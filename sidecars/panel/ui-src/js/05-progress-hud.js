@@ -82,7 +82,7 @@
           renderTaskProgressAndHud(res.taskProgress, res.floatingHud);
         }
         if (typeof flashStatus === 'function') {
-          flashStatus('Карточки прогресса сброшены ✓');
+          flashStatus(L('Карточки прогресса сброшены ✓', 'Progress cards cleared ✓'));
         }
       } catch {}
     }
@@ -96,24 +96,11 @@
       const stackEl = document.getElementById('agActiveChatsStack');
       if (!stackEl) return;
 
-      function formatProjectsWordRu(n) {
-        const abs = Math.abs(Number(n || 0));
-        const mod100 = abs % 100;
-        const mod10 = abs % 10;
-        if (mod100 >= 11 && mod100 <= 14) return abs + ' проектов';
-        if (mod10 === 1) return abs + ' проект';
-        if (mod10 >= 2 && mod10 <= 4) return abs + ' проекта';
-        return abs + ' проектов';
+      function formatChatsWord(n) {
+        return Lplural(n, 'чат', 'чата', 'чатов', 'chat', 'chats');
       }
-
-      function formatChatsWordRu(n) {
-        const abs = Math.abs(Number(n || 0));
-        const mod100 = abs % 100;
-        const mod10 = abs % 10;
-        if (mod100 >= 11 && mod100 <= 14) return abs + ' чатов';
-        if (mod10 === 1) return abs + ' чат';
-        if (mod10 >= 2 && mod10 <= 4) return abs + ' чата';
-        return abs + ' чатов';
+      function formatProjectsWordRu(n) {
+        return Lplural(n, 'проект', 'проекта', 'проектов', 'project', 'projects');
       }
 
       const projName = p.projectName || 'antigravity-model-router';
@@ -124,6 +111,7 @@
                 conversationId: p.activeConversationId || 'default',
                 chatNumber: 1,
                 chatLabel: 'Чат #1',
+                chatLabelEn: 'Chat #1',
                 topicLabel: '',
                 projectName: projName,
                 workspaceRoot: p.workspaceRoot || '',
@@ -132,7 +120,9 @@
                 totalSteps: p.totalSteps,
                 percent: p.percent,
                 stepTitle: p.stepTitle,
+                stepTitleEn: p.stepTitleEn,
                 formattedText: p.formattedText,
+                formattedTextEn: p.formattedTextEn,
                 steps: p.steps || [],
               }]
             : []);
@@ -180,7 +170,9 @@
       });
 
       if (headingEl) {
-        headingEl.textContent = chats.length > 1 ? ('Параллельные задачи (' + chats.length + ')') : 'Прогресс задачи';
+        headingEl.textContent = chats.length > 1
+          ? (L('Параллельные задачи (', 'Parallel Tasks (') + chats.length + ')')
+          : L('Прогресс задачи', 'Task Progress');
       }
 
       const resetStaleBtn = document.getElementById('btnResetStaleProgress');
@@ -209,9 +201,11 @@
             const rpPct = Math.max(0, Math.min(100, Math.round(Number(rp.percent || 0))));
             const countSuffix = Number(rp.activeChatsCount) > 1 ? (' (' + rp.activeChatsCount + ')') : '';
             const rpWs = rp.workspaceRoot || '';
-            const tip = 'Переключить панель на активный проект ' + rp.projectName +
-              (rp.stageLabel ? (' · ' + rp.stageLabel) : '') +
-              (rp.stepTitle ? (' · ' + rp.stepTitle) : '');
+            const rpStage = pickText(rp, 'stageLabel', 'stageLabelEn', '');
+            const rpStep = pickText(rp, 'stepTitle', 'stepTitleEn', '');
+            const tip = L('Переключить панель на активный проект ', 'Switch panel to active project ') + rp.projectName +
+              (rpStage ? (' · ' + rpStage) : '') +
+              (rpStep ? (' · ' + rpStep) : '');
             return '<button type="button" class="ag-step-chip active" data-action="selectPanelWorkspaceChip" data-ws="' + escapeHtml(rpWs) + '" title="' + escapeHtml(tip) + '">📁 ' +
               escapeHtml(rp.projectName) + countSuffix + ' · ' + rpPct + '%</button>';
           }).join('');
@@ -243,7 +237,7 @@
         el.setAttribute('data-cid', slotKey);
         el.innerHTML =
           '<div class="ag-progress-capsule">' +
-            '<button type="button" class="ag-subagent-toggle-btn" data-action="toggleSubagentsList" data-arg="' + escapeHtml(slotKey) + '" aria-expanded="false" style="display: none;" title="Раскрыть список субагентов">' +
+            '<button type="button" class="ag-subagent-toggle-btn" data-action="toggleSubagentsList" data-arg="' + escapeHtml(slotKey) + '" aria-expanded="false" style="display: none;" title="' + L('Раскрыть список субагентов', 'Expand subagents list') + '">' +
               '<svg class="ag-subagent-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
                 '<path d="M6 3.75L10.25 8L6 12.25" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>' +
               '</svg>' +
@@ -251,7 +245,7 @@
             '</button>' +
             '<span class="ag-bloom-dot idle"></span>' +
             '<span class="ag-chat-num-badge" style="display: none;"></span>' +
-            '<span class="ag-progress-title">Ожидание задачи</span>' +
+            '<span class="ag-progress-title">' + L('Ожидание задачи', 'Waiting for task') + '</span>' +
             '<div class="ag-bloom-track">' +
               '<div class="ag-bloom-fill idle" style="width: 0%;"><div class="ag-bloom-shimmer"></div></div>' +
             '</div>' +
@@ -274,8 +268,8 @@
         el.innerHTML =
           '<div class="ag-subagent-capsule">' +
             '<span class="ag-bloom-dot is-mini"></span>' +
-            '<span class="ag-subagent-badge">Агент #1</span>' +
-            '<span class="ag-subagent-title">Работа субагента</span>' +
+            '<span class="ag-subagent-badge">' + L('Агент #1', 'Agent #1') + '</span>' +
+            '<span class="ag-subagent-title">' + L('Работа субагента', 'Subagent running') + '</span>' +
             '<div class="ag-bloom-track is-mini">' +
               '<div class="ag-bloom-fill" style="width: 0%;"><div class="ag-bloom-shimmer"></div></div>' +
             '</div>' +
@@ -325,8 +319,8 @@
           toggleBtn.classList.toggle('is-active-glow', runningCount > 0);
           toggleBtn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
           toggleBtn.title = isExpanded
-            ? ('Свернуть список субагентов (' + subs.length + ')')
-            : ('Внутри задачи работают субагенты (' + subs.length + ') — нажмите, чтобы раскрыть');
+            ? (L('Свернуть список субагентов (', 'Collapse subagents (') + subs.length + ')')
+            : (L('Внутри задачи работают субагенты (', 'Active subagents in task (') + subs.length + L(') — нажмите, чтобы раскрыть', ') — click to expand'));
         }
         if (countEl) {
           countEl.textContent = String(subs.length);
@@ -357,9 +351,9 @@
           const subPct = Math.max(0, Math.min(100, Math.round(Number(s.percent || 0))));
           animateChatPctNode('sub:' + subCid, sNum, subPct);
 
-          const badgeLabel = s.subagentBadge || ('Агент #' + (s.subagentNumber || (sIdx + 1)));
-          const roleText = String(s.roleLabel || '').trim();
-          const opText = s.stepTitle || s.formattedText || 'Работа субагента';
+          const badgeLabel = pickText(s, 'subagentBadge', 'subagentBadgeEn', '') || (L('Агент #', 'Agent #') + (s.subagentNumber || (sIdx + 1)));
+          const roleText = String(pickText(s, 'roleLabel', 'roleLabelEn', '') || '').trim();
+          const opText = pickText(s, 'stepTitle', 'stepTitleEn', '') || pickText(s, 'formattedText', 'formattedTextEn', '') || L('Работа субагента', 'Subagent running');
           const displayOp = roleText && opText.indexOf(roleText) === -1
             ? (roleText + ' · ' + opText)
             : opText;
@@ -370,7 +364,7 @@
           }
           if (sTitle) {
             sTitle.textContent = displayOp;
-            sTitle.title = badgeLabel + ': ' + (s.formattedText || displayOp);
+            sTitle.title = badgeLabel + ': ' + (pickText(s, 'formattedText', 'formattedTextEn', '') || displayOp);
           }
           if (sFill) {
             sFill.style.width = subPct + '%';
@@ -450,9 +444,9 @@
         if (dotEl) dotEl.className = 'ag-bloom-dot idle';
         if (badgeEl) badgeEl.style.display = 'none';
         if (titleEl) {
-          titleEl.textContent = 'Ожидание задачи';
+          titleEl.textContent = L('Ожидание задачи', 'Waiting for task');
           titleEl.classList.add('is-idle');
-          titleEl.title = 'Все задачи завершены · ожидание нового запроса';
+          titleEl.title = L('Все задачи завершены · ожидание нового запроса', 'All tasks finished · awaiting new prompt');
         }
         if (fillEl) {
           fillEl.style.width = '0%';
@@ -514,7 +508,7 @@
         animateChatPctNode(cid, numEl, pct);
         if (pctWrapEl) pctWrapEl.classList.remove('is-idle');
 
-        const chatNumLabel = c.chatLabel || ('Чат #' + (c.chatNumber || (globalIdx + 1)));
+        const chatNumLabel = pickText(c, 'chatLabel', 'chatLabelEn', '') || (L('Чат #', 'Chat #') + (c.chatNumber || (globalIdx + 1)));
         const topic = String(c.topicLabel || '').trim();
         const cProj = String(c.projectName || projName).trim() || projName;
         if (badgeEl) {
@@ -525,7 +519,7 @@
 
         const totalSteps = Math.max(1, Number(c.totalSteps || 3));
         const curStep = Math.max(1, Math.min(totalSteps, Number(c.currentStep || 1)));
-        const stageText = c.formattedText || c.stepTitle || 'Выполнение операции';
+        const stageText = pickText(c, 'formattedText', 'formattedTextEn', '') || pickText(c, 'stepTitle', 'stepTitleEn', '') || L('Выполнение операции', 'Running operation');
         if (titleEl) {
           titleEl.classList.remove('is-idle');
           titleEl.textContent = topic && chats.length > 1 ? (topic + ' — ' + stageText) : stageText;
@@ -580,9 +574,10 @@
             if (isStepExpanded) clsList.push('is-expanded');
             const cls = clsList.join(' ');
             const prefix = isDone ? '✓ ' : (isErr ? '✕ ' : (isQuestion ? '? ' : ''));
-            const rawTitle = st.title || ('Этап ' + stepNum);
-            const tip = st.fullTitle || st.activeDetail || rawTitle;
-            const fullTip = (prefix || (stepNum + '. ')) + tip + ' (клик — раскрыть/свернуть)';
+            const rawTitle = pickText(st, 'title', 'titleEn', '') || (L('Этап ', 'Step ') + stepNum);
+            const rawFull = isRu() ? (st.fullTitle || st.fullTitleEn || '') : (st.fullTitleEn || st.fullTitle || '');
+            const tip = rawFull || pickText(st, 'activeDetail', 'activeDetailEn', '') || rawTitle;
+            const fullTip = (prefix || (stepNum + '. ')) + tip + L(' (клик — раскрыть/свернуть)', ' (click to expand/collapse)');
             const numText = stepKey;
             const labelText = prefix + rawTitle;
 
@@ -622,7 +617,7 @@
         if (ctxRowEl) {
           const skills = Array.isArray(c.activeSkills) ? c.activeSkills.slice(0, 4) : [];
           const savedTok = Math.max(0, Math.round(Number(c.ramSavedTokens || 0)));
-          const sig = skills.join(',') + '|' + savedTok;
+          const sig = skills.join(',') + '|' + savedTok + '|' + getUiLanguage();
           if (skills.length === 0 && savedTok <= 0) {
             ctxRowEl.style.display = 'none';
             if (ctxRowEl.children.length > 0) ctxRowEl.textContent = '';
@@ -636,7 +631,7 @@
                 const pill = document.createElement('span');
                 pill.className = 'ag-ctx-pill';
                 pill.textContent = '⚡ ' + slug;
-                pill.title = 'Активный скилл: ' + slug;
+                pill.title = L('Активный скилл: ', 'Active skill: ') + slug;
                 ctxRowEl.appendChild(pill);
               });
               if (savedTok > 0) {
@@ -645,8 +640,8 @@
                 const compactTok = savedTok >= 1000
                   ? (savedTok / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
                   : String(savedTok);
-                ramPill.textContent = '💾 −' + compactTok + ' тк';
-                ramPill.title = 'Сэкономлено токенов через In-RAM и GPU: ~' + savedTok;
+                ramPill.textContent = '💾 −' + compactTok + L(' тк', ' tok');
+                ramPill.title = L('Сэкономлено токенов через In-RAM и GPU: ~', 'Tokens saved via In-RAM & GPU: ~') + savedTok;
                 ctxRowEl.appendChild(ramPill);
               }
             }
@@ -694,13 +689,13 @@
             !grp.chats.some(function (item) { return item.status === 'running'; });
 
           if (headEl) {
-            headEl.title = grpWs ? ('Проект: ' + grpWs) : ('Проект: ' + grp.projectName);
+            headEl.title = L('Проект: ', 'Project: ') + (grpWs || grp.projectName);
           }
           if (nameEl) {
             nameEl.textContent = '📁 ' + grp.projectName;
           }
           if (countEl) {
-            countEl.textContent = formatChatsWordRu(grp.chats.length);
+            countEl.textContent = formatChatsWord(grp.chats.length);
           }
           if (grpPctEl) {
             grpPctEl.textContent = grpPct + '%';
@@ -868,7 +863,7 @@
         if (st.moved) {
           st.blockEl.classList.add('is-just-moved');
           setTimeout(function () { st.blockEl.classList.remove('is-just-moved'); }, 360);
-          persistCurrentBlockOrder('Порядок блоков сохранён ✓');
+          persistCurrentBlockOrder(L('Порядок блоков сохранён ✓', 'Card order saved ✓'));
         }
       }
 

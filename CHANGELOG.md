@@ -2,7 +2,26 @@
 
 Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
 
-> Хронология с `v3.8.0` по `v3.31.0` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`53` основных / `61` всего ESM-модуля ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `12` навыков и `36` наборов автотестов).
+> Хронология с `v3.8.0` по `v3.32.0` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`54` основных / `62` всего ESM-модуля ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `12` навыков и `36` наборов автотестов).
+
+---
+
+## [3.32.0] — 2026-11-23
+
+### Добавлено и адаптировано (полная 7-слойная двуязычность `EN / RU`)
+- **Общий модуль локализации [core/i18n.mjs](core/i18n.mjs)**: единые функции `normalizeLang`, `detectOsLocale`, `resolveStateLanguage`, `pickLang`, `detectTextLanguage` и `readActiveUiLanguage` для ядра, CLI и установщиков.
+- **Панель управления (`sidecars/panel/`) и бэкенд**:
+  - Устранены все протечки кириллицы в `EN`-режиме во всех 7 фронтенд-модулях ([00-i18n.js](sidecars/panel/ui-src/js/00-i18n.js) … [06-smart-composer.js](sidecars/panel/ui-src/js/06-smart-composer.js)), пересобран [sidecars/panel/ui.html](sidecars/panel/ui.html).
+  - Двуязычная выдача в [sidecars/panel/server.mjs](sidecars/panel/server.mjs), [sidecars/panel/lib/](sidecars/panel/lib/panel-telemetry-collectors.mjs), [core/task-progress.mjs](core/task-progress.mjs), [core/progress/progress-parsers.mjs](core/progress/progress-parsers.mjs), [core/hardware-profiler.mjs](core/hardware-profiler.mjs) и [core/project-setup-recommender.mjs](core/project-setup-recommender.mjs).
+- **ИИ-хуки, правила и аудиторы ядра**:
+  - Динамическая адаптация под `uiLanguage` (`en` / `ru`) в [rules/AGENTS.md](rules/AGENTS.md), [core/hook-runner.mjs](core/hook-runner.mjs), [core/model-profile.mjs](core/model-profile.mjs), [core/tool-pruner.mjs](core/tool-pruner.mjs), [core/completion-gates.mjs](core/completion-gates.mjs), [core/bayesian-router.mjs](core/bayesian-router.mjs), [core/quota-pacer.mjs](core/quota-pacer.mjs), [core/cpu-worker-pool.mjs](core/cpu-worker-pool.mjs), [core/history-compactor.mjs](core/history-compactor.mjs), [core/agent-shield.mjs](core/agent-shield.mjs), [core/background-sentinel.mjs](core/background-sentinel.mjs), [core/runtime-wiretap.mjs](core/runtime-wiretap.mjs), [core/shadow-guard.mjs](core/shadow-guard.mjs), [core/shadow-worktree.mjs](core/shadow-worktree.mjs), [core/skill-registry-bridge.mjs](core/skill-registry-bridge.mjs), [core/friction-observer.mjs](core/friction-observer.mjs), [core/circuit-breaker.mjs](core/circuit-breaker.mjs) и [core/cpu-mutation-guard.mjs](core/cpu-mutation-guard.mjs) с сохранением контрактов `*Ru`/`*En`.
+- **Локальный GPU-движок, Floating HUD и навыки**:
+  - Локализованы [core/floating-hud.mjs](core/floating-hud.mjs), [core/gpu/gpu-critic-chat.mjs](core/gpu/gpu-critic-chat.mjs), [core/gpu/gpu-vram-runtime.mjs](core/gpu/gpu-vram-runtime.mjs), [core/gpu/gpu-distill.mjs](core/gpu/gpu-distill.mjs), [core/gpu/gpu-vector-skills.mjs](core/gpu/gpu-vector-skills.mjs) и [core/gpu/gpu-composer-copilot.mjs](core/gpu/gpu-composer-copilot.mjs).
+  - Добавлена поддержка `--lang=en|ru` / `readActiveUiLanguage()` в [skills/ui-ux-design-system/scripts/build-showroom.mjs](skills/ui-ux-design-system/scripts/build-showroom.mjs), [skills/ui-ux-design-system/scripts/fetch-web-refs.mjs](skills/ui-ux-design-system/scripts/fetch-web-refs.mjs), [skills/delta-bug-minimizer/scripts/ddmin-runner.mjs](skills/delta-bug-minimizer/scripts/ddmin-runner.mjs) и [skills/ui-ux-design-system/SKILL.md](skills/ui-ux-design-system/SKILL.md).
+- **Манифесты, установщики, CLI и тесты**:
+  - Англоязычные манифесты [plugin.json](plugin.json), [sidecars/panel/sidecar.json](sidecars/panel/sidecar.json) и [package.json](package.json); расширенные правила синхронизации версий `EN + RU` в [scripts/bump-version.mjs](scripts/bump-version.mjs).
+  - Автоопределение локали ОС (`ru` / `en`, флаги `--lang=en|ru`, переменная `TUNNEL_LANG`) в [install.js](install.js), [install.sh](install.sh), [core/router-cli.mjs](core/router-cli.mjs) и в WinForms C# 5.0 `Setup.exe` ([scripts/pack-release.mjs](scripts/pack-release.mjs)), плюс англоязычный `uninstall.bat` рядом с `Удалить плагин.bat` в релизном архиве.
+  - Расширен регрессионный набор [tests/i18n-language.test.mjs](tests/i18n-language.test.mjs) (8 тестов, включая проверку отсутствия кириллицы в манифестах, модулях ядра в `EN`-режиме и статическом DOM `ui.html`).
 
 ---
 

@@ -9,6 +9,7 @@ import http from 'node:http';
 import https from 'node:https';
 import path, { dirname, join } from 'node:path';
 import { redactSecretsInText } from '../security-guard.mjs';
+import { detectTextLanguage, normalizeLang, readActiveUiLanguage } from '../i18n.mjs';
 import {
   CONTINUATION_CACHE_MAX,
   CONTINUATION_CACHE_TTL_MS,
@@ -1341,6 +1342,7 @@ export async function generatePromptContinuation({
   maxOutputTokens = 18,
   timeoutMs = 2200,
   signal = null,
+  lang = '',
   cfgOverride = null,
   httpJsonFn = null,
   hwProbeFn = null,
@@ -1360,6 +1362,7 @@ export async function generatePromptContinuation({
   }
 
   const cfg = cfgOverride ? loadGpuConfig(cfgOverride) : loadGpuConfig();
+  const contLang = normalizeLang(lang || cfg.uiLanguage || readActiveUiLanguage(), 'en');
   if (!cfg.gpuEnabled) {
     return { ok: false, skippedGpuDisabled: true, continuation: '', error: 'GPU engine disabled' };
   }
@@ -1499,7 +1502,9 @@ export async function generatePromptContinuation({
       ok: false,
       skippedVramCap: true,
       continuation: '',
-      error: fit.reasonRu || `Модель ${requestedModel} превышает лимит ${fit.capGb} ГБ VRAM`,
+      error: (normalizeLang(lang || cfg.uiLanguage || readActiveUiLanguage(), 'en') === 'en')
+        ? (fit.reasonEn || fit.reasonRu || `Model ${requestedModel} exceeds the ${fit.capGb} GB VRAM limit`)
+        : (fit.reasonRu || fit.reasonEn || `Модель ${requestedModel} превышает лимит ${fit.capGb} ГБ VRAM`),
     };
   }
 
@@ -1580,9 +1585,14 @@ export async function generatePromptContinuation({
     );
   }
 
+  const isEnCont = contLang === 'en';
   const systemPrompt = followUpSentence
-    ? "You are an inline Ghost Text prompt-composer autocomplete writing strictly AS THE HUMAN DEVELOPER composing a request TO an AI coding assistant. The developer just finished one sentence/question and may append ONE short follow-up sentence FROM THEIR OWN PERSPECTIVE to clarify scope, target files, constraints, or an example (e.g. 'Например, ...', 'Желательно без ...', 'Чтобы при этом ...', 'В частности для ...'). CRITICAL: You are the HUMAN USER, NEVER the AI assistant! NEVER answer the question, NEVER confirm/deny or explain how to solve it. FORBIDDEN openings: 'Да', 'Нет', 'Конечно', 'Безусловно', 'Разумеется', 'Это можно', 'Для этого', 'Чтобы это реализовать', 'Я могу', 'Мы можем', 'Давайте', 'Дело в том', 'Yes', 'No', 'Sure', 'You can', 'This can'. STRICT GROUNDING: NEVER invent file paths, function/variable names, --cli-flags, or /slash commands that are not explicitly listed in FILES, SYMBOLS, or RAG_CONTEXT; if there is no high-confidence grounded continuation, output literally NONE. Output ONLY 1 short user-side sentence (3 to 10 words), no quotes, no line breaks, without repeating COMPLETED_FIRST_SENTENCE. Same language as input (Russian by default)."
-    : "You are an inline Ghost Text prompt-composer autocomplete writing strictly AS THE HUMAN DEVELOPER typing an unfinished prompt TO an AI coding assistant. Output ONLY a natural, concise continuation suffix (2 to 10 words) that finishes the user's current sentence. Stop at the end of the sentence; NEVER start a second sentence and NEVER answer the user's question. FORBIDDEN assistant replies: 'Да,', 'Нет,', 'Конечно', 'Безусловно', 'Это можно', 'Для этого', 'Я могу', 'Давайте', 'Yes,', 'No,', 'Sure', 'You can'. STRICT GROUNDING: NEVER invent file paths, function/variable names, --cli-flags, or /slash commands that are not explicitly listed in FILES, SYMBOLS, or RAG_CONTEXT; if there is no high-confidence grounded continuation, output literally NONE. NEVER repeat the user's words, NEVER wrap in quotes, NEVER add explanations or line breaks. Continue in the same language as the user's input (Russian by default).";
+    ? (isEnCont
+        ? "You are an inline Ghost Text prompt-composer autocomplete writing strictly AS THE HUMAN DEVELOPER composing a request TO an AI coding assistant. The developer just finished one sentence/question and may append ONE short follow-up sentence FROM THEIR OWN PERSPECTIVE to clarify scope, target files, constraints, or an example (e.g. 'For example, ...', 'Preferably without ...', 'Especially for ...'). CRITICAL: You are the HUMAN USER, NEVER the AI assistant! NEVER answer the question, NEVER confirm/deny or explain how to solve it. FORBIDDEN openings: 'Yes', 'No', 'Sure', 'You can', 'This can', 'Let us', 'Let\\'s', 'Here is', 'Да', 'Нет', 'Конечно'. STRICT GROUNDING: NEVER invent file paths, function/variable names, --cli-flags, or /slash commands that are not explicitly listed in FILES, SYMBOLS, or RAG_CONTEXT; if there is no high-confidence grounded continuation, output literally NONE. Output ONLY 1 short user-side sentence (3 to 10 words), no quotes, no line breaks, without repeating COMPLETED_FIRST_SENTENCE. Same language as input (English by default)."
+        : "You are an inline Ghost Text prompt-composer autocomplete writing strictly AS THE HUMAN DEVELOPER composing a request TO an AI coding assistant. The developer just finished one sentence/question and may append ONE short follow-up sentence FROM THEIR OWN PERSPECTIVE to clarify scope, target files, constraints, or an example (e.g. 'Например, ...', 'Желательно без ...', 'Чтобы при этом ...', 'В частности для ...'). CRITICAL: You are the HUMAN USER, NEVER the AI assistant! NEVER answer the question, NEVER confirm/deny or explain how to solve it. FORBIDDEN openings: 'Да', 'Нет', 'Конечно', 'Безусловно', 'Разумеется', 'Это можно', 'Для этого', 'Чтобы это реализовать', 'Я могу', 'Мы можем', 'Давайте', 'Дело в том', 'Yes', 'No', 'Sure', 'You can', 'This can'. STRICT GROUNDING: NEVER invent file paths, function/variable names, --cli-flags, or /slash commands that are not explicitly listed in FILES, SYMBOLS, or RAG_CONTEXT; if there is no high-confidence grounded continuation, output literally NONE. Output ONLY 1 short user-side sentence (3 to 10 words), no quotes, no line breaks, without repeating COMPLETED_FIRST_SENTENCE. Same language as input (Russian by default).")
+    : (isEnCont
+        ? "You are an inline Ghost Text prompt-composer autocomplete writing strictly AS THE HUMAN DEVELOPER typing an unfinished prompt TO an AI coding assistant. Output ONLY a natural, concise continuation suffix (2 to 10 words) that finishes the user's current sentence. Stop at the end of the sentence; NEVER start a second sentence and NEVER answer the user's question. FORBIDDEN assistant replies: 'Yes,', 'No,', 'Sure', 'You can', 'Here is', 'Да,', 'Нет,', 'Конечно'. STRICT GROUNDING: NEVER invent file paths, function/variable names, --cli-flags, or /slash commands that are not explicitly listed in FILES, SYMBOLS, or RAG_CONTEXT; if there is no high-confidence grounded continuation, output literally NONE. NEVER repeat the user's words, NEVER wrap in quotes, NEVER add explanations or line breaks. Continue in the same language as the user's input (English by default)."
+        : "You are an inline Ghost Text prompt-composer autocomplete writing strictly AS THE HUMAN DEVELOPER typing an unfinished prompt TO an AI coding assistant. Output ONLY a natural, concise continuation suffix (2 to 10 words) that finishes the user's current sentence. Stop at the end of the sentence; NEVER start a second sentence and NEVER answer the user's question. FORBIDDEN assistant replies: 'Да,', 'Нет,', 'Конечно', 'Безусловно', 'Это можно', 'Для этого', 'Я могу', 'Давайте', 'Yes,', 'No,', 'Sure', 'You can'. STRICT GROUNDING: NEVER invent file paths, function/variable names, --cli-flags, or /slash commands that are not explicitly listed in FILES, SYMBOLS, or RAG_CONTEXT; if there is no high-confidence grounded continuation, output literally NONE. NEVER repeat the user's words, NEVER wrap in quotes, NEVER add explanations or line breaks. Continue in the same language as the user's input (Russian by default).");
 
   const predictTokens = clampInt(maxOutputTokens, 8, 48, followUpSentence ? 24 : 22);
   const body = {
@@ -1616,7 +1626,7 @@ export async function generatePromptContinuation({
     workInfoOverride: {
       op: 'autocomplete',
       model: targetModel,
-      detail: `Умный ввод (${targetModel})`,
+      detail: isEnCont ? `Smart Composer (${targetModel})` : `Умный ввод (${targetModel})`,
     },
   };
 
@@ -1657,8 +1667,9 @@ export async function generatePromptContinuation({
         { role: 'assistant', content: rawContent.trim().slice(0, 120) },
         {
           role: 'user',
-          content:
-            "REJECTED: You answered as the AI assistant instead of continuing as the human user. Output ONLY 1 short user-perspective requirement or example (e.g. starting with 'Например,' / 'Чтобы' / 'Желательно') to append to the user's prompt:",
+          content: isEnCont
+            ? "REJECTED: You answered as the AI assistant instead of continuing as the human user. Output ONLY 1 short user-perspective requirement or example (e.g. starting with 'For example,' / 'So that' / 'Preferably') to append to the user's prompt:"
+            : "REJECTED: You answered as the AI assistant instead of continuing as the human user. Output ONLY 1 short user-perspective requirement or example (e.g. starting with 'Например,' / 'Чтобы' / 'Желательно') to append to the user's prompt:",
         },
       ],
       options: {
@@ -1721,23 +1732,25 @@ const MAX_LOCAL_VISION_IMAGE_BYTES = 4 * 1024 * 1024;
  */
 export async function analyzeUiScreenshotLocally(opts = {}) {
   const safeOpts = opts && typeof opts === 'object' && !Array.isArray(opts) ? opts : {};
+  const lang = normalizeLang(safeOpts.lang || safeOpts.uiLanguage, 'ru');
+  const isEn = lang === 'en';
   const rawImg = typeof safeOpts.imageBase64 === 'string' ? safeOpts.imageBase64.trim() : '';
   if (!rawImg) {
-    return { ok: false, error: 'Не передано изображение (imageBase64)' };
+    return { ok: false, error: isEn ? 'Image (imageBase64) is missing' : 'Не передано изображение (imageBase64)' };
   }
   const cleanB64 = rawImg.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/i, '').replace(/\s+/g, '');
   if (!cleanB64 || !/^[A-Za-z0-9+/=]+$/.test(cleanB64)) {
-    return { ok: false, error: 'Некорректный формат base64-скриншота' };
+    return { ok: false, error: isEn ? 'Invalid base64 screenshot format' : 'Некорректный формат base64-скриншота' };
   }
   const approxBytes = Math.floor((cleanB64.length * 3) / 4);
   if (approxBytes > MAX_LOCAL_VISION_IMAGE_BYTES) {
-    return { ok: false, error: 'Скриншот превышает лимит 4 МБ' };
+    return { ok: false, error: isEn ? 'Screenshot exceeds 4 MB limit' : 'Скриншот превышает лимит 4 МБ' };
   }
 
   const httpJsonFn = typeof safeOpts.httpJsonFn === 'function' ? safeOpts.httpJsonFn : null;
   const cfg = safeOpts.cfgOverride ? loadGpuConfig(safeOpts.cfgOverride) : loadGpuConfig();
   if (!httpJsonFn && !cfg.gpuEnabled) {
-    return { ok: false, skippedGpuDisabled: true, error: 'Локальный GPU выключен в настройках' };
+    return { ok: false, skippedGpuDisabled: true, error: isEn ? 'Local GPU is disabled in settings' : 'Локальный GPU выключен в настройках' };
   }
 
   const userHint = typeof safeOpts.userHint === 'string' ? safeOpts.userHint.trim().slice(0, 600) : '';
@@ -1752,14 +1765,19 @@ export async function analyzeUiScreenshotLocally(opts = {}) {
     messages: [
       {
         role: 'system',
-        content:
-          'You are a strict local UI/UX visual inspector. Analyze the attached UI screenshot for layout defects, contrast issues, spacing alignment, and visual style tokens. Output strict JSON in Russian: {"analysisRu":"...","defectsRu":["..."],"promptPatchRu":"Короткий чёткий промпт на русском для исправления UI"}',
+        content: isEn
+          ? 'You are a strict local UI/UX visual inspector. Analyze the attached UI screenshot for layout defects, contrast issues, spacing alignment, and visual style tokens. Output strict JSON in English: {"analysisRu":"...","defectsRu":["..."],"promptPatchRu":"Short concise UI fix prompt in English"}'
+          : 'You are a strict local UI/UX visual inspector. Analyze the attached UI screenshot for layout defects, contrast issues, spacing alignment, and visual style tokens. Output strict JSON in Russian: {"analysisRu":"...","defectsRu":["..."],"promptPatchRu":"Короткий чёткий промпт на русском для исправления UI"}',
       },
       {
         role: 'user',
-        content: userHint
-          ? `Разбери прикреплённый UI-скриншот с учётом фокуса: ${userHint}`
-          : 'Разбери прикреплённый UI-скриншот: найди проблемы вёрстки, контраста, отступов и сформируй короткую задачу на доработку.',
+        content: isEn
+          ? (userHint
+              ? `Inspect the attached UI screenshot focusing on: ${userHint}`
+              : 'Inspect the attached UI screenshot: identify layout, contrast, and spacing issues and form a short fix task.')
+          : (userHint
+              ? `Разбери прикреплённый UI-скриншот с учётом фокуса: ${userHint}`
+              : 'Разбери прикреплённый UI-скриншот: найди проблемы вёрстки, контраста, отступов и сформируй короткую задачу на доработку.'),
         images: [cleanB64],
       },
     ],
@@ -1774,10 +1792,10 @@ export async function analyzeUiScreenshotLocally(opts = {}) {
     const callHttp = httpJsonFn || ollamaHttpJson;
     const res = await callHttp('POST', '/api/chat', body, timeoutMs, cfg.gpuEndpoint, {
       priority: 'foreground',
-      workInfoOverride: { op: 'local_vision', model: targetModel, detail: 'Разбор UI-скриншота' },
+      workInfoOverride: { op: 'local_vision', model: targetModel, detail: isEn ? 'Inspect UI screenshot' : 'Разбор UI-скриншота' },
     });
     if (!res?.ok) {
-      return { ok: false, error: res?.error || 'Локальная модель не смогла разобрать скриншот' };
+      return { ok: false, error: res?.error || (isEn ? 'Local model failed to inspect screenshot' : 'Локальная модель не смогла разобрать скриншот') };
     }
     const rawReply =
       typeof res.data?.message?.content === 'string'
@@ -1788,30 +1806,37 @@ export async function analyzeUiScreenshotLocally(opts = {}) {
             ? JSON.stringify(res.data)
             : '';
     const parsed = parseStrictBackgroundJson(rawReply);
-    if (parsed && (parsed.analysisRu || parsed.promptPatchRu)) {
+    if (parsed && (parsed.analysisRu || parsed.analysisEn || parsed.promptPatchRu || parsed.promptPatchEn)) {
+      const analysis = String(parsed.analysisEn || parsed.analysisRu || '').trim().slice(0, 800);
+      const defects = Array.isArray(parsed.defectsRu) ? parsed.defectsRu.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 6) : [];
+      const patch = String(parsed.promptPatchEn || parsed.promptPatchRu || analysis || '').trim().slice(0, 600);
       return {
         ok: true,
-        analysisRu: String(parsed.analysisRu || '').trim().slice(0, 800),
-        defectsRu: Array.isArray(parsed.defectsRu) ? parsed.defectsRu.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 6) : [],
-        promptPatchRu: String(parsed.promptPatchRu || parsed.analysisRu || '').trim().slice(0, 600),
+        analysisRu: String(parsed.analysisRu || analysis).trim().slice(0, 800),
+        analysisEn: analysis,
+        defectsRu: defects,
+        promptPatchRu: String(parsed.promptPatchRu || patch).trim().slice(0, 600),
+        promptPatchEn: patch,
         model: targetModel,
       };
     }
     const plain = String(rawReply || '').trim();
-    if (!plain) return { ok: false, error: 'Пустой ответ мультимодальной модели' };
+    if (!plain) return { ok: false, error: isEn ? 'Empty response from multimodal model' : 'Пустой ответ мультимодальной модели' };
     return {
       ok: true,
       analysisRu: plain.slice(0, 800),
+      analysisEn: plain.slice(0, 800),
       defectsRu: [],
       promptPatchRu: plain.slice(0, 500),
+      promptPatchEn: plain.slice(0, 500),
       model: targetModel,
     };
   } catch (err) {
-    return { ok: false, error: err?.message || 'Ошибка разбора скриншота' };
+    return { ok: false, error: err?.message || (isEn ? 'Screenshot inspection error' : 'Ошибка разбора скриншота') };
   }
 }
 
-function buildDeterministicCommitFallback({ diffText = '', changedFiles = [], issuesCount = 0 } = {}) {
+function buildDeterministicCommitFallback({ diffText = '', changedFiles = [], issuesCount = 0, lang = 'ru' } = {}) {
   const files = Array.isArray(changedFiles) ? changedFiles.map((f) => String(f || '').trim()).filter(Boolean) : [];
   const lowerAll = `${files.join(' ')}\n${diffText.slice(0, 2000)}`.toLowerCase();
   const hasOnlyTests = files.length > 0 && files.every((f) => /(?:^|\/)tests?\/|\.test\.|\.spec\./i.test(f));
@@ -1824,33 +1849,39 @@ function buildDeterministicCommitFallback({ diffText = '', changedFiles = [], is
         ? 'docs'
         : 'feat';
   const primaryName = files[0] ? path.basename(files[0]).replace(/\.[a-z0-9]+$/i, '') : 'core';
-  const countSuffix = files.length > 1 ? ` и ещё ${files.length - 1} ф.` : '';
-  const commitMessage = `${kind}(${primaryName}): обновить ${files[0] ? path.basename(files[0]) : 'модули'}${countSuffix}`;
+  const isEnCommit = normalizeLang(lang, 'ru') === 'en';
+  const countSuffix = files.length > 1 ? (isEnCommit ? ` and ${files.length - 1} more` : ` и ещё ${files.length - 1} ф.`) : '';
+  const commitMessage = isEnCommit
+    ? `${kind}(${primaryName}): update ${files[0] ? path.basename(files[0]) : 'modules'}${countSuffix}`
+    : `${kind}(${primaryName}): обновить ${files[0] ? path.basename(files[0]) : 'модули'}${countSuffix}`;
   const addLines = (diffText.match(/^\+[^+]/gm) || []).length;
   const delLines = (diffText.match(/^-[^-]/gm) || []).length;
+  const summaryEn = `Files: ${files.length || 1} (+${addLines}/-${delLines} lines). ${files.slice(0, 4).join(', ')}`;
   const summaryRu = `Файлов: ${files.length || 1} (+${addLines}/-${delLines} стр.). ${files.slice(0, 4).join(', ')}`;
-  return { ok: true, commitMessage, summaryRu, viaGpu: false };
+  return { ok: true, commitMessage, summaryRu, summaryEn, viaGpu: false };
 }
 
 /**
- * Генерирует Conventional Commit сообщение и краткую сводку на русском без расхода облачных токенов
+ * Генерирует Conventional Commit сообщение и краткую сводку (RU/EN) без расхода облачных токенов
  * (через локальный GPU с детерминированным оффлайн-фолбэком при выключенном GPU).
  * @param {object} [opts={}]
  * @returns {Promise<object>}
  */
 export async function generateLocalCommitSummary(opts = {}) {
   const safeOpts = opts && typeof opts === 'object' && !Array.isArray(opts) ? opts : {};
+  const lang = normalizeLang(safeOpts.lang, 'ru');
+  const isEn = lang === 'en';
   const rawDiff = typeof safeOpts.diffText === 'string' ? safeOpts.diffText.trim() : '';
   const changedFiles = Array.isArray(safeOpts.changedFiles)
     ? safeOpts.changedFiles.map((f) => String(f || '').trim()).filter(Boolean).slice(0, 30)
     : [];
   const issuesCount = Math.max(0, Number(safeOpts.issuesCount || 0) || 0);
   if (!rawDiff && changedFiles.length === 0) {
-    return { ok: false, error: 'Нет изменённых файлов для генерации коммита' };
+    return { ok: false, error: isEn ? 'No changed files to generate commit message' : 'Нет изменённых файлов для генерации коммита' };
   }
 
   const safeDiff = redactSecretsInText(rawDiff.slice(0, 10_000));
-  const fallback = buildDeterministicCommitFallback({ diffText: safeDiff, changedFiles, issuesCount });
+  const fallback = buildDeterministicCommitFallback({ diffText: safeDiff, changedFiles, issuesCount, lang });
   const httpJsonFn = typeof safeOpts.httpJsonFn === 'function' ? safeOpts.httpJsonFn : null;
   const cfg = safeOpts.cfgOverride ? loadGpuConfig(safeOpts.cfgOverride) : loadGpuConfig();
   if (!httpJsonFn && !cfg.gpuEnabled) {
@@ -1868,8 +1899,9 @@ export async function generateLocalCommitSummary(opts = {}) {
     messages: [
       {
         role: 'system',
-        content:
-          'Generate a concise Conventional Commit message and short Russian bullet summary from the git diff. Output strict JSON: {"commitMessage":"feat(scope): ...","summaryRu":"..."}',
+        content: isEn
+          ? 'Generate a concise Conventional Commit message and short English bullet summary from the git diff. Output strict JSON: {"commitMessage":"feat(scope): ...","summaryEn":"...","summaryRu":"..."}'
+          : 'Generate a concise Conventional Commit message and short Russian bullet summary from the git diff. Output strict JSON: {"commitMessage":"feat(scope): ...","summaryRu":"...","summaryEn":"..."}',
       },
       {
         role: 'user',
@@ -1883,7 +1915,7 @@ export async function generateLocalCommitSummary(opts = {}) {
     const callHttp = httpJsonFn || ollamaHttpJson;
     const res = await callHttp('POST', '/api/chat', body, timeoutMs, cfg.gpuEndpoint, {
       priority: 'foreground',
-      workInfoOverride: { op: 'local_commit', model: targetModel, detail: 'Генерация сообщения коммита' },
+      workInfoOverride: { op: 'local_commit', model: targetModel, detail: isEn ? 'Generate commit message' : 'Генерация сообщения коммита' },
     });
     if (!res?.ok) return fallback;
     const rawReply =
@@ -1899,7 +1931,8 @@ export async function generateLocalCommitSummary(opts = {}) {
       return {
         ok: true,
         commitMessage: parsed.commitMessage.trim().slice(0, 160),
-        summaryRu: String(parsed.summaryRu || fallback.summaryRu).trim().slice(0, 400),
+        summaryRu: String(parsed.summaryRu || parsed.summaryEn || fallback.summaryRu).trim().slice(0, 400),
+        summaryEn: String(parsed.summaryEn || fallback.summaryEn).trim().slice(0, 400),
         viaGpu: true,
         model: targetModel,
       };
@@ -1917,6 +1950,8 @@ export async function generateLocalCommitSummary(opts = {}) {
  */
 export async function structureVoiceTranscriptLocally(opts = {}) {
   const safeOpts = opts && typeof opts === 'object' && !Array.isArray(opts) ? opts : {};
+  const lang = normalizeLang(safeOpts.lang, 'ru');
+  const isEn = lang === 'en';
   const rawText = typeof safeOpts.rawTranscript === 'string' ? safeOpts.rawTranscript : '';
   const cleaned = rawText
     .replace(/\b(?:ээ+|мм+|аа+|ну типа|типа|короче|как бы|в общем|это самое|значит)\b/gi, ' ')
@@ -1927,7 +1962,7 @@ export async function structureVoiceTranscriptLocally(opts = {}) {
     .trim()
     .slice(0, 2000);
   if (!cleaned) {
-    return { ok: false, error: 'Пустой текст голосовой диктовки' };
+    return { ok: false, error: isEn ? 'Empty voice dictation transcript' : 'Пустой текст голосовой диктовки' };
   }
   const capitalized = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
   const fallback = { ok: true, structuredPrompt: capitalized, viaGpu: false };
@@ -1952,8 +1987,9 @@ export async function structureVoiceTranscriptLocally(opts = {}) {
     messages: [
       {
         role: 'system',
-        content:
-          'Convert spoken developer Russian dictation into a clear, concise engineering prompt. Preserve or match exact workspace filenames only from WORKSPACE_FILES if clearly referenced. Output JSON: {"structuredPrompt":"..."}',
+        content: isEn
+          ? 'Convert spoken developer dictation into a clear, concise engineering prompt in English. Preserve or match exact workspace filenames only from WORKSPACE_FILES if clearly referenced. Output JSON: {"structuredPrompt":"..."}'
+          : 'Convert spoken developer Russian dictation into a clear, concise engineering prompt. Preserve or match exact workspace filenames only from WORKSPACE_FILES if clearly referenced. Output JSON: {"structuredPrompt":"..."}',
       },
       {
         role: 'user',
@@ -1967,7 +2003,7 @@ export async function structureVoiceTranscriptLocally(opts = {}) {
     const callHttp = httpJsonFn || ollamaHttpJson;
     const res = await callHttp('POST', '/api/chat', body, timeoutMs, cfg.gpuEndpoint, {
       priority: 'foreground',
-      workInfoOverride: { op: 'local_voice', model: targetModel, detail: 'Структурирование голоса' },
+      workInfoOverride: { op: 'local_voice', model: targetModel, detail: isEn ? 'Structure voice prompt' : 'Структурирование голоса' },
     });
     if (!res?.ok) return fallback;
     const rawReply =

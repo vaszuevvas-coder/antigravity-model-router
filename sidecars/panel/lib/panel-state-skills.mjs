@@ -598,6 +598,114 @@ export function sanitizeStatePatch(patch = {}, options = {}) {
 
 export { getSubscriptionCapabilities, sanitizeSwarmWorkerTierForSubscription };
 
+// Human-readable English titles for Skill Registry cards
+const SKILL_EN_TITLES = {
+  'ui-ux-design-system': '🎨 Design, Style & Variant Showroom (A/B/C)',
+  'game-systems-architect': '🎮 Game Mechanics, Balance & Game Feel',
+  'deep-stress-auditor': '🔬 Deep Project Stress & Security Audit',
+  'vj-video-fx-studio': '📺 DaVinci OpenFX, Resolume Shaders & Broadcast',
+  'programmatic-video-studio': '🎬 Programmatic Video & Motion (HyperFrames / Remotion)',
+  'binary-app-localizer': '📦 App, Game & Binary Resource Localization',
+  'ru-docs': '📝 Russian Technical Docs & Guides',
+  'ru-ui-update': '🇷🇺 Antigravity Russian UI Pack Updater',
+  'ast-codemod-refactor': '🛠️ Safe Multi-File AST Refactor & Rename',
+  'program-slicer-ocd': '🔍 Data-Flow Program Slicing for Large Files',
+  'delta-bug-minimizer': '🐞 Automated Delta Debugging for Flaky Failures',
+  'skill-architect': '🏗️ AI Skill Designer & Trigger Auditor (Skill Architect)',
+  'context7-mcp': '📚 Up-to-Date Library & Framework Docs (Context7)',
+  'chrome-devtools': '🌐 Live Browser UI & Network Inspector',
+  'a11y-debugging': '👁️ Accessibility, Contrast & Keyboard Audit',
+  'debug-optimize-lcp': '⚡ Page Load Speed & LCP Optimizer',
+  'memory-leak-debugging': '🧹 Heap Snapshot & Memory Leak Debugger',
+  'cookie-debugging': '🔑 Session, Auth & Cookie Diagnostics',
+  'troubleshooting': '🔌 Browser Debugger Connection Diagnostics',
+  'model-router': '🧭 The Tunnel · 3D Model Router & AI Autopilot',
+  'context-fork': '🧩 Context Window & Token Economy Protocol',
+  'plugin': '🔌 Plugin Manager & Bundling Guide',
+  'agy-customizations': '⚙️ Antigravity Rules, Hooks & Customizations',
+  'antigravity-guide': '📖 Antigravity Features, CLI & Reference',
+  'automation': '⏰ Scheduled Background Automations',
+  'ui-plugin-navigation': '🪟 Side-Pane UI Plugin Quick Navigation',
+  'migrate-workflows': '🔄 Legacy Workflow-to-Skill Migrator',
+  'migrate-agent-settings': '📥 Import Settings from Other AI Agents',
+  'generative_ui': '✨ Interactive HTML Widgets & Diagrams in Chat',
+  'mcp-app-development': '🪟 Interactive MCP App & Side-Pane Builder',
+  'permissioned-github': '🐙 Permissioned GitHub Workflow Helper',
+  'swarm': '🐝 Parallel Swarm Coordination for Large Tasks',
+  'swarm_monitor': '⏱️ Swarm Anti-Stall Monitor Worker',
+  'swarm_narrator': '📰 Live Swarm Overview Narrator',
+  'swarm_pane': '📊 Swarm Overview Plan & Timeline Updater',
+  'run-workflow': '🔀 Multi-Agent Python Pipeline (Workflow)',
+  'sonar-integrate': '🛡️ Connect SonarQube CLI & MCP Server',
+  'sonar-analyze': '🔍 Analyze File with SonarQube',
+  'sonar-quality-gate': '🚦 SonarQube Quality Gate Status',
+  'sonar-list-issues': '📋 List SonarQube Code Issues',
+  'sonar-fix-issue': '🔧 Fix Specific SonarQube Issue',
+  'sonar-coverage': '🧪 Find Low Test Coverage Lines',
+  'sonar-duplication': '📑 Detect Duplicated Code Blocks',
+  'sonar-dependency-risks': '📦 Scan Dependency Risks (SCA / CVE)',
+  'sonar-triage-dependency-risks': '🩺 Triage Reachable CVEs & Dependency Fixes',
+  'sonar-list-projects': '🗂️ List Accessible SonarQube Projects',
+  'gemini-api-dev': '✨ Build Apps with Gemini API SDK',
+  'gemini-api-cli': '💻 Run Gemini API & Media from Terminal',
+  'gemini-live-api-dev': '🎙️ Real-Time Voice & Streaming (Gemini Live API)',
+  'gemini-omni-flash-api': '🎬 Video Generation & Editing (Gemini Omni)',
+};
+
+// Plain-language triggers: when AI Autopilot attaches each skill automatically
+const SKILL_EN_HINTS = {
+  'ui-ux-design-system': 'Activates when you redesign screens, UI, or animations — offers visual style calibration and A/B/C previews',
+  'game-systems-architect': 'Activates for game projects — helps design progression math, combat feel, economies, and deterministic loops',
+  'deep-stress-auditor': 'Activates for deep stability checks — uncovers concurrency hazards, security taint flows, and runtime bottlenecks',
+  'vj-video-fx-studio': 'Activates for DaVinci Resolve OpenFX, Resolume GLSL/ISF shaders, Wire patches, and broadcast overlays',
+  'programmatic-video-studio': 'Activates for code-driven promo videos, animated intros, or UI demos rendered to MP4/WebM via HyperFrames/Remotion',
+  'binary-app-localizer': 'Activates when translating Electron ASAR bundles, desktop apps, JSON/XML resources, or game strings safely',
+  'ru-docs': 'Activates when writing or translating clear Russian READMEs, changelogs, and API guides',
+  'ru-ui-update': 'Activates when checking, updating, or rolling back Russian UI localization of Antigravity',
+  'ast-codemod-refactor': 'Activates when renaming symbols, rewriting signatures, or migrating imports across 3+ files safely',
+  'program-slicer-ocd': 'Activates when tracing variable mutations across large (>150L) files without burning full-file tokens',
+  'delta-bug-minimizer': 'Activates for flaky or oversized failing inputs — binary-searches down to a minimal reproducer',
+  'skill-architect': 'Activates when authoring or linting SKILL.md bundles — prevents trigger collisions and context bloat',
+  'context7-mcp': 'Activates when up-to-date framework and library documentation is needed without AI guesswork',
+  'chrome-devtools': 'Activates for live browser page inspection, DOM checks, performance traces, and UI automation',
+  'a11y-debugging': 'Activates when auditing semantic HTML, ARIA labels, focus states, and color contrast',
+  'debug-optimize-lcp': 'Activates when diagnosing slow page loads, Core Web Vitals, or hero render bottlenecks (LCP)',
+  'memory-leak-debugging': 'Activates when diagnosing slowdowns, OOM errors, or retained JS heap growth via DevTools',
+  'cookie-debugging': 'Activates when troubleshooting auth redirects, 401/403 session issues, or SameSite cookie flags',
+  'troubleshooting': 'Activates when Chrome DevTools browser targets or MCP connections fail to attach',
+  'model-router': 'Controls 3D Task Triage, model power tiers, Swarm routing, and Pre-Task confirmation gates',
+  'context-fork': 'Guides cache-aligned reads, RAM slicing, and read-only exploration offloading to preserve prompt budget',
+  'plugin': 'Activates when installing, enabling, disabling, or packaging extensions into Antigravity plugins',
+  'agy-customizations': 'Activates when configuring skills, rules, hooks, and MCP servers across Antigravity scopes',
+  'antigravity-guide': 'Activates when answering questions about Antigravity IDE, CLI, shortcuts, and configuration',
+  'automation': 'Activates when setting up recurring cron jobs or scheduled background automations',
+  'ui-plugin-navigation': 'Surfaces one-click pills in chat to open relevant side-pane plugin dashboards',
+  'migrate-workflows': 'Migrates legacy workflow files into modular SKILL.md skills safely',
+  'migrate-agent-settings': 'Imports MCP servers, skills, slash commands, and rules from Cursor, Claude Code, Codex, or Gemini CLI',
+  'generative_ui': 'Activates when interactive HTML charts, diagrams, or widgets explain concepts better than plain text',
+  'mcp-app-development': 'Activates when building or theming interactive MCP App UIs for chat or side panes',
+  'permissioned-github': 'Handles restricted GitHub operations cleanly with least-privilege permission prompts',
+  'swarm': 'Engages on wide XL tasks: parallel isolated workers per module plus @verifier code review',
+  'swarm_monitor': 'Internal Swarm watchdog: pings stalled workers only if the entire Swarm stops making progress',
+  'swarm_narrator': 'Internal Swarm coordinator: keeps the live Overview status and artifact timeline up to date',
+  'swarm_pane': 'Updates goal groups and screenshot timeline inside the Swarm Overview pane',
+  'run-workflow': 'Orchestrates multi-stage Python workflows across large batches of independent files or modules',
+  'sonar-integrate': 'Installs sonarqube-cli, authenticates, and configures SonarQube MCP analysis hooks',
+  'sonar-analyze': 'Scans a modified file for bugs, code smells, and security vulnerabilities via SonarQube',
+  'sonar-quality-gate': 'Checks Quality Gate pass/fail metrics and pinpoints failing thresholds',
+  'sonar-list-issues': 'Lists open SonarQube issues filtered by project, branch, or pull request',
+  'sonar-fix-issue': 'Targets and resolves a specific SonarQube rule violation in code',
+  'sonar-coverage': 'Identifies files with low test coverage and uncovered line ranges',
+  'sonar-duplication': 'Finds duplicated code blocks suitable for extraction into shared helpers',
+  'sonar-dependency-risks': 'Audits project dependencies for SCA / CVE vulnerability exposure',
+  'sonar-triage-dependency-risks': 'Triages reachable CVEs and prepares safe dependency upgrade bundles',
+  'sonar-list-projects': 'Lists SonarQube projects accessible to the connected account',
+  'gemini-api-dev': 'Guides text, multimodal, structured output, and function calling via current google-genai SDKs',
+  'gemini-api-cli': 'Calls Gemini models, Deep Research, and media generation directly from the terminal',
+  'gemini-live-api-dev': 'Guides real-time bidirectional audio/video WebSocket apps with Gemini Live API',
+  'gemini-omni-flash-api': 'Guides generative video creation, extensions, and editing with Gemini Omni Flash',
+};
+
 // Человекочитаемые русские названия для каталога навыков (без программистского жаргона)
 const SKILL_RU_TITLES = {
   'ui-ux-design-system': '🎨 Дизайн, стиль и витрина вариантов (A/B/C)',
@@ -1154,35 +1262,44 @@ function detectProjectProfileUncached(rootDir = process.cwd()) {
 
     const recommendedProfiles = ['code'];
     const labels = ['Код и AST'];
+    const labelsEn = ['Code & AST'];
     if (hasUi) {
       recommendedProfiles.push('ui');
       labels.push('UI / Дизайн');
+      labelsEn.push('UI / Design');
     }
     if (hasGame) {
       recommendedProfiles.push('game');
       labels.push('Геймдев');
+      labelsEn.push('GameDev');
     }
     if (hasVideo) {
       recommendedProfiles.push('video');
       labels.push('Видео FX');
+      labelsEn.push('Video FX');
     }
     if (hasL10n) {
       recommendedProfiles.push('l10n');
       labels.push('Русификация');
+      labelsEn.push('Localization');
     }
 
     return {
       detected: true,
       recommendedProfiles,
       label: labels.join(' + '),
+      labelEn: labelsEn.join(' + '),
       summary: `Рекомендуемый профиль: «${labels.join(' + ')}»`,
+      summaryEn: `Recommended profile: "${labelsEn.join(' + ')}"`,
     };
   } catch {
     return {
       detected: true,
       recommendedProfiles: ['code', 'ui'],
       label: 'Код + UI',
+      labelEn: 'Code + UI',
       summary: 'Рекомендуемый профиль: «Код + UI»',
+      summaryEn: 'Recommended profile: "Code + UI"',
     };
   }
 }
@@ -1226,7 +1343,7 @@ function discoverSkillsUncached(activeWs = '') {
     }
   } catch {}
 
-  const scanSkillsDir = (skillsBaseDir, sourceLabel) => {
+  const scanSkillsDir = (skillsBaseDir, sourceLabel, sourceLabelEn = sourceLabel) => {
     if (!existsSync(skillsBaseDir)) return;
     try {
       for (const entry of readdirSync(skillsBaseDir, { withFileTypes: true })) {
@@ -1250,8 +1367,11 @@ function discoverSkillsUncached(activeWs = '') {
         results.push({
           id: name,
           title: SKILL_RU_TITLES[name] || name,
+          titleEn: SKILL_EN_TITLES[name] || name,
           source: sourceLabel,
+          sourceEn: sourceLabelEn || sourceLabel,
           hint: SKILL_RU_HINTS[name] || desc.slice(0, 110) || 'Включается автоматически по смыслу вашей задачи',
+          hintEn: SKILL_EN_HINTS[name] || desc.slice(0, 110) || 'Activates automatically when relevant to your task',
         });
       }
     } catch {}
@@ -1278,29 +1398,29 @@ function discoverSkillsUncached(activeWs = '') {
             shortLabel = String(manifest.displayName).trim();
           }
         } catch {}
-        scanSkillsDir(join(pluginDir, 'skills'), `Плагин · ${shortLabel}`);
+        scanSkillsDir(join(pluginDir, 'skills'), `Плагин · ${shortLabel}`, `Plugin · ${shortLabel}`);
       }
     } catch {}
   }
 
   // 2. Проектные навыки текущего воркспейса (.agents/skills, .gemini/skills)
   if (activeWs) {
-    scanSkillsDir(join(activeWs, '.agents', 'skills'), 'Проектный');
-    scanSkillsDir(join(activeWs, '.gemini', 'skills'), 'Проектный');
+    scanSkillsDir(join(activeWs, '.agents', 'skills'), 'Проектный', 'Workspace');
+    scanSkillsDir(join(activeWs, '.gemini', 'skills'), 'Проектный', 'Workspace');
   }
 
   // 3. Пользовательские глобальные и кристаллизованные навыки
-  scanSkillsDir(join(geminiRoot, 'antigravity', 'skills'), 'Личный / Кристаллизованный');
-  scanSkillsDir(join(geminiRoot, 'config', 'skills'), 'Личный / Кристаллизованный');
+  scanSkillsDir(join(geminiRoot, 'antigravity', 'skills'), 'Личный / Кристаллизованный', 'Personal / Crystallized');
+  scanSkillsDir(join(geminiRoot, 'config', 'skills'), 'Личный / Кристаллизованный', 'Personal / Crystallized');
 
   // 4. Встроенные скиллы и встроенные плагины Antigravity
-  scanSkillsDir(join(geminiRoot, 'antigravity', 'builtin', 'skills'), 'Встроенный');
+  scanSkillsDir(join(geminiRoot, 'antigravity', 'builtin', 'skills'), 'Встроенный', 'Built-in');
   const builtinPluginsDir = join(geminiRoot, 'antigravity', 'builtin', 'plugins');
   if (existsSync(builtinPluginsDir)) {
     try {
       for (const bp of readdirSync(builtinPluginsDir, { withFileTypes: true })) {
         if (bp.isDirectory()) {
-          scanSkillsDir(join(builtinPluginsDir, bp.name, 'skills'), 'Встроенный');
+          scanSkillsDir(join(builtinPluginsDir, bp.name, 'skills'), 'Встроенный', 'Built-in');
         }
       }
     } catch {}

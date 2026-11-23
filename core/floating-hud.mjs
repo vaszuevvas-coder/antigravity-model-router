@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWriteJsonSync, safeReadJsonSync } from './safe-json.mjs';
+import { normalizeLang, readActiveUiLanguage } from './i18n.mjs';
 import {
   TASK_PROGRESS_FILE,
   getTaskProgressSnapshot,
@@ -54,15 +55,20 @@ export function buildWpfFloatingHudScript({
   runtimeFile = HUD_RUNTIME_FILE,
   positionFile = HUD_POSITION_FILE,
   panelTheme = '',
+  lang = '',
 } = {}) {
   const esc = (p) => String(p).replace(/'/g, "''");
   let resolvedTheme = String(panelTheme || '').trim().toLowerCase();
-  if (!resolvedTheme) {
+  let resolvedLangRaw = String(lang || '').trim().toLowerCase();
+  if (!resolvedTheme || (resolvedLangRaw !== 'en' && resolvedLangRaw !== 'ru')) {
     try {
       const st = safeReadJsonSync(join(PLUGIN_ROOT, 'router-state.json'), null, { selfHeal: false });
-      resolvedTheme = String(st?.panelTheme || '').trim().toLowerCase();
+      if (!resolvedTheme) resolvedTheme = String(st?.panelTheme || '').trim().toLowerCase();
+      if (!resolvedLangRaw) resolvedLangRaw = String(st?.uiLanguage || '').trim().toLowerCase();
     } catch {}
   }
+  const hudLang = normalizeLang(resolvedLangRaw || readActiveUiLanguage(PLUGIN_ROOT), 'en');
+  const isEnHud = hudLang === 'en';
   const isLightTheme = resolvedTheme === 'studio_titanium' || resolvedTheme === 'conductor_paper';
   const palette = isLightTheme
     ? {
@@ -151,7 +157,7 @@ $PositionFile = '${esc(positionFile)}'
           <!-- 2. Stage & Operation Text -->
           <TextBlock Name="StageText"
                      Grid.Column="1"
-                     Text="Этап 1 из 4 · Ожидание задачи"
+                     Text="${isEnHud ? 'Step 1 of 4 · Idle' : 'Этап 1 из 4 · Ожидание задачи'}"
                      Foreground="${palette.stageFg}"
                      FontFamily="Segoe UI Variable Display, Segoe UI"
                      FontSize="13"
@@ -252,7 +258,7 @@ function Toggle-CompactHud {
     if ($ColTrack) { $ColTrack.Width = New-Object System.Windows.GridLength(42) }
     if ($ProgressTrackBg) { $ProgressTrackBg.Width = 38 }
     if ($ColPct) { $ColPct.Width = New-Object System.Windows.GridLength(38) }
-    if ($miCompact) { $miCompact.Header = "Развернуть статус-бар (600px)" }
+    if ($miCompact) { $miCompact.Header = "${isEnHud ? 'Expand status bar (600px)' : 'Развернуть статус-бар (600px)'}" }
   } else {
     $window.Width = 600
     if ($InnerPill) { $InnerPill.Padding = New-Object System.Windows.Thickness(16, 0, 16, 0) }
@@ -262,7 +268,7 @@ function Toggle-CompactHud {
     if ($ColTrack) { $ColTrack.Width = New-Object System.Windows.GridLength(148) }
     if ($ProgressTrackBg) { $ProgressTrackBg.Width = 140 }
     if ($ColPct) { $ColPct.Width = New-Object System.Windows.GridLength(46) }
-    if ($miCompact) { $miCompact.Header = "Свернуть в мини-режим (156px)" }
+    if ($miCompact) { $miCompact.Header = "${isEnHud ? 'Collapse to mini mode (156px)' : 'Свернуть в мини-режим (156px)'}" }
   }
   if ($Save) { Save-HudPosition }
 }
@@ -282,20 +288,20 @@ $window.Add_MouseLeftButtonDown({
 # Context Menu (Right Click)
 $ctxMenu = New-Object System.Windows.Controls.ContextMenu
 $miCompact = New-Object System.Windows.Controls.MenuItem
-$miCompact.Header = "Свернуть в мини-режим (156px)"
+$miCompact.Header = "${isEnHud ? 'Collapse to mini mode (156px)' : 'Свернуть в мини-режим (156px)'}"
 $miCompact.Add_Click({
   Toggle-CompactHud
 })
 
 $miResetPos = New-Object System.Windows.Controls.MenuItem
-$miResetPos.Header = "Вернуть позицию над полем ввода чата"
+$miResetPos.Header = "${isEnHud ? 'Reset position above chat input' : 'Вернуть позицию над полем ввода чата'}"
 $miResetPos.Add_Click({
   Set-DefaultHudPosition
   Save-HudPosition
 })
 
 $miClose = New-Object System.Windows.Controls.MenuItem
-$miClose.Header = "Скрыть плавающий статус-бар"
+$miClose.Header = "${isEnHud ? 'Hide floating status bar' : 'Скрыть плавающий статус-бар'}"
 $miClose.Add_Click({
   try {
     $stopObj = @{ enabled = $false; stopRequested = $true; pid = 0; updatedAt = [DateTimeOffset]::Now.ToUnixTimeMilliseconds() }
@@ -469,7 +475,7 @@ export function ensureFloatingHudRunning({
     if (!existsSync(TASK_PROGRESS_FILE)) {
       getTaskProgressSnapshot();
     }
-    const ps1Content = buildWpfFloatingHudScript();
+    const ps1Content = buildWpfFloatingHudScript({ lang: state?.uiLanguage || '' });
     writeFileSync(HUD_PS1_SCRIPT_FILE, ps1Content, 'utf8');
 
     const child = spawn(
@@ -546,13 +552,21 @@ export function resetFloatingHudPosition() {
 /**
  * Runs a smooth 4-stage demo animation across the status bar so the user can preview the bloom & step transitions.
  */
-export function runFloatingHudDemo({ stepIntervalMs = 850 } = {}) {
-  const demoSteps = [
-    'Анализ контекста и зависимостей',
-    'Правка server.mjs',
-    'Контроль контрактов (Blast Radius)',
-    'Финальное тестирование',
-  ];
+export function runFloatingHudDemo({ stepIntervalMs = 850, lang = '' } = {}) {
+  const isEn = normalizeLang(lang || readActiveUiLanguage(PLUGIN_ROOT), 'en') === 'en';
+  const demoSteps = isEn
+    ? [
+        'Analyzing context and dependencies',
+        'Editing server.mjs',
+        'Checking contracts (Blast Radius)',
+        'Final testing',
+      ]
+    : [
+        'Анализ контекста и зависимостей',
+        'Правка server.mjs',
+        'Контроль контрактов (Blast Radius)',
+        'Финальное тестирование',
+      ];
 
   setExplicitTaskProgress({
     currentStep: 1,
@@ -581,22 +595,22 @@ export function runFloatingHudDemo({ stepIntervalMs = 850 } = {}) {
       conversationId: 'demo-sub-1',
       parentConversationId: 'default',
       isSubagent: true,
-      roleLabel: 'Разведка контекста',
+      roleLabel: isEn ? 'Context Scout' : 'Разведка контекста',
       currentStep: 1,
       totalSteps: 3,
       percent: 42,
-      stepTitle: 'Чтение router-core.mjs',
+      stepTitle: isEn ? 'Reading router-core.mjs' : 'Чтение router-core.mjs',
       status: 'running',
     });
     setExplicitTaskProgress({
       conversationId: 'demo-sub-2',
       parentConversationId: 'default',
       isSubagent: true,
-      roleLabel: 'Аудит связей',
+      roleLabel: isEn ? 'Contract Audit' : 'Аудит связей',
       currentStep: 2,
       totalSteps: 3,
       percent: 68,
-      stepTitle: 'Сверка контрактов UI',
+      stepTitle: isEn ? 'Checking UI contracts' : 'Сверка контрактов UI',
       status: 'running',
     });
   });
@@ -614,22 +628,22 @@ export function runFloatingHudDemo({ stepIntervalMs = 850 } = {}) {
       conversationId: 'demo-sub-1',
       parentConversationId: 'default',
       isSubagent: true,
-      roleLabel: 'Разведка контекста',
+      roleLabel: isEn ? 'Context Scout' : 'Разведка контекста',
       currentStep: 3,
       totalSteps: 3,
       percent: 100,
-      stepTitle: 'Завершено ✓',
+      stepTitle: isEn ? 'Completed ✓' : 'Завершено ✓',
       status: 'completed',
     });
     setExplicitTaskProgress({
       conversationId: 'demo-sub-2',
       parentConversationId: 'default',
       isSubagent: true,
-      roleLabel: 'Аудит связей',
+      roleLabel: isEn ? 'Contract Audit' : 'Аудит связей',
       currentStep: 3,
       totalSteps: 3,
       percent: 88,
-      stepTitle: 'Финальная проверка',
+      stepTitle: isEn ? 'Final verification' : 'Финальная проверка',
       status: 'running',
     });
   });
@@ -639,11 +653,11 @@ export function runFloatingHudDemo({ stepIntervalMs = 850 } = {}) {
       conversationId: 'demo-sub-2',
       parentConversationId: 'default',
       isSubagent: true,
-      roleLabel: 'Аудит связей',
+      roleLabel: isEn ? 'Contract Audit' : 'Аудит связей',
       currentStep: 3,
       totalSteps: 3,
       percent: 100,
-      stepTitle: 'Завершено ✓',
+      stepTitle: isEn ? 'Completed ✓' : 'Завершено ✓',
       status: 'completed',
     });
     setExplicitTaskProgress({

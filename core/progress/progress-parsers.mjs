@@ -80,6 +80,190 @@ export function extractProjectName(workspaceRoot = '', fallbackProjectName = '')
   return base || fallbackProjectName || 'antigravity-model-router';
 }
 
+const PROGRESS_EXACT_RU_TO_EN = new Map([
+  ['В ожидании задач', 'Waiting for tasks'],
+  ['Ожидание задачи', 'Waiting for task'],
+  ['Выполнение операции', 'Running operation'],
+  ['Выполнение задачи', 'Running task'],
+  ['Выполнение', 'Running'],
+  ['Задача выполнена', 'Task completed'],
+  ['Завершено ✓', 'Completed ✓'],
+  ['Завершено', 'Completed'],
+  ['Готово', 'Done'],
+  ['Ожидание ответа пользователя', 'Waiting for user reply'],
+  ['Ожидание ответа', 'Waiting for reply'],
+  ['Ошибка выполнения команды', 'Command failed'],
+  ['Ошибка выполнения', 'Execution error'],
+  ['Работа субагента', 'Subagent running'],
+  ['Запуск субагента', 'Launching subagent'],
+  ['Параллельная работа субагентов', 'Parallel subagents active'],
+  ['Параллельная работа агентов', 'Parallel agents active'],
+  ['Параллельные агенты', 'Parallel agents'],
+  ['Вопрос пользователю', 'Question for user'],
+  ['Согласование деталей с пользователем перед выполнением', 'Clarifying task details before execution'],
+  ['Ревью этапа архитектором', 'Architect stage review'],
+  ['Сверка правок исполнителя с планом и тестами', 'Reviewing executor edits against plan & tests'],
+  ['Выполнение согласованного плана', 'Executing approved plan'],
+  ['План согласован · выполнение', 'Plan approved · running'],
+  ['Обновление чек-листа', 'Updating checklist'],
+  ['Фиксация плана работ', 'Finalizing work plan'],
+  ['Дополнительная сверка кода', 'Additional code verification'],
+  ['Анализ задачи', 'Analyzing task'],
+  ['Анализ контекста', 'Inspecting context'],
+  ['Технический разбор', 'Technical analysis'],
+  ['Анализ связей, контрактов и формирование ответа', 'Analyzing dependencies, contracts & drafting answer'],
+  ['RAM-поиск и анализ кода', 'RAM search & code analysis'],
+  ['Поиск релевантных модулей в RAM/GPU и анализ контекста', 'Searching relevant modules in RAM/GPU & analyzing context'],
+  ['Синтез инженерного ответа по срезам кода', 'Synthesizing engineering answer from code slices'],
+  ['RAM-срез целевого узла', 'RAM slice of target node'],
+  ['Чтение целевого среза кода в RAM', 'Reading target code slice in RAM'],
+  ['Точечный diff-патч', 'Surgical diff patch'],
+  ['Точечное изменение файла с контролем отката', 'Surgical file edit with rollback guard'],
+  ['AST-чек синтаксиса', 'AST syntax check'],
+  ['Авто-проверка синтаксиса и контрактов', 'Automated syntax & contract check'],
+  ['Контракты AST (Blast Radius)', 'AST Contracts (Blast Radius)'],
+  ['Сверка импортов, экспортов и обратных зависимостей', 'Checking imports, exports & reverse dependencies'],
+  ['Автотесты и верификация', 'Automated tests & verification'],
+  ['Прогон регрессионных тестов и финальная проверка', 'Running regression tests & final verification'],
+  ['RAM-срез и граф связей', 'RAM slice & dependency graph'],
+  ['Архитектурный анализ графа зависимостей и срезов кода', 'Architectural dependency graph & slice analysis'],
+  ['Модификация целевых узлов', 'Modifying target nodes'],
+  ['Последовательное внесение изменений в целевые модули', 'Applying incremental edits to target modules'],
+  ['Контракты AST и импорты', 'AST contracts & imports'],
+  ['Контроль целостности импортов и обратных зависимостей', 'Validating import integrity & reverse dependencies'],
+  ['Запуск тестового набора и финальная проверка', 'Running test suite & final verification'],
+  ['AST-чек и микро-тесты', 'AST check & micro-tests'],
+  ['Проверка синтаксиса, контрактов импорта и микро-тестов', 'Checking syntax, import contracts & micro-tests'],
+  ['RAM-срез и поиск связей', 'RAM slice & dependency lookup'],
+  ['Поиск целевых модулей в RAM/GPU и анализ зависимостей', 'Finding target modules in RAM/GPU & analyzing dependencies'],
+  ['Внесение патчей в модули', 'Patching modules'],
+  ['Модификация целевых файлов через diff-патчи', 'Modifying target files via diff patches'],
+  ['Проверка синтаксиса, импортов и затронутых тестов', 'Checking syntax, imports & impacted tests'],
+  ['Внесение изменений', 'Applying changes'],
+  ['Внесение патчей', 'Applying patches'],
+  ['Модификация кода', 'Modifying code'],
+  ['Изменения проверены', 'Changes verified'],
+  ['Команда выполнена', 'Command completed'],
+  ['Команда терминала', 'Terminal command'],
+  ['Выполнение команды терминала', 'Running terminal command'],
+  ['Проверки пройдены · финализация', 'Checks passed · finalizing'],
+  ['Контракты AST и синтаксис ✓', 'AST contracts & syntax ✓'],
+  ['Синтаксис и контракты импорта проверены', 'Syntax & import contracts verified'],
+  ['Ошибка проверки синтаксиса', 'Syntax check failed'],
+  ['Чтение среза в RAM', 'Reading slice in RAM'],
+  ['Быстрый поиск в RAM', 'Fast RAM search'],
+  ['Анализ графа связей в RAM', 'Analyzing dependency graph in RAM'],
+  ['Сборка контекста в RAM', 'Building context pack in RAM'],
+  ['Семантический поиск GPU', 'GPU semantic search'],
+  ['Дистилляция на GPU', 'GPU distillation'],
+  ['Чтение файла', 'Reading file'],
+  ['Разведка контекста', 'Context scouting'],
+  ['Аудит связей', 'Contract audit'],
+  ['Финальная проверка', 'Final check'],
+  ['Демо-прогресс в панели', 'Demo progress in panel'],
+]);
+
+const PROGRESS_PREFIX_RU_TO_EN = [
+  [/^Этап\s+(\d+)\s+из\s+(\d+)(.*)$/i, (_, a, b, tail) => `Step ${a} of ${b}${tail ? localizeProgressLabelToEn(tail) : ''}`],
+  [/^Этап\s+(\d+)$/i, 'Step $1'],
+  [/^Чат\s+#(\d+)$/i, 'Chat #$1'],
+  [/^Рой\s+#(\d+)$/i, 'Swarm #$1'],
+  [/^Агент\s+#(\d+)$/i, 'Agent #$1'],
+  [/^Рой:\s*(.+)$/i, (_, rest) => `Swarm: ${localizeProgressLabelToEn(rest)}`],
+  [/^Агент:\s*(.+)$/i, (_, rest) => `Agent: ${localizeProgressLabelToEn(rest)}`],
+  [/^Субагент:\s*(.+)$/i, (_, rest) => `Subagent: ${localizeProgressLabelToEn(rest)}`],
+  [/^Вопрос пользователю:\s*(.+)$/i, 'Question for user: $1'],
+  [/^Вопрос:\s*(.+)$/i, 'Question: $1'],
+  [/^RAM-срез\s+(.+)$/i, 'RAM slice $1'],
+  [/^RAM-поиск:\s*(.+)$/i, 'RAM search: $1'],
+  [/^Срез и связи\s+(.+)$/i, 'Slice & deps $1'],
+  [/^Граф и срез\s+(.+)$/i, 'Graph & slice $1'],
+  [/^Патч\s+(.+)$/i, 'Patch $1'],
+  [/^Правка\s+(.+)$/i, 'Edit $1'],
+  [/^Реализация\s+(.+)$/i, 'Implement $1'],
+  [/^Анализ\s+(.+)$/i, 'Inspect $1'],
+  [/^Синхронизация\s+(.+)$/i, 'Sync $1'],
+  [/^Тесты?:\s*(.+)$/i, (_, r) => `Tests: ${r === 'автотесты' ? 'tests' : r}`],
+  [/^Тест\s+(.+)$/i, 'Test $1'],
+  [/^Микро-тест\s+(.+)$/i, 'Micro-test $1'],
+  [/^Запуск тестов:\s*(.+)$/i, 'Running tests: $1'],
+  [/^Запуск\s+(.+)$/i, 'Run $1'],
+  [/^Уточнение\s+(.+)$/i, 'Refining $1'],
+  [/^Чтение RAM-срезов(?:\s+и\s+символов)?:\s*(.+)$/i, 'Reading RAM slices: $1'],
+  [/^Чтение среза и зависимостей:\s*(.+)$/i, 'Reading slice & deps: $1'],
+  [/^Чтение срезов и зависимостей:\s*(.+)$/i, 'Reading slices & deps: $1'],
+  [/^Дополнительное чтение\s+(.+)$/i, 'Reading $1'],
+  [/^Чтение и анализ\s+(.+)$/i, 'Inspecting $1'],
+  [/^Чтение\s+(.+)$/i, 'Reading $1'],
+  [/^Поиск в RAM\/GPU:\s*(.+)$/i, 'RAM/GPU search: $1'],
+  [/^Анализ графа зависимостей и срезов:\s*(.+)$/i, 'Analyzing dependency graph & slices: $1'],
+  [/^Модификация(?:\s+целевых)?\s+модулей:\s*(.+)$/i, 'Modifying modules: $1'],
+  [/^Модификация:\s*(.+)$/i, 'Modifying: $1'],
+  [/^Точечная правка:\s*(.+)$/i, 'Surgical edit: $1'],
+  [/^Внесение изменений в:\s*(.+)$/i, 'Editing: $1'],
+  [/^Проверено:\s*(.+)$/i, 'Verified: $1'],
+  [/^Обновлён\s+(.+)$/i, 'Updated $1'],
+  [/^Верификация:\s*(.+)$/i, 'Verification: $1'],
+  [/^Прогон (?:авто)?тестов:\s*(.+)$/i, 'Running tests: $1'],
+  [/^Прогон тестов\s*\(([^)]+)\)$/i, 'Running tests ($1)'],
+  [/^Команда:\s*(.+)$/i, 'Command: $1'],
+  [/^Терминал:\s*(.+)$/i, 'Terminal: $1'],
+  [/^Сбой команды:\s*(.+)$/i, 'Command failed: $1'],
+  [/^Контракты AST\s*\((\d+)\s+завис\.\)$/i, 'AST contracts ($1 deps)'],
+  [/^Сверка импортов и контрактов\s*\((\d+)\s+обратных зависимостей\)$/i, 'Checking imports & contracts ($1 reverse deps)'],
+  [/^Test-Impact верификация:\s*(.+)$/i, 'Test-Impact verification: $1'],
+  [/^Сбой контракта\s*\((\d+)\)$/i, 'Contract violation ($1)'],
+  [/^Нарушены контракты импорта\s*\((\d+)\s+модулей\)$/i, 'Broken import contracts ($1 modules)'],
+  [/^Ошибка проверки:\s*(.+)$/i, 'Check error: $1'],
+  [/^Ошибка проверки\s+(.+)$/i, 'Check error in $1'],
+  [/^GPU-поиск:\s*(.+)$/i, 'GPU search: $1'],
+  [/^GPU-сжатие\s+(.+)$/i, 'GPU distill $1'],
+  [/^(.+?)\s+выполнен ✓$/i, '$1 completed ✓'],
+];
+
+/**
+ * Translates generated Russian task-progress labels/tooltips into concise English equivalents
+ * so live UI & exports work seamlessly in EN mode without mutating stored canonical strings.
+ * @param {string} [raw='']
+ * @returns {string}
+ */
+export function localizeProgressLabelToEn(raw = '') {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (PROGRESS_EXACT_RU_TO_EN.has(s)) {
+    return PROGRESS_EXACT_RU_TO_EN.get(s);
+  }
+  if (s.includes(' · ')) {
+    const parts = s.split(' · ').map((part) => localizeProgressLabelToEn(part));
+    const joined = parts.join(' · ');
+    if (joined !== s) return joined;
+  }
+  for (const [rx, rep] of PROGRESS_PREFIX_RU_TO_EN) {
+    if (rx.test(s)) {
+      return typeof rep === 'function' ? s.replace(rx, rep) : s.replace(rx, rep);
+    }
+  }
+  return s;
+}
+
+/**
+ * Attaches `titleEn`, `fullTitleEn`, and `activeDetailEn` to a timeline step object.
+ * @param {object} step
+ * @returns {object}
+ */
+export function localizeStepToEn(step) {
+  if (!step || typeof step !== 'object') return step;
+  const titleEn = step.titleEn || localizeProgressLabelToEn(step.title || '');
+  const fullTitleEn = step.fullTitleEn || localizeProgressLabelToEn(step.fullTitle || step.title || '');
+  const activeDetailEn = step.activeDetail ? (step.activeDetailEn || localizeProgressLabelToEn(step.activeDetail)) : '';
+  return {
+    ...step,
+    titleEn,
+    fullTitleEn,
+    ...(activeDetailEn ? { activeDetailEn } : {}),
+  };
+}
+
 export function buildActiveProjectsSummary(activeChats = []) {
   if (!Array.isArray(activeChats) || activeChats.length === 0) return [];
   const byProj = new Map();
@@ -90,14 +274,18 @@ export function buildActiveProjectsSummary(activeChats = []) {
     if (!proj) continue;
     let bucket = byProj.get(proj);
     if (!bucket) {
+      const stageRu = c.stageLabel || 'Выполнение';
+      const stepRu = c.stepTitle || '';
       bucket = {
         projectName: proj,
         workspaceRoot: c.workspaceRoot || '',
         status: c.status,
         pctSum: 0,
         activeChatsCount: 0,
-        stageLabel: c.stageLabel || 'Выполнение',
-        stepTitle: c.stepTitle || '',
+        stageLabel: stageRu,
+        stageLabelEn: c.stageLabelEn || localizeProgressLabelToEn(stageRu),
+        stepTitle: stepRu,
+        stepTitleEn: c.stepTitleEn || localizeProgressLabelToEn(stepRu),
         updatedAt: Number(c.updatedAt || 0),
       };
       byProj.set(proj, bucket);
@@ -111,8 +299,14 @@ export function buildActiveProjectsSummary(activeChats = []) {
     if (ts >= bucket.updatedAt) {
       bucket.updatedAt = ts;
       if (c.workspaceRoot) bucket.workspaceRoot = c.workspaceRoot;
-      if (c.stageLabel) bucket.stageLabel = c.stageLabel;
-      if (c.stepTitle) bucket.stepTitle = c.stepTitle;
+      if (c.stageLabel) {
+        bucket.stageLabel = c.stageLabel;
+        bucket.stageLabelEn = c.stageLabelEn || localizeProgressLabelToEn(c.stageLabel);
+      }
+      if (c.stepTitle) {
+        bucket.stepTitle = c.stepTitle;
+        bucket.stepTitleEn = c.stepTitleEn || localizeProgressLabelToEn(c.stepTitle);
+      }
     }
   }
   return Array.from(byProj.values())
@@ -125,7 +319,9 @@ export function buildActiveProjectsSummary(activeChats = []) {
       percent: Math.round(b.pctSum / Math.max(1, b.activeChatsCount)),
       activeChatsCount: b.activeChatsCount,
       stageLabel: b.stageLabel,
+      stageLabelEn: b.stageLabelEn || localizeProgressLabelToEn(b.stageLabel),
       stepTitle: b.stepTitle,
+      stepTitleEn: b.stepTitleEn || localizeProgressLabelToEn(b.stepTitle),
       updatedAt: b.updatedAt,
     }));
 }
@@ -141,6 +337,19 @@ export function buildFormattedProgressText({ status = 'idle', currentStep = 0, t
   const safeTotal = Math.max(safeStep, clampInt(totalSteps, 1, MAX_TIMELINE_STEPS, 3));
   const fallbackOp = status === 'completed' ? 'Задача выполнена' : (status === 'waiting_user' ? 'Ожидание ответа' : 'Выполнение операции');
   return `Этап ${safeStep} из ${safeTotal} · ${cleanTitle || fallbackOp}`;
+}
+
+export function buildFormattedProgressTextEn({ status = 'idle', currentStep = 0, totalSteps = 0, stepTitle = '', stepTitleEn = '' } = {}) {
+  const rawTitle = String(stepTitleEn || '').trim() || localizeProgressLabelToEn(stepTitle || '');
+  if (status === 'idle' || totalSteps <= 0 || currentStep <= 0) {
+    return rawTitle && rawTitle !== 'Waiting for tasks' && rawTitle !== 'Waiting for task'
+      ? `Waiting for tasks · ${rawTitle}`
+      : 'Waiting for tasks';
+  }
+  const safeStep = clampInt(currentStep, 1, Math.max(1, totalSteps), 1);
+  const safeTotal = Math.max(safeStep, clampInt(totalSteps, 1, MAX_TIMELINE_STEPS, 3));
+  const fallbackOp = status === 'completed' ? 'Task completed' : (status === 'waiting_user' ? 'Waiting for reply' : 'Running operation');
+  return `Step ${safeStep} of ${safeTotal} · ${rawTitle || fallbackOp}`;
 }
 
 export function extractTopicLabelFromPrompt(userPrompt = '') {
@@ -298,6 +507,11 @@ export function compactTechnicalStepLabel(rawText = '', maxChars = 30) {
     ''
   );
 
+  const enBaseText = text
+    .replace(/\s+/g, ' ')
+    .replace(/[.,;:\-–—\s]+$/g, '')
+    .trim();
+
   // Map common English plan headings to crisp Russian engineering verbs
   text = text
     .replace(/^run\s+tests?\b[\s:-]*/i, 'Тесты ')
@@ -310,32 +524,48 @@ export function compactTechnicalStepLabel(rawText = '', maxChars = 30) {
     .replace(/[.,;:\-–—\s]+$/g, '')
     .trim();
 
-  if (!text) return { title: '', fullTitle: '' };
+  if (!text) return { title: '', fullTitle: '', titleEn: '', fullTitleEn: '' };
 
   // Capitalize first letter unless it starts with a lowercase code/filename token (e.g. `server.mjs`, `node:test`)
   if (!/^[a-z0-9_.-]+(?:\.[a-z0-9]+|:)/i.test(text)) {
     text = text.charAt(0).toUpperCase() + text.slice(1);
   }
 
-  const fullTitle = text.length > 140 ? truncateAtCleanBoundary(text, 140) : text;
-  const limit = Math.min(32, Math.max(8, Number(maxChars) || 30));
-
-  let title = '';
-  if (text.length <= limit) {
-    title = text;
-  } else {
-    const sepMatch = /^(.+?)\s+(?:—|–|:)\s+(.+)$/.exec(text);
-    if (sepMatch && sepMatch[1].trim().length >= 5 && sepMatch[1].trim().length <= limit) {
-      const head = sepMatch[1].trim();
-      const tailWords = sepMatch[2].trim().split(/\s+/).filter(Boolean);
-      const firstJoined = tailWords.length > 0 ? `${head} · ${tailWords[0]}` : head;
-      title = firstJoined.length <= limit ? truncateAtCleanBoundary(text, limit) : head;
-    } else {
-      title = truncateAtCleanBoundary(text, limit);
-    }
+  let enText = localizeProgressLabelToEn(enBaseText || text);
+  if (enText && !/^[a-z0-9_.-]+(?:\.[a-z0-9]+|:)/i.test(enText)) {
+    enText = enText.charAt(0).toUpperCase() + enText.slice(1);
   }
 
-  return { title, fullTitle };
+  const formatCompact = (str, lim) => {
+    if (!str) return { compact: '', full: '' };
+    const full = str.length > 140 ? truncateAtCleanBoundary(str, 140) : str;
+    let compact = '';
+    if (str.length <= lim) {
+      compact = str;
+    } else {
+      const sepMatch = /^(.+?)\s+(?:—|–|:)\s+(.+)$/.exec(str);
+      if (sepMatch && sepMatch[1].trim().length >= 5 && sepMatch[1].trim().length <= lim) {
+        const head = sepMatch[1].trim();
+        const tailWords = sepMatch[2].trim().split(/\s+/).filter(Boolean);
+        const firstJoined = tailWords.length > 0 ? `${head} · ${tailWords[0]}` : head;
+        compact = firstJoined.length <= lim ? truncateAtCleanBoundary(str, lim) : head;
+      } else {
+        compact = truncateAtCleanBoundary(str, lim);
+      }
+    }
+    return { compact, full };
+  };
+
+  const limit = Math.min(32, Math.max(8, Number(maxChars) || 30));
+  const ruCompact = formatCompact(text, limit);
+  const enCompact = formatCompact(enText || localizeProgressLabelToEn(text), limit);
+
+  return {
+    title: ruCompact.compact,
+    fullTitle: ruCompact.full,
+    titleEn: enCompact.compact || ruCompact.compact,
+    fullTitleEn: enCompact.full || ruCompact.full,
+  };
 }
 
 /**
@@ -630,6 +860,8 @@ export function extractStepsFromPlanText(planText = '', maxSteps = 24) {
       index: out.length + 1,
       title: compacted.title,
       fullTitle: compacted.fullTitle || compacted.title,
+      titleEn: compacted.titleEn || localizeProgressLabelToEn(compacted.title),
+      fullTitleEn: compacted.fullTitleEn || localizeProgressLabelToEn(compacted.fullTitle || compacted.title),
       source: 'plan',
       status: out.length === 0 ? 'running' : 'pending',
     });
@@ -669,6 +901,8 @@ export function normalizeChecklistSteps(rawSteps = []) {
       index: out.length + 1,
       title: compacted.title || rawTitle.slice(0, 30),
       fullTitle: rawTitle.slice(0, 140),
+      titleEn: compacted.titleEn || localizeProgressLabelToEn(compacted.title || rawTitle.slice(0, 30)),
+      fullTitleEn: localizeProgressLabelToEn(rawTitle.slice(0, 140)),
       source: 'checklist',
       status,
       ...(rawSt === 'skipped' ? { skipped: true } : {}),
@@ -1072,6 +1306,10 @@ export function inspectTranscriptTurnState(transcriptPath = '', now = Date.now()
 }
 
 export function buildDefaultStepsForGrade(grade = 'M', isReadOnlyQuestion = false, context = {}) {
+  return buildDefaultStepsForGradeRaw(grade, isReadOnlyQuestion, context).map(localizeStepToEn);
+}
+
+function buildDefaultStepsForGradeRaw(grade = 'M', isReadOnlyQuestion = false, context = {}) {
   const { codeFiles, testFiles, editTargets } = classifyScopeTargets(
     context?.matchedFiles || [],
     context?.userPrompt || ''

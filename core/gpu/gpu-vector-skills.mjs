@@ -9,6 +9,7 @@ import os from 'node:os';
 import path, { dirname, join } from 'node:path';
 import { extractFileSymbolsWithRanges } from '../repo-mapper.mjs';
 import { atomicWriteJsonSync, safeReadJsonSync, sleepSync, withFileLockSync } from '../safe-json.mjs';
+import { normalizeLang, readActiveUiLanguage } from '../i18n.mjs';
 import {
   CACHE_DIR,
   CODE_DOC_SKIP_EXT,
@@ -1634,7 +1635,7 @@ export async function peekWarmSemanticSkills(query, { topK = 3, timeoutMs = 120 
 export async function classifySkillWithLlm(
   queryText,
   skillsList = [],
-  { timeoutMs = 12000, model = '', cfgOverride = null, chatHttpFn = null, tagModels = null, hwProbeFn = null } = {}
+  { timeoutMs = 12000, model = '', cfgOverride = null, chatHttpFn = null, tagModels = null, hwProbeFn = null, lang = '' } = {}
 ) {
   const cleanQuery = String(queryText || '').trim();
   const list = Array.isArray(skillsList) ? skillsList.filter((s) => s && s.slug) : [];
@@ -1643,6 +1644,7 @@ export async function classifySkillWithLlm(
   }
 
   const cfg = cfgOverride ? loadGpuConfig(cfgOverride) : loadGpuConfig();
+  const isEn = normalizeLang(lang || cfg.uiLanguage || readActiveUiLanguage(), 'en') === 'en';
   if (!chatHttpFn && !cfg.gpuEnabled) {
     return { ok: false, slug: '', confidence: 0, error: 'GPU engine disabled' };
   }
@@ -1690,7 +1692,9 @@ export async function classifySkillWithLlm(
         recommendedPullModel: fit.recommendedPullModel,
         slug: '',
         confidence: 0,
-        error: fit.reasonRu || `Модель ${requestedModel} превышает лимит ${fit.capGb} ГБ VRAM`,
+        error: isEn
+          ? (fit.reasonEn || fit.reasonRu || `Model ${requestedModel} exceeds ${fit.capGb} GB VRAM limit`)
+          : (fit.reasonRu || `Модель ${requestedModel} превышает лимит ${fit.capGb} ГБ VRAM`),
       };
     }
 

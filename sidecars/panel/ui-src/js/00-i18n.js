@@ -4,7 +4,7 @@
     let currentUiLanguage = 'en';
     const I18N_ORIG_TEXT = new WeakMap();
     const I18N_ORIG_ATTRS = new WeakMap();
-    const I18N_ATTR_NAMES = ['title', 'placeholder', 'data-prompt'];
+    const I18N_ATTR_NAMES = ['title', 'placeholder', 'data-prompt', 'alt'];
 
     function normalizeUiLanguage(raw) {
       const s = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
@@ -21,6 +21,28 @@
 
     function L(ruText, enText) {
       return isRu() ? ruText : enText;
+    }
+
+    function pickText(obj, ruKey, enKey, fallback) {
+      const fb = fallback !== undefined ? fallback : '';
+      if (!obj || typeof obj !== 'object') return fb;
+      if (isRu()) {
+        return obj[ruKey] !== undefined && obj[ruKey] !== '' ? obj[ruKey] : (obj[enKey] !== undefined && obj[enKey] !== '' ? obj[enKey] : fb);
+      }
+      return obj[enKey] !== undefined && obj[enKey] !== '' ? obj[enKey] : (obj[ruKey] !== undefined && obj[ruKey] !== '' ? obj[ruKey] : fb);
+    }
+
+    function Lplural(n, ruOne, ruFew, ruMany, enOne, enMany) {
+      const abs = Math.abs(Math.floor(Number(n) || 0));
+      if (!isRu()) {
+        return abs + ' ' + (abs === 1 ? enOne : enMany);
+      }
+      const mod100 = abs % 100;
+      const mod10 = abs % 10;
+      if (mod100 >= 11 && mod100 <= 14) return abs + ' ' + ruMany;
+      if (mod10 === 1) return abs + ' ' + ruOne;
+      if (mod10 >= 2 && mod10 <= 4) return abs + ' ' + ruFew;
+      return abs + ' ' + ruMany;
     }
 
     const UI_RU_TO_EN_TEXT = {
@@ -372,6 +394,9 @@
     };
 
     const UI_RU_TO_EN_ATTR = {
+      'Language / Язык интерфейса': 'Interface language',
+      'Русский': 'Russian',
+      'Превью UI': 'UI Preview',
       'Тема пульта: Жидкое стекло iOS (Тёмная) / Персиковый фарфор (Светлая)': 'Panel theme: Liquid Glass iOS (Dark) / Peach Porcelain (Light)',
       'Жидкое стекло iOS (Тёмная)': 'Liquid Glass iOS (Dark)',
       'Персиковый фарфор (Светлая)': 'Peach Porcelain (Light)',
@@ -601,11 +626,37 @@
       if (currentState && typeof currentState === 'object') {
         currentState.uiLanguage = valid;
       }
-      if (typeof renderPayload === 'function' && (lastPayloadCache || (currentState && Object.keys(currentState).length > 0))) {
-        const nextPayload = lastPayloadCache
+      if (typeof telemetryLastSig !== 'undefined') {
+        telemetryLastSig = '';
+      }
+      if (typeof renderPayload === 'function' && ((typeof lastPayloadCache !== 'undefined' && lastPayloadCache) || (currentState && Object.keys(currentState).length > 0))) {
+        const nextPayload = (typeof lastPayloadCache !== 'undefined' && lastPayloadCache)
           ? Object.assign({}, lastPayloadCache, { state: Object.assign({}, lastPayloadCache.state || currentState, { uiLanguage: valid }) })
           : { state: currentState };
         renderPayload(nextPayload);
+      }
+      if (typeof renderWorkspaceSwitcher === 'function') {
+        renderWorkspaceSwitcher(lastPayloadCache);
+      }
+      if (typeof syncComposerGrillToggleUi === 'function') {
+        syncComposerGrillToggleUi();
+      }
+      if (typeof renderSmartComposerChips === 'function') {
+        renderSmartComposerChips();
+      }
+      if (typeof renderLocalRagMessages === 'function') {
+        renderLocalRagMessages();
+      }
+      if (typeof updateComposerEngineBadge === 'function') {
+        updateComposerEngineBadge('', typeof _smartGhostText !== 'undefined' && _smartGhostText
+          ? L('RAM · <5 мс', 'RAM · <5 ms')
+          : L('RAM + GPU · 0 тк', 'RAM + GPU · 0 tok'));
+      }
+      if (typeof flashComposerStatus === 'function' && (typeof _smartComposerStatusTimer === 'undefined' || !_smartComposerStatusTimer)) {
+        flashComposerStatus('', '');
+      }
+      if (typeof syncSmartSendButtonLabel === 'function') {
+        syncSmartSendButtonLabel();
       }
       const wizModal = document.getElementById('onboardingWizardModal');
       if (wizModal && wizModal.classList.contains('visible') && typeof renderWizardStep === 'function') {

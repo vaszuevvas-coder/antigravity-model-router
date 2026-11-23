@@ -47,7 +47,7 @@ function clampInt(val, min, max, fallback) {
 export function createDefaultProgressState() {
   const now = Date.now();
   return {
-    version: '3.31.0',
+    version: '3.32.0',
     activeConversationId: 'default',
     projectName: 'antigravity-model-router',
     workspaceRoot: '',
@@ -59,8 +59,11 @@ export function createDefaultProgressState() {
     highWaterStep: 0,
     highWaterPercent: 0,
     stepTitle: 'В ожидании задач',
+    stepTitleEn: 'Waiting for tasks',
     stageLabel: 'В ожидании задач',
+    stageLabelEn: 'Waiting for tasks',
     formattedText: 'В ожидании задач',
+    formattedTextEn: 'Waiting for tasks',
     steps: [],
     activeChats: [],
     chats: {},
@@ -87,6 +90,9 @@ import {
   extractProjectName,
   buildActiveProjectsSummary,
   buildFormattedProgressText,
+  buildFormattedProgressTextEn,
+  localizeProgressLabelToEn,
+  localizeStepToEn,
   extractTopicLabelFromPrompt,
   assignChatNumber,
   resolveTranscriptPathForChat,
@@ -114,6 +120,9 @@ export {
   normalizeConversationId,
   extractProjectName,
   buildFormattedProgressText,
+  buildFormattedProgressTextEn,
+  localizeProgressLabelToEn,
+  localizeStepToEn,
   extractTopicLabelFromPrompt,
   compactTechnicalStepLabel,
   extractPrimarySymbolFromSnippet,
@@ -226,10 +235,14 @@ function buildQuestionStepMeta(questionHint = '') {
     .replace(/\s+/g, ' ')
     .trim();
   const title = raw ? compactTechnicalStepLabel(`Вопрос: ${raw}`, 30).title : 'Вопрос пользователю';
+  const titleEn = raw ? compactTechnicalStepLabel(`Question: ${raw}`, 30).titleEn : 'Question for user';
   const fullTitle = raw
     ? `Вопрос пользователю: ${raw}`.slice(0, 140)
     : 'Согласование деталей с пользователем перед выполнением';
-  return { title: title || 'Вопрос пользователю', fullTitle };
+  const fullTitleEn = raw
+    ? `Question for user: ${raw}`.slice(0, 140)
+    : 'Clarifying task details before execution';
+  return { title: title || 'Вопрос пользователю', fullTitle, titleEn: titleEn || 'Question for user', fullTitleEn };
 }
 
 function insertOrAppendStep(stepsArr = [], insertIdx = 0, newStep = {}) {
@@ -501,15 +514,27 @@ function buildPublicSubagentView(sub, idx) {
   const subNum = idx + 1;
   const isSwarm = sub.agentKind === 'swarm_worker';
   const subagentBadge = isSwarm ? `Рой #${subNum}` : `Агент #${subNum}`;
+  const subagentBadgeEn = isSwarm ? `Swarm #${subNum}` : `Agent #${subNum}`;
   const roleLabel = String(sub.roleLabel || '').trim();
+  const roleLabelEn = localizeProgressLabelToEn(sub.roleLabelEn || roleLabel);
   const stepTitle = sanitizeStepText(sub.stepTitle || '');
+  const stepTitleEn = localizeProgressLabelToEn(sub.stepTitleEn || stepTitle);
+  const stageLabel = sub.stageLabel || '';
+  const stageLabelEn = localizeProgressLabelToEn(sub.stageLabelEn || stageLabel);
+  const formattedText = sanitizeStepText(sub.formattedText || buildFormattedProgressText(sub));
+  const formattedTextEn = sanitizeStepText(
+    sub.formattedTextEn || buildFormattedProgressTextEn({ ...sub, stepTitle, stepTitleEn })
+  );
   return {
     conversationId: sub.conversationId || `sub-${subNum}`,
     parentConversationId: sub.parentConversationId || '',
     subagentNumber: subNum,
     subagentBadge,
+    subagentBadgeEn,
     roleLabel,
+    roleLabelEn,
     displayHeader: roleLabel ? `${subagentBadge} · ${roleLabel}` : subagentBadge,
+    displayHeaderEn: roleLabelEn ? `${subagentBadgeEn} · ${roleLabelEn}` : subagentBadgeEn,
     agentKind: sub.agentKind || 'subagent',
     projectName: sub.projectName || 'antigravity-model-router',
     status: sub.status || 'running',
@@ -517,8 +542,11 @@ function buildPublicSubagentView(sub, idx) {
     totalSteps: clampInt(sub.totalSteps, 0, 20, 0),
     percent: clampInt(sub.percent, 0, 100, 0),
     stepTitle,
-    stageLabel: sub.stageLabel || '',
-    formattedText: sanitizeStepText(sub.formattedText || buildFormattedProgressText(sub)),
+    stepTitleEn,
+    stageLabel,
+    stageLabelEn,
+    formattedText,
+    formattedTextEn,
     completedAt: sub.completedAt || 0,
     startedAt: sub.startedAt || 0,
     updatedAt: sub.updatedAt || 0,
@@ -528,14 +556,25 @@ function buildPublicSubagentView(sub, idx) {
 function buildPublicChatView(chat, subagents = []) {
   const num = clampInt(chat.chatNumber, 1, 99, 1);
   const chatLabel = `Чат #${num}`;
+  const chatLabelEn = `Chat #${num}`;
   const topic = String(chat.topicLabel || '').trim();
   const subs = Array.isArray(subagents) ? subagents : [];
   const runningSubagentsCount = subs.filter((s) => s && (s.status === 'running' || s.status === 'waiting_user')).length;
+  const stepTitle = sanitizeStepText(chat.stepTitle || '');
+  const stepTitleEn = localizeProgressLabelToEn(chat.stepTitleEn || stepTitle);
+  const stageLabel = chat.stageLabel || '';
+  const stageLabelEn = localizeProgressLabelToEn(chat.stageLabelEn || stageLabel);
+  const formattedText = sanitizeStepText(chat.formattedText || buildFormattedProgressText(chat));
+  const formattedTextEn = sanitizeStepText(
+    chat.formattedTextEn || buildFormattedProgressTextEn({ ...chat, stepTitle, stepTitleEn })
+  );
   return {
     conversationId: chat.conversationId || 'default',
     chatNumber: num,
     chatLabel,
+    chatLabelEn,
     displayHeader: topic ? `${chatLabel} · ${topic}` : chatLabel,
+    displayHeaderEn: topic ? `${chatLabelEn} · ${topic}` : chatLabelEn,
     topicLabel: topic,
     projectName: chat.projectName || 'antigravity-model-router',
     workspaceRoot: chat.workspaceRoot || '',
@@ -544,10 +583,13 @@ function buildPublicChatView(chat, subagents = []) {
     currentStep: clampInt(chat.currentStep, 0, MAX_TIMELINE_STEPS, 0),
     totalSteps: clampInt(chat.totalSteps, 0, MAX_TIMELINE_STEPS, 0),
     percent: clampInt(chat.percent, 0, 100, 0),
-    stepTitle: sanitizeStepText(chat.stepTitle || ''),
-    stageLabel: chat.stageLabel || '',
-    formattedText: sanitizeStepText(chat.formattedText || buildFormattedProgressText(chat)),
-    steps: Array.isArray(chat.steps) ? chat.steps : [],
+    stepTitle,
+    stepTitleEn,
+    stageLabel,
+    stageLabelEn,
+    formattedText,
+    formattedTextEn,
+    steps: Array.isArray(chat.steps) ? chat.steps.map(localizeStepToEn) : [],
     activeSkills: Array.isArray(chat.activeSkills) ? chat.activeSkills.slice(0, 6) : [],
     ramSavedTokens: Math.max(0, Math.round(Number(chat.ramSavedTokens || 0))),
     subagents: subs,
@@ -1008,8 +1050,11 @@ function hydrateStateWithPrimary(state, activeChats = [], defaultProject = 'anti
       highWaterStep: 0,
       highWaterPercent: 0,
       stepTitle: 'В ожидании задач',
+      stepTitleEn: 'Waiting for tasks',
       stageLabel: 'В ожидании задач',
+      stageLabelEn: 'Waiting for tasks',
       formattedText: 'В ожидании задач',
+      formattedTextEn: 'Waiting for tasks',
       steps: [],
       activeChats: [],
       activeProjects: [],
@@ -1030,9 +1075,12 @@ function hydrateStateWithPrimary(state, activeChats = [], defaultProject = 'anti
     totalSteps: primary.totalSteps,
     percent: primary.percent,
     stepTitle: primary.stepTitle,
+    stepTitleEn: primary.stepTitleEn || localizeProgressLabelToEn(primary.stepTitle),
     stageLabel: primary.stageLabel,
+    stageLabelEn: primary.stageLabelEn || localizeProgressLabelToEn(primary.stageLabel),
     formattedText: primary.formattedText,
-    steps: primary.steps,
+    formattedTextEn: primary.formattedTextEn || localizeProgressLabelToEn(primary.formattedText),
+    steps: Array.isArray(primary.steps) ? primary.steps.map(localizeStepToEn) : [],
     activeChats: orderedChats,
     activeProjects,
     recentProjects: activeProjects,
@@ -3050,8 +3098,11 @@ export function dismissStaleChats({
     percent: 0,
     currentStep: 0,
     stepTitle: 'Ожидание задачи',
+    stepTitleEn: 'Waiting for task',
     stageLabel: 'Ожидание задачи',
+    stageLabelEn: 'Waiting for task',
     formattedText: 'Ожидание задачи',
+    formattedTextEn: 'Waiting for task',
     completedAt: 0,
     updatedAt: now,
   });
@@ -3077,8 +3128,11 @@ export function dismissStaleChats({
       state.inFlightTool = false;
       state.inFlightToolName = '';
       state.stepTitle = 'Ожидание задачи';
+      state.stepTitleEn = 'Waiting for task';
       state.stageLabel = 'Ожидание задачи';
+      state.stageLabelEn = 'Waiting for task';
       state.formattedText = 'Ожидание задачи';
+      state.formattedTextEn = 'Waiting for task';
       state.activeChats = [];
       state.updatedAt = now;
     }

@@ -252,8 +252,8 @@
       if (vramHintEl) {
         if (ceilings) {
           vramHintEl.textContent = ceilings.gpuAvailable
-            ? ('(до ' + Math.round(ceilings.maxVramMb / 1024) + ' ГБ)')
-            : '(GPU не найдена · мин. 4 ГБ)';
+            ? (L('(до ', '(up to ') + Math.round(ceilings.maxVramMb / 1024) + L(' ГБ)', ' GB)'))
+            : L('(GPU не найдена · мин. 4 ГБ)', '(No GPU detected · min 4 GB)');
         } else {
           vramHintEl.textContent = '';
         }
@@ -261,13 +261,13 @@
       const ramHintEl = document.getElementById('ramBudgetCapHint');
       if (ramHintEl) {
         ramHintEl.textContent = ceilings && ceilings.totalRamGb > 0
-          ? ('(до ' + Math.round(ceilings.maxRamBudgetMb / 1024) + ' из ' + ceilings.totalRamGb + ' ГБ ОЗУ)')
+          ? (L('(до ', '(up to ') + Math.round(ceilings.maxRamBudgetMb / 1024) + L(' из ', ' of ') + ceilings.totalRamGb + L(' ГБ ОЗУ)', ' GB RAM)'))
           : '';
       }
       const cpuHintEl = document.getElementById('cpuThreadsCapHint');
       if (cpuHintEl) {
         cpuHintEl.textContent = ceilings && ceilings.logicalCores > 0
-          ? ('(до ' + ceilings.maxCpuThreads + ' из ' + ceilings.logicalCores + ' пот.)')
+          ? (L('(до ', '(up to ') + ceilings.maxCpuThreads + L(' из ', ' of ') + ceilings.logicalCores + L(' пот.)', ' thr.)'))
           : '';
       }
 
@@ -290,9 +290,9 @@
       if (legendEl) {
         const ramGbLbl = Math.max(1, Math.round(ramBudgetMb / 1024));
         const gpuLbl = hw && hw.available && hw.name
-          ? (hw.name.replace(/NVIDIA GeForce |AMD Radeon |Intel\(R\) /i, '').trim() + ' (до ' + capGb + ' ГБ)')
-          : (enabled ? ('Локальный GPU (до ' + capGb + ' ГБ)') : 'Контур CPU + In-RAM');
-        legendEl.textContent = '🎮 ' + gpuLbl + ' и память проекта (' + ramGbLbl + ' ГБ RAM)';
+          ? (hw.name.replace(/NVIDIA GeForce |AMD Radeon |Intel\(R\) /i, '').trim() + L(' (до ', ' (up to ') + capGb + L(' ГБ)', ' GB)'))
+          : (enabled ? (L('Локальный GPU (до ', 'Local GPU (up to ') + capGb + L(' ГБ)', ' GB)')) : L('Контур CPU + In-RAM', 'CPU + In-RAM Mode'));
+        legendEl.textContent = '🎮 ' + gpuLbl + L(' и память проекта (', ' & Project Memory (') + ramGbLbl + L(' ГБ RAM)', ' GB RAM)');
       }
 
       const ollResolved = resolvePanelOllamaVram(oll, hw);
@@ -303,25 +303,25 @@
 
       if (ramSubEl) {
         const instSuffix = ramCache && ramCache.active && Number(ramCache.instancesCount || 1) > 1
-          ? (' · Демонов ОЗУ: ' + ramCache.instancesCount)
+          ? (L(' · Демонов ОЗУ: ', ' · RAM Daemons: ') + ramCache.instancesCount)
           : '';
         const sotaInfo = ramCache && ramCache.sota ? ramCache.sota : null;
         const sotaOpsCount = sotaInfo
           ? (Number(sotaInfo.memoHits || 0) + Number(sotaInfo.repairRecalls || 0))
           : 0;
         const sotaSuffix = (sotaInfo && (Number(sotaInfo.memoHits || 0) > 0 || Number(sotaInfo.repairRecalls || 0) > 0))
-          ? (' · Мемо/RepairKV: +' + sotaOpsCount)
+          ? (L(' · Мемо/RepairKV: +', ' · Memo/RepairKV: +') + sotaOpsCount)
           : '';
         const hostWarmedLbl = formatHostRamWarmedLabel(tel.hostRamWarmedMb);
         const ddr5Suffix = (hostWarmedLbl && (!s || s.gpuWarmHostRamCache !== false))
           ? (' · DDR5 GGUF: ' + hostWarmedLbl)
           : '';
         ramSubEl.textContent =
-          'Векторный индекс: проиндексировано ' +
+          L('Векторный индекс: проиндексировано ', 'Vector index: indexed ') +
           (tel.indexedFiles || 0) +
-          ' файлов (' +
+          L(' файлов (', ' files (') +
           (tel.indexedChunks || 0) +
-          ' фрагментов)' +
+          L(' фрагментов)', ' chunks)') +
           instSuffix +
           sotaSuffix +
           ddr5Suffix;
@@ -340,25 +340,25 @@
       const vramGb = Math.max(2, Math.round(Number(st.gpuMaxVramMb || (gpu && gpu.config && gpu.config.gpuMaxVramMb) || 4096) / 1024));
       if (isWorkingOverride) {
         badgeEl.className = 'swarm-pill active';
-        badgeEl.textContent = '⚡ В работе';
+        badgeEl.textContent = L('⚡ В работе', '⚡ Active');
         return;
       }
       badgeEl.className = 'swarm-pill idle';
       if (ramOn && gpuOn) {
-        badgeEl.textContent = ramGb + ' ГБ RAM · ' + vramGb + ' ГБ GPU';
+        badgeEl.textContent = ramGb + L(' ГБ RAM · ', ' GB RAM · ') + vramGb + L(' ГБ GPU', ' GB GPU');
       } else if (ramOn) {
-        badgeEl.textContent = ramGb + ' ГБ RAM · CPU';
+        badgeEl.textContent = ramGb + L(' ГБ RAM · CPU', ' GB RAM · CPU');
       } else if (gpuOn) {
-        badgeEl.textContent = vramGb + ' ГБ GPU';
+        badgeEl.textContent = vramGb + L(' ГБ GPU', ' GB GPU');
       } else {
-        badgeEl.textContent = 'CPU-режим';
+        badgeEl.textContent = L('CPU-режим', 'CPU mode');
       }
     }
 
     function formatHostRamWarmedLabel(mb) {
       const num = Number(mb || 0);
       if (!Number.isFinite(num) || num <= 0) return '';
-      return num >= 1024 ? ((num / 1024).toFixed(1) + ' ГБ') : (Math.round(num) + ' МБ');
+      return num >= 1024 ? ((num / 1024).toFixed(1) + L(' ГБ', ' GB')) : (Math.round(num) + L(' МБ', ' MB'));
     }
 
     const RAM_AFTERGLOW_MS = 3200;
@@ -388,45 +388,58 @@
         repair_kv: 'Память RepairKV',
         memo_hit: 'Мемоизация ACON',
       };
-      const base = opNames[op] || 'Обращение к ОЗУ';
+      const opNamesEn = {
+        ram_slice: 'Code slice',
+        ram_search: 'RAM search',
+        hybrid_search: 'Hybrid search',
+        ram_context_pack: 'Context pack',
+        gold_context: 'Gold context',
+        session_repomap: 'Symbol RepoMap',
+        ram_hit: 'Buffer read',
+        speculative_prefetch: 'Speculative prefetch',
+        repair_kv: 'RepairKV cache',
+        memo_hit: 'ACON memoization',
+      };
+      const base = isRu() ? (opNames[op] || 'Обращение к ОЗУ') : (opNamesEn[op] || 'RAM access');
       const tgt = live.lastTarget ? (' · ' + live.lastTarget) : '';
-      const burst = Number(live.burstCount || 0) > 1 ? (' (+' + live.burstCount + ' хитов)') : '';
-      const ms = Number(live.lastLatencyMs || 0) > 0 ? (' · ' + live.lastLatencyMs + ' мс') : '';
+      const burst = Number(live.burstCount || 0) > 1 ? (' (+' + live.burstCount + L(' хитов)', ' hits)')) : '';
+      const ms = Number(live.lastLatencyMs || 0) > 0 ? (' · ' + live.lastLatencyMs + L(' мс', ' ms')) : '';
       return base + tgt + burst + ms;
     }
 
     function formatGpuLiveOpRu(live, fallbackModel) {
       if (!live) return '';
-      if (live.currentDetail) {
+      const detail = pickText(live, 'currentDetail', 'currentDetailEn', '');
+      if (detail) {
         const msTag = (!live.isWorking && Number(live.lastLatencyMs || 0) > 0)
-          ? (' (' + live.lastLatencyMs + ' мс)')
+          ? (' (' + live.lastLatencyMs + L(' мс)', ' ms)'))
           : '';
-        return live.currentDetail + msTag;
+        return detail + msTag;
       }
       const m = live.currentModel || fallbackModel || 'Ollama';
-      if (live.currentOp === 'autocomplete') return 'Умный ввод (' + m + ')';
-      if (live.currentOp === 'distill') return 'Дистилляция на ' + m;
-      if (live.currentOp === 'vector_index') return 'Индексация векторов (' + m + ')';
-      if (live.currentOp === 'semantic_embed') return 'Семантический поиск (' + m + ')';
-      return 'Расчёт на ' + m;
+      if (live.currentOp === 'autocomplete') return L('Умный ввод (', 'Smart input (') + m + ')';
+      if (live.currentOp === 'distill') return L('Дистилляция на ', 'Distilling on ') + m;
+      if (live.currentOp === 'vector_index') return L('Индексация векторов (', 'Vector indexing (') + m + ')';
+      if (live.currentOp === 'semantic_embed') return L('Семантический поиск (', 'Semantic search (') + m + ')';
+      return L('Расчёт на ', 'Inference on ') + m;
     }
 
     function formatCpuLiveOpRu(live) {
-      if (!live) return 'Расчёт в пуле потоков';
+      if (!live) return L('Расчёт в пуле потоков', 'Running in thread pool');
       const op = String(live.currentOp || '');
-      let base = String(live.currentDetail || '').trim();
+      let base = String(pickText(live, 'currentDetail', 'currentDetailEn', '') || '').trim();
       if (!base) {
-        if (op.indexOf('parseMetadataBatch') === 0) base = 'Разбор AST и триграмм';
-        else if (op.indexOf('chunkVectorsBatch') === 0) base = 'Нарезка чанков векторов';
-        else if (op.indexOf('syntaxCheckBatch') === 0) base = 'Проверка синтаксиса';
-        else if (op.indexOf('auditFilesBatch') === 0) base = 'Стресс-аудит кода';
+        if (op.indexOf('parseMetadataBatch') === 0) base = L('Разбор AST и триграмм', 'Parsing AST & trigrams');
+        else if (op.indexOf('chunkVectorsBatch') === 0) base = L('Нарезка чанков векторов', 'Chunking vector slices');
+        else if (op.indexOf('syntaxCheckBatch') === 0) base = L('Проверка синтаксиса', 'Syntax verification');
+        else if (op.indexOf('auditFilesBatch') === 0) base = L('Стресс-аудит кода', 'Code stress audit');
         else if (op === 'cross_rerank') base = 'CPU Cross-Reranker';
-        else if (op === 'parallel_verify') base = 'Параллельная проверка';
-        else if (op === 'ddmin_parallel') base = 'Минимизация ddmin';
-        else base = 'Задача пула потоков';
+        else if (op === 'parallel_verify') base = L('Параллельная проверка', 'Parallel verification');
+        else if (op === 'ddmin_parallel') base = L('Минимизация ddmin', 'ddmin minimization');
+        else base = L('Задача пула потоков', 'Worker pool task');
       }
       const msTag = (!live.isWorking && Number(live.lastLatencyMs || 0) > 0)
-        ? (' · ' + live.lastLatencyMs + ' мс')
+        ? (' · ' + live.lastLatencyMs + L(' мс', ' ms'))
         : '';
       return base + msTag;
     }
@@ -545,17 +558,17 @@
       if (topRamPill && topRamTxt) {
         if (!ramEnabled) {
           topRamPill.className = 'hw-live-pill is-off';
-          topRamTxt.textContent = 'RAM · Выкл';
+          topRamTxt.textContent = L('RAM · Выкл', 'RAM · Off');
         } else if (ramWorking) {
-          const shortOp = ramLive.lastOp === 'ram_slice' ? 'Срез кода' : (ramLive.lastOp === 'ram_search' ? 'Поиск' : 'Чтение');
+          const shortOp = ramLive.lastOp === 'ram_slice' ? L('Срез кода', 'Slice') : (ramLive.lastOp === 'ram_search' ? L('Поиск', 'Search') : L('Чтение', 'Read'));
           topRamPill.className = 'hw-live-pill is-working-ram';
           topRamTxt.textContent = 'RAM · ⚡ ' + shortOp;
         } else if (ramWarm) {
           topRamPill.className = 'hw-live-pill is-standby';
-          topRamTxt.textContent = 'RAM · В фоне (' + Math.round(ramCache.cacheUsedMb || 0) + ' МБ)';
+          topRamTxt.textContent = L('RAM · В фоне (', 'RAM · Standby (') + Math.round(ramCache.cacheUsedMb || 0) + L(' МБ)', ' MB)');
         } else {
           topRamPill.className = 'hw-live-pill is-off';
-          topRamTxt.textContent = 'RAM · Ожидание';
+          topRamTxt.textContent = L('RAM · Ожидание', 'RAM · Idle');
         }
       }
 
@@ -564,17 +577,17 @@
       if (topGpuPill && topGpuTxt) {
         if (!gpuEnabled) {
           topGpuPill.className = 'hw-live-pill is-off';
-          topGpuTxt.textContent = 'GPU · Выкл';
+          topGpuTxt.textContent = L('GPU · Выкл', 'GPU · Off');
         } else if (gpuWorking) {
           const activeModShort = String(gpuLive.currentModel || (s && s.gpuChatModel) || 'Ollama').split(':')[0];
           topGpuPill.className = 'hw-live-pill is-working-gpu';
           topGpuTxt.textContent = 'GPU · 🔥 ' + activeModShort;
         } else if (gpuWarmInVram) {
           topGpuPill.className = 'hw-live-pill is-standby';
-          topGpuTxt.textContent = 'GPU · В фоне (' + (loadedVramMb / 1024).toFixed(1) + ' ГБ)';
+          topGpuTxt.textContent = L('GPU · В фоне (', 'GPU · Standby (') + (loadedVramMb / 1024).toFixed(1) + L(' ГБ)', ' GB)');
         } else {
           topGpuPill.className = 'hw-live-pill is-off';
-          topGpuTxt.textContent = oll.running ? 'GPU · Выгружена' : 'GPU · Сон';
+          topGpuTxt.textContent = oll.running ? L('GPU · Выгружена', 'GPU · Unloaded') : L('GPU · Сон', 'GPU · Sleep');
         }
       }
 
@@ -583,17 +596,17 @@
       if (topCpuPill && topCpuTxt) {
         if (!cpuEnabled) {
           topCpuPill.className = 'hw-live-pill is-off';
-          topCpuTxt.textContent = 'CPU · Выкл';
+          topCpuTxt.textContent = L('CPU · Выкл', 'CPU · Off');
         } else if (cpuWorking) {
           const opRaw = String(cpuLive.currentOp || '');
           const shortCpuOp = opRaw === 'cross_rerank'
             ? 'Rerank'
-            : (opRaw === 'parallel_verify' || opRaw === 'ddmin_parallel' ? 'Проверка' : 'Воркеры');
+            : (opRaw === 'parallel_verify' || opRaw === 'ddmin_parallel' ? L('Проверка', 'Verify') : L('Воркеры', 'Workers'));
           topCpuPill.className = 'hw-live-pill is-working-cpu';
           topCpuTxt.textContent = 'CPU · ⚡ ' + shortCpuOp;
         } else {
           topCpuPill.className = 'hw-live-pill is-standby';
-          topCpuTxt.textContent = 'CPU · В фоне (' + effThreads + ' пот.)';
+          topCpuTxt.textContent = L('CPU · В фоне (', 'CPU · Standby (') + effThreads + L(' пот.)', ' thr.)');
         }
       }
 
@@ -609,19 +622,19 @@
         const usedMb = ramCache && ramCache.active ? (ramCache.cacheUsedMb || 0) : 0;
         const capRam = Math.max(256, Number(ramBudgetMb || (ramCache && ramCache.budgetMb) || 4096));
         const rawRamFrac = Math.max(0, Math.min(1, usedMb / capRam));
-        ramMetric.textContent = usedMb + ' / ' + capRam + ' МБ';
+        ramMetric.textContent = usedMb + ' / ' + capRam + L(' МБ', ' MB');
         if (ramCapPct) {
-          ramCapPct.textContent = !ramEnabled ? 'Выкл' : formatHwCapPctLabel(usedMb, capRam);
+          ramCapPct.textContent = !ramEnabled ? L('Выкл', 'Off') : formatHwCapPctLabel(usedMb, capRam);
         }
         if (!ramEnabled) {
           ramCard.className = 'hw-optical-unit ram-unit is-off';
-          ramBadge.textContent = '⚪ Выкл';
-          ramOp.textContent = 'In-RAM буфер отключён в настройках';
+          ramBadge.textContent = L('⚪ Выкл', '⚪ Off');
+          ramOp.textContent = L('In-RAM буфер отключён в настройках', 'In-RAM cache is disabled in settings');
           ramFill.style.setProperty('--hw-fill', '0');
         } else if (ramWorking) {
           const workFill = Math.min(1, Math.max(rawRamFrac, usedMb > 0 ? 0.08 : 0.04, 0.16 + 0.56 * ramRatio));
           ramCard.className = 'hw-optical-unit ram-unit is-working';
-          ramBadge.textContent = '⚡ В работе';
+          ramBadge.textContent = L('⚡ В работе', '⚡ Active');
           ramOp.textContent = formatRamLiveOpRu(ramLive);
           ramFill.style.setProperty('--hw-fill', workFill.toFixed(3));
         } else if (ramWarm) {
@@ -629,15 +642,15 @@
           const filesCount = wsArr.reduce((acc, w) => acc + (Number(w && w.files) || 0), 0);
           const standbyFill = usedMb > 0 ? Math.max(0.065, rawRamFrac) : 0.045;
           ramCard.className = 'hw-optical-unit ram-unit is-standby';
-          ramBadge.textContent = '🟡 В фоне';
+          ramBadge.textContent = L('🟡 В фоне', '🟡 Standby');
           ramOp.textContent = filesCount > 0
-            ? ('Прогрето в ОЗУ: ' + filesCount + ' файлов · ждёт запроса')
-            : ('Демон активен · ждёт обращений (хитов: ' + (ramCache.hits || 0) + ')');
+            ? (L('Прогрето в ОЗУ: ', 'Warmed in RAM: ') + filesCount + L(' файлов · ждёт запроса', ' files · awaiting query'))
+            : (L('Демон активен · ждёт обращений (хитов: ', 'Daemon active · awaiting requests (hits: ') + (ramCache.hits || 0) + ')');
           ramFill.style.setProperty('--hw-fill', standbyFill.toFixed(3));
         } else {
           ramCard.className = 'hw-optical-unit ram-unit is-off';
-          ramBadge.textContent = '⚪ Спит';
-          ramOp.textContent = 'Автостарт при первом обращении ИИ';
+          ramBadge.textContent = L('⚪ Спит', '⚪ Sleep');
+          ramOp.textContent = L('Автостарт при первом обращении ИИ', 'Auto-starts on first AI request');
           ramFill.style.setProperty('--hw-fill', '0.032');
         }
       }
@@ -657,11 +670,11 @@
           Number(gpuTel.savedTokensEstimate || 0),
           Number((_lastTelemetrySnapshot && _lastTelemetrySnapshot.gpuSavedTokens) || 0)
         );
-        gpuSavedPill.textContent = '~' + formatK(savedGpuTok) + ' ток.';
+        gpuSavedPill.textContent = '~' + formatK(savedGpuTok) + L(' ток.', ' tok');
         gpuSavedPill.title =
-          'Экономия видеомодели GPU: ~' + formatExactInt(savedGpuTok) + ' ток. ' +
-          '(сжатий логов: ' + formatExactInt(gpuTel.distillCalls || 0) +
-          ' · семантических поисков: ' + formatExactInt(gpuTel.semanticSearches || 0) + ')';
+          L('Экономия видеомодели GPU: ~', 'Local GPU savings: ~') + formatExactInt(savedGpuTok) + L(' ток. ', ' tok ') +
+          L('(сжатий логов: ', '(log distills: ') + formatExactInt(gpuTel.distillCalls || 0) +
+          L(' · семантических поисков: ', ' · semantic searches: ') + formatExactInt(gpuTel.semanticSearches || 0) + ')';
       }
       if (gpuCard && gpuBadge && gpuMetric && gpuOp && gpuFill) {
         const usedVramGb = (loadedVramMb / 1024).toFixed(1);
@@ -672,24 +685,33 @@
         const hwSensorsSuffix = (gpuEnabled && gpuHw.available && (liveTempC > 0 || liveUtilPct > 0))
           ? (' · ' + liveUtilPct + '% · ' + (liveTempC > 0 ? (liveTempC + '°C') : '—'))
           : '';
-        gpuMetric.textContent = usedVramGb + ' / ' + capGb + ' ГБ';
+        gpuMetric.textContent = usedVramGb + ' / ' + capGb + L(' ГБ', ' GB');
         if (gpuCapPct) {
           gpuCapPct.textContent = !gpuEnabled
-            ? 'Выкл'
+            ? L('Выкл', 'Off')
             : (formatHwCapPctLabel(loadedVramMb, capVramMb) + hwSensorsSuffix);
         }
         gpuMetric.title = gpuHw.available
           ? (
-            gpuHw.name +
-            ' · Модели Ollama: ' + usedVramGb + ' ГБ' +
-            ' · Всего на GPU: ' + ((gpuHw.usedMb || 0) / 1024).toFixed(1) + ' / ' + ((gpuHw.totalMb || 0) / 1024).toFixed(1) + ' ГБ' +
-            ' (свободно ' + ((gpuHw.freeMb || 0) / 1024).toFixed(1) + ' ГБ) · Ядро: ' + liveUtilPct + '% · ' + liveTempC + '°C'
+            isRu()
+              ? (
+                gpuHw.name +
+                ' · Модели Ollama: ' + usedVramGb + ' ГБ' +
+                ' · Всего на GPU: ' + ((gpuHw.usedMb || 0) / 1024).toFixed(1) + ' / ' + ((gpuHw.totalMb || 0) / 1024).toFixed(1) + ' ГБ' +
+                ' (свободно ' + ((gpuHw.freeMb || 0) / 1024).toFixed(1) + ' ГБ) · Ядро: ' + liveUtilPct + '% · ' + liveTempC + '°C'
+              )
+              : (
+                gpuHw.name +
+                ' · Ollama models: ' + usedVramGb + ' GB' +
+                ' · Total GPU: ' + ((gpuHw.usedMb || 0) / 1024).toFixed(1) + ' / ' + ((gpuHw.totalMb || 0) / 1024).toFixed(1) + ' GB' +
+                ' (free ' + ((gpuHw.freeMb || 0) / 1024).toFixed(1) + ' GB) · Core: ' + liveUtilPct + '% · ' + liveTempC + '°C'
+              )
           )
           : '';
         if (!gpuEnabled) {
           gpuCard.className = 'hw-optical-unit gpu-unit is-off';
-          gpuBadge.textContent = '⚪ Выкл';
-          gpuOp.textContent = 'Локальный GPU-помощник выключен';
+          gpuBadge.textContent = L('⚪ Выкл', '⚪ Off');
+          gpuOp.textContent = L('Локальный GPU-помощник выключен', 'Local GPU copilot is disabled');
           gpuOp.title = '';
           gpuFill.style.setProperty('--hw-fill', '0');
         } else if (gpuGuard.throttled && !gpuWorking) {
@@ -697,45 +719,51 @@
           gpuCard.className = 'hw-optical-unit gpu-unit is-standby is-over-cap';
           gpuBadge.textContent = isThermal ? ('🌡️ ' + liveTempC + '°C') : ('🎮 GPU ' + liveUtilPct + '%');
           gpuOp.textContent = isThermal
-            ? ('Пауза по перегреву GPU (' + liveTempC + '°C) · фоновые задачи приостановлены')
-            : ('Внешняя нагрузка GPU (' + liveUtilPct + '%) · фоновый индекс отложен');
-          gpuOp.title = gpuGuard.message || '';
+            ? (L('Пауза по перегреву GPU (', 'GPU thermal pause (') + liveTempC + L('°C) · фоновые задачи приостановлены', '°C) · background tasks paused'))
+            : (L('Внешняя нагрузка GPU (', 'External GPU load (') + liveUtilPct + L('%) · фоновый индекс отложен', '%) · background indexing deferred'));
+          gpuOp.title = pickText(gpuGuard, 'message', 'messageEn', gpuGuard.message || '');
           gpuFill.style.setProperty('--hw-fill', Math.max(0.08, rawGpuFrac).toFixed(3));
         } else if (gpuWorking) {
           const liveText = formatGpuLiveOpRu(gpuLive, (s && s.gpuChatModel) || 'gemma4:12b');
           const workVramFill = Math.min(1, Math.max(rawGpuFrac, loadedVramMb > 0 ? 0.08 : 0.18 + 0.58 * gpuRatio));
           gpuCard.className = 'hw-optical-unit gpu-unit is-working';
-          gpuBadge.textContent = gpuInFlight ? '🔥 В работе' : '⚡ Завершено';
+          gpuBadge.textContent = gpuInFlight ? L('🔥 В работе', '🔥 Working') : L('⚡ Завершено', '⚡ Done');
           gpuOp.textContent = liveText;
           gpuOp.title = liveText;
           gpuFill.style.setProperty('--hw-fill', workVramFill.toFixed(3));
         } else if (gpuWarmInVram) {
           const names = Array.isArray(ollResolved && ollResolved.loadedModels)
             ? ollResolved.loadedModels.map((m) => m.name).join(' + ')
-            : 'модель';
+            : L('модель', 'model');
           const isOverCap = loadedVramMb > (capGb * 1024 + 128);
           const hostWarmedLbl = formatHostRamWarmedLabel(gpuTel.hostRamWarmedMb);
           const ddr5WarmOn = Boolean(hostWarmedLbl && (!s || s.gpuWarmHostRamCache !== false));
           gpuCard.className = isOverCap ? 'hw-optical-unit gpu-unit is-standby is-over-cap' : 'hw-optical-unit gpu-unit is-standby';
-          gpuBadge.textContent = isOverCap ? '⚠️ Сверх лимита' : '🟡 В фоне';
+          gpuBadge.textContent = isOverCap ? L('⚠️ Сверх лимита', '⚠️ Over cap') : L('🟡 В фоне', '🟡 Standby');
           if (isOverCap) {
-            gpuOp.textContent = 'Превышен лимит ' + capGb + ' ГБ · требуется выгрузка или компактная модель';
+            gpuOp.textContent = L('Превышен лимит ', 'Exceeded ') + capGb + L(' ГБ · требуется выгрузка или компактная модель', ' GB cap · unload or pick smaller model');
           } else {
-            gpuOp.textContent = 'Дежурит в VRAM · расчётов сейчас нет';
-            if (ddr5WarmOn) gpuOp.textContent = 'Дежурит в VRAM · DDR5 GGUF: ' + hostWarmedLbl;
+            if (isRu()) {
+              gpuOp.textContent = 'Дежурит в VRAM · расчётов сейчас нет';
+            } else {
+              gpuOp.textContent = 'Warm in VRAM · idle';
+            }
+            if (ddr5WarmOn) gpuOp.textContent = L('Дежурит в VRAM · DDR5 GGUF: ', 'Warm in VRAM · DDR5 GGUF: ') + hostWarmedLbl;
           }
-          gpuOp.title = 'В видеопамяти: ' + names + (ddr5WarmOn ? (' · Прогрето в DDR5 ОЗУ: ' + hostWarmedLbl) : '');
+          gpuOp.title = L('В видеопамяти: ', 'In VRAM: ') + names + (ddr5WarmOn ? (L(' · Прогрето в DDR5 ОЗУ: ', ' · Warmed in DDR5 RAM: ') + hostWarmedLbl) : '');
           gpuFill.style.setProperty('--hw-fill', (isOverCap ? 1 : Math.max(0.065, rawGpuFrac)).toFixed(3));
         } else {
           const hostWarmedLbl = formatHostRamWarmedLabel(gpuTel.hostRamWarmedMb);
           const ddr5WarmOn = Boolean(hostWarmedLbl && (!s || s.gpuWarmHostRamCache !== false));
           gpuCard.className = 'hw-optical-unit gpu-unit is-off';
-          gpuBadge.textContent = oll.running ? '⚪ Выгружена' : '⚪ Спит';
+          gpuBadge.textContent = oll.running ? L('⚪ Выгружена', '⚪ Unloaded') : L('⚪ Спит', '⚪ Sleep');
           gpuOp.textContent = oll.running
-            ? (ddr5WarmOn ? ('0 ГБ в VRAM · в DDR5 ОЗУ: ' + hostWarmedLbl) : '0 ГБ в видеопамяти · ждёт задачи')
-            : 'Сервер Ollama в режиме ожидания';
+            ? (ddr5WarmOn
+                ? L('0 ГБ в VRAM · в DDR5 ОЗУ: ' + hostWarmedLbl, '0 GB in VRAM · in DDR5 RAM: ' + hostWarmedLbl)
+                : L('0 ГБ в видеопамяти · ждёт задачи', '0 GB in VRAM · awaiting task'))
+            : L('Сервер Ollama в режиме ожидания', 'Ollama server in standby');
           gpuOp.title = (oll.running && ddr5WarmOn)
-            ? ('Веса GGUF прогреты в системной DDR5 ОЗУ (' + hostWarmedLbl + ') для быстрого подъёма в VRAM')
+            ? (L('Веса GGUF прогреты в системной DDR5 ОЗУ (', 'GGUF weights warmed in system DDR5 RAM (') + hostWarmedLbl + L(') для быстрого подъёма в VRAM', ') for fast VRAM load'))
             : '';
           gpuFill.style.setProperty('--hw-fill', '0.032');
         }
@@ -755,17 +783,17 @@
       const lastRerankMs = Number(cpuTel.lastRerankMs || 0);
       if (cpuSavedPill) {
         if (triCount > 0) {
-          cpuSavedPill.textContent = formatK(triCount) + ' тригр.';
+          cpuSavedPill.textContent = formatK(triCount) + L(' тригр.', ' trigrams');
         } else if (totalBatches > 0) {
-          cpuSavedPill.textContent = formatExactInt(totalBatches) + ' батч.';
+          cpuSavedPill.textContent = formatExactInt(totalBatches) + L(' батч.', ' batches');
         } else {
-          cpuSavedPill.textContent = '0 тригр.';
+          cpuSavedPill.textContent = L('0 тригр.', '0 trigrams');
         }
         cpuSavedPill.title =
-          'Индекс триграмм BM25F: ' + formatExactInt(triCount) +
-          ' · Батчей воркеров: ' + formatExactInt(totalBatches) +
-          ' · Вызовов Rerank: ' + formatExactInt(cpuTel.rerankCalls || 0) +
-          (lastRerankMs > 0 ? (' (' + lastRerankMs + ' мс)') : '');
+          L('Индекс триграмм BM25F: ', 'BM25F trigram index: ') + formatExactInt(triCount) +
+          L(' · Батчей воркеров: ', ' · Worker batches: ') + formatExactInt(totalBatches) +
+          L(' · Вызовов Rerank: ', ' · Rerank calls: ') + formatExactInt(cpuTel.rerankCalls || 0) +
+          (lastRerankMs > 0 ? (' (' + lastRerankMs + L(' мс)', ' ms)')) : '');
       }
       if (cpuCard && cpuBadge && cpuMetric && cpuOp && cpuFill) {
         const rawActiveThreads = cpuInFlight
@@ -773,34 +801,36 @@
           : (cpuWorking ? Math.max(1, Number(cpuLive.recentThreads || 1)) : 0);
         const shownThreads = cpuEnabled ? Math.min(effThreads, rawActiveThreads) : 0;
         const threadFrac = Math.max(0, Math.min(1, shownThreads / Math.max(1, effThreads)));
-        cpuMetric.textContent = shownThreads + ' / ' + effThreads + ' потоков';
+        cpuMetric.textContent = shownThreads + ' / ' + effThreads + L(' потоков', ' threads');
         if (cpuCapPct) {
-          cpuCapPct.textContent = !cpuEnabled ? 'Выкл' : (Math.round(threadFrac * 100) + '%');
+          cpuCapPct.textContent = !cpuEnabled ? L('Выкл', 'Off') : (Math.round(threadFrac * 100) + '%');
         }
         cpuMetric.title =
-          'Лимит пула: ' + effThreads + ' из ' + logCores + ' логических потоков' +
-          ' · Активно в пуле: ' + Number(cpuPool.activeWorkers || 0) +
-          ' · Пик нагрузки: ' + Math.max(Number(cpuTel.peakWorkersUsed || 0), shownThreads) + ' пот.';
+          L('Лимит пула: ', 'Pool cap: ') + effThreads + L(' из ', ' of ') + logCores + L(' логических потоков', ' logical threads') +
+          L(' · Активно в пуле: ', ' · Active in pool: ') + Number(cpuPool.activeWorkers || 0) +
+          L(' · Пик нагрузки: ', ' · Peak load: ') + Math.max(Number(cpuTel.peakWorkersUsed || 0), shownThreads) + L(' пот.', ' thr.');
         if (!cpuEnabled) {
           cpuCard.className = 'hw-optical-unit cpu-unit is-off';
-          cpuBadge.textContent = '⚪ Выкл';
-          cpuOp.textContent = 'Контур CPU-сопроцессора отключён в настройках';
+          cpuBadge.textContent = L('⚪ Выкл', '⚪ Off');
+          cpuOp.textContent = L('Контур CPU-сопроцессора отключён в настройках', 'CPU coprocessor is disabled in settings');
           cpuOp.title = '';
           cpuFill.style.setProperty('--hw-fill', '0');
         } else if (cpuWorking) {
           const liveCpuText = formatCpuLiveOpRu(cpuLive);
           const workCpuFill = Math.min(1, Math.max(threadFrac, shownThreads > 0 ? 0.08 : 0.04, 0.16 + 0.56 * cpuRatio));
           cpuCard.className = 'hw-optical-unit cpu-unit is-working';
-          cpuBadge.textContent = cpuInFlight ? '⚡ В работе' : '⚡ Завершено';
+          cpuBadge.textContent = cpuInFlight ? L('⚡ В работе', '⚡ Working') : L('⚡ Завершено', '⚡ Done');
           cpuOp.textContent = liveCpuText;
           cpuOp.title = liveCpuText;
           cpuFill.style.setProperty('--hw-fill', workCpuFill.toFixed(3));
         } else {
-          const batchStat = totalBatches > 0 ? (' · батчей: ' + totalBatches) : '';
-          const rerankStat = lastRerankMs > 0 ? (' · rerank ' + lastRerankMs + ' мс') : '';
+          const batchStat = totalBatches > 0 ? (L(' · батчей: ', ' · batches: ') + totalBatches) : '';
+          const rerankStat = lastRerankMs > 0 ? (' · rerank ' + lastRerankMs + L(' мс', ' ms')) : '';
           cpuCard.className = 'hw-optical-unit cpu-unit is-standby';
-          cpuBadge.textContent = '🟡 В фоне';
-          cpuOp.textContent = (!cpuPoolOn ? 'Пул потоков выкл · активен быстрый индекс' : 'Дежурит в пуле · внутренних задач сейчас нет') + batchStat + rerankStat;
+          cpuBadge.textContent = L('🟡 В фоне', '🟡 Standby');
+          cpuOp.textContent = (!cpuPoolOn
+            ? L('Пул потоков выкл · активен быстрый индекс', 'Thread pool off · fast index active')
+            : L('Дежурит в пуле · внутренних задач сейчас нет', 'Standing by in pool · no background tasks')) + batchStat + rerankStat;
           cpuOp.title = cpuOp.textContent;
           cpuFill.style.setProperty('--hw-fill', threadFrac > 0 ? Math.max(0.04, threadFrac).toFixed(3) : '0');
         }
@@ -887,12 +917,12 @@
         postGpu && postGpu.vramFit
       );
       if (currentState && currentState.gpuEnabled && postFit.needsModelDownload) {
-        flashStatus('Лимит ' + capGb + ' ГБ: подходящая модель не скачана — нажмите «Каскад моделей»');
+        flashStatus(L('Лимит ' + capGb + ' ГБ: подходящая модель не скачана — нажмите «Каскад моделей»', capGb + ' GB cap: no fitting model downloaded — click "Model Cascade"'));
       } else {
         const pairTxt = currentState && currentState.gpuChatModel
           ? (' · ' + currentState.gpuChatModel + ' + ' + (currentState.gpuEmbedModel || 'qwen3-embedding:0.6b'))
           : '';
-        flashStatus('Лимит VRAM: ' + capGb + ' ГБ' + pairTxt + ' ✓');
+        flashStatus(L('Лимит VRAM: ', 'VRAM limit: ') + capGb + L(' ГБ', ' GB') + pairTxt + ' ✓');
       }
     }
 
@@ -911,7 +941,7 @@
     async function saveExpertGpuConfig() {
       const ep = String((document.getElementById('inp-gpuEndpoint') || {}).value || '').trim();
       if (ep && !/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\]|::1)(:\d+)?(\/|$)/i.test(ep)) {
-        flashStatus('Ошибка: gpuEndpoint разрешён только для localhost/127.0.0.1!');
+        flashStatus(L('Ошибка: gpuEndpoint разрешён только для localhost/127.0.0.1!', 'Error: gpuEndpoint is only allowed for localhost/127.0.0.1!'));
         return;
       }
       const patch = {
@@ -926,18 +956,18 @@
       if (typeof clearExpertGpuInputsDirty === 'function') clearExpertGpuInputsDirty();
       const saved = await updateState(patch);
       if (saved) {
-        flashStatus('Параметры Ollama и RAM сохранены ✓');
+        flashStatus(L('Параметры Ollama и RAM сохранены ✓', 'Ollama & RAM settings saved ✓'));
       }
     }
 
     async function runGpuPanelAction(action) {
       const msgMap = {
-        warm: 'Индексация проекта в векторный поиск на GPU...',
-        unload: 'Выгрузка нейросетей из видеопамяти...',
-        test_distill: 'Тестовое сжатие лога на локальной GPU...',
+        warm: L('Индексация проекта в векторный поиск на GPU...', 'Indexing workspace for GPU semantic search...'),
+        unload: L('Выгрузка нейросетей из видеопамяти...', 'Unloading models from GPU VRAM...'),
+        test_distill: L('Тестовое сжатие лога на локальной GPU...', 'Testing log distillation on local GPU...'),
       };
       try {
-        flashStatus(msgMap[action] || 'Выполнение GPU-операции...');
+        flashStatus(msgMap[action] || L('Выполнение GPU-операции...', 'Running GPU operation...'));
         const res = await panelFetch('/api/gpu', {
           method: 'POST',
           body: JSON.stringify({ action: action }),
@@ -945,25 +975,25 @@
         const data = await res.json();
         if (res && res.ok && data && data.ok !== false && !data.error) {
           if (action === 'test_distill') {
-            flashStatus('GPU-тест OK (' + (data.latencyMs || 0) + ' мс) ✓');
+            flashStatus(L('GPU-тест OK (', 'GPU test OK (') + (data.latencyMs || 0) + L(' мс) ✓', ' ms) ✓'));
           } else if (action === 'unload') {
-            flashStatus('VRAM освобождена ✓');
+            flashStatus(L('VRAM освобождена ✓', 'VRAM freed ✓'));
           } else {
-            flashStatus('Проиндексировано: ' + (data.totalFiles || 0) + ' файлов ✓');
+            flashStatus(L('Проиндексировано: ', 'Indexed: ') + (data.totalFiles || 0) + L(' файлов ✓', ' files ✓'));
           }
           await refreshAll();
         } else {
-          flashStatus('GPU: ' + (data && data.error ? data.error : 'ошибка'));
+          flashStatus('GPU: ' + (data && data.error ? data.error : L('ошибка', 'error')));
         }
       } catch (err) {
         console.error(err);
-        flashStatus('Ошибка обращения к локальной GPU!');
+        flashStatus(L('Ошибка обращения к локальной GPU!', 'Error contacting local GPU!'));
       }
     }
 
     async function backupProfile() {
       try {
-        flashStatus('Сохранение слепка профиля...');
+        flashStatus(L('Сохранение слепка профиля...', 'Saving profile backup...'));
         const res = await panelFetch('/api/profile-backup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -971,19 +1001,19 @@
         });
         const result = await res.json();
         if (res && res.ok && result && result.ok && !result.error) {
-          flashStatus('Слепок сохранён ✓ (' + result.keysSaved + ' настроек)');
+          flashStatus(L('Слепок сохранён ✓ (', 'Backup saved ✓ (') + result.keysSaved + L(' настроек)', ' settings)'));
         } else {
-          flashStatus('Ошибка: ' + (result ? (result.error || 'сбой бэкапа') : 'сбой'));
+          flashStatus(L('Ошибка: ', 'Error: ') + (result ? (result.error || L('сбой бэкапа', 'backup failed')) : L('сбой', 'failed')));
         }
       } catch (err) {
         console.error(err);
-        flashStatus('Ошибка сохранения слепка!');
+        flashStatus(L('Ошибка сохранения слепка!', 'Error saving backup!'));
       }
     }
 
     async function restoreProfile() {
       try {
-        flashStatus('Восстановление профиля...');
+        flashStatus(L('Восстановление профиля...', 'Restoring profile...'));
         const res = await panelFetch('/api/profile-backup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -991,20 +1021,20 @@
         });
         const result = await res.json();
         if (res && res.ok && result && result.ok && !result.error) {
-          flashStatus('Профиль восстановлен ✓ (' + result.restoredKeys + ' настроек)');
+          flashStatus(L('Профиль восстановлен ✓ (', 'Profile restored ✓ (') + result.restoredKeys + L(' настроек)', ' settings)'));
           await refreshAll();
         } else {
-          flashStatus('Ошибка: ' + (result ? (result.error || 'слепок не найден') : 'сбой'));
+          flashStatus(L('Ошибка: ', 'Error: ') + (result ? (result.error || L('слепок не найден', 'backup not found')) : L('сбой', 'failed')));
         }
       } catch (err) {
         console.error(err);
-        flashStatus('Ошибка восстановления профиля!');
+        flashStatus(L('Ошибка восстановления профиля!', 'Error restoring profile!'));
       }
     }
 
     async function autoCalibrateHardware() {
       try {
-        flashStatus('Сканирование железа ПК и авто-калибровка лимитов...');
+        flashStatus(L('Сканирование железа ПК и авто-калибровка лимитов...', 'Scanning PC hardware and auto-calibrating limits...'));
         const res = await panelFetch('/api/hardware', {
           method: 'POST',
           body: JSON.stringify({ action: 'auto_apply', subscriptionTier: currentState.subscriptionTier || 'pro' }),
@@ -1013,13 +1043,13 @@
         if (res && res.ok && data && data.ok && !data.error) {
           if (data.hardwareProfile) currentHardwareProfile = data.hardwareProfile;
           await refreshAll();
-          flashStatus('Лимиты CPU / RAM / GPU адаптированы под ваш ПК ✓');
+          flashStatus(L('Лимиты CPU / RAM / GPU адаптированы под ваш ПК ✓', 'CPU / RAM / GPU limits calibrated for your PC ✓'));
         } else {
-          flashStatus('Ошибка калибровки: ' + (data && data.error ? data.error : 'сбой'));
+          flashStatus(L('Ошибка калибровки: ', 'Calibration error: ') + (data && data.error ? data.error : L('сбой', 'failed')));
         }
       } catch (err) {
         console.error(err);
-        flashStatus('Ошибка обращения к сканеру железа!');
+        flashStatus(L('Ошибка обращения к сканеру железа!', 'Error accessing hardware profiler!'));
       }
     }
 
@@ -1040,7 +1070,7 @@
       const valEl = trigger.querySelector('.lg-select-trigger-text');
       const selectedOpt = sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex] : null;
       const labelText = selectedOpt ? String(selectedOpt.textContent || selectedOpt.value || '') : String(sel.value || '');
-      if (valEl) valEl.textContent = labelText || 'Выбрать модель';
+      if (valEl) valEl.textContent = labelText || L('Выбрать модель', 'Select model');
     }
 
     function highlightCustomSelectOption(idx) {
@@ -1171,7 +1201,7 @@
         emptyEl.style.padding = '8px 10px';
         emptyEl.style.fontSize = '11px';
         emptyEl.style.color = 'var(--text-muted)';
-        emptyEl.textContent = 'Нет доступных моделей';
+        emptyEl.textContent = L('Нет доступных моделей', 'No available models');
         menu.appendChild(emptyEl);
       }
 
@@ -1344,33 +1374,43 @@
 
       box.style.display = 'flex';
       const estGbText = vramFit.selectedChatEstVramMb > 0
-        ? (' (~' + (vramFit.selectedChatEstVramMb / 1024).toFixed(1) + ' ГБ в VRAM)')
+        ? (' (~' + (vramFit.selectedChatEstVramMb / 1024).toFixed(1) + L(' ГБ в VRAM)', ' GB in VRAM)'))
         : '';
 
       if (vramFit.needsModelDownload) {
-        titleEl.textContent = '⚠️ Нет подходящей модели под лимит ' + vramFit.capGb + ' ГБ VRAM';
-        descEl.textContent =
+        titleEl.textContent = L('⚠️ Нет подходящей модели под лимит ', '⚠️ No compatible model for ') + vramFit.capGb + L(' ГБ VRAM', ' GB VRAM limit');
+        descEl.textContent = L(
           'Выбранная модель ' + vramFit.selectedChatModel + estGbText +
           ' не помещается в лимит ' + vramFit.capGb + ' ГБ — её загрузка строго заблокирована, сжатие переведено на CPU. ' +
-          'Скачайте компактную модель (например, ' + vramFit.recommendedPullModel + ').';
+          'Скачайте компактную модель (например, ' + vramFit.recommendedPullModel + ').',
+          'Selected model ' + vramFit.selectedChatModel + estGbText +
+          ' exceeds the ' + vramFit.capGb + ' GB limit — loading is blocked and distillation switched to CPU. ' +
+          'Download a compact model (e.g. ' + vramFit.recommendedPullModel + ').'
+        );
         if (fallbackBtn) fallbackBtn.style.display = 'none';
-        if (promptBtn) promptBtn.textContent = '💬 Подобрать в чате';
+        if (promptBtn) promptBtn.textContent = L('💬 Подобрать в чате', '💬 Pick in chat');
       } else if (!vramFit.selectedChatFits && vramFit.bestFallbackChatModel) {
-        titleEl.textContent = '⚠️ Модель ' + vramFit.selectedChatModel + ' превышает лимит ' + vramFit.capGb + ' ГБ VRAM';
-        descEl.textContent =
+        titleEl.textContent = L('⚠️ Модель ', '⚠️ Model ') + vramFit.selectedChatModel + L(' превышает лимит ', ' exceeds ') + vramFit.capGb + L(' ГБ VRAM', ' GB VRAM limit');
+        descEl.textContent = L(
           'Модель требует' + (estGbText || (' > ' + vramFit.capGb + ' ГБ')) +
-          '. Для работы в пределах лимита переключитесь на скачанную ' + vramFit.bestFallbackChatModel + '.';
+          '. Для работы в пределах лимита переключитесь на скачанную ' + vramFit.bestFallbackChatModel + '.',
+          'Model requires' + (estGbText || (' > ' + vramFit.capGb + ' GB')) +
+          '. To stay within budget, switch to downloaded ' + vramFit.bestFallbackChatModel + '.'
+        );
         if (fallbackBtn) {
           fallbackBtn.style.display = 'inline-flex';
           fallbackBtn.setAttribute('data-arg', vramFit.bestFallbackChatModel);
-          fallbackBtn.textContent = 'Включить ' + vramFit.bestFallbackChatModel;
+          fallbackBtn.textContent = L('Включить ', 'Use ') + vramFit.bestFallbackChatModel;
         }
-        if (promptBtn) promptBtn.textContent = '💬 Подобрать в чате';
+        if (promptBtn) promptBtn.textContent = L('💬 Подобрать в чате', '💬 Pick in chat');
       } else if (vramFit.overBudgetLoaded) {
-        titleEl.textContent = '⚠️ В VRAM занято ' + (vramFit.loadedVramMb / 1024).toFixed(1) + ' ГБ при лимите ' + vramFit.capGb + ' ГБ';
-        descEl.textContent = 'В видеопамяти остаётся тяжёлая модель сверх установленного лимита — выгрузите её или подберите более лёгкую модель.';
+        titleEl.textContent = L('⚠️ В VRAM занято ', '⚠️ VRAM usage is ') + (vramFit.loadedVramMb / 1024).toFixed(1) + L(' ГБ при лимите ', ' GB over ') + vramFit.capGb + L(' ГБ', ' GB cap');
+        descEl.textContent = L(
+          'В видеопамяти остаётся тяжёлая модель сверх установленного лимита — выгрузите её или подберите более лёгкую модель.',
+          'A heavy model remains loaded above your VRAM limit — unload it or select a lighter model.'
+        );
         if (fallbackBtn) fallbackBtn.style.display = 'none';
-        if (promptBtn) promptBtn.textContent = '💬 Подобрать в чате';
+        if (promptBtn) promptBtn.textContent = L('💬 Подобрать в чате', '💬 Pick in chat');
       }
     }
 
@@ -1407,10 +1447,10 @@
       if (toolbarBtn) {
         toolbarBtn.disabled = isActive;
         if (showCascadeBtn) {
-          toolbarBtn.textContent = '⬇️ Докачать каскад (' + missingCount + (missingGb > 0 ? (' · ~' + missingGb.toFixed(1) + ' ГБ') : '') + ')';
+          toolbarBtn.textContent = L('⬇️ Докачать каскад (', '⬇️ Pull missing cascade (') + missingCount + (missingGb > 0 ? (' · ~' + missingGb.toFixed(1) + L(' ГБ', ' GB')) : '') + ')';
           toolbarBtn.title = missingModels.length > 0
-            ? ('Не скачаны модели каскада: ' + missingModels.join(', ') + ' — нажмите, чтобы скачать в фоне')
-            : 'Скачать недостающие модели каскада под все лимиты вашей видеокарты (с автофоллбэком на Hugging Face)';
+            ? (L('Не скачаны модели каскада: ', 'Missing cascade models: ') + missingModels.join(', ') + L(' — нажмите, чтобы скачать в фоне', ' — click to download in background'))
+            : L('Скачать недостающие модели каскада под все лимиты вашей видеокарты (с автофоллбэком на Hugging Face)', 'Download missing cascade models for your VRAM limits (with Hugging Face fallback)');
         }
       }
       if (!box) return;
@@ -1420,7 +1460,7 @@
         pullStatus &&
         pullStatus.finishedAt &&
         (Date.now() - Number(pullStatus.finishedAt || 0)) < 12000 &&
-        pullStatus.statusText
+        (pullStatus.statusText || pullStatus.statusTextEn)
       );
       if (!isActive && !recentlyFinished) {
         box.style.display = 'none';
@@ -1437,22 +1477,23 @@
 
       if (titleEl) {
         titleEl.textContent = isActive
-          ? ('⬇️ Загрузка каскада моделей (' + Math.min(done + 1, total) + '/' + total + ')')
-          : (pullStatus.error ? '⚠️ Загрузка каскада завершена с ошибками' : '✓ Каскад моделей готов');
+          ? (L('⬇️ Загрузка каскада моделей (', '⬇️ Downloading model cascade (') + Math.min(done + 1, total) + '/' + total + ')')
+          : (pullStatus.error ? L('⚠️ Загрузка каскада завершена с ошибками', '⚠️ Model cascade finished with errors') : L('✓ Каскад моделей готов', '✓ Model cascade ready'));
       }
       if (fillEl) {
         fillEl.style.width = overallPct + '%';
       }
       if (subEl) {
         const srcBadge = pullStatus.source === 'huggingface' ? ' [Hugging Face]' : (pullStatus.source === 'ollama' ? ' [Ollama]' : '');
-        subEl.textContent = (pullStatus.statusText || 'Выполняется загрузка...') + srcBadge + (pullStatus.error && !isActive ? (' · ' + pullStatus.error) : '');
+        const stText = pickText(pullStatus, 'statusText', 'statusTextEn', L('Выполняется загрузка...', 'Downloading...'));
+        subEl.textContent = stText + srcBadge + (pullStatus.error && !isActive ? (' · ' + pullStatus.error) : '');
       }
     }
 
     async function startGpuCascadePull(mode, selectedCapMb) {
       try {
         const pullMode = mode === 'active_only' ? 'active_only' : 'cascade';
-        flashStatus('Запуск загрузки каскада моделей...');
+        flashStatus(L('Запуск загрузки каскада моделей...', 'Starting model cascade download...'));
         const res = await panelFetch('/api/gpu', {
           method: 'POST',
           body: JSON.stringify({
@@ -1465,16 +1506,16 @@
         if (data && data.ok) {
           renderGpuCascadePullStatus(data.pullStatus);
           if (data.pullStatus && data.pullStatus.active) {
-            flashStatus('Каскад моделей качается в фоне...');
+            flashStatus(L('Каскад моделей качается в фоне...', 'Model cascade downloading in background...'));
             scheduleTelemetryPoll();
-          } else if (data.pullStatus && data.pullStatus.statusText) {
-            flashStatus(data.pullStatus.statusText);
+          } else if (data.pullStatus && (data.pullStatus.statusText || data.pullStatus.statusTextEn)) {
+            flashStatus(pickText(data.pullStatus, 'statusText', 'statusTextEn', ''));
           }
         } else {
-          flashStatus('Ошибка запуска загрузки: ' + (data && data.error ? data.error : 'неизвестно'));
+          flashStatus(L('Ошибка запуска загрузки: ', 'Download start failed: ') + (data && data.error ? data.error : L('неизвестно', 'unknown')));
         }
       } catch (e) {
-        flashStatus('Ошибка связи с сервером панели');
+        flashStatus(L('Ошибка связи с сервером панели', 'Panel server connection error'));
       }
     }
 
@@ -1487,7 +1528,7 @@
         const data = await res.json();
         if (data && data.ok) {
           renderGpuCascadePullStatus(data.pullStatus);
-          flashStatus('Загрузка каскада отменена');
+          flashStatus(L('Загрузка каскада отменена', 'Cascade download cancelled'));
         }
       } catch {}
     }
@@ -1518,15 +1559,15 @@
           if (!name || seen.has(name)) return;
           seen.add(name);
           const vramMb = loadedMap.get(name) || 0;
-          const sizeText = Number(m.sizeGb) > 0 ? (Number(m.sizeGb).toFixed(1) + ' ГБ') : '';
-          const vramText = vramMb > 0 ? ('VRAM ' + (vramMb / 1024).toFixed(1) + ' ГБ') : '';
+          const sizeText = Number(m.sizeGb) > 0 ? (Number(m.sizeGb).toFixed(1) + L(' ГБ', ' GB')) : '';
+          const vramText = vramMb > 0 ? ('VRAM ' + (vramMb / 1024).toFixed(1) + L(' ГБ', ' GB')) : '';
           const parts = [];
           if (sizeText) parts.push(sizeText);
-          if (vramMb > 0) parts.push('в VRAM ' + (vramMb / 1024).toFixed(1) + ' ГБ');
+          if (vramMb > 0) parts.push(L('в VRAM ', 'in VRAM ') + (vramMb / 1024).toFixed(1) + L(' ГБ', ' GB'));
           if (checkBudget && chatBudgetMb > 0) {
             const estMb = estimateClientModelVramMb(name, downloaded, loadedMap);
             if (estMb > chatBudgetMb + 128) {
-              parts.push('⚠️ > ' + capGb + ' ГБ');
+              parts.push('⚠️ > ' + capGb + L(' ГБ', ' GB'));
             }
           }
           const label = parts.length > 0 ? (name + ' (' + parts.join(' · ') + ')') : name;
@@ -1534,16 +1575,16 @@
         });
         if (currentVal && !seen.has(currentVal)) {
           const vramMb = loadedMap.get(currentVal) || 0;
-          const vramText = vramMb > 0 ? ('VRAM ' + (vramMb / 1024).toFixed(1) + ' ГБ') : '';
-          const missingText = vramMb <= 0 && oll && oll.running ? 'не скачана' : '';
+          const vramText = vramMb > 0 ? ('VRAM ' + (vramMb / 1024).toFixed(1) + L(' ГБ', ' GB')) : '';
+          const missingText = vramMb <= 0 && oll && oll.running ? L('не скачана', 'not downloaded') : '';
           const estMb = checkBudget && chatBudgetMb > 0 ? estimateClientModelVramMb(currentVal, downloaded, loadedMap) : 0;
-          const overTag = estMb > chatBudgetMb + 128 ? (' · ⚠️ > ' + capGb + ' ГБ') : '';
+          const overTag = estMb > chatBudgetMb + 128 ? (' · ⚠️ > ' + capGb + L(' ГБ', ' GB')) : '';
           const suffix = vramMb > 0
-            ? (' (в VRAM ' + (vramMb / 1024).toFixed(1) + ' ГБ' + overTag + ')')
+            ? (L(' (в VRAM ', ' (in VRAM ') + (vramMb / 1024).toFixed(1) + L(' ГБ', ' GB') + overTag + ')')
             : (missingText ? (' (' + missingText + overTag + ')') : (overTag ? (' (' + overTag.replace(/^ · /, '') + ')') : ''));
           opts.unshift({ value: currentVal, label: currentVal + suffix, sizeText: '', vramText: vramText, missingText: missingText });
         }
-        const sig = currentVal + '|' + opts.map(function (o) { return o.value + ':' + o.label; }).join(';');
+        const sig = getUiLanguage() + '|' + currentVal + '|' + opts.map(function (o) { return o.value + ':' + o.label; }).join(';');
         if (_openCustomSelectId === selId || document.activeElement === sel) return;
         if (sel.getAttribute('data-opts-sig') !== sig) {
           sel.innerHTML = '';
@@ -1580,7 +1621,7 @@
       patch[key] = clean;
       const saved = await updateState(patch);
       if (saved) {
-        flashStatus('Модель GPU выбрана: ' + clean + ' ✓');
+        flashStatus(L('Модель GPU выбрана: ', 'GPU model selected: ') + clean + ' ✓');
       }
     }
 
@@ -1708,17 +1749,17 @@
                 _activeFallbackSidecarConvId = targetCid;
                 focusSidecarConversationIfPossible(targetCid);
               }
-              const msgNew = newChatStatus || 'Открыт новый чат и отправлен запрос ✓';
+              const msgNew = newChatStatus || L('Открыт новый чат и отправлен запрос ✓', 'Opened a new chat and sent prompt ✓');
               flashStatus(msgNew);
               return { sent: true, copied: false, mode: 'new_conversation', conversationId: targetCid, statusText: msgNew, queue: data.queue || null };
             }
-            const msgSent = sentStatus || 'Запрос отправлен в активный чат ✓';
+            const msgSent = sentStatus || L('Запрос отправлен в активный чат ✓', 'Prompt sent to active chat ✓');
             flashStatus(msgSent);
             return { sent: true, copied: false, mode: 'existing_conversation', conversationId: targetCid, statusText: msgSent, queue: data.queue || null };
           }
           if (data && data.error) lastErr = String(data.error);
           if (data && data.dropped) {
-            return { sent: false, copied: false, dropped: true, mode: 'dropped', conversationId: '', statusText: lastErr || 'Старая задача сброшена очередью', error: lastErr, queue: data.queue || null };
+            return { sent: false, copied: false, dropped: true, mode: 'dropped', conversationId: '', statusText: lastErr || L('Старая задача сброшена очередью', 'Old queued task dropped'), error: lastErr, queue: data.queue || null };
           }
         }
       } catch (err) {
@@ -1730,7 +1771,7 @@
         try {
           if (directConvId && typeof window.sidecar.agent.sendMessage === 'function') {
             await window.sidecar.agent.sendMessage(promptText, directConvId);
-            const msgDirect = sentStatus || 'Запрос отправлен в активный чат ✓';
+            const msgDirect = sentStatus || L('Запрос отправлен в активный чат ✓', 'Prompt sent to active chat ✓');
             flashStatus(msgDirect);
             return { sent: true, copied: false, mode: 'existing_conversation', conversationId: directConvId, statusText: msgDirect };
           }
@@ -1741,7 +1782,7 @@
               _activeFallbackSidecarConvId = startedCid;
               focusSidecarConversationIfPossible(startedCid);
             }
-            const msgStarted = newChatStatus || 'Открыт новый чат и отправлен запрос ✓';
+            const msgStarted = newChatStatus || L('Открыт новый чат и отправлен запрос ✓', 'Opened a new chat and sent prompt ✓');
             flashStatus(msgStarted);
             return { sent: true, copied: false, mode: 'new_conversation', conversationId: startedCid, statusText: msgStarted };
           }
@@ -1753,8 +1794,8 @@
 
       const copied = await copyTextToClipboardSafe(promptText);
       const fallbackMsg = copied
-        ? (copiedStatus || 'Текст скопирован в буфер — вставьте в чат (Ctrl+V) ✓')
-        : ('Не удалось отправить в чат' + (lastErr ? (': ' + lastErr) : ' — откройте активный чат и повторите'));
+        ? (copiedStatus || L('Текст скопирован в буфер — вставьте в чат (Ctrl+V) ✓', 'Copied to clipboard — paste in chat (Ctrl+V) ✓'))
+        : (L('Не удалось отправить в чат', 'Failed to send to chat') + (lastErr ? (': ' + lastErr) : L(' — откройте активный чат и повторите', ' — open an active chat and retry')));
       flashStatus(fallbackMsg);
       return { sent: false, copied: copied, mode: 'clipboard', conversationId: '', statusText: fallbackMsg, error: lastErr };
     }
@@ -1768,7 +1809,7 @@
       const capMb = Number((currentState && currentState.gpuMaxVramMb) || 4096);
       const capGb = Math.max(2, Math.round(capMb / 1024));
       try {
-        flashStatus('Подготовка запроса на подбор модели под ' + capGb + ' ГБ VRAM...');
+        flashStatus(L('Подготовка запроса на подбор модели под ', 'Preparing model fit request for ') + capGb + L(' ГБ VRAM...', ' GB VRAM...'));
         const res = await panelFetch('/api/hardware', {
           method: 'POST',
           body: JSON.stringify({
@@ -1784,33 +1825,39 @@
           const oll = (snapGpu && snapGpu.ollama) || {};
           const installed = Array.isArray(oll.downloadedModels)
             ? oll.downloadedModels.map(function (m) { return m.name + (m.sizeGb ? (' (' + m.sizeGb + ' GB)') : ''); }).join(', ')
-            : 'не обнаружены';
+            : L('не обнаружены', 'none detected');
           const curChat = String((currentState && currentState.gpuChatModel) || 'gemma4:12b');
           const curEmbed = String((currentState && currentState.gpuEmbedModel) || 'qwen3-embedding:0.6b');
           const recModel = capMb < 11264 ? 'qwen3:4b' : 'gemma4:12b';
-          promptText = [
-            'Я ограничил лимит видеопамяти до **' + capGb + ' ГБ (' + capMb + ' МБ)**, но среди установленных моделей Ollama (' + installed + ') нет чат-модели, которая помещается в этот лимит вместе с `' + curEmbed + '` (текущая `' + curChat + '` заблокирована).',
-            '1. Подбери 2–3 компактные модели Ollama для роли `gpuChatModel` (сжатие логов и кода), которые гарантированно влезут в **' + capGb + ' ГБ VRAM** вместе с `' + curEmbed + '` (например, `' + recModel + '` или аналоги), укажи команды `ollama pull ...`.',
-            '2. После моего подтверждения скачай выбранную модель и обнови `gpuChatModel` в `~/.gemini/config/plugins/antigravity-model-router/router-state.json`, не изменяя исходный код плагина.'
-          ].join('\n');
+          promptText = isRu()
+            ? [
+                'Я ограничил лимит видеопамяти до **' + capGb + ' ГБ (' + capMb + ' МБ)**, но среди установленных моделей Ollama (' + installed + ') нет чат-модели, которая помещается в этот лимит вместе с `' + curEmbed + '` (текущая `' + curChat + '` заблокирована).',
+                '1. Подбери 2–3 компактные модели Ollama для роли `gpuChatModel` (сжатие логов и кода), которые гарантированно влезут в **' + capGb + ' ГБ VRAM** вместе с `' + curEmbed + '` (например, `' + recModel + '` или аналоги), укажи команды `ollama pull ...`.',
+                '2. После моего подтверждения скачай выбранную модель и обнови `gpuChatModel` в `~/.gemini/config/plugins/antigravity-model-router/router-state.json`, не изменяя исходный код плагина.'
+              ].join('\n')
+            : [
+                'I set my GPU VRAM cap to **' + capGb + ' GB (' + capMb + ' MB)**, but none of the installed Ollama models (' + installed + ') fit within this cap alongside `' + curEmbed + '` (current `' + curChat + '` is blocked).',
+                '1. Recommend 2–3 compact Ollama models for `gpuChatModel` (log distillation and code analysis) that fit safely into **' + capGb + ' GB VRAM** together with `' + curEmbed + '` (e.g. `' + recModel + '` or equivalents), and provide `ollama pull ...` commands.',
+                '2. After my confirmation, pull the chosen model and update `gpuChatModel` in `~/.gemini/config/plugins/antigravity-model-router/router-state.json` without modifying plugin source code.'
+              ].join('\n');
         }
         if (data && data.hardwareProfile) {
           currentHardwareProfile = data.hardwareProfile;
         }
         await dispatchPromptToChatOrClipboard(
           promptText,
-          'Запрос на подбор модели под ' + capGb + ' ГБ отправлен в активный чат ✓',
-          'Активный чат недоступен — запрос подбора модели скопирован в буфер ✓'
+          L('Запрос на подбор модели под ' + capGb + ' ГБ отправлен в активный чат ✓', 'Model fit request for ' + capGb + ' GB sent to active chat ✓'),
+          L('Активный чат недоступен — запрос подбора модели скопирован в буфер ✓', 'Active chat unavailable — model fit prompt copied to clipboard ✓')
         );
       } catch (err) {
         console.error(err);
-        flashStatus('Ошибка подготовки запроса подбора модели');
+        flashStatus(L('Ошибка подготовки запроса подбора модели', 'Error preparing model fit prompt'));
       }
     }
 
     async function prepareModelSearchPrompt() {
       try {
-        flashStatus('Сбор списка моделей Ollama и параметров GPU...');
+        flashStatus(L('Сбор списка моделей Ollama и параметров GPU...', 'Collecting Ollama models and GPU specs...'));
         const res = await panelFetch('/api/hardware', {
           method: 'POST',
           body: JSON.stringify({
@@ -1821,7 +1868,7 @@
         });
         const data = await res.json();
         if (!data || !data.ok || !data.promptText) {
-          flashStatus('Не удалось сформировать задание поиска моделей');
+          flashStatus(L('Не удалось сформировать задание поиска моделей', 'Failed to prepare model search prompt'));
           return;
         }
         if (data.hardwareProfile) {
@@ -1829,18 +1876,18 @@
         }
         await dispatchPromptToChatOrClipboard(
           data.promptText,
-          'Запрос на поиск актуальных моделей отправлен в активный чат ✓',
-          'Активный чат недоступен — запрос скопирован в буфер, вставьте его в чат ✓'
+          L('Запрос на поиск актуальных моделей отправлен в активный чат ✓', 'Model search request sent to active chat ✓'),
+          L('Активный чат недоступен — запрос скопирован в буфер, вставьте его в чат ✓', 'Active chat unavailable — prompt copied to clipboard ✓')
         );
       } catch (err) {
         console.error(err);
-        flashStatus('Ошибка подготовки поиска моделей');
+        flashStatus(L('Ошибка подготовки поиска моделей', 'Error preparing model search'));
       }
     }
 
     async function sendHardwareTunePrompt() {
       try {
-        flashStatus('Сборка паспорта системы для ИИ-оптимизации...');
+        flashStatus(L('Сборка паспорта системы для ИИ-оптимизации...', 'Building hardware passport for AI tuning...'));
         const res = await panelFetch('/api/hardware', {
           method: 'POST',
           body: JSON.stringify({
@@ -1851,7 +1898,7 @@
         });
         const data = await res.json();
         if (!data || !data.ok || !data.promptText) {
-          flashStatus('Не удалось сформировать промпт диагностики');
+          flashStatus(L('Не удалось сформировать промпт диагностики', 'Failed to generate diagnostic prompt'));
           return;
         }
         if (data.hardwareProfile) {
@@ -1863,12 +1910,12 @@
         }
         await dispatchPromptToChatOrClipboard(
           data.promptText,
-          'Паспорт ПК отправлен в активный чат для ИИ-оптимизации ✓',
-          'Промпт скопирован в буфер! Откройте новый чат и нажмите Вставить ✓'
+          L('Паспорт ПК отправлен в активный чат для ИИ-оптимизации ✓', 'PC hardware passport sent to active chat ✓'),
+          L('Промпт скопирован в буфер! Откройте новый чат и нажмите Вставить ✓', 'Prompt copied to clipboard! Open a new chat and paste ✓')
         );
       } catch (err) {
         console.error(err);
-        flashStatus('Сбой отправки промпта диагностики');
+        flashStatus(L('Сбой отправки промпта диагностики', 'Failed to send diagnostic prompt'));
       }
     }
 

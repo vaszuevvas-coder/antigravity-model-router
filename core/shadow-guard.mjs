@@ -484,18 +484,19 @@ function computeLineDiffStats(beforeText = '', afterText = '') {
  * @param {string} [workspaceRoot=''] Опциональный фильтр по воркспейсу для 'latest'.
  * @returns {{ ok: boolean, checkpoint?: object, error?: string }} Результат отката.
  */
-export function rollbackCheckpoint(checkpointId = 'latest', workspaceRoot = '') {
+export function rollbackCheckpoint(checkpointId = 'latest', workspaceRoot = '', { lang = 'ru' } = {}) {
+  const isEn = String(lang || '').trim().toLowerCase() === 'en';
   const cleanId = safeStr(checkpointId, 128).trim();
   const rawWs = safeStr(workspaceRoot, 1024).trim();
   const cleanWs = rawWs === '__all__' ? '' : rawWs;
   if (!cleanId || BLOCKED_KEYS.has(cleanId)) {
-    return { ok: false, error: 'Некорректный checkpointId' };
+    return { ok: false, error: isEn ? 'Invalid checkpointId' : 'Некорректный checkpointId' };
   }
   ensureStorage();
   const lockOutcome = withFileLockSync(INDEX_FILE, () => {
     const list = loadIndex();
     if (list.length === 0) {
-      return { ok: false, error: 'Список чекпоинтов пуст' };
+      return { ok: false, error: isEn ? 'Checkpoints list is empty' : 'Список чекпоинтов пуст' };
     }
 
     let checkpoint = null;
@@ -504,7 +505,7 @@ export function rollbackCheckpoint(checkpointId = 'latest', workspaceRoot = '') 
         ? list.filter((c) => matchesWorkspaceCheckpoint(c, cleanWs))
         : list;
       if (candidates.length === 0) {
-        return { ok: false, error: 'Чекпоинты для текущего воркспейса не найдены' };
+        return { ok: false, error: isEn ? 'No checkpoints found for current workspace' : 'Чекпоинты для текущего воркспейса не найдены' };
       }
       checkpoint = candidates.find((c) => !c.restored) || candidates[0];
     } else {
@@ -512,7 +513,7 @@ export function rollbackCheckpoint(checkpointId = 'latest', workspaceRoot = '') 
     }
 
     if (!checkpoint) {
-      return { ok: false, error: `Чекпоинт не найден: ${cleanId}` };
+      return { ok: false, error: isEn ? `Checkpoint not found: ${cleanId}` : `Чекпоинт не найден: ${cleanId}` };
     }
 
     try {
@@ -521,12 +522,14 @@ export function rollbackCheckpoint(checkpointId = 'latest', workspaceRoot = '') 
         if (!hasBackup) {
           return {
             ok: false,
-            error: `Файл ${checkpoint.fileName} превышал лимит теневой копии (>2 МБ) или был занят при создании снимка; откат отменён для защиты данных`,
+            error: isEn
+              ? `File ${checkpoint.fileName} exceeded shadow backup limit (>2 MB) or was locked during snapshot; rollback cancelled to protect data`
+              : `Файл ${checkpoint.fileName} превышал лимит теневой копии (>2 МБ) или был занят при создании снимка; откат отменён для защиты данных`,
           };
         }
         const bakPath = join(CHECKPOINTS_DIR, `${checkpoint.id}.bak`);
         if (!existsSync(bakPath)) {
-          return { ok: false, error: `Файл снимка ${checkpoint.id}.bak отсутствует` };
+          return { ok: false, error: isEn ? `Snapshot file ${checkpoint.id}.bak is missing` : `Файл снимка ${checkpoint.id}.bak отсутствует` };
         }
         mkdirSync(dirname(checkpoint.filePath), { recursive: true });
         copyFileSync(bakPath, checkpoint.filePath);
@@ -613,6 +616,7 @@ export function listTurnCheckpoints(limit = 12, workspaceRoot = '') {
         workspaceRoot: effectiveWs,
         projectName: effectiveWs ? basename(effectiveWs) : '',
         turnLabel: safeStr(cp.turnLabel, 120) || (cp.fileName ? `Правка ${cp.fileName}` : 'Правка файлов'),
+        turnLabelEn: safeStr(cp.turnLabelEn || cp.turnLabel, 120) || (cp.fileName ? `Edit ${cp.fileName}` : 'File edits'),
         timestamp: cp.timestamp || new Date().toISOString(),
         conversationId: safeStr(cp.conversationId, 128),
         filesSet: new Set(),
@@ -634,6 +638,7 @@ export function listTurnCheckpoints(limit = 12, workspaceRoot = '') {
       workspaceRoot: grp.workspaceRoot,
       projectName: grp.projectName,
       turnLabel: grp.turnLabel,
+      turnLabelEn: grp.turnLabelEn,
       timestamp: grp.timestamp,
       conversationId: grp.conversationId,
       filesCount: grp.filesSet.size,
@@ -656,23 +661,25 @@ function resolveTurnKeyMatch(cp, turnId) {
  * Вычисляет сводку изменений (diff summary) всех файлов относительно состояния до начала хода.
  * @param {string} [turnId='latest']
  * @param {string} [workspaceRoot='']
+ * @param {{ lang?: 'en'|'ru' }} [opts={}]
  * @returns {object}
  */
-export function getTurnDiffSummary(turnId = 'latest', workspaceRoot = '') {
+export function getTurnDiffSummary(turnId = 'latest', workspaceRoot = '', { lang = 'ru' } = {}) {
+  const isEn = String(lang || '').trim().toLowerCase() === 'en';
   if (typeof turnId !== 'string' || (workspaceRoot !== undefined && typeof workspaceRoot !== 'string')) {
-    return { ok: false, error: 'Некорректный turnId', files: [] };
+    return { ok: false, error: isEn ? 'Invalid turnId' : 'Некорректный turnId', files: [] };
   }
   const cleanTurnArg = safeStr(turnId, 128).trim();
   const rawWs = safeStr(workspaceRoot, 1024).trim();
   const cleanWs = rawWs === '__all__' ? '' : rawWs;
   if (!cleanTurnArg || BLOCKED_KEYS.has(cleanTurnArg)) {
-    return { ok: false, error: 'Некорректный turnId', files: [] };
+    return { ok: false, error: isEn ? 'Invalid turnId' : 'Некорректный turnId', files: [] };
   }
 
   const list = loadIndex();
   const candidates = cleanWs ? list.filter((c) => matchesWorkspaceCheckpoint(c, cleanWs)) : list;
   if (candidates.length === 0) {
-    return { ok: false, error: 'Снимки не найдены', files: [] };
+    return { ok: false, error: isEn ? 'No snapshots found' : 'Снимки не найдены', files: [] };
   }
 
   let resolvedTurnId = cleanTurnArg;
@@ -684,7 +691,7 @@ export function getTurnDiffSummary(turnId = 'latest', workspaceRoot = '') {
   // Filter checkpoints in this turn (list is newest -> oldest)
   const turnCps = candidates.filter((c) => resolveTurnKeyMatch(c, resolvedTurnId));
   if (turnCps.length === 0) {
-    return { ok: false, error: `Ход не найден: ${resolvedTurnId}`, files: [] };
+    return { ok: false, error: isEn ? `Turn not found: ${resolvedTurnId}` : `Ход не найден: ${resolvedTurnId}`, files: [] };
   }
 
   // Find earliest checkpoint per unique filePath to represent the true pre-turn baseline
@@ -750,23 +757,24 @@ export function getTurnDiffSummary(turnId = 'latest', workspaceRoot = '') {
  * @param {string} [workspaceRoot='']
  * @returns {object}
  */
-export function rollbackTurn(turnId = 'latest', workspaceRoot = '') {
+export function rollbackTurn(turnId = 'latest', workspaceRoot = '', { lang = 'ru' } = {}) {
+  const isEn = String(lang || '').trim().toLowerCase() === 'en';
   const cleanTurnArg = safeStr(turnId, 128).trim();
   const rawWs = safeStr(workspaceRoot, 1024).trim();
   const cleanWs = rawWs === '__all__' ? '' : rawWs;
   if (!cleanTurnArg || BLOCKED_KEYS.has(cleanTurnArg)) {
-    return { ok: false, error: 'Некорректный turnId' };
+    return { ok: false, error: isEn ? 'Invalid turnId' : 'Некорректный turnId' };
   }
 
   ensureStorage();
   const lockOutcome = withFileLockSync(INDEX_FILE, () => {
     const list = loadIndex();
     if (list.length === 0) {
-      return { ok: false, error: 'Список чекпоинтов пуст' };
+      return { ok: false, error: isEn ? 'Checkpoints list is empty' : 'Список чекпоинтов пуст' };
     }
     const candidates = cleanWs ? list.filter((c) => matchesWorkspaceCheckpoint(c, cleanWs)) : list;
     if (candidates.length === 0) {
-      return { ok: false, error: 'Чекпоинты для текущего воркспейса не найдены' };
+      return { ok: false, error: isEn ? 'No checkpoints found for current workspace' : 'Чекпоинты для текущего воркспейса не найдены' };
     }
 
     let resolvedTurnId = cleanTurnArg;
@@ -777,7 +785,7 @@ export function rollbackTurn(turnId = 'latest', workspaceRoot = '') {
 
     const turnCps = candidates.filter((c) => resolveTurnKeyMatch(c, resolvedTurnId));
     if (turnCps.length === 0) {
-      return { ok: false, error: `Ход не найден: ${resolvedTurnId}` };
+      return { ok: false, error: isEn ? `Turn not found: ${resolvedTurnId}` : `Ход не найден: ${resolvedTurnId}` };
     }
 
     // Group earliest checkpoint per unique filePath so repeated edits in one turn revert to pre-turn baseline
@@ -792,7 +800,7 @@ export function rollbackTurn(turnId = 'latest', workspaceRoot = '') {
     }
 
     if (baselineByFile.size === 0) {
-      return { ok: false, error: `Ход ${resolvedTurnId} уже был откачен` };
+      return { ok: false, error: isEn ? `Turn ${resolvedTurnId} has already been rolled back` : `Ход ${resolvedTurnId} уже был откачен` };
     }
 
     // Verify all backups exist before mutating disk (atomic safety)
@@ -802,12 +810,14 @@ export function rollbackTurn(turnId = 'latest', workspaceRoot = '') {
         if (!hasBackup) {
           return {
             ok: false,
-            error: `Файл ${cp.fileName} превышал лимит теневой копии (>2 МБ); откат хода отменён`,
+            error: isEn
+              ? `File ${cp.fileName} exceeded shadow backup limit (>2 MB); turn rollback cancelled`
+              : `Файл ${cp.fileName} превышал лимит теневой копии (>2 МБ); откат хода отменён`,
           };
         }
         const bakPath = join(CHECKPOINTS_DIR, `${cp.id}.bak`);
         if (!existsSync(bakPath)) {
-          return { ok: false, error: `Файл снимка ${cp.id}.bak отсутствует` };
+          return { ok: false, error: isEn ? `Snapshot file ${cp.id}.bak is missing` : `Файл снимка ${cp.id}.bak отсутствует` };
         }
       }
     }

@@ -8,6 +8,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, sta
 import path, { join } from 'node:path';
 import { atomicWriteJsonSync, safeReadJsonSync } from '../safe-json.mjs';
 import { checkFileSecurity, redactSecretsInText } from '../security-guard.mjs';
+import { normalizeLang, readActiveUiLanguage } from '../i18n.mjs';
 import {
   CACHE_DIR,
   GPU_DISTILL_CACHE_FILE,
@@ -261,6 +262,7 @@ export async function distillText({
   strictTimeout = false,
   workspaceRoot = '',
   _skipAtFile = false,
+  lang = '',
   cfgOverride = null,
   httpJsonFn = null,
   hwProbeFn = null,
@@ -289,6 +291,7 @@ export async function distillText({
       model,
       minFreeVramMb,
       strictTimeout,
+      lang,
       cfgOverride,
       httpJsonFn,
       hwProbeFn,
@@ -410,7 +413,9 @@ export async function distillText({
         skippedVramCap: true,
         needsModelDownload: fit.needsModelDownload,
         recommendedPullModel: fit.recommendedPullModel,
-        error: fit.reasonRu || `Модель ${requestedModel} превышает лимит ${fit.capGb} ГБ VRAM`,
+        error: (normalizeLang(lang || cfg.uiLanguage || readActiveUiLanguage(), 'en') === 'en')
+          ? (fit.reasonEn || fit.reasonRu || `Model ${requestedModel} exceeds the ${fit.capGb} GB VRAM limit`)
+          : (fit.reasonRu || fit.reasonEn || `Модель ${requestedModel} превышает лимит ${fit.capGb} ГБ VRAM`),
       };
     }
 
@@ -652,6 +657,7 @@ export async function distillLocalFile({
   model = '',
   minFreeVramMb = 0,
   strictTimeout = false,
+  lang = '',
   cfgOverride = null,
   httpJsonFn = null,
   hwProbeFn = null,
@@ -756,6 +762,7 @@ export async function distillLocalFile({
     model,
     minFreeVramMb,
     strictTimeout,
+    lang,
     workspaceRoot: wsRoot,
     _skipAtFile: true,
     cfgOverride,

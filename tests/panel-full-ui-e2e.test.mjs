@@ -1612,7 +1612,7 @@ test('2. All 56 Boolean Toggles: UI checkbox sync, server persistence & real dow
     const wtDisabledRes = createShadowWorktree({ workspaceRoot: tmpRepo, state: loadState() });
     assert.equal(wtDisabledRes.ok, false);
     assert.equal(wtDisabledRes.disabled, true);
-    assert.ok(dom.doc.getElementById('shadowWorktreeList').textContent.includes('отключена'));
+    assert.match(dom.doc.getElementById('shadowWorktreeList').textContent, /отключена|disabled/i);
 
     // B) sqliteKnowledgeEnabled = false -> disables UI federation input & knowledge snapshot
     const chkSql = dom.doc.getElementById('chk-sqliteKnowledgeEnabled');
@@ -1621,7 +1621,7 @@ test('2. All 56 Boolean Toggles: UI checkbox sync, server persistence & real dow
     await waitFor(() => loadState().sqliteKnowledgeEnabled === false, 4000, 15, 'sqliteKnowledge off');
     await dom.waitIdle();
     assert.equal(dom.doc.getElementById('federatedPeerInput').disabled, true);
-    assert.equal(dom.doc.getElementById('knowledgeStatsBadge').textContent, 'Откл.');
+    assert.match(dom.doc.getElementById('knowledgeStatsBadge').textContent, /^(?:Откл\.|Off)$/);
 
     // C) cpuMulticoreEnabled = false -> resolveCpuThreadBudget drops thread budget to 1
     const cpuOffCfg = loadCpuConfig({ cpuMulticoreEnabled: false, cpuMaxThreads: 16 });

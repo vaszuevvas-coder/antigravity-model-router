@@ -18,6 +18,7 @@ import {
 } from './core/hardware-profiler.mjs';
 import { findOllamaBinary } from './core/local-gpu-engine.mjs';
 import { buildPanelUi } from './core/panel-ui-builder.mjs';
+import { detectOsLocale, normalizeLang } from './core/i18n.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -51,6 +52,7 @@ export const EXCLUDE = new Set([
   'install.js',
   'install.bat',
   'install.sh',
+  'uninstall.bat',
   'Установить плагин.bat',
   'Удалить плагин.bat',
 ]);
@@ -625,6 +627,7 @@ export function parseInstallCliArgs(argv = process.argv.slice(2)) {
   const opts = {
     action: 'install',
     targetDir: '',
+    lang: '',
     purge: false,
     dryRun: false,
     silent: false,
@@ -648,6 +651,10 @@ export function parseInstallCliArgs(argv = process.argv.slice(2)) {
       opts.silent = true;
     } else if (arg === '--json') {
       opts.json = true;
+    } else if (arg === '--lang' && i + 1 < argv.length) {
+      opts.lang = String(argv[++i] || '').trim();
+    } else if (arg.startsWith('--lang=')) {
+      opts.lang = arg.slice('--lang='.length).trim();
     } else if (arg === '--target' && i + 1 < argv.length) {
       opts.targetDir = String(argv[++i] || '').trim();
     } else if (arg.startsWith('--target=')) {
@@ -679,7 +686,8 @@ export function getInstallStatus({ targetDir: customTarget } = {}) {
   };
 }
 
-export function runUninstall({ targetDir: customTarget, purge = false, silent = false } = {}) {
+export function runUninstall({ targetDir: customTarget, purge = false, silent = false, lang = '' } = {}) {
+  const isRu = normalizeLang(lang || detectOsLocale(), 'en') === 'ru';
   const destRoot = resolveTargetDir(customTarget);
   const externalBackup = getExternalBackupPath(destRoot);
   const log = silent ? () => {} : (...args) => console.log(...args);
@@ -690,7 +698,7 @@ export function runUninstall({ targetDir: customTarget, purge = false, silent = 
         fs.unlinkSync(externalBackup);
       } catch {}
     }
-    log(`[i] Плагин ${PLUGIN_NAME} не найден в: ${destRoot}`);
+    log(isRu ? `[i] Плагин ${PLUGIN_NAME} не найден в: ${destRoot}` : `[i] Plugin ${PLUGIN_NAME} was not found at: ${destRoot}`);
     return {
       ok: true,
       removed: false,
@@ -712,9 +720,9 @@ export function runUninstall({ targetDir: customTarget, purge = false, silent = 
   }
 
   fs.rmSync(destRoot, { recursive: true, force: true });
-  log(`[✓] Плагин ${PLUGIN_NAME} удалён из: ${destRoot}`);
+  log(isRu ? `[✓] Плагин ${PLUGIN_NAME} удалён из: ${destRoot}` : `[OK] Plugin ${PLUGIN_NAME} removed from: ${destRoot}`);
   if (backupPath) {
-    log(`[✓] Резервная копия настроек сохранена: ${backupPath}`);
+    log(isRu ? `[✓] Резервная копия настроек сохранена: ${backupPath}` : `[OK] Settings backup saved: ${backupPath}`);
   }
   return {
     ok: true,
@@ -724,7 +732,8 @@ export function runUninstall({ targetDir: customTarget, purge = false, silent = 
   };
 }
 
-export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun = false, silent = false } = {}) {
+export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun = false, silent = false, lang = '' } = {}) {
+  const isRu = normalizeLang(lang || detectOsLocale(), 'en') === 'ru';
   const resolvedSrc = path.resolve(srcRoot || srcDir);
   const destRoot = resolveTargetDir(customTarget);
   const isDefaultTarget = path.resolve(destRoot) === path.resolve(targetDir);
@@ -732,7 +741,7 @@ export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun =
   const log = silent ? () => {} : (...args) => console.log(...args);
 
   const srcManifest = safeParseJsonObject(path.join(resolvedSrc, 'plugin.json'));
-  const version = srcManifest?.version ? String(srcManifest.version) : '3.31.0';
+  const version = srcManifest?.version ? String(srcManifest.version) : '3.32.0';
   const srcStatePath = path.join(resolvedSrc, 'router-state.json');
   const destStatePath = path.join(destRoot, 'router-state.json');
   const externalBackupPath = getExternalBackupPath(destRoot);
@@ -740,14 +749,15 @@ export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun =
 
   if (dryRun) {
     const previewState = computeMergedState(srcStatePath, destStatePath, fallbackBackupState);
-    log(`[DRY-RUN] Версия: v${version}`);
-    log(`[DRY-RUN] Целевая папка: ${destRoot}`);
+    log(isRu ? `[DRY-RUN] Версия: v${version}` : `[DRY-RUN] Version: v${version}`);
+    log(isRu ? `[DRY-RUN] Целевая папка: ${destRoot}` : `[DRY-RUN] Target directory: ${destRoot}`);
     log(
-      `[DRY-RUN] Профиль ПК: RAM=${previewState.ramMaxBudgetMb} МБ, CPU=${previewState.cpuMaxThreads} потоков, ` +
-      `GPU=${previewState.gpuEnabled ? previewState.gpuChatModel : 'выкл'}`
+      isRu
+        ? `[DRY-RUN] Профиль ПК: RAM=${previewState.ramMaxBudgetMb} МБ, CPU=${previewState.cpuMaxThreads} потоков, GPU=${previewState.gpuEnabled ? previewState.gpuChatModel : 'выкл'}`
+        : `[DRY-RUN] Hardware profile: RAM=${previewState.ramMaxBudgetMb} MB, CPU=${previewState.cpuMaxThreads} threads, GPU=${previewState.gpuEnabled ? previewState.gpuChatModel : 'off'}`
     );
     if (fallbackBackupState) {
-      log(`[DRY-RUN] Будут восстановлены настройки из бэкапа: ${externalBackupPath}`);
+      log(isRu ? `[DRY-RUN] Будут восстановлены настройки из бэкапа: ${externalBackupPath}` : `[DRY-RUN] Will restore settings from backup: ${externalBackupPath}`);
     }
     return {
       ok: true,
@@ -821,7 +831,7 @@ export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun =
 
   const globalDupesRemoved = isDefaultTarget ? purgeDuplicateGlobalSkills(destRoot) : 0;
 
-  // Чистка и обновление кэшей (.cache) The Tunnel v3.31.0: legacy priors/ledgers, старый f32bin-v1, нулевые repomap/digest
+  // Чистка и обновление кэшей (.cache) The Tunnel v3.32.0: legacy priors/ledgers, старый f32bin-v1, нулевые repomap/digest
   const targetCacheStats = maintainCacheDir(path.join(destRoot, '.cache'));
   const localCacheStats = inPlace || !isDefaultTarget
     ? { repomapsRemoved: 0, vectorsPurged: 0, digestsPruned: 0, legacyRemoved: 0 }
@@ -832,17 +842,17 @@ export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun =
   const totalLegacyRemoved = targetCacheStats.legacyRemoved + localCacheStats.legacyRemoved;
 
   log(
-    `[✓] Обслуживание The Tunnel v3.31.0: удалено сирот=${orphansRemoved}, дублей скиллов v3.0=${globalDupesRemoved}, ` +
-    `legacy-кэшей=${totalLegacyRemoved}, устаревших f32bin/json векторов=${totalVectorsPurged}, ` +
-    `устаревших repomap=${totalRepomapsRemoved}, старых дайджестов=${totalDigestsPruned}`
+    isRu
+      ? `[✓] Обслуживание The Tunnel v3.32.0: удалено сирот=${orphansRemoved}, дублей скиллов v3.0=${globalDupesRemoved}, legacy-кэшей=${totalLegacyRemoved}, устаревших f32bin/json векторов=${totalVectorsPurged}, устаревших repomap=${totalRepomapsRemoved}, старых дайджестов=${totalDigestsPruned}`
+      : `[OK] The Tunnel v3.32.0 maintenance: orphansRemoved=${orphansRemoved}, dupSkills=${globalDupesRemoved}, legacyCaches=${totalLegacyRemoved}, staleVectors=${totalVectorsPurged}, staleRepomaps=${totalRepomapsRemoved}, prunedDigests=${totalDigestsPruned}`
   );
   if (fallbackBackupState) {
-    log(`[✓] Пользовательские настройки восстановлены из резервной копии: ${externalBackupPath}`);
+    log(isRu ? `[✓] Пользовательские настройки восстановлены из резервной копии: ${externalBackupPath}` : `[OK] User settings restored from backup: ${externalBackupPath}`);
   }
-  log(`[✓] Плагин The Tunnel (${PLUGIN_NAME}) v${version} успешно установлен в:`);
+  log(isRu ? `[✓] Плагин The Tunnel (${PLUGIN_NAME}) v${version} успешно установлен в:` : `[OK] Plugin The Tunnel (${PLUGIN_NAME}) v${version} installed to:`);
   log(`    ${destRoot}`);
-  log(`\nПерезапустите Google Antigravity или напишите агенту в чате:`);
-  log(`    "Открой панель управления The Tunnel"`);
+  log(isRu ? `\nПерезапустите Google Antigravity или напишите агенту в чате:` : `\nRestart Google Antigravity or ask the agent in chat:`);
+  log(isRu ? `    "Открой панель управления The Tunnel"` : `    "Open the The Tunnel control panel"`);
 
   return {
     ok: true,
@@ -863,34 +873,42 @@ const isMain = (() => {
   return process.platform === 'win32' ? self.toLowerCase() === arg.toLowerCase() : self === arg;
 })();
 if (isMain) {
+  const cliOpts = parseInstallCliArgs(process.argv.slice(2));
+  const isRu = normalizeLang(cliOpts.lang || detectOsLocale(), 'en') === 'ru';
   const nodeMajor = Number(String(process.versions?.node || '0').split('.')[0]) || 0;
   if (nodeMajor < 22) {
     console.error(
-      `[ОШИБКА] Требуется Node.js v22.0.0+ (текущая: v${process.versions?.node || '?'}). Установите актуальную LTS с https://nodejs.org/`
+      isRu
+        ? `[ОШИБКА] Требуется Node.js v22.0.0+ (текущая: v${process.versions?.node || '?'}). Установите актуальную LTS с https://nodejs.org/`
+        : `[ERROR] Node.js v22.0.0+ is required (found v${process.versions?.node || '?'}). Install current LTS from https://nodejs.org/`
     );
     process.exit(1);
   }
-  const cliOpts = parseInstallCliArgs(process.argv.slice(2));
   if (cliOpts.help) {
     console.log([
-      `Установщик ${PLUGIN_NAME}:`,
-      '  node install.js [--target <dir>] [--dry-run] [--silent]',
-      '  node install.js --status [--target <dir>] [--json]',
-      '  node install.js --uninstall [--target <dir>] [--purge] [--silent]',
+      isRu ? `Установщик ${PLUGIN_NAME}:` : `${PLUGIN_NAME} installer:`,
+      '  node install.js [--target <dir>] [--lang en|ru] [--dry-run] [--silent]',
+      '  node install.js --status [--target <dir>] [--lang en|ru] [--json]',
+      '  node install.js --uninstall [--target <dir>] [--lang en|ru] [--purge] [--silent]',
     ].join('\n'));
   } else if (cliOpts.action === 'status') {
     const st = getInstallStatus({ targetDir: cliOpts.targetDir });
     if (cliOpts.json) {
       console.log(JSON.stringify(st, null, 2));
-    } else {
+    } else if (isRu) {
       console.log(`Статус: ${st.installed ? `установлен (v${st.version || '?'})` : 'не установлен'}`);
       console.log(`Путь:   ${st.targetDir}`);
       console.log(`Настройки: ${st.hasState ? 'найдены' : 'нет'}${st.stateBackupPath ? ` (бэкап: ${st.stateBackupPath})` : ''}`);
       console.log(`Node.js: ${st.nodeVersion}`);
+    } else {
+      console.log(`Status:   ${st.installed ? `installed (v${st.version || '?'})` : 'not installed'}`);
+      console.log(`Path:     ${st.targetDir}`);
+      console.log(`Settings: ${st.hasState ? 'present' : 'none'}${st.stateBackupPath ? ` (backup: ${st.stateBackupPath})` : ''}`);
+      console.log(`Node.js:  ${st.nodeVersion}`);
     }
   } else if (cliOpts.action === 'uninstall') {
-    runUninstall({ targetDir: cliOpts.targetDir, purge: cliOpts.purge, silent: cliOpts.silent });
+    runUninstall({ targetDir: cliOpts.targetDir, purge: cliOpts.purge, silent: cliOpts.silent, lang: cliOpts.lang });
   } else {
-    runInstall({ targetDir: cliOpts.targetDir, dryRun: cliOpts.dryRun, silent: cliOpts.silent });
+    runInstall({ targetDir: cliOpts.targetDir, dryRun: cliOpts.dryRun, silent: cliOpts.silent, lang: cliOpts.lang });
   }
 }

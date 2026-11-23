@@ -39,6 +39,13 @@ const THINKING_LEVEL_RU_MAP = {
   low: 'Низкий',
 };
 
+const THINKING_LEVEL_EN_MAP = {
+  xhigh: 'XHigh',
+  high: 'High',
+  medium: 'Medium',
+  low: 'Low',
+};
+
 function formatThinkingSuffixEn(thinkingLevel) {
   if (!thinkingLevel) return '';
   if (thinkingLevel === 'xhigh') return ' (XHigh)';
@@ -80,8 +87,10 @@ export function normalizeModelProfile(rawModelName = '') {
 
   const thinkingLevel = parseThinkingLevel(lower);
   const thinkingLevelRu = thinkingLevel ? THINKING_LEVEL_RU_MAP[thinkingLevel] || null : null;
+  const thinkingLevelEn = thinkingLevel ? THINKING_LEVEL_EN_MAP[thinkingLevel] || null : null;
   const suffix = formatThinkingSuffixEn(thinkingLevel);
   const suffixRu = thinkingLevelRu ? ` · ${thinkingLevelRu}` : '';
+  const suffixEn = thinkingLevelEn ? ` · ${thinkingLevelEn}` : '';
 
   // 1. Штатные мульти-модельные режимы Antigravity Orchestrator (Планировщик Neon/Carbon/Argon с выбором глубины <-> Исполнитель Hydrogen)
   if (lower.includes('orchestrator') || lower.includes('оркестратор')) {
@@ -97,11 +106,13 @@ export function normalizeModelProfile(rawModelName = '') {
       label: orchLevelEn ? `Orchestrator (${plannerName} · ${orchLevelEn})` : `Orchestrator (${plannerName})`,
       shortLabel: orchLevelEn ? `Orch (${plannerName} · ${orchLevelEn})` : `Orch (${plannerName})`,
       displayRu: thinkingLevelRu ? `Оркестратор · ${plannerName} · ${thinkingLevelRu}` : `Оркестратор · ${plannerName}`,
+      displayEn: thinkingLevelEn ? `Orchestrator · ${plannerName} · ${thinkingLevelEn}` : `Orchestrator · ${plannerName}`,
       tier: isNeonOrch ? 'orchestrator_neon' : (isArgonOrch ? 'orchestrator_argon' : 'orchestrator_carbon'),
       plannerTier: isNeonOrch ? 'neon' : (isArgonOrch ? 'argon' : 'carbon'),
       executorTier: 'hydrogen',
       thinkingLevel,
       thinkingLevelRu: thinkingLevelRu || 'Авто',
+      thinkingLevelEn: thinkingLevelEn || 'Auto',
       isOrchestrator: true,
       isCarbon: false,
       isArgon: false,
@@ -122,11 +133,13 @@ export function normalizeModelProfile(rawModelName = '') {
       label: `Gemini 4 Hydrogen${suffix}`,
       shortLabel: `Hydrogen${suffix}`,
       displayRu: `Hydrogen${suffixRu}`,
+      displayEn: `Hydrogen${suffixEn}`,
       tier: 'hydrogen',
       plannerTier: null,
       executorTier: 'hydrogen',
       thinkingLevel,
       thinkingLevelRu,
+      thinkingLevelEn,
       isOrchestrator: false,
       isCarbon: false,
       isArgon: false,
@@ -147,11 +160,13 @@ export function normalizeModelProfile(rawModelName = '') {
       label: `Gemini 4 Neon${suffix}`,
       shortLabel: `Neon${suffix}`,
       displayRu: `Neon${suffixRu}`,
+      displayEn: `Neon${suffixEn}`,
       tier: 'neon',
       plannerTier: 'neon',
       executorTier: 'neon',
       thinkingLevel,
       thinkingLevelRu,
+      thinkingLevelEn,
       isOrchestrator: false,
       isCarbon: false,
       isArgon: false,
@@ -172,11 +187,13 @@ export function normalizeModelProfile(rawModelName = '') {
       label: `Gemini 4 Carbon${suffix}`,
       shortLabel: `Carbon${suffix}`,
       displayRu: `Carbon${suffixRu}`,
+      displayEn: `Carbon${suffixEn}`,
       tier: 'carbon',
       plannerTier: 'carbon',
       executorTier: null,
       thinkingLevel,
       thinkingLevelRu,
+      thinkingLevelEn,
       isOrchestrator: false,
       isCarbon: true,
       isArgon: false,
@@ -197,11 +214,13 @@ export function normalizeModelProfile(rawModelName = '') {
       label: `Gemini 4 Argon${suffix}`,
       shortLabel: `Argon${suffix}`,
       displayRu: `Argon${suffixRu}`,
+      displayEn: `Argon${suffixEn}`,
       tier: 'argon',
       plannerTier: 'argon',
       executorTier: null,
       thinkingLevel,
       thinkingLevelRu,
+      thinkingLevelEn,
       isOrchestrator: false,
       isCarbon: false,
       isArgon: true,
@@ -222,11 +241,13 @@ export function normalizeModelProfile(rawModelName = '') {
       label: 'Gemini Flash-Lite',
       shortLabel: 'Flash-Lite',
       displayRu: 'Flash-Lite',
+      displayEn: 'Flash-Lite',
       tier: 'flash_lite',
       plannerTier: null,
       executorTier: 'flash_lite',
       thinkingLevel,
       thinkingLevelRu,
+      thinkingLevelEn,
       isOrchestrator: false,
       isCarbon: false,
       isArgon: false,
@@ -251,11 +272,13 @@ export function normalizeModelProfile(rawModelName = '') {
       label: `${baseLabel}${suffix}`,
       shortLabel: `${baseShort}${suffix}`,
       displayRu: `${baseShort}${suffixRu}`,
+      displayEn: `${baseShort}${suffixEn}`,
       tier: 'flash',
       plannerTier: null,
       executorTier: 'flash',
       thinkingLevel,
       thinkingLevelRu,
+      thinkingLevelEn,
       isOrchestrator: false,
       isCarbon: false,
       isArgon: false,
@@ -277,11 +300,13 @@ export function normalizeModelProfile(rawModelName = '') {
       label: raw.slice(0, 40),
       shortLabel: raw.slice(0, 22),
       displayRu: raw.slice(0, 26),
+      displayEn: raw.slice(0, 26),
       tier: 'pro',
       plannerTier: 'pro',
       executorTier: null,
       thinkingLevel,
       thinkingLevelRu,
+      thinkingLevelEn,
       isOrchestrator: false,
       isCarbon: false,
       isArgon: false,
@@ -300,11 +325,13 @@ export function normalizeModelProfile(rawModelName = '') {
     label: '',
     shortLabel: '',
     displayRu: '',
+    displayEn: '',
     tier: 'unknown',
     plannerTier: null,
     executorTier: null,
     thinkingLevel: null,
     thinkingLevelRu: null,
+    thinkingLevelEn: null,
     isOrchestrator: false,
     isCarbon: false,
     isArgon: false,
@@ -1049,6 +1076,9 @@ export function getPricingPhaseStatus(now = new Date()) {
     labelRu: postPromo
       ? `Стандартный тариф Argon/Carbon ($${carbonIn}/$${carbonOut} за 1M) · Neon ($3/$15)`
       : `Промо-тариф Gemini 4 ($${carbonIn}/$${carbonOut} за 1M, осталось ${daysRemaining} дн. до 01.12.2026) · Neon ($3/$15)`,
+    labelEn: postPromo
+      ? `Standard Argon/Carbon rate ($${carbonIn}/$${carbonOut} per 1M) · Neon ($3/$15)`
+      : `Gemini 4 Promo rate ($${carbonIn}/$${carbonOut} per 1M, ${daysRemaining}d left until Dec 1, 2026) · Neon ($3/$15)`,
     ratesPer1M: {
       hydrogen: {
         input: GEMINI4_PRICING_META.hydrogen.inputPer1M,
@@ -1155,11 +1185,12 @@ export function evaluateThinkingBurnAdvisory({
   const outputPerStep = stepCount > 0 ? Math.round(outTotal / stepCount) : 0;
 
   if (!modelProfile || stepCount < 3) {
-    return { status: 'optimal', outputPerStep, advisoryRu: '' };
+    return { status: 'optimal', outputPerStep, advisoryRu: '', advisoryEn: '' };
   }
 
   const flashSubs = Number(subagents?.flash || 0);
   const modelDisplay = modelProfile.displayRu || modelProfile.shortLabel || 'Gemini 4';
+  const modelDisplayEn = modelProfile.displayEn || modelProfile.shortLabel || 'Gemini 4';
 
   // Режимы Orchestrator распределяют фазы Планировщик <-> Hydrogen (-24% квоты), но учитывают выбранную глубину планировщика
   if (modelProfile.isOrchestrator) {
@@ -1175,6 +1206,7 @@ export function evaluateThinkingBurnAdvisory({
         status: 'overprovisioned_high',
         outputPerStep,
         advisoryRu: `Профиль ${modelDisplay} избыточен на коротких шагах — снизьте глубину планировщика Оркестратора до Средний/Высокий или включите Hydrogen · Средний`,
+        advisoryEn: `${modelDisplayEn} is overkill for short steps — lower Orchestrator planner depth to Medium/High or switch to Hydrogen · Medium`,
       };
     }
     if (outputPerStep >= 2200) {
@@ -1182,9 +1214,10 @@ export function evaluateThinkingBurnAdvisory({
         status: 'heavy_reasoning',
         outputPerStep,
         advisoryRu: 'Плотная фаза планирования Оркестратора — для шумного чтения 20+ файлов подключайте субагента research (flash_lite)',
+        advisoryEn: 'Heavy Orchestrator planning burn — offload noisy 20+ file scans to a research subagent (flash_lite)',
       };
     }
-    return { status: 'optimal', outputPerStep, advisoryRu: '' };
+    return { status: 'optimal', outputPerStep, advisoryRu: '', advisoryEn: '' };
   }
 
   // Gemini 4 Hydrogen: контроль избыточного уровня XHigh на коротких шагах
@@ -1194,6 +1227,7 @@ export function evaluateThinkingBurnAdvisory({
         status: 'overprovisioned_high',
         outputPerStep,
         advisoryRu: 'Профиль Hydrogen · XHigh избыточен для коротких шагов — на рутине S/M быстрее и экономнее Hydrogen · Средний',
+        advisoryEn: 'Hydrogen · XHigh is excessive for short steps — Hydrogen · Medium is faster and cheaper on S/M routine tasks',
       };
     }
     if (modelProfile.thinkingLevel === 'xhigh' && outputPerStep >= 1850) {
@@ -1201,9 +1235,10 @@ export function evaluateThinkingBurnAdvisory({
         status: 'heavy_reasoning',
         outputPerStep,
         advisoryRu: 'Высокий расход thinking-токенов на Hydrogen · XHigh — для тяжёлой архитектуры выгоднее Orchestrator (Neon · Высокий/XHigh) или Orchestrator (Carbon · Высокий)',
+        advisoryEn: 'High thinking burn on Hydrogen · XHigh — for heavy architecture prefer Orchestrator (Neon · High/XHigh) or Orchestrator (Carbon · High)',
       };
     }
-    return { status: 'optimal', outputPerStep, advisoryRu: '' };
+    return { status: 'optimal', outputPerStep, advisoryRu: '', advisoryEn: '' };
   }
 
   // Gemini 4 Neon: контроль высокой болтливости thinking ($15/1M output) и коротких шагов
@@ -1219,6 +1254,7 @@ export function evaluateThinkingBurnAdvisory({
         status: 'overprovisioned_high',
         outputPerStep,
         advisoryRu: `Профиль ${modelDisplay} избыточен на коротких шагах — для рутины выгоднее Orchestrator (Neon · Средний) или Hydrogen · Средний`,
+        advisoryEn: `${modelDisplayEn} is overkill for short steps — Orchestrator (Neon · Medium) or Hydrogen · Medium is cheaper for routine work`,
       };
     }
     if (outputPerStep >= 2000) {
@@ -1226,13 +1262,14 @@ export function evaluateThinkingBurnAdvisory({
         status: 'heavy_reasoning',
         outputPerStep,
         advisoryRu: `Высокий расход thinking-токенов ${modelDisplay} ($15/1M) — включите Orchestrator (Neon · Высокий) для авто-передачи правок на Hydrogen (-24% квоты) или делегируйте разведку на flash_lite`,
+        advisoryEn: `High thinking spend on ${modelDisplayEn} ($15/1M) — switch to Orchestrator (Neon · High) for Hydrogen edits (-24% quota) or delegate research to flash_lite`,
       };
     }
-    return { status: 'optimal', outputPerStep, advisoryRu: '' };
+    return { status: 'optimal', outputPerStep, advisoryRu: '', advisoryEn: '' };
   }
 
   if (!modelProfile.isCarbon && !modelProfile.isArgon) {
-    return { status: 'optimal', outputPerStep, advisoryRu: '' };
+    return { status: 'optimal', outputPerStep, advisoryRu: '', advisoryEn: '' };
   }
 
   if (modelProfile.thinkingLevel === 'high' && stepCount >= 5 && outputPerStep > 0 && outputPerStep < 480 && flashSubs === 0) {
@@ -1240,6 +1277,7 @@ export function evaluateThinkingBurnAdvisory({
       status: 'overprovisioned_high',
       outputPerStep,
       advisoryRu: `Профиль ${modelDisplay} тратится на короткие шаги — для активной разработки выгоднее Orchestrator (${modelProfile.isCarbon ? 'Carbon · Средний' : 'Neon · Средний'}) или Hydrogen · Средний`,
+      advisoryEn: `${modelDisplayEn} is spent on short steps — Orchestrator (${modelProfile.isCarbon ? 'Carbon · Medium' : 'Neon · Medium'}) or Hydrogen · Medium fits active iteration better`,
     };
   }
 
@@ -1248,10 +1286,11 @@ export function evaluateThinkingBurnAdvisory({
       status: 'heavy_reasoning',
       outputPerStep,
       advisoryRu: 'Высокий расход thinking-токенов Carbon — включите Orchestrator (Carbon · Высокий) для авто-передачи правок на Hydrogen или делегируйте разведку на flash_lite',
+      advisoryEn: 'High Carbon thinking spend — switch to Orchestrator (Carbon · High) to offload edits to Hydrogen or delegate scanning to flash_lite',
     };
   }
 
-  return { status: 'optimal', outputPerStep, advisoryRu: '' };
+  return { status: 'optimal', outputPerStep, advisoryRu: '', advisoryEn: '' };
 }
 
 export const SUBSCRIPTION_TIER_CAPABILITIES = {
@@ -1263,6 +1302,7 @@ export const SUBSCRIPTION_TIER_CAPABILITIES = {
     allowedSwarmWorkerTiers: ['hydrogen_auto', 'neon_auto', 'inherit'],
     allowedSwarmModes: ['auto_xl', 'aggressive_l', 'auto_all', 'always_ask', 'manual_only', 'off'],
     maxModelLabelRu: 'Orchestrator (Neon · Высокий/XHigh) / Neon · XHigh',
+    maxModelLabelEn: 'Orchestrator (Neon · High/XHigh) / Neon · XHigh',
   },
   ultra: {
     tier: 'ultra',
@@ -1272,6 +1312,7 @@ export const SUBSCRIPTION_TIER_CAPABILITIES = {
     allowedSwarmWorkerTiers: ['hydrogen_auto', 'neon_auto', 'argon_auto', 'carbon_auto', 'inherit'],
     allowedSwarmModes: ['auto_xl', 'aggressive_l', 'auto_all', 'always_ask', 'manual_only', 'off'],
     maxModelLabelRu: 'Orchestrator (Carbon · Высокий) / Carbon · Высокий',
+    maxModelLabelEn: 'Orchestrator (Carbon · High) / Carbon · High',
   },
 };
 
@@ -1322,6 +1363,7 @@ export function evaluateSelectorMatchForTask({
   const strategy = state?.strategy || 'balanced';
   const threshold = state?.heavyThreshold || 'XL';
   const cur = modelProfile.displayRu || modelProfile.shortLabel || modelProfile.label;
+  const curEn = modelProfile.displayEn || modelProfile.shortLabel || modelProfile.label;
   const lvl = modelProfile.thinkingLevel;
   const depth = matrix2D?.depth || null;
   const riskMode = matrix2D?.riskMode || null;
@@ -1337,17 +1379,23 @@ export function evaluateSelectorMatchForTask({
 
   if (isPerf) {
     if (res.match === 'overprovisioned' && grade !== 'S') {
-      return { ...res, match: 'optimal', tipRu: '' };
+      return { ...res, match: 'optimal', tipRu: '', tipEn: '' };
     }
     if ((meetsHeavyThreshold || (grade === 'M' && depth !== 'routine')) && modelProfile.isFlash) {
       const perfTarget = isProSub
         ? 'Orchestrator (Neon · Высокий) / Neon · Высокий'
         : 'Orchestrator (Neon · Высокий) / Neon · Высокий или Carbon · Высокий';
+      const perfTargetEn = isProSub
+        ? 'Orchestrator (Neon · High) / Neon · High'
+        : 'Orchestrator (Neon · High) / Neon · High or Carbon · High';
       return {
         match: 'underprovisioned',
         currentDisplayRu: cur,
+        currentDisplayEn: curEn,
         recommendedRu: `${perfTarget} (Performance)`,
+        recommendedEn: `${perfTargetEn} (Performance)`,
         tipRu: `⚡ Стратегия ${strategy} (порог ${threshold}): выбран ${cur}, для максимального качества на ${grade} рекомендуется ${perfTarget}.`,
+        tipEn: `⚡ Strategy ${strategy} (threshold ${threshold}): currently on ${curEn} — switch to ${perfTargetEn} for peak quality on ${grade}.`,
       };
     }
     return res;
@@ -1355,7 +1403,7 @@ export function evaluateSelectorMatchForTask({
 
   if (isEcon) {
     if (grade === 'L' && !isDeepAuditOrArch && depth !== 'deep_arch' && modelProfile.isFlash && res.match === 'underprovisioned') {
-      return { ...res, match: 'optimal', tipRu: '' };
+      return { ...res, match: 'optimal', tipRu: '', tipEn: '' };
     }
     if (
       grade === 'M' &&
@@ -1368,8 +1416,11 @@ export function evaluateSelectorMatchForTask({
       return {
         match: 'overprovisioned',
         currentDisplayRu: cur,
+        currentDisplayEn: curEn,
         recommendedRu: 'Hydrogen · Средний или Orchestrator (Neon · Средний) / Flash 3.8 · Средний (Economy)',
+        recommendedEn: 'Hydrogen · Medium or Orchestrator (Neon · Medium) / Flash 3.8 · Medium (Economy)',
         tipRu: `💰 Стратегия ${strategy}: на рутинной задаче ${grade} одиночный ${cur} избыточен — выгоднее переключить на Orchestrator (Neon · Средний) (-24% квоты + правки на Hydrogen) или Hydrogen · Средний / Flash 3.8 · Средний.`,
+        tipEn: `💰 Strategy ${strategy}: standalone ${curEn} is overkill for routine ${grade} — switch to Orchestrator (Neon · Medium) (-24% quota + Hydrogen edits) or Hydrogen · Medium / Flash 3.8 · Medium.`,
       };
     }
   }
@@ -1379,14 +1430,23 @@ export function evaluateSelectorMatchForTask({
       const thrRec = isProSub
         ? 'Orchestrator (Neon · Высокий) / Neon · Высокий'
         : 'Orchestrator (Neon · Высокий) / Neon · Высокий или Orchestrator (Carbon · Средний/Высокий) / Carbon · Средний';
+      const thrRecEn = isProSub
+        ? 'Orchestrator (Neon · High) / Neon · High'
+        : 'Orchestrator (Neon · High) / Neon · High or Orchestrator (Carbon · Medium/High) / Carbon · Medium';
       const thrTipTarget = isProSub
         ? 'Orchestrator (Neon · Высокий) / Neon · Высокий'
         : 'Neon · Высокий / Carbon · Средний';
+      const thrTipTargetEn = isProSub
+        ? 'Orchestrator (Neon · High) / Neon · High'
+        : 'Neon · High / Carbon · Medium';
       return {
         match: 'underprovisioned',
         currentDisplayRu: cur,
+        currentDisplayEn: curEn,
         recommendedRu: thrRec,
+        recommendedEn: thrRecEn,
         tipRu: `⚠️ Порог тяжёлых задач ${threshold}: для ${grade} с текущим ${cur} лучше повысить модель до ${thrTipTarget}.`,
+        tipEn: `⚠️ Heavy-task threshold ${threshold}: upgrade from ${curEn} to ${thrTipTargetEn} for grade ${grade}.`,
       };
     }
   }
@@ -1433,6 +1493,61 @@ export function resolveOptimalModelTargetRu({ grade = 'M', isDeepAuditOrArch = f
   return 'Hydrogen · Средний / Flash 3.8 · Средний';
 }
 
+export function resolveOptimalModelTargetEn({ grade = 'M', isDeepAuditOrArch = false, matrix2D = null, subscriptionTier = null } = {}) {
+  const breadth = matrix2D?.breadth || null;
+  const depth = matrix2D?.depth || null;
+  const isHighBlast = Boolean(matrix2D?.isHighBlast || matrix2D?.riskMode === 'critical_blast');
+  const isProSub = subscriptionTier === 'pro';
+  if (depth === 'deep_arch' && (breadth === 'narrow' || breadth === 'moderate')) {
+    return isProSub
+      ? 'Orchestrator (Neon · High/XHigh) / Neon · High/XHigh'
+      : 'Orchestrator (Neon · High/XHigh) / Neon · High/XHigh or Carbon · Medium/High';
+  }
+  if (isHighBlast && depth !== 'routine' && grade !== 'XL') {
+    return isProSub
+      ? 'Orchestrator (Neon · High/XHigh) or Neon · High/XHigh'
+      : 'Orchestrator (Neon · High/XHigh) / Orchestrator (Carbon · Medium/High) or Carbon · Medium/High';
+  }
+  if (breadth === 'wide' && depth === 'routine') {
+    return 'Hydrogen · High/XHigh or Orchestrator (Neon · Medium/High)';
+  }
+  if (breadth === 'wide' && depth === 'integrated' && !isDeepAuditOrArch) {
+    return isProSub
+      ? 'Orchestrator (Neon · High) or Hydrogen · XHigh'
+      : 'Orchestrator (Neon · High) / Orchestrator (Carbon · Medium/High) or Hydrogen · XHigh';
+  }
+  if (grade === 'XL' || isDeepAuditOrArch || (breadth === 'wide' && depth === 'deep_arch')) {
+    return isProSub
+      ? 'Orchestrator (Neon · XHigh) / Neon · XHigh'
+      : 'Orchestrator (Carbon · High) / Orchestrator (Neon · XHigh) / Carbon · High';
+  }
+  if (grade === 'L') {
+    return isProSub
+      ? 'Orchestrator (Neon · High) or Hydrogen · High/XHigh'
+      : 'Orchestrator (Neon · High) / Orchestrator (Carbon · Medium/High) or Hydrogen · High/XHigh';
+  }
+  if (grade === 'M') {
+    return 'Hydrogen · Medium/High or Orchestrator (Neon · Medium/High)';
+  }
+  return 'Hydrogen · Medium / Flash 3.8 · Medium';
+}
+
+export function formatModelDisplay(profile = null, lang = 'en') {
+  if (!profile) return '';
+  const isRu = String(lang || '').trim().toLowerCase() === 'ru';
+  return isRu
+    ? (profile.displayRu || profile.shortLabel || profile.label || '')
+    : (profile.displayEn || profile.shortLabel || profile.label || '');
+}
+
+export function getEvalTip(evalRes = null, lang = 'en') {
+  if (!evalRes) return '';
+  const isRu = String(lang || '').trim().toLowerCase() === 'ru';
+  return isRu
+    ? (evalRes.tipRu || evalRes.tipEn || '')
+    : (evalRes.tipEn || evalRes.tipRu || '');
+}
+
 function evaluateSelectorMatchBase({
   modelProfile = null,
   grade = 'M',
@@ -1440,16 +1555,22 @@ function evaluateSelectorMatchBase({
   matrix2D = null,
   subscriptionTier = null,
 } = {}) {
+  const recTarget = resolveOptimalModelTargetRu({ grade, isDeepAuditOrArch, matrix2D, subscriptionTier });
+  const recTargetEn = resolveOptimalModelTargetEn({ grade, isDeepAuditOrArch, matrix2D, subscriptionTier });
   if (!modelProfile || modelProfile.tier === 'unknown') {
     return {
       match: 'optimal',
       currentDisplayRu: '',
-      recommendedRu: resolveOptimalModelTargetRu({ grade, isDeepAuditOrArch, matrix2D, subscriptionTier }),
+      currentDisplayEn: '',
+      recommendedRu: recTarget,
+      recommendedEn: recTargetEn,
       tipRu: '',
+      tipEn: '',
     };
   }
 
   const cur = modelProfile.displayRu || modelProfile.shortLabel || modelProfile.label;
+  const curEn = modelProfile.displayEn || modelProfile.shortLabel || modelProfile.label;
   const lvl = modelProfile.thinkingLevel; // 'low' | 'medium' | 'high' | 'xhigh' | null
   const breadth = matrix2D?.breadth || null; // 'narrow' | 'moderate' | 'wide' | null
   const depth = matrix2D?.depth || null;     // 'routine' | 'integrated' | 'deep_arch' | null
@@ -1460,7 +1581,7 @@ function evaluateSelectorMatchBase({
   const isOrchLow = isStrongOrchBase && lvl === 'low';
   const isArgonOrch = modelProfile.isOrchestrator && modelProfile.plannerTier === 'argon';
   const orchDepthTargetRu = modelProfile.plannerTier === 'neon' ? 'Высокий / Сверхвысокий (XHigh)' : 'Высокий';
-  const recTarget = resolveOptimalModelTargetRu({ grade, isDeepAuditOrArch, matrix2D, subscriptionTier });
+  const orchDepthTargetEn = modelProfile.plannerTier === 'neon' ? 'High / XHigh' : 'High';
 
   // 0. 2D-ветка A: Узкая или средняя по числу файлов, но ВЫСОКАЯ когнитивная глубина (хитрый баг, гонка, утечка, безопасность в 1–3 файлах)
   if (depth === 'deep_arch' && (breadth === 'narrow' || breadth === 'moderate')) {
@@ -1472,18 +1593,27 @@ function evaluateSelectorMatchBase({
       const orchTip = !isStrongOrch && (breadth === 'moderate' || lvl === 'medium')
         ? `💡 Совет по режиму: в логе IDE указан ${cur} (если это одиночная модель, а не Оркестратор) — для связки планирования и правок выгоднее Orchestrator (${modelProfile.isCarbon ? 'Carbon · Высокий' : 'Neon · Высокий'}) (экономия -24% квоты за счёт правок на Hydrogen).`
         : '';
+      const orchTipEn = !isStrongOrch && (breadth === 'moderate' || lvl === 'medium')
+        ? `💡 Mode tip: IDE log shows ${curEn} (if standalone rather than Orchestrator) — Orchestrator (${modelProfile.isCarbon ? 'Carbon · High' : 'Neon · High'}) saves -24% quota by offloading edits to Hydrogen.`
+        : '';
       return {
         match: 'optimal',
         currentDisplayRu: cur,
+        currentDisplayEn: curEn,
         recommendedRu: recTarget,
+        recommendedEn: recTargetEn,
         tipRu: orchTip,
+        tipEn: orchTipEn,
       };
     }
     return {
       match: 'underprovisioned',
       currentDisplayRu: cur,
+      currentDisplayEn: curEn,
       recommendedRu: recTarget,
+      recommendedEn: recTargetEn,
       tipRu: `💡 Совет по режиму (2D: узкий охват × глубокая логика): сейчас выбран ${cur} — хотя файлов немного, задача требует глубокого анализа (гонки/баг/алгоритм), поэтому лучше переключить на ${recTarget}.`,
+      tipEn: `💡 Mode tip (2D: Narrow × Deep logic): currently on ${curEn} — even with few files, this task requires deep reasoning (race/bug/algorithm); switch to ${recTargetEn}.`,
     };
   }
 
@@ -1496,8 +1626,11 @@ function evaluateSelectorMatchBase({
       return {
         match: 'optimal',
         currentDisplayRu: cur,
+        currentDisplayEn: curEn,
         recommendedRu: 'Hydrogen · Высокий/XHigh или Orchestrator (Neon · Средний/Высокий)',
+        recommendedEn: 'Hydrogen · High/XHigh or Orchestrator (Neon · Medium/High)',
         tipRu: '',
+        tipEn: '',
       };
     }
     if (modelProfile.isCarbon || modelProfile.isNeon || modelProfile.isArgon || isArgonOrch) {
@@ -1505,22 +1638,31 @@ function evaluateSelectorMatchBase({
         return {
           match: 'optimal',
           currentDisplayRu: cur,
+          currentDisplayEn: curEn,
           recommendedRu: 'Hydrogen · Высокий/XHigh или Orchestrator (Neon · Средний/Высокий)',
+          recommendedEn: 'Hydrogen · High/XHigh or Orchestrator (Neon · Medium/High)',
           tipRu: `💡 Совет по режиму: в логе IDE указан ${cur} (если это одиночная модель, а не Оркестратор) — для широкой правки с обратными зависимостями быстрее и выгоднее включить Orchestrator (Neon · Средний/Высокий) или Hydrogen · Высокий/XHigh.`,
+          tipEn: `💡 Mode tip: IDE log shows ${curEn} — for wide edits with reverse dependencies, Orchestrator (Neon · Medium/High) or Hydrogen · High/XHigh is faster and more quota-efficient.`,
         };
       }
       return {
         match: 'overprovisioned',
         currentDisplayRu: cur,
+        currentDisplayEn: curEn,
         recommendedRu: 'Hydrogen · Высокий/XHigh',
+        recommendedEn: 'Hydrogen · High/XHigh',
         tipRu: `💡 Совет по квоте (2D: широкий охват × типовая логика): сейчас выбран ${cur} — правки затрагивают много файлов без сложной архитектуры, поэтому быстрее и в 2–2.5 раза экономнее прогнать их на Hydrogen · Высокий / XHigh.`,
+        tipEn: `💡 Quota tip (2D: Wide × Routine): currently on ${curEn} — edits span many files without complex architecture, so Hydrogen · High / XHigh runs faster and uses 2–2.5x less quota.`,
       };
     }
     return {
       match: 'underprovisioned',
       currentDisplayRu: cur,
+      currentDisplayEn: curEn,
       recommendedRu: 'Hydrogen · Высокий/XHigh',
+      recommendedEn: 'Hydrogen · High/XHigh',
       tipRu: `💡 Совет по режиму: сейчас выбран ${cur} — для широкой мульти-файловой правки лучше переключить на Hydrogen · Высокий / XHigh.`,
+      tipEn: `💡 Mode tip: currently on ${curEn} — switch to Hydrogen · High / XHigh for wide multi-file edits.`,
     };
   }
 
@@ -1535,18 +1677,27 @@ function evaluateSelectorMatchBase({
       const orchTip = !isStrongOrch && (modelProfile.isCarbon || modelProfile.isNeon)
         ? `💡 Совет по режиму: в логе IDE указан ${cur} (если это одиночная модель, а не Оркестратор) — для широкой интеграции нескольких модулей выгоднее включить Orchestrator (${modelProfile.isCarbon ? 'Carbon · Средний/Высокий' : 'Neon · Высокий'}) (план + быстрые правки на Hydrogen со скидкой -24%).`
         : '';
+      const orchTipEn = !isStrongOrch && (modelProfile.isCarbon || modelProfile.isNeon)
+        ? `💡 Mode tip: IDE log shows ${curEn} — for wide cross-module integration, Orchestrator (${modelProfile.isCarbon ? 'Carbon · Medium/High' : 'Neon · High'}) saves -24% quota via Hydrogen edits.`
+        : '';
       return {
         match: 'optimal',
         currentDisplayRu: cur,
+        currentDisplayEn: curEn,
         recommendedRu: recTarget,
+        recommendedEn: recTargetEn,
         tipRu: orchTip,
+        tipEn: orchTipEn,
       };
     }
     return {
       match: 'underprovisioned',
       currentDisplayRu: cur,
+      currentDisplayEn: curEn,
       recommendedRu: recTarget,
+      recommendedEn: recTargetEn,
       tipRu: `💡 Совет по режиму (2D: широкая интеграция): сейчас выбран ${cur} — для надёжной связки нескольких модулей лучше включить ${recTarget}.`,
+      tipEn: `💡 Mode tip (2D: Wide Integration): currently on ${curEn} — switch to ${recTargetEn} for reliable multi-module wiring.`,
     };
   }
 
@@ -1561,18 +1712,27 @@ function evaluateSelectorMatchBase({
       const orchTip = !isStrongOrch && (modelProfile.isCarbon || modelProfile.isNeon)
         ? `💡 Совет по режиму: в логе IDE указан ${cur} (если это одиночная модель, а не Оркестратор) — при правке связующего модуля (High-Blast) выгоднее Orchestrator (${modelProfile.isCarbon ? 'Carbon · Средний/Высокий' : 'Neon · Высокий/XHigh'}) (-24% квоты + правки на Hydrogen).`
         : '';
+      const orchTipEn = !isStrongOrch && (modelProfile.isCarbon || modelProfile.isNeon)
+        ? `💡 Mode tip: IDE log shows ${curEn} — for High-Blast core edits, Orchestrator (${modelProfile.isCarbon ? 'Carbon · Medium/High' : 'Neon · High/XHigh'}) saves -24% quota via Hydrogen.`
+        : '';
       return {
         match: 'optimal',
         currentDisplayRu: cur,
+        currentDisplayEn: curEn,
         recommendedRu: recTarget,
+        recommendedEn: recTargetEn,
         tipRu: orchTip,
+        tipEn: orchTipEn,
       };
     }
     return {
       match: 'underprovisioned',
       currentDisplayRu: cur,
+      currentDisplayEn: curEn,
       recommendedRu: recTarget,
+      recommendedEn: recTargetEn,
       tipRu: `💡 Совет по режиму (3D: высокий радиус поражения ядра): сейчас выбран ${cur} — правка затрагивает связующий модуль с обратными зависимостями, лучше включить ${recTarget}.`,
+      tipEn: `💡 Mode tip (3D: High-Blast Core): currently on ${curEn} — edit touches core reverse-dependent modules; switch to ${recTargetEn}.`,
     };
   }
 
@@ -1586,37 +1746,55 @@ function evaluateSelectorMatchBase({
       const orchTip = !isStrongOrch && (modelProfile.isCarbon || modelProfile.isNeon)
         ? `💡 Совет по режиму: в логе IDE указан ${cur} (если это одиночная модель, а не Оркестратор) — для масштабной архитектуры XL выгоднее Orchestrator (${modelProfile.isCarbon ? 'Carbon · Высокий' : 'Neon · XHigh'}) (план + быстрые правки кода на Hydrogen со скидкой -24%).`
         : '';
+      const orchTipEn = !isStrongOrch && (modelProfile.isCarbon || modelProfile.isNeon)
+        ? `💡 Mode tip: IDE log shows ${curEn} — for XL architecture work, Orchestrator (${modelProfile.isCarbon ? 'Carbon · High' : 'Neon · XHigh'}) pairs deep planning with Hydrogen edits (-24% quota).`
+        : '';
       return {
         match: 'optimal',
         currentDisplayRu: cur,
+        currentDisplayEn: curEn,
         recommendedRu: recTarget,
+        recommendedEn: recTargetEn,
         tipRu: orchTip,
+        tipEn: orchTipEn,
       };
     }
     if ((isStrongOrch && lvl === 'medium') || isOrchLow) {
       return {
         match: 'underprovisioned',
         currentDisplayRu: cur,
+        currentDisplayEn: curEn,
         recommendedRu: recTarget,
+        recommendedEn: recTargetEn,
         tipRu: `💡 Совет по глубине планировщика: сейчас выбран ${cur} — для масштабной архитектуры XL лучше поднять глубину планировщика в меню Оркестратора до ${orchDepthTargetRu}.`,
+        tipEn: `💡 Planner depth tip: currently on ${curEn} — raise Orchestrator planner depth to ${orchDepthTargetEn} for XL architecture work.`,
       };
     }
     if (modelProfile.isCarbon && lvl === 'medium') {
       const medCarbonTip = subscriptionTier === 'pro'
         ? `💡 Совет по режиму: для масштабной архитектуры XL на Pro используйте ${recTarget}.`
         : `💡 Совет по режиму: в логе IDE указан ${cur} (если это одиночная модель, а не Оркестратор) — для масштабной архитектуры XL выгоднее Orchestrator (Neon · XHigh) / Orchestrator (Carbon · Высокий) (план + быстрые правки кода на Hydrogen со скидкой -24%) или Neon · XHigh / Carbon · Высокий.`;
+      const medCarbonTipEn = subscriptionTier === 'pro'
+        ? `💡 Mode tip: on Pro tier, use ${recTargetEn} for XL architecture work.`
+        : `💡 Mode tip: currently on ${curEn} — for XL architecture, Orchestrator (Neon · XHigh) / Orchestrator (Carbon · High) saves -24% quota via Hydrogen or use Neon · XHigh / Carbon · High.`;
       return {
         match: 'underprovisioned',
         currentDisplayRu: cur,
+        currentDisplayEn: curEn,
         recommendedRu: recTarget,
+        recommendedEn: recTargetEn,
         tipRu: medCarbonTip,
+        tipEn: medCarbonTipEn,
       };
     }
     return {
       match: 'underprovisioned',
       currentDisplayRu: cur,
+      currentDisplayEn: curEn,
       recommendedRu: recTarget,
+      recommendedEn: recTargetEn,
       tipRu: `💡 Совет по режиму: сейчас выбран ${cur} — для сложной архитектуры XL лучше переключить селектор на ${recTarget}.`,
+      tipEn: `💡 Mode tip: currently on ${curEn} — switch selector to ${recTargetEn} for complex XL architecture.`,
     };
   }
 
@@ -1626,11 +1804,17 @@ function evaluateSelectorMatchBase({
       const rateSuffix = isPostPromoRateActive()
         ? ' (Argon $4/$20 уступает Neon $3/$15 и Hydrogen $1.50/$7.50)'
         : ' (Hydrogen High 51 и Neon 61 обходят Argon 50 и выгоднее)';
+      const rateSuffixEn = isPostPromoRateActive()
+        ? ' (Argon $4/$20 trails Neon $3/$15 and Hydrogen $1.50/$7.50)'
+        : ' (Hydrogen High 51 and Neon 61 outperform Argon 50 at lower cost)';
       return {
         match: 'overprovisioned',
         currentDisplayRu: cur,
+        currentDisplayEn: curEn,
         recommendedRu: 'Orchestrator (Neon · Высокий) или Hydrogen · Высокий/XHigh',
+        recommendedEn: 'Orchestrator (Neon · High) or Hydrogen · High/XHigh',
         tipRu: `💡 Совет по режиму и цене: сейчас выбран ${cur}${rateSuffix} — для задачи L быстрее и выгоднее Orchestrator (Neon · Высокий) или Hydrogen · Высокий / XHigh.`,
+        tipEn: `💡 Mode & price tip: currently on ${curEn}${rateSuffixEn} — Orchestrator (Neon · High) or Hydrogen · High / XHigh is faster and cheaper for grade L.`,
       };
     }
     if (
@@ -1642,20 +1826,31 @@ function evaluateSelectorMatchBase({
       const orchTip = !isStrongOrch && (modelProfile.isCarbon || modelProfile.isNeon)
         ? `💡 Совет по режиму: в логе IDE указан ${cur} (если это одиночная модель, а не Оркестратор) — для мульти-файловой задачи L быстрее и на 24% экономнее по квоте включить Orchestrator (${modelProfile.isCarbon ? 'Carbon · Средний/Высокий' : 'Neon · Высокий'}).`
         : '';
+      const orchTipEn = !isStrongOrch && (modelProfile.isCarbon || modelProfile.isNeon)
+        ? `💡 Mode tip: IDE log shows ${curEn} — for multi-file grade L, Orchestrator (${modelProfile.isCarbon ? 'Carbon · Medium/High' : 'Neon · High'}) is faster and saves 24% quota.`
+        : '';
       return {
         match: 'optimal',
         currentDisplayRu: cur,
+        currentDisplayEn: curEn,
         recommendedRu: recTarget,
+        recommendedEn: recTargetEn,
         tipRu: orchTip,
+        tipEn: orchTipEn,
       };
     }
     return {
       match: 'underprovisioned',
       currentDisplayRu: cur,
+      currentDisplayEn: curEn,
       recommendedRu: recTarget,
+      recommendedEn: recTargetEn,
       tipRu: isOrchLow
         ? `💡 Совет по глубине планировщика: сейчас выбран ${cur} — для мульти-файловой задачи L повысьте глубину планировщика в меню Оркестратора до ${orchDepthTargetRu}.`
         : `💡 Совет по режиму: сейчас выбран ${cur} — для мульти-файловой задачи L надёжнее и выгоднее включить ${recTarget}.`,
+      tipEn: isOrchLow
+        ? `💡 Planner depth tip: currently on ${curEn} — raise Orchestrator planner depth to ${orchDepthTargetEn} for multi-file grade L.`
+        : `💡 Mode tip: currently on ${curEn} — switch to ${recTargetEn} for reliable multi-file grade L execution.`,
     };
   }
 
@@ -1665,8 +1860,11 @@ function evaluateSelectorMatchBase({
       return {
         match: 'overprovisioned',
         currentDisplayRu: cur,
+        currentDisplayEn: curEn,
         recommendedRu: 'Hydrogen · Средний/Высокий или Orchestrator (Neon · Средний/Высокий)',
+        recommendedEn: 'Hydrogen · Medium/High or Orchestrator (Neon · Medium/High)',
         tipRu: `💡 Совет по квоте: сейчас выбран ${cur} — Hydrogen · Средний/Высокий быстрее, точнее базового Argon (51 vs 50) и обходится дешевле ($1.50/$7.50).`,
+        tipEn: `💡 Quota tip: currently on ${curEn} — Hydrogen · Medium/High is faster, stronger than baseline Argon (51 vs 50), and cheaper ($1.50/$7.50).`,
       };
     }
     if (
@@ -1679,23 +1877,32 @@ function evaluateSelectorMatchBase({
       return {
         match: 'overprovisioned',
         currentDisplayRu: cur,
+        currentDisplayEn: curEn,
         recommendedRu: 'Hydrogen · Средний/Высокий или Orchestrator (Neon · Средний/Высокий)',
+        recommendedEn: 'Hydrogen · Medium/High or Orchestrator (Neon · Medium/High)',
         tipRu: `💡 Совет по квоте: сейчас включён ${cur} — для задачи M быстрее и экономнее штатный Orchestrator (Neon · Средний/Высокий) (-24% квоты + правки на Hydrogen) или Hydrogen · Средний/Высокий.`,
+        tipEn: `💡 Quota tip: currently on ${curEn} — Orchestrator (Neon · Medium/High) (-24% quota + Hydrogen edits) or Hydrogen · Medium/High is faster and leaner for grade M.`,
       };
     }
     if (lvl === 'low') {
       return {
         match: 'underprovisioned',
         currentDisplayRu: cur,
+        currentDisplayEn: curEn,
         recommendedRu: 'Hydrogen · Средний или Orchestrator (Neon · Средний)',
+        recommendedEn: 'Hydrogen · Medium or Orchestrator (Neon · Medium)',
         tipRu: `💡 Совет по режиму: сейчас стоит ${cur} — для задачи M лучше поставить Hydrogen · Средний/Высокий или Orchestrator (Neon · Средний/Высокий).`,
+        tipEn: `💡 Mode tip: currently on ${curEn} — use Hydrogen · Medium/High or Orchestrator (Neon · Medium/High) for grade M.`,
       };
     }
     return {
       match: 'optimal',
       currentDisplayRu: cur,
+      currentDisplayEn: curEn,
       recommendedRu: 'Hydrogen · Средний/Высокий или Orchestrator (Neon · Средний/Высокий)',
+      recommendedEn: 'Hydrogen · Medium/High or Orchestrator (Neon · Medium/High)',
       tipRu: '',
+      tipEn: '',
     };
   }
 
@@ -1711,20 +1918,30 @@ function evaluateSelectorMatchBase({
     return {
       match: 'overprovisioned',
       currentDisplayRu: cur,
+      currentDisplayEn: curEn,
       recommendedRu: modelProfile.isOrchestrator && !isArgonOrch
         ? 'Hydrogen · Средний или Orchestrator (Neon · Средний)'
         : 'Hydrogen · Средний или Flash 3.8 · Низкий/Средний',
+      recommendedEn: modelProfile.isOrchestrator && !isArgonOrch
+        ? 'Hydrogen · Medium or Orchestrator (Neon · Medium)'
+        : 'Hydrogen · Medium or Flash 3.8 · Low/Medium',
       tipRu: modelProfile.isOrchestrator && !isArgonOrch
         ? `💡 Совет по квоте: выбран ${cur} — на мелких правках S достаточно снизить глубину планировщика до Orchestrator (Neon · Средний) или включить Hydrogen · Средний.`
         : `💡 Совет по квоте: выбран ${cur} — на мелких правках S мгновенно и экономно работает Hydrogen · Средний (или Orchestrator (Neon · Средний) без лишних опросов).`,
+      tipEn: modelProfile.isOrchestrator && !isArgonOrch
+        ? `💡 Quota tip: currently on ${curEn} — for tiny S edits, drop planner depth to Orchestrator (Neon · Medium) or use Hydrogen · Medium.`
+        : `💡 Quota tip: currently on ${curEn} — Hydrogen · Medium (or Orchestrator (Neon · Medium)) handles small S fixes rapidly with minimal quota.`,
     };
   }
 
   return {
     match: 'optimal',
     currentDisplayRu: cur,
+    currentDisplayEn: curEn,
     recommendedRu: 'Hydrogen · Средний / Orchestrator (Neon · Средний) / Flash 3.8 · Средний',
+    recommendedEn: 'Hydrogen · Medium / Orchestrator (Neon · Medium) / Flash 3.8 · Medium',
     tipRu: '',
+    tipEn: '',
   };
 }
 
@@ -1732,13 +1949,17 @@ function evaluateSelectorMatchBase({
  * Формирует компактный паспорт текущей выбранной модели для промпт-инъекции PreInvocation,
  * чтобы ИИ-Автопилот точно знал текущий селектор окна и нюансы Hydrogen / Orchestrator.
  * @param {ReturnType<typeof normalizeModelProfile>|null} [modelProfile=null]
+ * @param {'en'|'ru'} [lang='ru']
  * @returns {string}
  */
-export function formatSelectorSnapshotForPrompt(modelProfile = null) {
+export function formatSelectorSnapshotForPrompt(modelProfile = null, lang = 'ru') {
   if (!modelProfile || modelProfile.tier === 'unknown') return '';
-  const disp = modelProfile.displayRu || modelProfile.shortLabel || modelProfile.label;
+  const isEn = String(lang || '').trim().toLowerCase() === 'en';
+  const disp = isEn
+    ? (modelProfile.displayEn || modelProfile.shortLabel || modelProfile.label)
+    : (modelProfile.displayRu || modelProfile.shortLabel || modelProfile.label);
   if (!modelProfile.isOrchestrator && modelProfile.tier !== 'flash_lite' && !modelProfile.thinkingLevel) {
-    return `[Active Selector: ${disp} · Авто]`;
+    return isEn ? `[Active Selector: ${disp} · Auto]` : `[Active Selector: ${disp} · Авто]`;
   }
   return `[Active Selector: ${disp}]`;
 }

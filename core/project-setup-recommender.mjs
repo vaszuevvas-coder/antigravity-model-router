@@ -10,6 +10,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectAndDetectStack } from '../skills/deep-stress-auditor/scripts/lib/stack-detector.mjs';
+import { normalizeLang } from './i18n.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
@@ -146,12 +147,15 @@ export function recommendProjectSetup(opts = {}) {
 
   let recommendedHookProfile = 'standard';
   let hookProfileReasonRu = 'Сбалансированный профиль для повседневной разработки и проверок после правок.';
+  let hookProfileReasonEn = 'Balanced profile for daily development and post-edit verification.';
   if (stack.totalFiles <= 8 && !hasTests && !hasTypedOrSystemsLang) {
     recommendedHookProfile = 'minimal';
     hookProfileReasonRu = 'Небольшой проект или набор скриптов без тяжёлых связей — достаточно лёгких защитных хуков.';
+    hookProfileReasonEn = 'Small script/project with few dependencies — lightweight guard hooks are sufficient.';
   } else if (hasTypedOrSystemsLang || (hasTests && stack.totalFiles >= 45) || langSet.has('ci_container')) {
     recommendedHookProfile = 'strict';
     hookProfileReasonRu = 'Типизированный или крупный проект с тестами — строгий профиль гарантирует LSP, каскад-проверку и защиту конфигов.';
+    hookProfileReasonEn = 'Typed or large tested codebase — strict profile enforces LSP checks, cascade audits, and config protection.';
   }
 
   const recommendedToggles = {
@@ -163,29 +167,53 @@ export function recommendProjectSetup(opts = {}) {
   };
 
   const recommendedLocalSkills = [];
-  const addSkill = (slug, reasonRu) => {
+  const addSkill = (slug, reasonRu, reasonEn) => {
     if (!recommendedLocalSkills.some((s) => s.slug === slug)) {
-      recommendedLocalSkills.push({ slug, reasonRu });
+      recommendedLocalSkills.push({ slug, reasonRu, reasonEn: reasonEn || reasonRu });
     }
   };
 
   if (hasFrontend) {
-    addSkill('ui-ux-design-system', 'Обнаружен веб-интерфейс/CSS/JSX — пригодится DESIGN.md, матрица палитр и проверка UI audit-ui.');
+    addSkill(
+      'ui-ux-design-system',
+      'Обнаружен веб-интерфейс/CSS/JSX — пригодится DESIGN.md, матрица палитр и проверка UI audit-ui.',
+      'Web UI/CSS/JSX detected — DESIGN.md tokens, palette matrix, and audit-ui checks are recommended.'
+    );
   }
   if (hasProgrammaticVideo) {
-    addSkill('programmatic-video-studio', 'Обнаружены зависимости или композиции Remotion/HyperFrames/GSAP.');
+    addSkill(
+      'programmatic-video-studio',
+      'Обнаружены зависимости или композиции Remotion/HyperFrames/GSAP.',
+      'Remotion/HyperFrames/GSAP dependencies or compositions detected.'
+    );
   }
   if (hasShaderOrVfx) {
-    addSkill('vj-video-fx-studio', 'Обнаружены шейдеры GLSL/ISF или плагины OpenFX/GSI.');
+    addSkill(
+      'vj-video-fx-studio',
+      'Обнаружены шейдеры GLSL/ISF или плагины OpenFX/GSI.',
+      'GLSL/ISF shaders or OpenFX/GSI plugins detected.'
+    );
   }
   if (hasGameSignals) {
-    addSkill('game-systems-architect', 'Обнаружен игровой движок/сцена (Phaser/Three/Pixi/Godot).');
+    addSkill(
+      'game-systems-architect',
+      'Обнаружен игровой движок/сцена (Phaser/Three/Pixi/Godot).',
+      'Game engine/scene dependencies detected (Phaser/Three/Pixi/Godot).'
+    );
   }
   if (stack.totalFiles >= 12) {
-    addSkill('deep-stress-auditor', 'Многомодульный проект — полезен периодический прогон стресс-аудита и Blast Radius.');
+    addSkill(
+      'deep-stress-auditor',
+      'Многомодульный проект — полезен периодический прогон стресс-аудита и Blast Radius.',
+      'Multi-module repository — periodic stress audit and Blast Radius checks are recommended.'
+    );
   }
   if (stack.totalFiles >= 20 && (langSet.has('javascript') || langSet.has('typescript') || langSet.has('python'))) {
-    addSkill('ast-codemod-refactor', 'Крупная кодовая база — массовое переименование безопаснее выполнять через run-codemod с откатом.');
+    addSkill(
+      'ast-codemod-refactor',
+      'Крупная кодовая база — массовое переименование безопаснее выполнять через run-codemod с откатом.',
+      'Large codebase — run bulk renames safely via run-codemod with rollback snapshots.'
+    );
   }
 
   const projectHygieneSuggestions = [];
@@ -193,6 +221,7 @@ export function recommendProjectSetup(opts = {}) {
     projectHygieneSuggestions.push({
       kind: 'agentignore',
       titleRu: 'Добавьте .agentignore для дополнительной изоляции .env и локальных секретов',
+      titleEn: 'Add .agentignore to isolate .env and local secret files',
       command: `node -e "require('fs').writeFileSync('.agentignore','.env*\\nsecrets/\\n','utf8')"`,
     });
   }
@@ -201,6 +230,7 @@ export function recommendProjectSetup(opts = {}) {
     projectHygieneSuggestions.push({
       kind: 'design_md',
       titleRu: 'Сгенерируйте DESIGN.md прямо из существующего CSS/токенов проекта',
+      titleEn: 'Generate DESIGN.md directly from existing CSS variables/tokens',
       command: `node ${extractScript} . --write`,
     });
   }
@@ -209,6 +239,7 @@ export function recommendProjectSetup(opts = {}) {
     projectHygieneSuggestions.push({
       kind: 'gates_md',
       titleRu: 'Для крупных задач можно создать журнал приёмки GATES.md (unlazy)',
+      titleEn: 'Create a GATES.md acceptance gate checklist for large tasks',
       command: `node ${cliScript} gates init .`,
     });
   }
@@ -216,6 +247,7 @@ export function recommendProjectSetup(opts = {}) {
     projectHygieneSuggestions.push({
       kind: 'hook_profile',
       titleRu: `Текущий профиль хуков (${currentState.hookProfile}) отличается от рекомендованного (${recommendedHookProfile})`,
+      titleEn: `Current hook profile (${currentState.hookProfile}) differs from recommended (${recommendedHookProfile})`,
       command: '',
     });
   }
@@ -226,7 +258,9 @@ export function recommendProjectSetup(opts = {}) {
       id: 'playwright',
       kind: 'cli_or_mcp',
       name: 'Playwright / Chrome DevTools',
+      nameEn: 'Playwright / Chrome DevTools',
       reasonRu: 'В проекте найден Playwright — удобно гонять E2E и accessibility-снимки без раздувания контекста.',
+      reasonEn: 'Playwright found in dependencies — great for E2E and accessibility snapshots without bloating context.',
       command: 'npx playwright test',
     });
   }
@@ -235,7 +269,9 @@ export function recommendProjectSetup(opts = {}) {
       id: 'posthog',
       kind: 'mcp_or_plugin',
       name: 'PostHog AI Plugin / MCP',
+      nameEn: 'PostHog AI Plugin / MCP',
       reasonRu: 'В зависимостях найден PostHog — можно подключить просмотр фиче-флагов и ошибок прямо из агента.',
+      reasonEn: 'PostHog found in dependencies — inspect feature flags and error telemetry directly from the agent.',
       command: 'npx @posthog/wizard mcp add',
     });
   }
@@ -244,7 +280,9 @@ export function recommendProjectSetup(opts = {}) {
       id: 'context7',
       kind: 'installed_mcp',
       name: 'Context7 MCP (уже установлен)',
+      nameEn: 'Context7 MCP (already installed)',
       reasonRu: 'Найдены внешние фреймворки/ORM — проверяйте свежие API через Context7 перед написанием кода.',
+      reasonEn: 'External frameworks/ORMs detected — verify up-to-date APIs via Context7 before coding.',
       command: '',
     });
   }
@@ -253,7 +291,9 @@ export function recommendProjectSetup(opts = {}) {
       id: 'sonarqube',
       kind: 'installed_skill',
       name: 'SonarQube Skills (уже установлен)',
+      nameEn: 'SonarQube Skills (already installed)',
       reasonRu: 'Найден sonar-project.properties — доступен авто-анализ Quality Gate и уязвимостей.',
+      reasonEn: 'sonar-project.properties detected — Quality Gate and vulnerability analysis ready.',
       command: '',
     });
   }
@@ -262,7 +302,9 @@ export function recommendProjectSetup(opts = {}) {
       id: 'gemini-api',
       kind: 'installed_skill',
       name: 'Gemini API Dev Skill (уже установлен)',
+      nameEn: 'Gemini API Dev Skill (already installed)',
       reasonRu: 'Найден @google/genai — используйте актуальный Interactions API вместо устаревшего SDK.',
+      reasonEn: '@google/genai detected — use the current Interactions API rather than legacy SDK patterns.',
       command: '',
     });
   }
@@ -271,7 +313,9 @@ export function recommendProjectSetup(opts = {}) {
       id: 'firecrawl',
       kind: 'env_detected',
       name: 'Firecrawl API (ключ обнаружен)',
+      nameEn: 'Firecrawl API (key detected)',
       reasonRu: 'Обнаружен FIRECRAWL_API_KEY — доступен импорт документации в чистый Markdown.',
+      reasonEn: 'FIRECRAWL_API_KEY detected — documentation import to clean Markdown is available.',
       command: '',
     });
   }
@@ -280,7 +324,9 @@ export function recommendProjectSetup(opts = {}) {
       id: 'perplexity',
       kind: 'env_detected',
       name: 'Perplexity MCP (ключ обнаружен)',
+      nameEn: 'Perplexity MCP (key detected)',
       reasonRu: 'Обнаружен PERPLEXITY_API_KEY — доступен глубокий поиск с источниками через внешний MCP.',
+      reasonEn: 'PERPLEXITY_API_KEY detected — grounded deep search is available via external MCP.',
       command: '',
     });
   }
@@ -304,6 +350,7 @@ export function recommendProjectSetup(opts = {}) {
     },
     recommendedHookProfile,
     hookProfileReasonRu,
+    hookProfileReasonEn,
     recommendedToggles,
     recommendedLocalSkills,
     projectHygieneSuggestions,
@@ -312,36 +359,58 @@ export function recommendProjectSetup(opts = {}) {
 }
 
 /**
- * Formats project setup recommendation report into concise Russian CLI output.
- * @param {object} report
+ * Formats project setup recommendation report into English or Russian CLI output.
+ * @param {object} [report={}]
+ * @param {'en'|'ru'} [lang='en']
  */
-export function formatProjectSetupReportRu(report = {}) {
+export function formatProjectSetupReport(report = {}, lang = 'en') {
+  const isRu = normalizeLang(lang, 'en') === 'ru';
   if (!report || !report.ok) {
-    return `❌ [Setup Doctor] Не удалось проанализировать проект: ${report?.error || 'unknown_error'}`;
+    return isRu
+      ? `❌ [Setup Doctor] Не удалось проанализировать проект: ${report?.error || 'unknown_error'}`
+      : `❌ [Setup Doctor] Failed to analyze project: ${report?.error || 'unknown_error'}`;
   }
   const st = report.stack || {};
-  const lines = [
-    `🩺 [Setup Doctor] Проект: ${report.workspaceRoot}`,
-    `   Стек: ${(st.languages || []).join(', ') || 'text'} | Фреймворки: ${(st.frameworks || []).join(', ') || 'нет'} | Файлов: ${st.totalFiles || 0}`,
-    `   Профиль хуков: ${report.recommendedHookProfile} — ${report.hookProfileReasonRu}`,
-  ];
+  const lines = isRu
+    ? [
+        `🩺 [Setup Doctor] Проект: ${report.workspaceRoot}`,
+        `   Стек: ${(st.languages || []).join(', ') || 'text'} | Фреймворки: ${(st.frameworks || []).join(', ') || 'нет'} | Файлов: ${st.totalFiles || 0}`,
+        `   Профиль хуков: ${report.recommendedHookProfile} — ${report.hookProfileReasonRu}`,
+      ]
+    : [
+        `🩺 [Setup Doctor] Project: ${report.workspaceRoot}`,
+        `   Stack: ${(st.languages || []).join(', ') || 'text'} | Frameworks: ${(st.frameworks || []).join(', ') || 'none'} | Files: ${st.totalFiles || 0}`,
+        `   Hook profile: ${report.recommendedHookProfile} — ${report.hookProfileReasonEn || report.hookProfileReasonRu}`,
+      ];
   if (report.recommendedLocalSkills?.length) {
-    lines.push('   Рекомендованные локальные навыки:');
+    lines.push(isRu ? '   Рекомендованные локальные навыки:' : '   Recommended local skills:');
     for (const sk of report.recommendedLocalSkills) {
-      lines.push(`     • ${sk.slug} — ${sk.reasonRu}`);
+      lines.push(`     • ${sk.slug} — ${isRu ? sk.reasonRu : (sk.reasonEn || sk.reasonRu)}`);
     }
   }
   if (report.projectHygieneSuggestions?.length) {
-    lines.push('   Улучшения гигиены проекта:');
+    lines.push(isRu ? '   Улучшения гигиены проекта:' : '   Project hygiene improvements:');
     for (const h of report.projectHygieneSuggestions) {
-      lines.push(`     • ${h.titleRu}${h.command ? ` (${h.command})` : ''}`);
+      const title = isRu ? h.titleRu : (h.titleEn || h.titleRu);
+      lines.push(`     • ${title}${h.command ? ` (${h.command})` : ''}`);
     }
   }
   if (report.externalIntegrations?.length) {
-    lines.push('   Подключения под обнаруженные зависимости:');
+    lines.push(isRu ? '   Подключения под обнаруженные зависимости:' : '   Integrations for detected dependencies:');
     for (const ext of report.externalIntegrations) {
-      lines.push(`     • ${ext.name}: ${ext.reasonRu}`);
+      const name = isRu ? ext.name : (ext.nameEn || ext.name);
+      const reason = isRu ? ext.reasonRu : (ext.reasonEn || ext.reasonRu);
+      lines.push(`     • ${name}: ${reason}`);
     }
   }
   return lines.join('\n');
+}
+
+/**
+ * Formats project setup recommendation report into concise CLI output (RU default for backwards compat).
+ * @param {object} [report={}]
+ * @param {'en'|'ru'} [lang='ru']
+ */
+export function formatProjectSetupReportRu(report = {}, lang = 'ru') {
+  return formatProjectSetupReport(report, lang);
 }

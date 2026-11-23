@@ -197,14 +197,21 @@ export function computeQuotaBurnForecast(eventsOrSamples = null, state = {}) {
     : 240;
 
   let recommendationRu = 'Темп квоты спокойный — можно работать в обычном режиме.';
+  let recommendationEn = 'Quota burn rate is calm — normal workflow pace is safe.';
   if (status === 'critical') {
     recommendationRu = isUltra
       ? 'Высокий темп расхода: перенесите рутинные S/M правки на Hydrogen или паузы между тяжёлыми прогонами.'
       : 'Критический темп расхода на Pro: переключите рутину S/M на Hydrogen / Orchestrator (Neon), чтобы сберечь лимит.';
+    recommendationEn = isUltra
+      ? 'High burn rate: offload routine S/M edits to Hydrogen or pause between heavy runs.'
+      : 'Critical burn rate on Pro: switch S/M routine work to Hydrogen / Orchestrator (Neon) to protect quota.';
   } else if (status === 'elevated') {
     recommendationRu = isUltra
       ? 'Повышенный темп: Orchestrator (Carbon) экономит квоту на правках за счёт авто-передачи на Hydrogen.'
       : 'Повышенный темп квоты: для мелких правок лучше использовать Hydrogen вместо ручного Neon/Carbon.';
+    recommendationEn = isUltra
+      ? 'Elevated burn rate: Orchestrator (Carbon) saves quota by routing edits to Hydrogen.'
+      : 'Elevated burn rate: prefer Hydrogen over manual Neon/Carbon for small edits.';
   }
 
   return {
@@ -218,6 +225,7 @@ export function computeQuotaBurnForecast(eventsOrSamples = null, state = {}) {
     dominantTier,
     subscriptionTier: isUltra ? 'ultra' : 'pro',
     recommendationRu,
+    recommendationEn,
   };
 }
 
@@ -228,14 +236,15 @@ export function computeQuotaBurnForecast(eventsOrSamples = null, state = {}) {
  * @returns {object}
  */
 export function auditPrefixStability(opts = {}) {
+  const isEn = String(opts?.lang || '').trim().toLowerCase() === 'en';
   if (!opts || typeof opts !== 'object' || Array.isArray(opts)) {
-    return { ok: false, stable: false, error: 'Некорректные параметры auditPrefixStability' };
+    return { ok: false, stable: false, error: isEn ? 'Invalid auditPrefixStability arguments' : 'Некорректные параметры auditPrefixStability' };
   }
   const safeOpts = asObj(opts);
   const rawConvo = asStr(safeOpts.convoId, 96).trim();
   const convoId = rawConvo || 'default';
   if (BLOCKED_KEYS.has(convoId)) {
-    return { ok: false, stable: false, error: 'Некорректный convoId' };
+    return { ok: false, stable: false, error: isEn ? 'Invalid convoId' : 'Некорректный convoId' };
   }
   const staticPrefix = asStr(safeOpts.staticPrefix, 24_000);
   const dynamicTail = asStr(safeOpts.dynamicTail, 24_000);

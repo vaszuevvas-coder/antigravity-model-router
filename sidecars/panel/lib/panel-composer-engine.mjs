@@ -6,6 +6,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import http from 'node:http';
+import { detectTextLanguage, normalizeLang, pickLang, readActiveUiLanguage } from '../../../core/i18n.mjs';
 import net from 'node:net';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
@@ -31,32 +32,42 @@ import { resolveActiveWorkspaceForPanel } from './panel-telemetry-collectors.mjs
  */
 export function buildComposerAtSuggestions(opts = {}) {
   const safe = opts && typeof opts === 'object' && !Array.isArray(opts) ? opts : {};
+  const uiLang = safe.lang ? normalizeLang(safe.lang, 'ru') : 'ru';
   const rawQuery = typeof safe.query === 'string' ? safe.query.trim().toLowerCase() : '';
   const needle = rawQuery.replace(/^@/, '');
   const limit = Number.isFinite(Number(safe.limit)) ? Math.max(1, Math.min(20, Math.round(Number(safe.limit)))) : 10;
 
   const candidates = [];
-  const push = (token, kind, label, detail) => {
-    if (needle && !token.toLowerCase().includes(needle) && !label.toLowerCase().includes(needle)) return;
-    candidates.push({ token, kind, label, detail });
+  const push = (token, kind, labelRu, detailRu, labelEn = labelRu, detailEn = detailRu) => {
+    const label = pickLang(uiLang, labelRu, labelEn);
+    const detail = pickLang(uiLang, detailRu, detailEn);
+    if (
+      needle &&
+      !token.toLowerCase().includes(needle) &&
+      !label.toLowerCase().includes(needle) &&
+      !String(labelRu).toLowerCase().includes(needle) &&
+      !String(labelEn).toLowerCase().includes(needle)
+    ) return;
+    candidates.push({ token, kind, label, labelEn, detail, detailEn });
   };
 
-  push('@git:diff', 'git', 'Текущий diff', 'Незафиксированные правки git diff HEAD');
-  push('@git:staged', 'git', 'Индекс staged', 'Подготовленные изменения git diff --cached');
+  push('@git:diff', 'git', 'Текущий diff', 'Незафиксированные правки git diff HEAD', 'Working diff', 'Uncommitted edits (git diff HEAD)');
+  push('@git:staged', 'git', 'Индекс staged', 'Подготовленные изменения git diff --cached', 'Staged diff', 'Staged changes (git diff --cached)');
 
   const faults = Array.isArray(safe.wiretapFaults) ? safe.wiretapFaults : [];
   if (faults.length > 0) {
     const f0 = faults[0];
-    push('@error:last', 'error', 'Последний сбой', `${f0.file || 'runtime'}: ${String(f0.summary || '').slice(0, 60)}`);
+    const faultDetail = `${f0.file || 'runtime'}: ${String(f0.summary || '').slice(0, 60)}`;
+    push('@error:last', 'error', 'Последний сбой', faultDetail, 'Last error', faultDetail);
   } else {
-    push('@error:last', 'error', 'Последний сбой', 'Последняя перехваченная ошибка Wiretap');
+    push('@error:last', 'error', 'Последний сбой', 'Последняя перехваченная ошибка Wiretap', 'Last error', 'Latest captured Wiretap runtime fault');
   }
 
   const peers = Array.isArray(safe.federatedPeers) ? safe.federatedPeers : [];
   for (const peer of peers.slice(0, 4)) {
     const label = typeof peer === 'string' ? basename(peer) : String(peer?.label || basename(peer?.path || '')).trim();
     if (label) {
-      push(`@repo:${label}`, 'repo', label, 'Связанный репозиторий (Federation)');
+      push(`@repo:${label}`, 'repo', label, 'Связанный репозиторий (Federation)', label, 'Federated peer repository');
     }
   }
 
@@ -72,9 +83,9 @@ export function buildComposerAtSuggestions(opts = {}) {
   for (const sym of symbols) {
     if (candidates.length >= limit * 4) break;
     const name = typeof sym === 'string' ? sym : String(sym?.name || sym?.symbol || '').trim();
-    const loc = sym?.file ? `${sym.file}${sym.line ? `:L${sym.line}` : ''}` : 'символ проекта';
+    const fileLoc = sym?.file ? `${sym.file}${sym.line ? `:L${sym.line}` : ''}` : '';
     if (name) {
-      push(`@symbol:${name}`, 'symbol', name, loc);
+      push(`@symbol:${name}`, 'symbol', name, fileLoc || 'символ проекта', name, fileLoc || 'project symbol');
     }
   }
 
@@ -82,13 +93,13 @@ export function buildComposerAtSuggestions(opts = {}) {
 }
 
 const SLASH_AUTOCOMPLETE_PRESETS = [
-  { cmd: '/plan', tail: ' — составь пошаговый план реализации' },
-  { cmd: '/boost', tail: ' — глубокий инженерный анализ и проверка' },
-  { cmd: '/goal', tail: ' — доведи задачу до полного прохождения тестов' },
-  { cmd: '/swarm', tail: ' — распредели модули по параллельным воркерам' },
-  { cmd: '/compact', tail: ' — сожми историю диалога и освободи контекст' },
-  { cmd: '/grill-me', tail: ' — задай уточняющие вопросы по архитектуре' },
-  { cmd: '/learn', tail: ' — зафиксируй правило для будущих задач' },
+  { cmd: '/plan', tail: ' — составь пошаговый план реализации', tailEn: ' — create a step-by-step implementation plan' },
+  { cmd: '/boost', tail: ' — глубокий инженерный анализ и проверка', tailEn: ' — deep engineering analysis and verification' },
+  { cmd: '/goal', tail: ' — доведи задачу до полного прохождения тестов', tailEn: ' — keep going until all tests pass' },
+  { cmd: '/swarm', tail: ' — распредели модули по параллельным воркерам', tailEn: ' — distribute modules across parallel workers' },
+  { cmd: '/compact', tail: ' — сожми историю диалога и освободи контекст', tailEn: ' — compact conversation history and free context' },
+  { cmd: '/grill-me', tail: ' — задай уточняющие вопросы по архитектуре', tailEn: ' — ask clarifying architecture questions' },
+  { cmd: '/learn', tail: ' — зафиксируй правило для будущих задач', tailEn: ' — capture a persistent rule for future tasks' },
 ];
 
 export const ALLOWED_SLASH_COMMANDS = SLASH_AUTOCOMPLETE_PRESETS.map((p) => p.cmd);
@@ -122,18 +133,27 @@ export function buildSmartContinuationChips({ workspaceName = '', touchedFiles =
     return [
       {
         label: `🚨 Исправить ${alertBase}`,
+        labelEn: `🚨 Fix ${alertBase}`,
         prompt: `Исправь ошибку проверки${checkerNote} в ${alertFile}${errSnippet} и убедись, что автотесты зелёные`,
+        promptEn: `Fix the check error${checkerNote} in ${alertFile}${errSnippet} and verify tests pass`,
         title: `Активный алерт проверки в ${alertFile}`,
+        titleEn: `Active verification alert in ${alertFile}`,
       },
       {
         label: `🔍 Проверить ${secondBase}`,
+        labelEn: `🔍 Inspect ${secondBase}`,
         prompt: `Проверь изменения в ${secondFile} на крайние случаи и потенциальные ошибки`,
+        promptEn: `Inspect changes in ${secondFile} for edge cases and regressions`,
         title: `Вставить проверку ${secondFile}`,
+        titleEn: `Insert review prompt for ${secondFile}`,
       },
       {
         label: '🧪 Прогнать тесты',
+        labelEn: '🧪 Run tests',
         prompt: `Прогони профильные автотесты по правкам в ${alertBase} и убедись, что нет регрессий`,
+        promptEn: `Run relevant automated tests for ${alertBase} and ensure no regressions`,
         title: 'Вставить запрос на запуск тестов',
+        titleEn: 'Insert test-run prompt',
       },
     ];
   }
@@ -143,40 +163,61 @@ export function buildSmartContinuationChips({ workspaceName = '', touchedFiles =
     return [
       {
         label: `🔍 Проверить ${base}`,
+        labelEn: `🔍 Inspect ${base}`,
         prompt: `Проверь изменения в ${topFile} на крайние случаи и потенциальные ошибки`,
+        promptEn: `Inspect changes in ${topFile} for edge cases and potential bugs`,
         title: `Вставить проверку ${topFile}`,
+        titleEn: `Insert review prompt for ${topFile}`,
       },
       {
         label: '🧪 Прогнать тесты',
+        labelEn: '🧪 Run tests',
         prompt: `Прогони профильные автотесты по последним правкам в ${base} и убедись, что нет регрессий`,
+        promptEn: `Run targeted tests for recent edits in ${base} and ensure no regressions`,
         title: 'Вставить запрос на запуск тестов',
+        titleEn: 'Insert test-run prompt',
       },
       {
         label: '⚡ Узкие места',
+        labelEn: '⚡ Bottlenecks',
         prompt: `Оцени производительность и узкие места в ${topFile}, предложи точечное улучшение`,
+        promptEn: `Analyze performance bottlenecks in ${topFile} and suggest a surgical fix`,
         title: 'Вставить запрос на поиск узких мест',
+        titleEn: 'Insert bottleneck-analysis prompt',
       },
     ];
   }
   const scopeNote = workspaceName ? ` проекта ${workspaceName}` : ' проекта';
+  const scopeNoteEn = workspaceName ? ` of ${workspaceName}` : '';
   const hasGoals = Array.isArray(recentGoals) && recentGoals.length > 0;
   return [
     {
       label: '🧭 Ревью архитектуры',
+      labelEn: '🧭 Architecture Review',
       prompt: `Проведи краткое ревью архитектуры${scopeNote} и выдели слабые места`,
+      promptEn: `Run a concise architecture review${scopeNoteEn} and highlight weak spots`,
       title: `Ревью архитектуры${scopeNote}`,
+      titleEn: `Architecture review${scopeNoteEn}`,
     },
     {
       label: '🐞 Найти риски и баги',
+      labelEn: '🐞 Find Risks & Bugs',
       prompt: hasGoals
         ? `Найди потенциальные баги, гонки или необработанные ошибки в модулях после недавних задач`
         : 'Найди потенциальные баги, гонки или необработанные ошибки в ключевых модулях',
+      promptEn: hasGoals
+        ? 'Find potential bugs, races, or unhandled errors in recently modified modules'
+        : 'Find potential bugs, race conditions, or unhandled errors across core modules',
       title: 'Поиск потенциальных багов',
+      titleEn: 'Search for potential bugs',
     },
     {
       label: '📋 План доработки',
+      labelEn: '📋 Implementation Plan',
       prompt: 'Составь пошаговый инженерный план реализации следующей задачи: ',
+      promptEn: 'Create a step-by-step engineering plan for the following task: ',
       title: 'Шаблон пошагового плана',
+      titleEn: 'Step-by-step plan template',
     },
   ];
 }
@@ -308,6 +349,9 @@ export function computeFastRamAutocomplete(draft = '', context = {}) {
   }
 
   const scopedCtx = prioritizeContextForDraft(rawDraft, context);
+  const uiLang = context?.lang
+    ? normalizeLang(context.lang, readActiveUiLanguage())
+    : detectTextLanguage(rawDraft, readActiveUiLanguage());
   const cleanTouched = scopedCtx.touchedFiles;
   const cleanRepoFiles = scopedCtx.repoFiles;
   const cleanSymbols = scopedCtx.symbols;
@@ -324,7 +368,8 @@ export function computeFastRamAutocomplete(draft = '', context = {}) {
     const lowerSlash = leftTrimmed.toLowerCase();
     for (const preset of SLASH_AUTOCOMPLETE_PRESETS) {
       if (preset.cmd.startsWith(lowerSlash)) {
-        const fullLine = `${preset.cmd}${preset.tail}`;
+        const tail = uiLang === 'ru' ? preset.tail : (preset.tailEn || preset.tail);
+        const fullLine = `${preset.cmd}${tail}`;
         const cont = fullLine.slice(leftTrimmed.length);
         if (cont) return { continuation: cont, source: 'ram' };
       }
@@ -346,7 +391,7 @@ export function computeFastRamAutocomplete(draft = '', context = {}) {
       /^[A-Z][A-Za-z0-9]{2,}$/.test(tok) ||
       leadDelim === '`' ||
       leadDelim === '@';
-    const precededByFileCue = /(?:^|\s)(?:в|во|из|для|открой|файл[аеуыов]*|модул[ьяюеией]*|папк[аеуи])\s+[A-Za-z0-9_./-]{2,}$/i.test(rawDraft);
+    const precededByFileCue = /(?:^|\s)(?:в|во|из|для|открой|файл[аеуыов]*|модул[ьяюеией]*|папк[аеуи]|file|module|folder|in|from)\s+[A-Za-z0-9_./-]{2,}$/i.test(rawDraft);
     const isGenericStopword =
       !hasSlash &&
       !hasDot &&
@@ -415,17 +460,25 @@ export function computeFastRamAutocomplete(draft = '', context = {}) {
     const cont = sanitizeGhostContinuation(rawDraft, `ошибку${checkerHint} в ${cascadeAlert.file} и проверь автотесты`);
     if (cont) return { continuation: cont, source: 'ram' };
   }
+  if (cascadeAlert?.file && /^(?:fix|repair|resolve)\s*$/i.test(trimmed)) {
+    const checkerHint = cascadeAlert.checker ? ` (${cascadeAlert.checker})` : '';
+    const cont = sanitizeGhostContinuation(rawDraft, `the check error${checkerHint} in ${cascadeAlert.file} and verify unit tests`);
+    if (cont) return { continuation: cont, source: 'ram' };
+  }
   if (scopedCtx.matchedDirs.length > 0 && cleanTouched.length > 0) {
     const dirPrimaryFile = cleanTouched[0];
     const dirPrimarySym = cleanSymbols[0] || '';
-    if (/(?:из\s+файлов|в\s+папке|в\s+модулях|внутри)\s+[A-Za-z0-9_/-]+\s+(?:через|в|из|используя)\s*$/i.test(rawDraft)) {
+    if (
+      /(?:из\s+файлов|в\s+папке|в\s+модулях|внутри)\s+[A-Za-z0-9_/-]+\s+(?:через|в|из|используя)\s*$/i.test(rawDraft) ||
+      /(?:files\s+in|inside|in\s+folder|in\s+directory|within)\s+[A-Za-z0-9_/-]+\s+(?:via|using|in|with)\s*$/i.test(rawDraft)
+    ) {
       const symClause = dirPrimarySym ? ` (${dirPrimarySym})` : '';
       const cont = sanitizeGhostContinuation(rawDraft, `${dirPrimaryFile}${symClause}`);
       if (cont) return { continuation: cont, source: 'ram' };
     }
   }
 
-  const endsWithTargetPreposition = /(?:^|\s)(?:в|во|из|для|файл[аеу]?|модул[ьяюеи])\s*$/i.test(rawDraft);
+  const endsWithTargetPreposition = /(?:^|\s)(?:в|во|из|для|файл[аеу]?|модул[ьяюеи]|file|module|in\s+(?:the\s+)?(?:file|module))\s*$/i.test(rawDraft);
   const isScopedCallerContext =
     cleanTouched.length > 0 &&
     !context?.wsRoot &&
@@ -730,7 +783,11 @@ async function rebuildAutocompleteWorkspaceContext(wsRoot = '', stateSig = '') {
         if (g && !recentGoals.includes(g)) recentGoals.push(g);
       }
       if (cascadeAlert?.file && cascadeAlert?.error) {
-        recentGoals.unshift(`Исправить алерт (${cascadeAlert.checker || 'syntax'}) в ${cascadeAlert.file}`);
+        recentGoals.unshift(
+          readActiveUiLanguage() === 'en'
+            ? `Fix alert (${cascadeAlert.checker || 'syntax'}) in ${cascadeAlert.file}`
+            : `Исправить алерт (${cascadeAlert.checker || 'syntax'}) в ${cascadeAlert.file}`
+        );
       }
 
       const workspaceName = wsRoot ? basename(wsRoot) : '';
@@ -1192,7 +1249,7 @@ export class Queue {
         this._rejectEntry(
           entry,
           'QUEUE_TASK_EXPIRED',
-          'Задача автоматически сброшена по истечении времени ожидания в очереди',
+          pickLang(readActiveUiLanguage(), 'Задача автоматически сброшена по истечении времени ожидания в очереди', 'Queued task automatically dropped after waiting too long'),
           true
         );
       }
@@ -1201,7 +1258,7 @@ export class Queue {
     return expired.length;
   }
 
-  supersedePending(predicate, code = 'QUEUE_SUPERSEDED', message = 'Задача заменена более новым запросом') {
+  supersedePending(predicate, code = 'QUEUE_SUPERSEDED', message = pickLang(readActiveUiLanguage(), 'Задача заменена более новым запросом', 'Task superseded by a newer request')) {
     if (this.size === 0 || typeof predicate !== 'function') return 0;
     const dropped = [];
     const kept = [];
@@ -1229,13 +1286,14 @@ export class Queue {
   }
 
   enqueue(taskFn, meta = {}) {
+    const lang = readActiveUiLanguage();
     if (this._disposed) {
-      const err = new Error('Очередь остановлена');
+      const err = new Error(pickLang(lang, 'Очередь остановлена', 'Queue is stopped'));
       err.code = 'QUEUE_DISPOSED';
       return Promise.reject(err);
     }
     if (typeof taskFn !== 'function') {
-      const err = new Error('Задача очереди должна быть функцией');
+      const err = new Error(pickLang(lang, 'Задача очереди должна быть функцией', 'Queue task must be a function'));
       err.code = 'INVALID_TASK';
       return Promise.reject(err);
     }
@@ -1253,7 +1311,7 @@ export class Queue {
       this._rejectEntry(
         oldest,
         'QUEUE_OVERFLOW',
-        `Очередь достигла лимита (${this.maxSize} сообщений): старая задача сброшена`,
+        pickLang(lang, `Очередь достигла лимита (${this.maxSize} сообщений): старая задача сброшена`, `Queue limit (${this.maxSize} messages) reached: oldest task dropped`),
         true
       );
     }
@@ -1301,7 +1359,7 @@ export class Queue {
       const expiredErr = this._rejectEntry(
         entry,
         'QUEUE_TASK_EXPIRED',
-        'Задача автоматически сброшена перед выполнением (просрочена)',
+        pickLang(readActiveUiLanguage(), 'Задача автоматически сброшена перед выполнением (просрочена)', 'Queued task automatically dropped before execution (expired)'),
         true
       );
       return { ok: false, id: entry.id, dropped: true, error: expiredErr };
@@ -1312,7 +1370,7 @@ export class Queue {
     const timeoutPromise = new Promise((_, rejectTimeout) => {
       timeoutTimer = setTimeout(() => {
         try { ac.abort(); } catch {}
-        const timeoutErr = new Error(`Таймаут шага очереди (${entry.timeoutMs} мс)`);
+        const timeoutErr = new Error(pickLang(readActiveUiLanguage(), `Таймаут шага очереди (${entry.timeoutMs} мс)`, `Queue step timed out (${entry.timeoutMs} ms)`));
         timeoutErr.code = 'QUEUE_TASK_TIMEOUT';
         timeoutErr.timedOut = true;
         rejectTimeout(timeoutErr);
@@ -1485,7 +1543,7 @@ export class Queue {
     };
   }
 
-  clear(code = 'QUEUE_CLEARED', message = 'Очередь очищена') {
+  clear(code = 'QUEUE_CLEARED', message = pickLang(readActiveUiLanguage(), 'Очередь очищена', 'Queue cleared')) {
     this._clearNextTick();
     this._clearExpiryTimer();
     const pending = this._items.slice(this._head).filter(Boolean);
@@ -1500,7 +1558,7 @@ export class Queue {
 
   dispose() {
     this._disposed = true;
-    return this.clear('QUEUE_DISPOSED', 'Очередь остановлена');
+    return this.clear('QUEUE_DISPOSED', pickLang(readActiveUiLanguage(), 'Очередь остановлена', 'Queue stopped'));
   }
 
   getStats() {
@@ -1531,13 +1589,15 @@ export async function dispatchChatMessageFromSidecar({
   execAgentApiFn = null,
   eventsDir = '',
   env = process.env,
+  lang = '',
 } = {}) {
+  const uiLang = lang ? normalizeLang(lang, readActiveUiLanguage()) : readActiveUiLanguage();
   const cleanMessage = typeof message === 'string' ? message.trim() : '';
   if (!cleanMessage) {
-    return { ok: false, code: 'EMPTY_MESSAGE', error: 'Пустой текст запроса' };
+    return { ok: false, code: 'EMPTY_MESSAGE', error: pickLang(uiLang, 'Пустой текст запроса', 'Prompt message is empty') };
   }
   if (cleanMessage.length > 32000) {
-    return { ok: false, code: 'MESSAGE_TOO_LONG', error: 'Слишком длинный текст запроса' };
+    return { ok: false, code: 'MESSAGE_TOO_LONG', error: pickLang(uiLang, 'Слишком длинный текст запроса', 'Prompt message is too long') };
   }
 
   const hasHostEnv = Boolean(
@@ -1548,7 +1608,7 @@ export async function dispatchChatMessageFromSidecar({
     return {
       ok: false,
       code: 'NO_AGENTAPI_ENV',
-      error: 'Панель открыта вне контейнера Antigravity',
+      error: pickLang(uiLang, 'Панель открыта вне контейнера Antigravity', 'Panel is running outside Antigravity host'),
     };
   }
 
@@ -1595,7 +1655,7 @@ export async function dispatchChatMessageFromSidecar({
       return {
         ok: false,
         code: 'SEND_FAILED',
-        error: errStr || 'Не удалось отправить сообщение в текущий чат',
+        error: errStr || pickLang(uiLang, 'Не удалось отправить сообщение в текущий чат', 'Failed to send message to current chat'),
       };
     }
   }
@@ -1604,7 +1664,7 @@ export async function dispatchChatMessageFromSidecar({
     return {
       ok: false,
       code: 'NO_ACTIVE_CONVERSATION',
-      error: 'Активный чат не выбран',
+      error: pickLang(uiLang, 'Активный чат не выбран', 'No active chat selected'),
     };
   }
 
@@ -1617,7 +1677,7 @@ export async function dispatchChatMessageFromSidecar({
     return {
       ok: false,
       code: 'NEW_CONVERSATION_FAILED',
-      error: String(newRes?.error || 'Не удалось запустить новый чат'),
+      error: String(newRes?.error || pickLang(uiLang, 'Не удалось запустить новый чат', 'Failed to start a new chat')),
     };
   }
 

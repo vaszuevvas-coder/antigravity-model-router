@@ -167,6 +167,7 @@ export async function minimizeChunksParallel(items, asyncTestFn, { concurrency =
         workers: Math.min(maxThreads, items.length),
         items: items.length,
         detail: `Минимизация ddmin (${items.length} фрагм.)`,
+        detailEn: `ddmin minimization (${items.length} chunks)`,
       })
     : null;
   let c = [...items];
@@ -212,6 +213,7 @@ export async function minimizeChunksParallel(items, asyncTestFn, { concurrency =
         workers: Math.min(maxThreads, items.length),
         items: c.length,
         detail: `Минимизация ddmin (${items.length} → ${c.length})`,
+        detailEn: `ddmin minimization (${items.length} → ${c.length})`,
         latencyMs: Date.now() - t0,
       });
     }

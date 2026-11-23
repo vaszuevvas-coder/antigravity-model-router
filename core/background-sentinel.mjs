@@ -32,6 +32,7 @@ import {
   reviewGitDiffHunkLocally,
 } from './local-gpu-engine.mjs';
 import { redactSecretsInText } from './security-guard.mjs';
+import { normalizeLang, pickLang } from './i18n.mjs';
 import { lspBridge } from './lsp-bridge.mjs';
 import { knowledgeHub } from './sqlite-knowledge-hub.mjs';
 
@@ -893,14 +894,16 @@ export class BackgroundSentinel {
     return { ws: null, filesMap: scanWorkspaceFilesFallback(absRoot) };
   }
 
-  _beginWorking(taskRu, abortController = null) {
+  _beginWorking(taskRu, abortController = null, taskEn = '') {
     this.currentState = 'working';
     this.currentTaskRu = taskRu;
+    this.currentTaskEn = taskEn || taskRu;
     this.activeAbortController = abortController;
     this._persistRuntimePatch((cur) => ({
       ...cur,
       state: 'working',
       currentTaskRu: taskRu,
+      currentTaskEn: this.currentTaskEn,
       stateTs: Date.now(),
       preemptedCount: this.preemptedCount,
       speculativeHits: this.speculativeHits,
@@ -914,10 +917,12 @@ export class BackgroundSentinel {
     if (this.currentState === 'working') {
       this.currentState = 'idle';
       this.currentTaskRu = '';
+      this.currentTaskEn = '';
       this._persistRuntimePatch((cur) => ({
         ...cur,
         state: 'idle',
         currentTaskRu: '',
+        currentTaskEn: '',
         stateTs: Date.now(),
         preemptedCount: this.preemptedCount,
         speculativeHits: this.speculativeHits,
@@ -1169,12 +1174,14 @@ export class BackgroundSentinel {
         });
         for (const p of coRes?.partners || []) {
           if (p.confidence >= 0.75 && !gitDirtySet.has(p.file)) {
+            const pct = Math.round(p.confidence * 100);
             coChangeAlerts.push({
               file: dirtyFile,
               partnerFile: p.file,
               confidence: p.confidence,
               coCommits: p.coCommits,
-              detailRu: `${dirtyFile} обычно меняется вместе с ${p.file} (${Math.round(p.confidence * 100)}%)`,
+              detailRu: `${dirtyFile} обычно меняется вместе с ${p.file} (${pct}%)`,
+              detailEn: `${dirtyFile} usually changes together with ${p.file} (${pct}%)`,
             });
           }
         }
@@ -1364,7 +1371,7 @@ export class BackgroundSentinel {
     } catch {}
 
     const ac = new AbortController();
-    this._beginWorking('Локальный BugBot: проверка git diff', ac);
+    this._beginWorking('Локальный BugBot: проверка git diff', ac, 'Local BugBot: reviewing git diff');
     try {
       const res = await reviewGitDiffHunkLocally({
         relPath: touchedFiles[0] || '',
@@ -1468,7 +1475,11 @@ export class BackgroundSentinel {
     }
 
     const ac = new AbortController();
-    this._beginWorking(`Индексация паспортов модулей (${batch[0].relPath})`, ac);
+    this._beginWorking(
+      `Индексация паспортов модулей (${batch[0].relPath})`,
+      ac,
+      `Indexing module symbol cards (${batch[0].relPath})`
+    );
     let indexedNow = 0;
     let lastFile = doc.lastFile || '';
     let aborted = false;
@@ -1780,6 +1791,7 @@ export class BackgroundSentinel {
         enabled: false,
         lastStatus: 'disabled',
         lastSummaryRu: 'Фоновые микро-тесты выключены (opt-in)',
+        lastSummaryEn: 'Shadow micro-tests are disabled (opt-in)',
       };
     }
 
@@ -1820,6 +1832,7 @@ export class BackgroundSentinel {
         enabled: Boolean(cfg.sentinelShadowTests),
         lastStatus: 'idle',
         lastSummaryRu: 'Подходящие микро-тесты не найдены',
+        lastSummaryEn: 'No matching micro-tests found',
         lastRunAt: new Date().toISOString(),
       };
       this._saveShadowTestsState(wsState.wsKey, idleRec);
@@ -1828,7 +1841,7 @@ export class BackgroundSentinel {
 
     const ac = new AbortController();
     const shortName = path.basename(targetTests[0]);
-    this._beginWorking(`Теневой прогон теста ${shortName}`, ac);
+    this._beginWorking(`Теневой прогон теста ${shortName}`, ac, `Shadow test run: ${shortName}`);
 
     try {
       const childEnv = { ...process.env };
@@ -1858,6 +1871,7 @@ export class BackgroundSentinel {
           enabled: Boolean(cfg.sentinelShadowTests),
           lastStatus: 'preempted',
           lastSummaryRu: `Прервано P0-задачей (${shortName})`,
+          lastSummaryEn: `Preempted by P0 task (${shortName})`,
           lastRunAt: new Date().toISOString(),
         };
         this._saveShadowTestsState(wsState.wsKey, preemptRec);
@@ -1866,13 +1880,18 @@ export class BackgroundSentinel {
 
       wsState.shadowTestsDirty = false;
       const status = runRes.ok ? 'pass' : 'fail';
+      const errTail = String(runRes.stderr || runRes.stdout || runRes.error).trim().slice(0, 140);
       const summaryRu = runRes.ok
         ? `Пройдено: ${shortName}`
-        : `Сбой в ${shortName}: ${String(runRes.stderr || runRes.stdout || runRes.error).trim().slice(0, 140)}`;
+        : `Сбой в ${shortName}: ${errTail}`;
+      const summaryEn = runRes.ok
+        ? `Passed: ${shortName}`
+        : `Failed in ${shortName}: ${errTail}`;
       const finalRec = {
         enabled: Boolean(cfg.sentinelShadowTests),
         lastStatus: status,
         lastSummaryRu: summaryRu,
+        lastSummaryEn: summaryEn,
         lastRunAt: new Date().toISOString(),
       };
       this._saveShadowTestsState(wsState.wsKey, finalRec);
@@ -1936,6 +1955,7 @@ export class BackgroundSentinel {
       ...snap,
       state: liveState,
       currentTaskRu: liveState === 'working' ? this.currentTaskRu : '',
+      currentTaskEn: liveState === 'working' ? (this.currentTaskEn || this.currentTaskRu) : '',
       preemptedCount: Math.max(this.preemptedCount, snap.preemptedCount),
       speculativeHits: Math.max(this.speculativeHits, snap.speculativeHits),
       symbolCards: {
@@ -1959,7 +1979,10 @@ export class BackgroundSentinel {
     ramEngine = null,
     httpJsonFn = null,
     cfgOverride = null,
+    lang = 'ru',
   } = {}) {
+    const resolvedLang = normalizeLang(lang, 'ru');
+    const isEn = resolvedLang === 'en';
     const targetWs = resolve(wsPath || Array.from(this.workspaces.values())[0]?.absRoot || process.cwd());
     const wsKey = normWsKey(targetWs);
     if (ramEngine) this.ramEngineRef = ramEngine;
@@ -2028,13 +2051,21 @@ export class BackgroundSentinel {
       const blockers = [];
       const warnings = [];
       if (sgRes && Number(sgRes.errorCount || 0) > 0) {
-        blockers.push(`Найдены ошибки синтаксиса/типов (${sgRes.errorCount})`);
+        blockers.push(
+          isEn
+            ? `Syntax/type errors detected (${sgRes.errorCount})`
+            : `Найдены ошибки синтаксиса/типов (${sgRes.errorCount})`
+        );
       }
       // Scan added diff lines only for leaked tokens/keys
       const addedLines = diffSlice.split(/\r?\n/).filter((l) => /^\+[^+]/.test(l)).join('\n');
       const secretRx = /(?:ghp_[A-Za-z0-9]{16,}|sk-[A-Za-z0-9]{20,}|AIza[A-Za-z0-9_-]{20,}|-----BEGIN (?:RSA|EC|OPENSSH) PRIVATE KEY-----)/;
       if (secretRx.test(addedLines) || (addedLines && redactSecretsInText(addedLines) !== addedLines)) {
-        blockers.push('Обнаружен возможный секретный ключ или токен в диффе (+ строки)');
+        blockers.push(
+          isEn
+            ? 'Possible secret key or token detected in diff (+ lines)'
+            : 'Обнаружен возможный секретный ключ или токен в диффе (+ строки)'
+        );
       }
 
       if (cfg.sentinelLocalBugBot !== false && diffSlice) {
@@ -2047,11 +2078,16 @@ export class BackgroundSentinel {
       const snap = this.getStatusSnapshot(targetWs, ramEngine);
       const bbFindings = Array.isArray(snap?.bugBot?.findings) ? snap.bugBot.findings : [];
       for (const bf of bbFindings) {
-        if (bf?.severity === 'high') blockers.push(`BugBot: ${bf.issueRu || bf.file || 'риск'}`);
-        else if (bf?.issueRu) warnings.push(`BugBot: ${bf.issueRu}`);
+        const bfText = isEn ? (bf.issueEn || bf.issueRu || bf.file || 'risk') : (bf.issueRu || bf.issueEn || bf.file || 'риск');
+        if (bf?.severity === 'high') blockers.push(`BugBot: ${bfText}`);
+        else if (bf?.issueRu || bf?.issueEn) warnings.push(`BugBot: ${bfText}`);
       }
       if (Number(sgRes?.warnCount || 0) > 0) {
-        warnings.push(`Предупреждения Shadow Guard / контрактов (${sgRes.warnCount})`);
+        warnings.push(
+          isEn
+            ? `Shadow Guard / contract warnings (${sgRes.warnCount})`
+            : `Предупреждения Shadow Guard / контрактов (${sgRes.warnCount})`
+        );
       }
 
       const commitMeta = await generateLocalCommitSummary({
@@ -2060,7 +2096,14 @@ export class BackgroundSentinel {
         issuesCount: blockers.length + warnings.length,
         httpJsonFn,
         cfgOverride,
+        lang: resolvedLang,
       });
+
+      const defaultMsg = changedFiles.length
+        ? (isEn ? `chore: update ${changedFiles[0]}` : `chore: обновить ${changedFiles[0]}`)
+        : '';
+      const summaryRu = commitMeta?.summaryRu || commitMeta?.error || 'Изменения не обнаружены';
+      const summaryEn = commitMeta?.summaryEn || commitMeta?.summaryRu || commitMeta?.error || 'No changes detected';
 
       return {
         ...snap,
@@ -2070,8 +2113,9 @@ export class BackgroundSentinel {
           blockers,
           warnings,
           changedFiles,
-          commitMessage: commitMeta?.commitMessage || (changedFiles.length ? `chore: обновить ${changedFiles[0]}` : ''),
-          summaryRu: commitMeta?.summaryRu || commitMeta?.error || 'Изменения не обнаружены',
+          commitMessage: commitMeta?.commitMessage || defaultMsg,
+          summaryRu,
+          summaryEn,
           viaGpu: Boolean(commitMeta?.viaGpu),
         },
       };

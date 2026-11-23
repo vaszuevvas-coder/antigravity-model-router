@@ -144,21 +144,22 @@ function parseArgvTokens(cmdLine = '') {
  */
 export function createShadowWorktree(opts = {}) {
   const safeOpts = asObj(opts);
+  const isEn = String(safeOpts.lang || '').trim().toLowerCase() === 'en';
   if (safeOpts.state?.shadowWorktreeEnabled === false) {
-    return { ok: false, disabled: true, error: 'Shadow Worktree отключён в настройках' };
+    return { ok: false, disabled: true, error: isEn ? 'Shadow Worktree is disabled in settings' : 'Shadow Worktree отключён в настройках' };
   }
   const rawWs = asStr(safeOpts.workspaceRoot).trim();
   if (!rawWs || rawWs.startsWith('-') || !existsSync(rawWs)) {
-    return { ok: false, error: 'Рабочая папка не найдена' };
+    return { ok: false, error: isEn ? 'Workspace directory not found' : 'Рабочая папка не найдена' };
   }
   const repoRoot = resolveGitRepoRoot(rawWs);
   if (!repoRoot) {
-    return { ok: false, error: 'Папка не является Git-репозиторием' };
+    return { ok: false, error: isEn ? 'Directory is not a Git repository' : 'Папка не является Git-репозиторием' };
   }
 
   const headRes = runGit(['rev-parse', 'HEAD'], repoRoot, 4000);
   if (!headRes.ok || !headRes.stdout) {
-    return { ok: false, error: 'В репозитории нет ни одного коммита (HEAD отсутствует)' };
+    return { ok: false, error: isEn ? 'Repository has no commits yet (HEAD missing)' : 'В репозитории нет ни одного коммита (HEAD отсутствует)' };
   }
 
   const paths = resolvePaths(safeOpts.cacheDir);
@@ -166,11 +167,11 @@ export function createShadowWorktree(opts = {}) {
 
   const id = `wt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   const wtDir = join(paths.worktreesDir, id);
-  const label = asStr(safeOpts.label, 120).replace(/\s+/g, ' ').trim() || `Песочница ${basename(repoRoot)}`;
+  const label = asStr(safeOpts.label, 120).replace(/\s+/g, ' ').trim() || (isEn ? `Sandbox ${basename(repoRoot)}` : `Песочница ${basename(repoRoot)}`);
 
   const addRes = runGit(['worktree', 'add', '--detach', wtDir, headRes.stdout], repoRoot, 15000);
   if (!addRes.ok || !existsSync(wtDir)) {
-    return { ok: false, error: addRes.stderr || 'Не удалось создать git worktree' };
+    return { ok: false, error: addRes.stderr || (isEn ? 'Failed to create git worktree' : 'Не удалось создать git worktree') };
   }
 
   const entry = {
@@ -248,9 +249,10 @@ export function listShadowWorktrees(workspaceRoot = '', opts = {}) {
  */
 export function runInShadowWorktree(opts = {}) {
   const safeOpts = asObj(opts);
+  const isEn = String(safeOpts.lang || '').trim().toLowerCase() === 'en';
   const { entry } = findEntry(safeOpts);
   if (!entry || !existsSync(entry.worktreePath)) {
-    return { ok: false, exitCode: 1, stdout: '', stderr: '', error: 'Песочница git worktree не найдена' };
+    return { ok: false, exitCode: 1, stdout: '', stderr: '', error: isEn ? 'Git worktree sandbox not found' : 'Песочница git worktree не найдена' };
   }
 
   const rawCmd = asStr(safeOpts.command, 512).trim();
@@ -259,13 +261,13 @@ export function runInShadowWorktree(opts = {}) {
     : [];
   const tokens = explicitArgs.length > 0 ? [rawCmd, ...explicitArgs] : parseArgvTokens(rawCmd);
   if (tokens.length === 0 || !tokens[0]) {
-    return { ok: false, exitCode: 1, stdout: '', stderr: '', error: 'Команда не указана' };
+    return { ok: false, exitCode: 1, stdout: '', stderr: '', error: isEn ? 'Command is not specified' : 'Команда не указана' };
   }
 
   const fullCmdStr = tokens.join(' ');
   const sec = checkCommandSecurity(fullCmdStr, entry.worktreePath);
   if (sec && sec.allowed === false) {
-    return { ok: false, exitCode: 1, stdout: '', stderr: '', error: sec.reason || 'Команда заблокирована Security Guard' };
+    return { ok: false, exitCode: 1, stdout: '', stderr: '', error: sec.reason || (isEn ? 'Command blocked by Security Guard' : 'Команда заблокирована Security Guard') };
   }
 
   let bin = tokens[0];
@@ -305,14 +307,15 @@ export function runInShadowWorktree(opts = {}) {
  */
 export function getShadowWorktreeDiff(opts = {}) {
   const safeOpts = asObj(opts);
+  const isEn = String(safeOpts.lang || '').trim().toLowerCase() === 'en';
   const { entry } = findEntry(safeOpts);
   if (!entry || !existsSync(entry.worktreePath)) {
-    return { ok: false, error: 'Песочница git worktree не найдена', changedFiles: [] };
+    return { ok: false, error: isEn ? 'Git worktree sandbox not found' : 'Песочница git worktree не найдена', changedFiles: [] };
   }
 
   const statusRes = runGit(['status', '--porcelain'], entry.worktreePath, 6000, { trimOutput: false });
   if (!statusRes.ok) {
-    return { ok: false, error: statusRes.stderr || 'Не удалось получить статус песочницы', changedFiles: [] };
+    return { ok: false, error: statusRes.stderr || (isEn ? 'Failed to inspect sandbox status' : 'Не удалось получить статус песочницы'), changedFiles: [] };
   }
 
   const changedFiles = [];
@@ -354,10 +357,11 @@ export function getShadowWorktreeDiff(opts = {}) {
  */
 export function promoteShadowWorktree(opts = {}) {
   const safeOpts = asObj(opts);
+  const isEn = String(safeOpts.lang || '').trim().toLowerCase() === 'en';
   const diff = getShadowWorktreeDiff(safeOpts);
   if (!diff.ok) return diff;
   const { entry } = findEntry(safeOpts);
-  if (!entry) return { ok: false, error: 'Песочница не найдена' };
+  if (!entry) return { ok: false, error: isEn ? 'Sandbox not found' : 'Песочница не найдена' };
 
   const promotedFiles = [];
   const deletedFiles = [];
@@ -375,7 +379,7 @@ export function promoteShadowWorktree(opts = {}) {
         workspaceRoot: entry.repoRoot,
         toolName: 'worktree_promote',
         turnId: promoteTurnId,
-        turnLabel: `Применение песочницы: ${entry.label}`,
+        turnLabel: isEn ? `Apply sandbox: ${entry.label}` : `Применение песочницы: ${entry.label}`,
       });
     } catch {}
 
@@ -421,9 +425,10 @@ export function promoteShadowWorktree(opts = {}) {
  */
 export function discardShadowWorktree(opts = {}) {
   const safeOpts = asObj(opts);
+  const isEn = String(safeOpts.lang || '').trim().toLowerCase() === 'en';
   const { paths, entry } = findEntry(safeOpts);
   if (!entry) {
-    return { ok: false, error: 'Песочница git worktree не найдена' };
+    return { ok: false, error: isEn ? 'Git worktree sandbox not found' : 'Песочница git worktree не найдена' };
   }
 
   if (entry.repoRoot && existsSync(entry.repoRoot)) {

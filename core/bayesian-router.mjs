@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWriteJsonSync, safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
+import { normalizeLang, pickLang } from './i18n.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
@@ -28,6 +29,16 @@ const DOMAIN_LABELS = {
   docs: 'Документация и переводы',
   devops: 'DevOps и окружение',
   general: 'Общие задачи',
+};
+
+const DOMAIN_LABELS_EN = {
+  algo_refactor: 'Algorithms & Refactoring',
+  ui_browser: 'UI & Frontend',
+  backend_db: 'Backend & Databases',
+  security: 'Security & Audit',
+  docs: 'Documentation & Localization',
+  devops: 'DevOps & Environment',
+  general: 'General Tasks',
 };
 
 // Базовый набор доменов
@@ -600,7 +611,9 @@ export function evaluateBayesianRoute(opts = {}) {
     fragilityScore = 0,
     retries = 0,
     explore = false,
+    lang = 'ru',
   } = (opts && typeof opts === 'object') ? opts : {};
+  const isEn = normalizeLang(lang, 'ru') === 'en';
   const state = loadPriorsState();
   const domainKey = sanitizeKey(domain, 'general');
   const tierBucket = normalizeModelTierBucket(modelTier);
@@ -688,6 +701,7 @@ export function evaluateBayesianRoute(opts = {}) {
   const confidencePercent = Math.round(effectiveConfidence * 100);
   let recommendedTier = 'flash';
   let recommendedGemini4 = 'Hydrogen · Средний/Высокий';
+  let recommendedGemini4En = 'Hydrogen · Medium/High';
   let depthBoost = 0;
   let escalated = false;
   let formattedHint = '';
@@ -695,20 +709,25 @@ export function evaluateBayesianRoute(opts = {}) {
   if (effectiveConfidence < 0.62) {
     recommendedTier = 'pro';
     recommendedGemini4 = 'Orchestrator (Carbon · Высокий) / Orchestrator (Neon · Высокий/XHigh) / Neon · XHigh';
+    recommendedGemini4En = 'Orchestrator (Carbon · High) / Orchestrator (Neon · High/XHigh) / Neon · XHigh';
     depthBoost = 2;
     escalated = true;
-    formattedHint = `🎲 [Bayesian v4 | Gemini 4] Domain "${domainKey}" LCB reliability: ${confidencePercent}% (<62%) -> Escalate cognitive depth to Orchestrator (Carbon · Высокий / Neon · Высокий/XHigh) / Neon · XHigh!`;
+    formattedHint = isEn
+      ? `🎲 [Bayesian v4 | Gemini 4] Domain "${domainKey}" LCB reliability: ${confidencePercent}% (<62%) -> Escalate cognitive depth to ${recommendedGemini4En}!`
+      : `🎲 [Bayesian v4 | Gemini 4] Domain "${domainKey}" LCB reliability: ${confidencePercent}% (<62%) -> Escalate cognitive depth to Orchestrator (Carbon · Высокий / Neon · Высокий/XHigh) / Neon · XHigh!`;
   } else if (effectiveConfidence < 0.72) {
     recommendedTier = 'pro';
     recommendedGemini4 = 'Orchestrator (Neon · Высокий) / Neon · Высокий или Hydrogen · XHigh';
+    recommendedGemini4En = 'Orchestrator (Neon · High) / Neon · High or Hydrogen · XHigh';
     depthBoost = 1;
     escalated = effectiveConfidence < 0.68;
     if (effectiveConfidence < 0.68 || domainPrior.runs >= 2) {
-      formattedHint = `🎲 [Bayesian v4 | Gemini 4] Domain "${domainKey}" LCB reliability: ${confidencePercent}% -> Prefer ${recommendedGemini4}.`;
+      formattedHint = `🎲 [Bayesian v4 | Gemini 4] Domain "${domainKey}" LCB reliability: ${confidencePercent}% -> Prefer ${isEn ? recommendedGemini4En : recommendedGemini4}.`;
     }
   } else if (effectiveConfidence >= 0.84 && grade !== 'XL') {
     recommendedTier = 'flash';
     recommendedGemini4 = 'Hydrogen · Средний';
+    recommendedGemini4En = 'Hydrogen · Medium';
     depthBoost = 0;
     escalated = false;
     formattedHint = `🎲 [Bayesian v4 | Gemini 4] Domain "${domainKey}" LCB reliability: ${confidencePercent}% -> Safe for fast Hydrogen execution.`;
@@ -717,6 +736,9 @@ export function evaluateBayesianRoute(opts = {}) {
     recommendedGemini4 = (grade === 'XL')
       ? 'Orchestrator (Neon · XHigh) / Orchestrator (Carbon · Высокий)'
       : (grade === 'L' ? 'Orchestrator (Neon · Высокий) или Hydrogen · Высокий/XHigh' : 'Hydrogen · Средний/Высокий');
+    recommendedGemini4En = (grade === 'XL')
+      ? 'Orchestrator (Neon · XHigh) / Orchestrator (Carbon · High)'
+      : (grade === 'L' ? 'Orchestrator (Neon · High) or Hydrogen · High/XHigh' : 'Hydrogen · Medium/High');
     depthBoost = 0;
     escalated = false;
   }
@@ -748,6 +770,7 @@ export function evaluateBayesianRoute(opts = {}) {
     ...(thompsonSample !== undefined ? { thompsonSample } : {}),
     recommendedTier,
     recommendedGemini4,
+    recommendedGemini4En,
     depthBoost,
     escalated,
     runs: domainPrior.runs,
@@ -797,6 +820,12 @@ export function getBayesianSummary(workspaceRoot = '') {
         : confidencePercent < 72
           ? 'Orchestrator (Neon) / Neon · Высокий'
           : 'Hydrogen · Средний';
+    const recommendedGemini4En =
+      confidencePercent < 62
+        ? 'Orchestrator (Carbon / Neon) / Neon · XHigh'
+        : confidencePercent < 72
+          ? 'Orchestrator (Neon) / Neon · High'
+          : 'Hydrogen · Medium';
 
     const tierConfidence = {};
     for (const tb of ['light', 'mid', 'heavy']) {
@@ -809,6 +838,7 @@ export function getBayesianSummary(workspaceRoot = '') {
     return {
       key,
       label: DOMAIN_LABELS[key] || key,
+      labelEn: DOMAIN_LABELS_EN[key] || key,
       confidencePercent,
       lcbPercent,
       posteriorStd: Number(std.toFixed(4)),
@@ -821,6 +851,7 @@ export function getBayesianSummary(workspaceRoot = '') {
       tierConfidence,
       recommendedTier,
       recommendedGemini4,
+      recommendedGemini4En,
     };
   });
 

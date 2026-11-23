@@ -10,6 +10,7 @@ import http from 'node:http';
 import https from 'node:https';
 import os from 'node:os';
 import { join } from 'node:path';
+import { normalizeLang, pickLang, readActiveUiLanguage } from '../i18n.mjs';
 import { HF_GGUF_FALLBACK_MAP, buildGpuCascadeBundleForHardware, probeAnyGpu, resolveGpuModelPairForVramCap } from '../hardware-profiler.mjs';
 import { atomicWriteJsonSync, safeReadJsonSync } from '../safe-json.mjs';
 import {
@@ -436,14 +437,18 @@ export function evaluateVramModelFit({ cfg = {}, tagModels = null, loadedModels 
   const recommendedPullModel = recommendPullModelForCap(capMb);
 
   let reasonRu = '';
+  let reasonEn = '';
   if (!selectedSizeFits && compatibleChatModels.length === 0) {
     const estGb = (selectedChatEstVramMb / 1024).toFixed(1);
     reasonRu = `Модель ${selectedChatModel} (~${estGb} ГБ в VRAM) превышает установленный лимит ${capGb} ГБ. Подходящей компактной модели в Ollama не найдено (рекомендуется ${recommendedPullModel}).`;
+    reasonEn = `Model ${selectedChatModel} (~${estGb} GB VRAM) exceeds configured ${capGb} GB limit. No suitable compact model found in Ollama (recommended: ${recommendedPullModel}).`;
   } else if (!selectedSizeFits && bestFallbackChatModel) {
     const estGb = (selectedChatEstVramMb / 1024).toFixed(1);
     reasonRu = `Модель ${selectedChatModel} (~${estGb} ГБ в VRAM) превышает лимит ${capGb} ГБ — автопилот использует совместимую ${bestFallbackChatModel}.`;
+    reasonEn = `Model ${selectedChatModel} (~${estGb} GB VRAM) exceeds ${capGb} GB limit — autopilot will use compatible ${bestFallbackChatModel}.`;
   } else if (tagsInventoryKnown && !selectedChatDownloaded && compatibleChatModels.length === 0) {
     reasonRu = `Модель ${selectedChatModel} не скачана в Ollama — требуется загрузка модели под лимит ${capGb} ГБ (например, ${recommendedPullModel}).`;
+    reasonEn = `Model ${selectedChatModel} is not downloaded in Ollama — pull a model within the ${capGb} GB cap (e.g., ${recommendedPullModel}).`;
   }
 
   return {
@@ -463,6 +468,7 @@ export function evaluateVramModelFit({ cfg = {}, tagModels = null, loadedModels 
     needsModelDownload,
     recommendedPullModel,
     reasonRu,
+    reasonEn,
   };
 }
 
@@ -1254,7 +1260,7 @@ export function getGpuPullJobStatus() {
     if (disk.active) {
       const stale = (Date.now() - Number(disk.updatedAt || 0)) > 15 * 60 * 1000 || (disk.pid && !isProcessAliveSafe(disk.pid));
       if (stale) {
-        return { ...disk, active: false, statusText: disk.statusText || 'Загрузка прервана' };
+        return { ...disk, active: false, statusText: disk.statusText || (readActiveUiLanguage() === 'en' ? 'Download interrupted' : 'Загрузка прервана') };
       }
     }
     return disk;
@@ -1274,7 +1280,7 @@ export function cancelGpuPullJob() {
     activePullJob.status.active = false;
     activePullJob.status.finishedAt = Date.now();
     activePullJob.status.updatedAt = Date.now();
-    activePullJob.status.statusText = 'Загрузка отменена пользователем';
+    activePullJob.status.statusText = readActiveUiLanguage() === 'en' ? 'Download cancelled by user' : 'Загрузка отменена пользователем';
     activePullJob.active = false;
     persistPullStatus(activePullJob.status, true);
   }
@@ -1312,9 +1318,10 @@ export { formatCompactPullError, isTransientPullError };
  */
 async function execDefaultOllamaHttpStep(
   args = [],
-  { cfg = null, onLine = null, manifestTimeoutMs = 20000, totalTimeoutMs = 30 * 60 * 1000, checkCancelled = null } = {}
+  { cfg = null, onLine = null, manifestTimeoutMs = 20000, totalTimeoutMs = 30 * 60 * 1000, checkCancelled = null, lang = '' } = {}
 ) {
   const resolvedCfg = cfg || loadGpuConfig();
+  const isEnStep = normalizeLang(lang || resolvedCfg?.uiLanguage || readActiveUiLanguage(), 'en') === 'en';
   const endpoint = resolvedCfg.gpuEndpoint || 'http://127.0.0.1:11434';
   const cmd = String(args[0] || '').toLowerCase();
 
@@ -1327,7 +1334,7 @@ async function execDefaultOllamaHttpStep(
     return { ok: Boolean(res?.ok), code: res?.ok ? 0 : 1, sawDownloadProgress: true, error: res?.error || '' };
   }
   if (cmd !== 'pull') {
-    return execDefaultOllamaCliStep(args, { cfg: resolvedCfg, onLine, manifestTimeoutMs, totalTimeoutMs, checkCancelled });
+    return execDefaultOllamaCliStep(args, { cfg: resolvedCfg, onLine, manifestTimeoutMs, totalTimeoutMs, checkCancelled, lang });
   }
 
   let url;
@@ -1445,7 +1452,7 @@ async function execDefaultOllamaHttpStep(
     const watchdog = setInterval(() => {
       if (checkCancelled?.() || activePullJob.cancelRequested) {
         try { req.destroy(); } catch {}
-        finish({ ok: false, code: -1, cancelled: true, error: 'Отменено пользователем' });
+        finish({ ok: false, code: -1, cancelled: true, error: isEnStep ? 'Cancelled by user' : 'Отменено пользователем' });
         return;
       }
       const idleMs = Date.now() - lastActivityAt;
@@ -1455,22 +1462,24 @@ async function execDefaultOllamaHttpStep(
         finish({
           ok: false,
           code: -1,
-          error: lastErrorLine || (sawDownloadProgress ? 'Обрыв потока загрузки' : 'Таймаут реестра Ollama (TLS/manifest timeout)'),
+          error: lastErrorLine || (sawDownloadProgress
+            ? (isEnStep ? 'Download stream interrupted' : 'Обрыв потока загрузки')
+            : (isEnStep ? 'Ollama registry timeout (TLS/manifest timeout)' : 'Таймаут реестра Ollama (TLS/manifest timeout)')),
         });
       }
     }, 1000);
 
     const hardTimer = setTimeout(() => {
       try { req.destroy(); } catch {}
-      finish({ ok: false, code: -1, error: 'Превышено максимальное время загрузки модели' });
+      finish({ ok: false, code: -1, error: isEnStep ? 'Maximum model download timeout exceeded' : 'Превышено максимальное время загрузки модели' });
     }, totalTimeoutMs);
 
     req.on('error', (err) => {
       if (checkCancelled?.() || activePullJob.cancelRequested) {
-        finish({ ok: false, code: -1, cancelled: true, error: 'Отменено пользователем' });
+        finish({ ok: false, code: -1, cancelled: true, error: isEnStep ? 'Cancelled by user' : 'Отменено пользователем' });
         return;
       }
-      finish({ ok: false, code: -1, error: lastErrorLine || err?.message || 'Ошибка HTTP-загрузки модели' });
+      finish({ ok: false, code: -1, error: lastErrorLine || err?.message || (isEnStep ? 'HTTP model download error' : 'Ошибка HTTP-загрузки модели') });
     });
 
     req.write(payloadStr);
@@ -1480,12 +1489,13 @@ async function execDefaultOllamaHttpStep(
 
 function execDefaultOllamaCliStep(
   args = [],
-  { cfg = null, onLine = null, manifestTimeoutMs = 20000, totalTimeoutMs = 30 * 60 * 1000, checkCancelled = null } = {}
+  { cfg = null, onLine = null, manifestTimeoutMs = 20000, totalTimeoutMs = 30 * 60 * 1000, checkCancelled = null, lang = '' } = {}
 ) {
+  const isEnStep = normalizeLang(lang || cfg?.uiLanguage || readActiveUiLanguage(), 'en') === 'en';
   return new Promise((resolvePromise) => {
     const bin = findOllamaBinary();
     if (!bin) {
-      resolvePromise({ ok: false, code: -1, error: 'Ollama не установлена на этом ПК' });
+      resolvePromise({ ok: false, code: -1, error: isEnStep ? 'Ollama is not installed on this PC' : 'Ollama не установлена на этом ПК' });
       return;
     }
     const env = { ...process.env };
@@ -1533,7 +1543,7 @@ function execDefaultOllamaCliStep(
     const watchdog = setInterval(() => {
       if (checkCancelled?.() || activePullJob.cancelRequested) {
         try { child.kill(); } catch {}
-        finish({ ok: false, code: -1, cancelled: true, error: 'Отменено пользователем' });
+        finish({ ok: false, code: -1, cancelled: true, error: isEnStep ? 'Cancelled by user' : 'Отменено пользователем' });
         return;
       }
       const idleMs = Date.now() - lastActivityAt;
@@ -1543,18 +1553,20 @@ function execDefaultOllamaCliStep(
         finish({
           ok: false,
           code: -1,
-          error: lastErrorLine || (sawDownloadProgress ? 'Обрыв потока загрузки' : 'Таймаут реестра Ollama (TLS/manifest timeout)'),
+          error: lastErrorLine || (sawDownloadProgress
+            ? (isEnStep ? 'Download stream interrupted' : 'Обрыв потока загрузки')
+            : (isEnStep ? 'Ollama registry timeout (TLS/manifest timeout)' : 'Таймаут реестра Ollama (TLS/manifest timeout)')),
         });
       }
     }, 1000);
 
     const hardTimer = setTimeout(() => {
       try { child.kill(); } catch {}
-      finish({ ok: false, code: -1, error: 'Превышено максимальное время загрузки модели' });
+      finish({ ok: false, code: -1, error: isEnStep ? 'Maximum model download timeout exceeded' : 'Превышено максимальное время загрузки модели' });
     }, totalTimeoutMs);
 
     child.on('error', (err) => {
-      finish({ ok: false, code: -1, error: err?.message || 'Ошибка запуска ollama' });
+      finish({ ok: false, code: -1, error: err?.message || (isEnStep ? 'Failed to launch ollama' : 'Ошибка запуска ollama') });
     });
 
     child.on('close', (code) => {
@@ -1574,13 +1586,14 @@ function execDefaultOllamaCliStep(
  */
 export async function pullSingleOllamaModelWithFallback(
   modelName,
-  { cfg = null, onProgress = null, execStepFn = null, checkCancelled = null, hfMaxAttempts = 3, retryDelayMs = null } = {}
+  { cfg = null, onProgress = null, execStepFn = null, checkCancelled = null, hfMaxAttempts = 3, retryDelayMs = null, lang = '' } = {}
 ) {
+  const resolvedCfg = cfg || loadGpuConfig();
+  const isEn = normalizeLang(lang || resolvedCfg?.uiLanguage || readActiveUiLanguage(), 'en') === 'en';
   const cleanName = String(modelName || '').trim();
   if (!SAFE_OLLAMA_TAG_RE.test(cleanName)) {
-    return { ok: false, model: cleanName, error: 'Некорректное имя модели' };
+    return { ok: false, model: cleanName, error: isEn ? 'Invalid model name' : 'Некорректное имя модели' };
   }
-  const resolvedCfg = cfg || loadGpuConfig();
   let useHttpDaemon = false;
   if (!execStepFn) {
     const ready = await ensureOllamaRunning({ ...resolvedCfg, gpuEnabled: true, gpuAutoStart: true });
@@ -1588,13 +1601,18 @@ export async function pullSingleOllamaModelWithFallback(
   }
   const runStep = execStepFn || ((args, opts) => (
     useHttpDaemon
-      ? execDefaultOllamaHttpStep(args, { ...opts, cfg: resolvedCfg, checkCancelled })
-      : execDefaultOllamaCliStep(args, { ...opts, cfg: resolvedCfg, checkCancelled })
+      ? execDefaultOllamaHttpStep(args, { ...opts, cfg: resolvedCfg, checkCancelled, lang: isEn ? 'en' : 'ru' })
+      : execDefaultOllamaCliStep(args, { ...opts, cfg: resolvedCfg, checkCancelled, lang: isEn ? 'en' : 'ru' })
   ));
   const waitMs = Number.isFinite(retryDelayMs) ? Math.max(0, Number(retryDelayMs)) : (execStepFn ? 5 : 1800);
   const pauseBeforeRetry = () => new Promise((r) => setTimeout(r, waitMs));
+  const cancelledMsg = isEn ? 'Cancelled by user' : 'Отменено пользователем';
 
-  onProgress?.({ percent: 0, source: 'ollama', statusText: `Скачивание ${cleanName} из Ollama...` });
+  onProgress?.({
+    percent: 0,
+    source: 'ollama',
+    statusText: isEn ? `Downloading ${cleanName} from Ollama...` : `Скачивание ${cleanName} из Ollama...`,
+  });
   let r1 = await runStep(['pull', cleanName], {
     manifestTimeoutMs: 20000,
     onLine: (_line, pct) => {
@@ -1607,7 +1625,7 @@ export async function pullSingleOllamaModelWithFallback(
     return { ok: true, model: cleanName, source: 'ollama' };
   }
   if (checkCancelled?.() || r1?.cancelled) {
-    return { ok: false, cancelled: true, model: cleanName, error: 'Отменено пользователем' };
+    return { ok: false, cancelled: true, model: cleanName, error: cancelledMsg };
   }
 
   const norm = normalizeOllamaTag(cleanName);
@@ -1617,9 +1635,13 @@ export async function pullSingleOllamaModelWithFallback(
     if (r1?.sawDownloadProgress && isTransientPullError(r1?.error)) {
       if (waitMs > 0) await pauseBeforeRetry();
       if (checkCancelled?.()) {
-        return { ok: false, cancelled: true, model: cleanName, error: 'Отменено пользователем' };
+        return { ok: false, cancelled: true, model: cleanName, error: cancelledMsg };
       }
-      onProgress?.({ percent: 0, source: 'ollama', statusText: `Повтор Ollama: ${cleanName}...` });
+      onProgress?.({
+        percent: 0,
+        source: 'ollama',
+        statusText: isEn ? `Retrying Ollama: ${cleanName}...` : `Повтор Ollama: ${cleanName}...`,
+      });
       r1 = await runStep(['pull', cleanName], {
         manifestTimeoutMs: 25000,
         onLine: (_line, pct) => {
@@ -1632,14 +1654,14 @@ export async function pullSingleOllamaModelWithFallback(
         return { ok: true, model: cleanName, source: 'ollama' };
       }
       if (checkCancelled?.() || r1?.cancelled) {
-        return { ok: false, cancelled: true, model: cleanName, error: 'Отменено пользователем' };
+        return { ok: false, cancelled: true, model: cleanName, error: cancelledMsg };
       }
     }
     return {
       ok: false,
       model: cleanName,
       source: 'ollama',
-      error: formatCompactPullError(r1?.error || 'Не удалось скачать модель', 240),
+      error: formatCompactPullError(r1?.error || (isEn ? 'Failed to download model' : 'Не удалось скачать модель'), 240),
     };
   }
 
@@ -1647,11 +1669,11 @@ export async function pullSingleOllamaModelWithFallback(
   let r2 = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (checkCancelled?.()) {
-      return { ok: false, cancelled: true, model: cleanName, error: 'Отменено пользователем' };
+      return { ok: false, cancelled: true, model: cleanName, error: cancelledMsg };
     }
     const statusLabel = attempt === 1
-      ? `Резервное зеркало Hugging Face: ${cleanName}...`
-      : `Повтор Hugging Face (${attempt}/${maxAttempts}): ${cleanName}...`;
+      ? (isEn ? `Hugging Face mirror: ${cleanName}...` : `Резервное зеркало Hugging Face: ${cleanName}...`)
+      : (isEn ? `Hugging Face retry (${attempt}/${maxAttempts}): ${cleanName}...` : `Повтор Hugging Face (${attempt}/${maxAttempts}): ${cleanName}...`);
     onProgress?.({ percent: 0, source: 'huggingface', statusText: statusLabel });
     r2 = await runStep(['pull', hfTag], {
       manifestTimeoutMs: 45000,
@@ -1663,7 +1685,7 @@ export async function pullSingleOllamaModelWithFallback(
     });
     if (r2?.ok) break;
     if (checkCancelled?.() || r2?.cancelled) {
-      return { ok: false, cancelled: true, model: cleanName, error: 'Отменено пользователем' };
+      return { ok: false, cancelled: true, model: cleanName, error: cancelledMsg };
     }
     if (attempt < maxAttempts && isTransientPullError(r2?.error)) {
       if (waitMs > 0) await pauseBeforeRetry();
@@ -1677,13 +1699,13 @@ export async function pullSingleOllamaModelWithFallback(
       cancelled: Boolean(r2?.cancelled),
       model: cleanName,
       source: 'huggingface',
-      error: formatCompactPullError(r2?.error || r1?.error || 'Ошибка загрузки с Hugging Face', 240),
+      error: formatCompactPullError(r2?.error || r1?.error || (isEn ? 'Hugging Face download failed' : 'Ошибка загрузки с Hugging Face'), 240),
     };
   }
 
   const rCp = await runStep(['cp', hfTag, cleanName], { manifestTimeoutMs: 30000 });
   if (!rCp?.ok) {
-    return { ok: false, model: cleanName, source: 'huggingface', error: rCp?.error || 'Не удалось зарегистрировать тег модели' };
+    return { ok: false, model: cleanName, source: 'huggingface', error: rCp?.error || (isEn ? 'Failed to register model tag' : 'Не удалось зарегистрировать тег модели') };
   }
   await runStep(['rm', hfTag], { manifestTimeoutMs: 15000 }).catch(() => {});
   return { ok: true, model: cleanName, source: 'huggingface', hfTag };
@@ -1699,6 +1721,7 @@ export async function startGpuCascadePull({
   totalVramMb = 0,
   selectedCapMb = 0,
   installedTags = null,
+  lang = '',
   cfgOverride = null,
   execStepFn = null,
   awaitCompletion = false,
@@ -1708,6 +1731,8 @@ export async function startGpuCascadePull({
   }
 
   const cfg = cfgOverride ? loadGpuConfig(cfgOverride) : loadGpuConfig();
+  const pullLang = normalizeLang(lang || cfg.uiLanguage || readActiveUiLanguage(), 'en');
+  const isEnPull = pullLang === 'en';
   let candidateList = Array.isArray(models)
     ? models.map((m) => String(m || '').trim()).filter((m) => SAFE_OLLAMA_TAG_RE.test(m))
     : [];
@@ -1770,7 +1795,7 @@ export async function startGpuCascadePull({
       currentModel: '',
       currentPercent: 100,
       source: 'installed',
-      statusText: 'Все модели каскада уже установлены ✓',
+      statusText: isEnPull ? 'All cascade models are already installed ✓' : 'Все модели каскада уже установлены ✓',
       cancelled: false,
       error: '',
       items,
@@ -1794,7 +1819,7 @@ export async function startGpuCascadePull({
     currentModel: '',
     currentPercent: 0,
     source: '',
-    statusText: 'Подготовка каскадной загрузки моделей...',
+    statusText: isEnPull ? 'Preparing cascade model download...' : 'Подготовка каскадной загрузки моделей...',
     cancelled: false,
     error: '',
     items,
@@ -1818,6 +1843,7 @@ export async function startGpuCascadePull({
 
         const res = await pullSingleOllamaModelWithFallback(item.name, {
           cfg,
+          lang: pullLang,
           execStepFn,
           checkCancelled: () => activePullJob.cancelRequested,
           onProgress: ({ percent, source, statusText }) => {
@@ -1838,10 +1864,10 @@ export async function startGpuCascadePull({
           item.source = res.source || 'ollama';
           activePullJob.status.completedCount = items.filter((x) => x.status === 'done' || x.status === 'skipped').length;
           activePullJob.status.currentPercent = 100;
-          activePullJob.status.statusText = `Установлено: ${item.name}`;
+          activePullJob.status.statusText = isEnPull ? `Installed: ${item.name}` : `Установлено: ${item.name}`;
         } else {
           item.status = res.cancelled ? 'cancelled' : 'error';
-          item.error = res.error || 'Ошибка загрузки';
+          item.error = res.error || (isEnPull ? 'Download error' : 'Ошибка загрузки');
           if (!res.cancelled) errors.push(`${item.name}: ${item.error}`);
         }
         activePullJob.status.updatedAt = Date.now();
@@ -1860,12 +1886,16 @@ export async function startGpuCascadePull({
       activePullJob.status.currentModel = '';
       if (activePullJob.cancelRequested) {
         activePullJob.status.cancelled = true;
-        activePullJob.status.statusText = 'Загрузка отменена';
+        activePullJob.status.statusText = isEnPull ? 'Download cancelled' : 'Загрузка отменена';
       } else if (errors.length > 0) {
         activePullJob.status.error = formatCompactPullError(errors.join('; '), 320);
-        activePullJob.status.statusText = `Завершено с ошибками (${activePullJob.status.completedCount}/${items.length})`;
+        activePullJob.status.statusText = isEnPull
+          ? `Completed with errors (${activePullJob.status.completedCount}/${items.length})`
+          : `Завершено с ошибками (${activePullJob.status.completedCount}/${items.length})`;
       } else {
-        activePullJob.status.statusText = `Готово: загружено ${activePullJob.status.completedCount}/${items.length} моделей ✓`;
+        activePullJob.status.statusText = isEnPull
+          ? `Done: downloaded ${activePullJob.status.completedCount}/${items.length} models ✓`
+          : `Готово: загружено ${activePullJob.status.completedCount}/${items.length} моделей ✓`;
       }
       persistPullStatus(activePullJob.status, true);
     }

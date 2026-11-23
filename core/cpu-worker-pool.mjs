@@ -718,6 +718,7 @@ function defaultCpuLiveState() {
     lastCompletedAt: 0,
     lastOp: '',
     lastDetail: '',
+    lastDetailEn: '',
     lastWorkers: 0,
     lastItems: 0,
     lastLatencyMs: 0,
@@ -738,11 +739,26 @@ function describeCpuBatchDetailRu(type, count = 0) {
   return `Пакетная задача CPU${suffix}`;
 }
 
+function describeCpuBatchDetailEn(type, count = 0) {
+  const n = Math.max(0, Number(count) || 0);
+  const suffix = n > 0 ? ` (${n} f.)` : '';
+  if (type === 'parseMetadataBatch') return `Parsing AST & trigrams${suffix}`;
+  if (type === 'chunkVectorsBatch') return `Chunking vector slices${suffix}`;
+  if (type === 'syntaxCheckBatch') return `Syntax verification${suffix}`;
+  if (type === 'auditFilesBatch' || type === 'auditFileBatch') return `Code stress audit${suffix}`;
+  if (type === 'compressLogsBatch') return `Compressing logs & JSON (Drain3)${suffix}`;
+  if (type === 'foldCodeBatch') return `AST code folding (Knapsack)${suffix}`;
+  if (type === 'simhashIndexBatch') return `Indexing SimHash duplicates${suffix}`;
+  if (type === 'skimAstBatch') return `Skimming AST branches${suffix}`;
+  return `CPU batch task${suffix}`;
+}
+
 export function beginCpuLiveWork({
   op = 'worker_batch',
   workers = 1,
   items = 0,
   detail = '',
+  detailEn = '',
   activityFile = CPU_LIVE_ACTIVITY_FILE,
 } = {}) {
   const now = Date.now();
@@ -763,6 +779,7 @@ export function beginCpuLiveWork({
         workers: clampInt(workers, 1, 64, 1),
         items: Math.max(0, Number(items) || 0),
         detail: String(detail || '').slice(0, 96),
+        detailEn: String(detailEn || '').slice(0, 96),
         startedAt: now,
       });
       return {
@@ -777,7 +794,7 @@ export function beginCpuLiveWork({
 
 export function endCpuLiveWork(
   jobId,
-  { op = '', workers = 0, items = 0, detail = '', latencyMs = 0, activityFile = CPU_LIVE_ACTIVITY_FILE } = {}
+  { op = '', workers = 0, items = 0, detail = '', detailEn = '', latencyMs = 0, activityFile = CPU_LIVE_ACTIVITY_FILE } = {}
 ) {
   const now = Date.now();
   const targetFile = activityFile || CPU_LIVE_ACTIVITY_FILE;
@@ -801,6 +818,7 @@ export function endCpuLiveWork(
         lastCompletedAt: now,
         lastOp: String(op || finishedJob?.op || base.lastOp || ''),
         lastDetail: String(detail || finishedJob?.detail || base.lastDetail || '').slice(0, 96),
+        lastDetailEn: String(detailEn || finishedJob?.detailEn || base.lastDetailEn || '').slice(0, 96),
         lastWorkers: clampInt(workers || finishedJob?.workers || base.lastWorkers || 1, 1, 64, 1),
         lastItems: Math.max(0, Number(items || finishedJob?.items || base.lastItems || 0)),
         lastLatencyMs: elapsed,
@@ -814,6 +832,7 @@ export function recordCpuInstantWork({
   workers = 1,
   items = 0,
   detail = '',
+  detailEn = '',
   latencyMs = 0,
   activityFile = CPU_LIVE_ACTIVITY_FILE,
 } = {}) {
@@ -834,6 +853,7 @@ export function recordCpuInstantWork({
         lastCompletedAt: now,
         lastOp: String(op || 'cross_rerank'),
         lastDetail: String(detail || '').slice(0, 96),
+        lastDetailEn: String(detailEn || '').slice(0, 96),
         lastWorkers: clampInt(workers, 1, 64, 1),
         lastItems: Math.max(0, Number(items) || 0),
         lastLatencyMs: Math.max(0, Number(Number(latencyMs || 0).toFixed(2)) || 0),
@@ -896,6 +916,7 @@ export function getCpuLiveActivity({
       opSeq: Number(raw.opSeq || 0),
       currentOp: headJob?.op || raw.lastOp || '',
       currentDetail: headJob?.detail || raw.lastDetail || '',
+      currentDetailEn: headJob?.detailEn || raw.lastDetailEn || headJob?.detail || raw.lastDetail || '',
       currentItems: headJob ? Number(headJob.items || 0) : Number(raw.lastItems || 0),
       lastCompletedAt: lastCompletedAt || null,
       msSinceLast,
@@ -913,6 +934,7 @@ export function getCpuLiveActivity({
       opSeq: 0,
       currentOp: '',
       currentDetail: '',
+      currentDetailEn: '',
       currentItems: 0,
       lastCompletedAt: null,
       msSinceLast: null,
@@ -938,6 +960,7 @@ export async function runCpuBatch(
   const rawBudget = resolveCpuThreadBudget(cfg);
   const budget = maxWorkers > 0 ? Math.min(rawBudget, maxWorkers) : Math.min(rawBudget, 8);
   const detailRu = describeCpuBatchDetailRu(type, items.length);
+  const detailEn = describeCpuBatchDetailEn(type, items.length);
   const zeroCopyCount = items.reduce(
     (acc, item) => acc + (item && (item.sab instanceof SharedArrayBuffer || item.sab instanceof ArrayBuffer) ? 1 : 0),
     0
@@ -965,6 +988,7 @@ export async function runCpuBatch(
           workers: 1,
           items: items.length,
           detail: detailRu,
+          detailEn,
           latencyMs: elapsedInline,
         });
       }
@@ -983,7 +1007,7 @@ export async function runCpuBatch(
   }
 
   const liveTicket = !skipTelemetry
-    ? beginCpuLiveWork({ op: type, workers: workerCount, items: items.length, detail: detailRu })
+    ? beginCpuLiveWork({ op: type, workers: workerCount, items: items.length, detail: detailRu, detailEn })
     : null;
   let elapsedMs = 0;
   try {
@@ -1026,6 +1050,7 @@ export async function runCpuBatch(
         workers: workerCount,
         items: items.length,
         detail: detailRu,
+        detailEn,
         latencyMs: finalMs,
       });
     }

@@ -25,12 +25,12 @@
       if (badgeEl) {
         if (st.sentinelEnabled === false) {
           badgeEl.className = 'sentinel-live-badge is-off';
-          badgeEl.textContent = 'Выключен';
-          badgeEl.title = 'Фоновый Дозор отключён в настройках';
+          badgeEl.textContent = L('Выключен', 'Off');
+          badgeEl.title = L('Фоновый Дозор отключён в настройках', 'Background Sentinel is disabled in settings');
         } else if (badgeEl.classList.contains('is-off')) {
           badgeEl.className = 'sentinel-live-badge is-idle';
-          badgeEl.textContent = 'Ожидание простоя';
-          badgeEl.title = 'Фоновый Дозор дежурит и ждёт паузы в работе';
+          badgeEl.textContent = L('Ожидание простоя', 'Waiting for idle');
+          badgeEl.title = L('Фоновый Дозор дежурит и ждёт паузы в работе', 'Background Sentinel is standing by for idle pauses');
         }
       }
     }
@@ -60,31 +60,31 @@
         } else if (lineHintStr) {
           loc = lineHintStr;
         }
+        const rawDescRu = rawItem.issueRu || rawItem.detailRu || rawItem.detail || rawItem.message || rawItem.summary || rawItem.title || rawItem.reason || rawItem.suggestion || '';
+        const rawDescEn = rawItem.issueEn || rawItem.detailEn || rawItem.detail || rawItem.messageEn || rawItem.message || rawItem.summaryEn || rawItem.summary || rawItem.title || rawItem.reason || rawItem.suggestion || '';
         desc = String(
-          rawItem.issueRu ||
-          rawItem.detailRu ||
-          rawItem.detail ||
-          rawItem.message ||
-          rawItem.summary ||
-          rawItem.title ||
-          rawItem.reason ||
-          rawItem.suggestion ||
-          (rawItem.symbol ? ('Символ ' + rawItem.symbol + (rawItem.type ? (' (' + rawItem.type + ')') : '')) : '')
+          (isRu() ? (rawDescRu || rawDescEn) : (rawDescEn || rawDescRu)) ||
+          (rawItem.symbol ? (L('Символ ', 'Symbol ') + rawItem.symbol + (rawItem.type ? (' (' + rawItem.type + ')') : '')) : '')
         ).trim();
         if (!desc && loc) {
-          desc = category === 'cochange' ? 'Связанный файл не обновлён в текущем наборе правок' : 'Обнаружено нарушение контракта';
+          desc = category === 'cochange'
+            ? L('Связанный файл не обновлён в текущем наборе правок', 'Co-changed file was not updated in the current edit set')
+            : L('Обнаружено нарушение контракта', 'Contract violation detected');
         }
-        const customPrompt = String(rawItem.fixPromptRu || rawItem.prompt || '').trim();
+        const rawPromptRu = rawItem.fixPromptRu || rawItem.prompt || '';
+        const rawPromptEn = rawItem.fixPromptEn || rawItem.prompt || '';
+        const customPrompt = String(isRu() ? (rawPromptRu || rawPromptEn) : (rawPromptEn || rawPromptRu)).trim();
         if (customPrompt) {
           prompt = customPrompt;
         }
       }
       if (!desc && !loc) return null;
-      const tagLabel = category === 'bugbot' ? 'BugBot' : (category === 'cochange' ? 'Co-Change' : 'Контракт');
+      const tagLabel = category === 'bugbot' ? 'BugBot' : (category === 'cochange' ? 'Co-Change' : L('Контракт', 'Contract'));
       const tagClass = category === 'bugbot' ? 'tag-bugbot' : (category === 'cochange' ? 'tag-cochange' : 'tag-contract');
       if (!prompt) {
-        prompt = 'Проверь находку Фонового Дозора (' + tagLabel + ')' +
-          (loc ? (' в ' + loc) : '') + ': ' + desc + '. Предложи или внеси точечное исправление.';
+        prompt = isRu()
+          ? ('Проверь находку Фонового Дозора (' + tagLabel + ')' + (loc ? (' в ' + loc) : '') + ': ' + desc + '. Предложи или внеси точечное исправление.')
+          : ('Inspect Background Sentinel finding (' + tagLabel + ')' + (loc ? (' in ' + loc) : '') + ': ' + desc + '. Suggest or apply a targeted fix.');
       }
       return {
         tagLabel: tagLabel,
@@ -112,24 +112,26 @@
 
       const badgeEl = document.getElementById('sentinelLiveBadge');
       if (badgeEl) {
+        const curTask = String(pickText(sen, 'currentTaskRu', 'currentTaskEn', '') || '').trim();
         if (!isEnabled) {
           badgeEl.className = 'sentinel-live-badge is-off';
-          badgeEl.textContent = 'Выключен';
-          badgeEl.title = 'Фоновый Дозор отключён в настройках';
+          badgeEl.textContent = L('Выключен', 'Off');
+          badgeEl.title = L('Фоновый Дозор отключён в настройках', 'Background Sentinel is disabled in settings');
         } else if (rawState === 'preempted' || rawState === 'yielded' || sen.p0Active) {
           badgeEl.className = 'sentinel-live-badge is-preempted';
-          badgeEl.textContent = 'P0 Уступил чату';
-          badgeEl.title = sen.currentTaskRu || 'Фоновая задача мгновенно уступила ресурсы активному запросу';
+          badgeEl.textContent = L('P0 Уступил чату', 'P0 Yielded to chat');
+          badgeEl.title = curTask || L('Фоновая задача мгновенно уступила ресурсы активному запросу', 'Background task immediately yielded resources to active request');
         } else if (rawState === 'working' || rawState === 'running' || rawState === 'scanning' || _sentinelActionBusy) {
           badgeEl.className = 'sentinel-live-badge is-working';
-          const taskTxt = String(sen.currentTaskRu || '').trim();
-          badgeEl.textContent = (taskTxt && taskTxt !== 'Ожидание простоя') ? ('В работе · ' + taskTxt) : 'В работе';
-          badgeEl.title = taskTxt || 'Фоновый Дозор выполняет проверку';
+          badgeEl.textContent = (curTask && curTask !== 'Ожидание простоя' && curTask !== 'Waiting for idle')
+            ? (L('В работе · ', 'Working · ') + curTask)
+            : L('В работе', 'Working');
+          badgeEl.title = curTask || L('Фоновый Дозор выполняет проверку', 'Background Sentinel is running checks');
         } else {
           badgeEl.className = 'sentinel-live-badge is-idle';
-          const idleTxt = String(sen.currentTaskRu || '').trim();
-          badgeEl.textContent = (idleTxt && idleTxt !== 'Выключен') ? idleTxt : 'Ожидание простоя';
-          badgeEl.title = st.lastSummaryRu ? ('Микро-тесты: ' + st.lastSummaryRu) : 'Дежурит в паузах с P0-приоритетом чата';
+          badgeEl.textContent = (curTask && curTask !== 'Выключен' && curTask !== 'Off') ? curTask : L('Ожидание простоя', 'Waiting for idle');
+          const sumTxt = pickText(st, 'lastSummaryRu', 'lastSummaryEn', '');
+          badgeEl.title = sumTxt ? (L('Микро-тесты: ', 'Micro-tests: ') + sumTxt) : L('Дежурит в паузах с P0-приоритетом чата', 'Standing by during pauses with P0 chat priority');
         }
       }
 
@@ -143,15 +145,15 @@
       const healthEl = document.getElementById('sentinelHealthVal');
       if (healthEl) {
         if (errCount === 0 && warnCount === 0 && rawIssues.length === 0 && rawCoChange.length === 0) {
-          healthEl.textContent = 'Чисто';
+          healthEl.textContent = L('Чисто', 'Clean');
           healthEl.className = 'sentinel-metric-val is-ok';
-          healthEl.title = 'Нарушений контрактов, импортов и пар Git Co-Change не обнаружено';
+          healthEl.title = L('Нарушений контрактов, импортов и пар Git Co-Change не обнаружено', 'No contract, import, or Git co-change violations detected');
         } else {
           const shownWarns = Math.max(warnCount, rawCoChange.length);
           const shownErrs = Math.max(errCount, rawIssues.length > 0 && shownWarns === 0 ? rawIssues.length : errCount);
-          healthEl.textContent = 'Ошибок: ' + shownErrs + ' · Пред.: ' + shownWarns;
+          healthEl.textContent = L('Ошибок: ', 'Errors: ') + shownErrs + L(' · Пред.: ', ' · Warn: ') + shownWarns;
           healthEl.className = 'sentinel-metric-val ' + (shownErrs > 0 ? 'is-err' : 'is-warn');
-          healthEl.title = 'Клонов SimHash: ' + Number(sg.cloneCount || 0);
+          healthEl.title = L('Клонов SimHash: ', 'SimHash clones: ') + Number(sg.cloneCount || 0);
         }
       }
 
@@ -164,28 +166,28 @@
           : (totFiles > 0 ? Math.min(100, Math.round((idxFiles / totFiles) * 100)) : 0);
         cardsEl.textContent = idxFiles + ' / ' + totFiles + ' (' + covPct + '%)';
         cardsEl.className = 'sentinel-metric-val' + (covPct >= 80 && totFiles > 0 ? ' is-ok' : '');
-        cardsEl.title = sc.lastFile ? ('Последний индексированный модуль: ' + sc.lastFile) : 'Покрытие семантических паспортов модулей по SHA-256';
+        cardsEl.title = sc.lastFile ? (L('Последний индексированный модуль: ', 'Last indexed module: ') + sc.lastFile) : L('Покрытие семантических паспортов модулей по SHA-256', 'SHA-256 semantic module passport coverage');
       }
 
       const bbCount = Math.max(0, Number(bb.findingsCount || 0), rawBugBot.length);
       const bugBotEl = document.getElementById('sentinelBugBotVal');
       if (bugBotEl) {
         if (bbCount > 0) {
-          bugBotEl.textContent = 'Находок: ' + bbCount;
+          bugBotEl.textContent = L('Находок: ', 'Findings: ') + bbCount;
           bugBotEl.className = 'sentinel-metric-val is-warn';
         } else {
-          bugBotEl.textContent = 'Чисто';
+          bugBotEl.textContent = L('Чисто', 'Clean');
           bugBotEl.className = 'sentinel-metric-val is-ok';
         }
-        bugBotEl.title = 'Локальное ревью git diff в глубоком простое';
+        bugBotEl.title = L('Локальное ревью git diff в глубоком простое', 'Local git diff review during deep idle');
       }
 
       const specEl = document.getElementById('sentinelSpecVal');
       if (specEl) {
         const specHits = Math.max(0, Number(sen.speculativeHits || 0));
         const preempts = Math.max(0, Number(sen.preemptedCount || 0));
-        specEl.textContent = 'Префетч: ' + specHits + ' · Уступок: ' + preempts;
-        specEl.title = 'Упреждающих сборок контекста: ' + specHits + ' · Мгновенных P0-уступок чату: ' + preempts;
+        specEl.textContent = L('Префетч: ', 'Prefetch: ') + specHits + L(' · Уступок: ', ' · Yields: ') + preempts;
+        specEl.title = L('Упреждающих сборок контекста: ', 'Speculative context packs: ') + specHits + L(' · Мгновенных P0-уступок чату: ', ' · Instant P0 yields: ') + preempts;
       }
 
       const normalizedFindings = [];
@@ -212,7 +214,7 @@
       const runBtn = document.getElementById('btnRunSentinelNow');
       if (runBtn) {
         runBtn.disabled = _sentinelActionBusy;
-        runBtn.textContent = _sentinelActionBusy ? 'Проверка…' : 'Проверить сейчас';
+        runBtn.textContent = _sentinelActionBusy ? L('Проверка…', 'Checking…') : L('Проверить сейчас', 'Check now');
       }
 
       const listEl = document.getElementById('sentinelFindingsList');
@@ -258,8 +260,8 @@
             btn.className = 'win-btn sentinel-composer-btn';
             btn.setAttribute('data-action', 'sendSentinelToComposer');
             btn.setAttribute('data-prompt', f.prompt);
-            btn.textContent = 'В композер';
-            btn.title = 'Перенести задачу на исправление в Умный Композер';
+            btn.textContent = L('В композер', 'To Composer');
+            btn.title = L('Перенести задачу на исправление в Умный Композер', 'Send fix prompt to Smart Composer');
 
             row.appendChild(body);
             row.appendChild(btn);
@@ -274,25 +276,25 @@
       _sentinelActionBusy = true;
       renderSentinelStatus(lastPayloadCache ? lastPayloadCache.sentinel : null, currentState);
       try {
-        flashStatus('Запуск проверки Фонового Дозора...');
+        flashStatus(L('Запуск проверки Фонового Дозора...', 'Running Background Sentinel check...'));
         const res = await panelFetch('/api/sentinel', {
           method: 'POST',
           body: JSON.stringify({ action: 'run_now', force: true }),
         });
         const data = await res.json();
         if (!res || !res.ok || !data || data.ok === false) {
-          throw new Error((data && data.error) ? data.error : 'Сбой запуска Дозора');
+          throw new Error((data && data.error) ? data.error : L('Сбой запуска Дозора', 'Sentinel launch error'));
         }
         const snap = (data.sentinel && typeof data.sentinel === 'object') ? data.sentinel : data;
         if (lastPayloadCache) lastPayloadCache.sentinel = snap;
         _sentinelActionBusy = false;
         renderSentinelStatus(snap, currentState);
-        flashStatus('Проверка Фонового Дозора завершена ✓');
+        flashStatus(L('Проверка Фонового Дозора завершена ✓', 'Background Sentinel check complete ✓'));
       } catch (err) {
         console.error(err);
         _sentinelActionBusy = false;
         renderSentinelStatus(lastPayloadCache ? lastPayloadCache.sentinel : null, currentState);
-        flashStatus('Ошибка запуска Фонового Дозора!');
+        flashStatus(L('Ошибка запуска Фонового Дозора!', 'Background Sentinel error!'));
       }
     }
 
@@ -306,18 +308,18 @@
         });
         const data = await res.json();
         if (!res || !res.ok || !data || data.ok === false) {
-          throw new Error((data && data.error) ? data.error : 'Сбой сброса находок');
+          throw new Error((data && data.error) ? data.error : L('Сбой сброса находок', 'Failed to clear findings'));
         }
         const snap = (data.sentinel && typeof data.sentinel === 'object') ? data.sentinel : data;
         if (lastPayloadCache) lastPayloadCache.sentinel = snap;
         _sentinelActionBusy = false;
         renderSentinelStatus(snap, currentState);
-        flashStatus('Находки Фонового Дозора сброшены ✓');
+        flashStatus(L('Находки Фонового Дозора сброшены ✓', 'Sentinel findings cleared ✓'));
       } catch (err) {
         console.error(err);
         _sentinelActionBusy = false;
         renderSentinelStatus(lastPayloadCache ? lastPayloadCache.sentinel : null, currentState);
-        flashStatus('Ошибка сброса находок Дозора!');
+        flashStatus(L('Ошибка сброса находок Дозора!', 'Error clearing Sentinel findings!'));
       }
     }
 
@@ -332,7 +334,7 @@
       if (compCard && typeof compCard.scrollIntoView === 'function') {
         compCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
-      flashStatus('Задача из Дозора перенесена в Композер ✓');
+      flashStatus(L('Задача из Дозора перенесена в Композер ✓', 'Sentinel task sent to Composer ✓'));
     }
 
     let _latestWiretapFault = null;
@@ -348,7 +350,7 @@
               ? (_latestWiretapFault.file + (_latestWiretapFault.line ? ':' + _latestWiretapFault.line : ''))
               : (_latestWiretapFault.source || 'runtime');
             const rep = (_latestWiretapFault.occurrences || 1) > 1 ? (' (x' + _latestWiretapFault.occurrences + ')') : '';
-            txt.textContent = '🐞 [' + loc + ']' + rep + ' ' + (_latestWiretapFault.summary || 'Сбой процесса');
+            txt.textContent = '🐞 [' + loc + ']' + rep + ' ' + (_latestWiretapFault.summary || L('Сбой процесса', 'Runtime fault'));
             txt.title = _latestWiretapFault.excerpt || txt.textContent;
             bar.style.display = 'block';
           } else {
@@ -361,10 +363,13 @@
         if (badge) {
           const st = quotaPacer.status || 'calm';
           const pct = Number(quotaPacer.utilizationPct || 0);
-          const lbl = st === 'critical' ? 'Квота: высокий расход' : st === 'elevated' ? 'Квота: повышенный' : 'Квота: спокойно';
+          const lbl = st === 'critical'
+            ? L('Квота: высокий расход', 'Quota: high burn')
+            : (st === 'elevated' ? L('Квота: повышенный', 'Quota: elevated') : L('Квота: спокойно', 'Quota: calm'));
           badge.textContent = lbl + (pct > 0 ? (' · ' + pct + '%') : '');
           badge.className = 'swarm-pill ' + (st === 'critical' ? 'warn' : st === 'elevated' ? 'active' : 'idle');
-          badge.title = (quotaPacer.recommendationRu || '') + ' (30м: ' + (quotaPacer.turnsLast30m || 0) + ' ходов)';
+          const recTxt = pickText(quotaPacer, 'recommendationRu', 'recommendationEn', '');
+          badge.title = recTxt + ' (30m: ' + (quotaPacer.turnsLast30m || 0) + L(' ходов)', ' turns)');
         }
         const comboTextEl = document.getElementById('comboFailoverText');
         const comboResetBtn = document.getElementById('btnResetComboCooldowns');
@@ -373,8 +378,8 @@
           const skippedCnt = Array.isArray(combo.skippedOnCooldown) ? combo.skippedOnCooldown.length : 0;
           const activeCnt = Array.isArray(combo.activeCooldowns) ? combo.activeCooldowns.length : 0;
           const pausedCnt = Math.max(skippedCnt, activeCnt);
-          comboTextEl.textContent = 'Маршрут страховки (Combo): ' + (combo.selected || 'ready') +
-            (pausedCnt > 0 ? ' · на паузе: ' + pausedCnt : '');
+          comboTextEl.textContent = L('Маршрут страховки (Combo): ', 'Failover route (Combo): ') + (combo.selected || 'ready') +
+            (pausedCnt > 0 ? (L(' · на паузе: ', ' · on cooldown: ') + pausedCnt) : '');
           comboTextEl.style.color = combo.allExhausted ? 'var(--status-warn)' : 'var(--text-sub)';
           if (comboResetBtn) {
             comboResetBtn.style.display = pausedCnt > 0 ? 'inline-flex' : 'none';
@@ -387,11 +392,14 @@
       if (!_latestWiretapFault) return;
       const loc = _latestWiretapFault.file
         ? (_latestWiretapFault.file + (_latestWiretapFault.line ? ':' + _latestWiretapFault.line : ''))
-        : 'проекте';
-      const prompt = 'Исправь ошибку выполнения в ' + loc + ': ' + (_latestWiretapFault.summary || '') +
-        (_latestWiretapFault.codeFrame ? ('\n\nФрагмент кода:\n' + _latestWiretapFault.codeFrame) : '');
+        : L('проекте', 'project');
+      const prompt = isRu()
+        ? ('Исправь ошибку выполнения в ' + loc + ': ' + (_latestWiretapFault.summary || '') +
+            (_latestWiretapFault.codeFrame ? ('\n\nФрагмент кода:\n' + _latestWiretapFault.codeFrame) : ''))
+        : ('Fix runtime error in ' + loc + ': ' + (_latestWiretapFault.summary || '') +
+            (_latestWiretapFault.codeFrame ? ('\n\nCode frame:\n' + _latestWiretapFault.codeFrame) : ''));
       applyComposerChip(prompt);
-      flashStatus('Ошибка из Wiretap вставлена в Композер ✓');
+      flashStatus(L('Ошибка из Wiretap вставлена в Композер ✓', 'Wiretap fault sent to Composer ✓'));
     }
 
     async function clearWiretapFaults() {
@@ -399,7 +407,7 @@
         await panelFetch('/api/wiretap/clear', { method: 'POST', body: '{}' });
         _latestWiretapFault = null;
         renderWiretapAndQuota([], null);
-        flashStatus('Журнал сбоев Wiretap очищен ✓');
+        flashStatus(L('Журнал сбоев Wiretap очищен ✓', 'Wiretap fault log cleared ✓'));
       } catch {}
     }
 
@@ -593,7 +601,7 @@
       el.classList.toggle('is-collapsed', isCollapsed);
       const btn = el.querySelector('.lg-card-collapse-btn[data-arg="' + cardId + '"]');
       if (btn) {
-        const labelText = isCollapsed ? 'Показать содержимое блока' : 'Скрыть содержимое блока';
+        const labelText = isCollapsed ? L('Показать содержимое блока', 'Expand card content') : L('Скрыть содержимое блока', 'Collapse card content');
         btn.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
         btn.setAttribute('aria-label', labelText);
         btn.setAttribute('title', labelText);
@@ -813,7 +821,7 @@
       wrap.className = 'block-move-controls';
       wrap.setAttribute('data-block-controls', blockId);
       wrap.innerHTML =
-        '<span class="block-drag-handle" data-role="drag-handle" data-block-id="' + escapeHtml(blockId) + '" title="Перетащите, чтобы изменить порядок блока">' +
+        '<span class="block-drag-handle" data-role="drag-handle" data-block-id="' + escapeHtml(blockId) + '" title="' + L('Перетащите, чтобы изменить порядок блока', 'Drag to reorder card') + '">' +
         '<svg viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">' +
         '<circle cx="3.75" cy="3.75" r="1.25"/><circle cx="8.25" cy="3.75" r="1.25"/>' +
         '<circle cx="3.75" cy="8.25" r="1.25"/><circle cx="8.25" cy="8.25" r="1.25"/>' +
@@ -891,8 +899,8 @@
               collapseBtn.setAttribute('data-action', 'togglePanelCardCollapse');
               collapseBtn.setAttribute('data-arg', id);
               collapseBtn.setAttribute('aria-expanded', 'true');
-              collapseBtn.setAttribute('aria-label', 'Скрыть содержимое блока');
-              collapseBtn.setAttribute('title', 'Скрыть содержимое блока');
+              collapseBtn.setAttribute('aria-label', L('Скрыть содержимое блока', 'Collapse card content'));
+              collapseBtn.setAttribute('title', L('Скрыть содержимое блока', 'Collapse card content'));
               targetHost.appendChild(collapseBtn);
             }
             targetHost.appendChild(controls);
@@ -1063,6 +1071,6 @@
         playFlipAnimation(siblings, rects, null);
       }
       updateState({ panelBlockOrder: DEFAULT_PANEL_BLOCK_ORDER.slice() });
-      flashStatus('Восстановлен исходный порядок блоков ✓');
+      flashStatus(L('Восстановлен исходный порядок блоков ✓', 'Default card order restored ✓'));
     }
 

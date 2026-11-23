@@ -173,6 +173,7 @@ export function recordFrictionObservation({
   targetSkill = '',
   hub = knowledgeHub,
   nowMs = Date.now(),
+  lang = 'ru',
 } = {}) {
   const cleanPattern = cleanSnippet(pattern, 220);
   if (!cleanPattern || !workspaceRoot || !hub || typeof hub.recordInstinct !== 'function') {
@@ -191,12 +192,16 @@ export function recordFrictionObservation({
     return { ok: false, recorded: false, readyForPromotion: false, instinctId: '', confidence: 0, promotionHint: '' };
   }
 
+  const isEn = String(lang || '').trim().toLowerCase() === 'en';
   const ready = Boolean(res.readyForPromotion);
   const skillRef = targetSkill ? ` into skill "${targetSkill}"` : '';
   const cliPath = join(PLUGIN_ROOT, 'core', 'router-cli.mjs');
   const cliRef = /\s/.test(cliPath) ? `"${cliPath}"` : cliPath;
+  const confPct = Math.round((res.effectiveConfidence || 0) * 100);
   const promotionHint = ready
-    ? `🔎 [Task-Observer] Повторяющееся трение (${signalType}) набрало ${Math.round((res.effectiveConfidence || 0) * 100)}% уверенности. Кандидат готов к кристаллизации${skillRef}: \`node ${cliRef} evolve\`.`
+    ? (isEn
+        ? `🔎 [Task-Observer] Recurring friction (${signalType}) reached ${confPct}% confidence. Candidate ready for crystallization${skillRef}: \`node ${cliRef} evolve\`.`
+        : `🔎 [Task-Observer] Повторяющееся трение (${signalType}) набрало ${confPct}% уверенности. Кандидат готов к кристаллизации${skillRef}: \`node ${cliRef} evolve\`.`)
     : '';
 
   return {

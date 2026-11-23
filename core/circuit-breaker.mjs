@@ -672,7 +672,9 @@ export function recordAndCheckStalledToolRound(opts = {}) {
     isError = false,
     cacheDir = '',
     nowMs = Date.now(),
+    lang = 'ru',
   } = opts && typeof opts === 'object' ? opts : {};
+  const isEn = String(lang || '').trim().toLowerCase() === 'en';
   const cleanTool = String(toolName || '').trim();
   if (!cleanTool) {
     return { stalled: false, reason: '', formattedAlert: '' };
@@ -725,7 +727,9 @@ export function recordAndCheckStalledToolRound(opts = {}) {
   }, { spaces: 0 });
 
   const formattedAlert = stalled
-    ? `🛑 [Stalled Tool-Loop Guard] Вызов \`${cleanTool}\` с теми же аргументами вернул идентичный результат ${repeatRounds} раза подряд (${reason}). Не повторяй тот же вызов — смени подход или прочитай другой срез.`
+    ? (isEn
+        ? `🛑 [Stalled Tool-Loop Guard] Calling \`${cleanTool}\` with identical arguments returned the same result ${repeatRounds} times in a row (${reason}). Do not repeat the same call — change approach or read a different slice.`
+        : `🛑 [Stalled Tool-Loop Guard] Вызов \`${cleanTool}\` с теми же аргументами вернул идентичный результат ${repeatRounds} раза подряд (${reason}). Не повторяй тот же вызов — смени подход или прочитай другой срез.`)
     : '';
 
   return {

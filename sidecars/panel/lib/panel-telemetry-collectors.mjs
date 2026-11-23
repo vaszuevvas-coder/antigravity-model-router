@@ -8,6 +8,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { safeReadJsonSync } from '../../../core/safe-json.mjs';
+import { pickLang } from '../../../core/i18n.mjs';
 import { getCpuStatusSnapshot, readCpuTelemetry } from '../../../core/cpu-worker-pool.mjs';
 import { isSubagentTranscriptFile } from '../../../core/model-profile.mjs';
 import { isValidWorkspaceDir } from './panel-security.mjs';
@@ -120,7 +121,7 @@ export async function safeGetCircuitState(workspaceRoot = '') {
   } catch (err) {
     console.warn('Ошибка getCircuitState:', err.message);
   }
-  return { status: 'CLOSED', reason: 'Нормальная работа (нет зацикливаний)', repeatCount: 0 };
+  return { status: 'CLOSED', reason: 'Нормальная работа (нет зацикливаний)', reasonEn: 'Healthy (no thrashing loops)', repeatCount: 0 };
 }
 
 export async function safeResetCircuitBreaker(workspaceRoot = '') {
@@ -134,7 +135,7 @@ export async function safeResetCircuitBreaker(workspaceRoot = '') {
       const res = await mod.resetCircuitBreaker(scope);
       const st = (mod.getCircuitState && typeof mod.getCircuitState === 'function')
         ? await mod.getCircuitState(scope || undefined)
-        : { status: 'CLOSED', reason: 'Автомат сброшен оператором', repeatCount: 0 };
+        : { status: 'CLOSED', reason: 'Автомат сброшен оператором', reasonEn: 'Reset by operator', repeatCount: 0 };
       return { ok: true, circuitBreaker: st, ...res };
     }
   } catch (err) {
@@ -142,7 +143,7 @@ export async function safeResetCircuitBreaker(workspaceRoot = '') {
   }
   return {
     ok: true,
-    circuitBreaker: { status: 'CLOSED', reason: 'Сброшен (режим ожидания)', repeatCount: 0 },
+    circuitBreaker: { status: 'CLOSED', reason: 'Сброшен (режим ожидания)', reasonEn: 'Reset (standby mode)', repeatCount: 0 },
   };
 }
 
@@ -193,6 +194,7 @@ export async function safeTriggerManualCompactionDigest(opts = {}) {
     epoch: 1,
     savedTokens: 0,
     message: 'Дайджест контекста сформирован',
+    messageEn: 'Context digest generated',
   };
 }
 
@@ -259,11 +261,11 @@ export async function safeGetBayesianSummary(workspaceRoot = '') {
     totalRuns: 0,
     fragileFiles: [],
     domains: [
-      { key: 'code_generation', label: 'Генерация кода', confidencePercent: 90, runs: 0, failures: 0, recommendedTier: 'flash' },
-      { key: 'algo_refactor', label: 'Алгоритмы и рефакторинг', confidencePercent: 82, runs: 0, failures: 0, recommendedTier: 'pro' },
-      { key: 'bug_investigation', label: 'Поиск и триаж багов', confidencePercent: 86, runs: 0, failures: 0, recommendedTier: 'flash' },
-      { key: 'docs_translate', label: 'Документация и перевод', confidencePercent: 95, runs: 0, failures: 0, recommendedTier: 'flash' },
-      { key: 'general', label: 'Общие задачи', confidencePercent: 88, runs: 0, failures: 0, recommendedTier: 'flash' },
+      { key: 'code_generation', label: 'Генерация кода', labelEn: 'Code Generation', confidencePercent: 90, runs: 0, failures: 0, recommendedTier: 'flash' },
+      { key: 'algo_refactor', label: 'Алгоритмы и рефакторинг', labelEn: 'Algorithms & Refactoring', confidencePercent: 82, runs: 0, failures: 0, recommendedTier: 'pro' },
+      { key: 'bug_investigation', label: 'Поиск и триаж багов', labelEn: 'Bug Triage & Debugging', confidencePercent: 86, runs: 0, failures: 0, recommendedTier: 'flash' },
+      { key: 'docs_translate', label: 'Документация и перевод', labelEn: 'Docs & Localization', confidencePercent: 95, runs: 0, failures: 0, recommendedTier: 'flash' },
+      { key: 'general', label: 'Общие задачи', labelEn: 'General Tasks', confidencePercent: 88, runs: 0, failures: 0, recommendedTier: 'flash' },
     ],
   };
 }
@@ -284,6 +286,7 @@ export async function safeResetBayesianPriors(workspaceRoot = '', onlyFragility 
     ok: true,
     summary: await safeGetBayesianSummary(cleanWs),
     message: 'Веса Байесовского доверия сброшены к начальным априорным распределениям Beta(α, β)',
+    messageEn: 'Bayesian confidence weights reset to Beta(α, β) priors',
   };
 }
 
@@ -326,17 +329,21 @@ export async function safeListCheckpoints(limit = 8, workspaceRoot = '') {
   return [];
 }
 
-export async function safeRollbackCheckpoint(checkpointId = 'latest', workspaceRoot = '') {
+export async function safeRollbackCheckpoint(checkpointId = 'latest', workspaceRoot = '', opts = {}) {
+  const lang = opts?.lang || 'en';
   try {
     const mod = await getShadowGuard();
     if (mod && typeof mod.rollbackCheckpoint === 'function') {
-      return await mod.rollbackCheckpoint(checkpointId, workspaceRoot);
+      return await mod.rollbackCheckpoint(checkpointId, workspaceRoot, { lang });
     }
   } catch (err) {
-    console.error('Ошибка rollbackCheckpoint:', err);
+    console.error('rollbackCheckpoint failed:', err);
     return { ok: false, error: err.message };
   }
-  return { ok: false, message: 'Чекпоинты пока не созданы или модуль инициализируется' };
+  return {
+    ok: false,
+    message: pickLang(lang, 'Чекпоинты пока не созданы или модуль инициализируется', 'No checkpoints created yet or module is initializing'),
+  };
 }
 
 export async function safeListTurnCheckpoints(limit = 10, workspaceRoot = '') {
@@ -349,28 +356,30 @@ export async function safeListTurnCheckpoints(limit = 10, workspaceRoot = '') {
   return [];
 }
 
-export async function safeGetTurnDiffSummary(turnId = 'latest', workspaceRoot = '') {
+export async function safeGetTurnDiffSummary(turnId = 'latest', workspaceRoot = '', opts = {}) {
+  const lang = opts?.lang || 'en';
   try {
     const mod = await getShadowGuard();
     if (mod && typeof mod.getTurnDiffSummary === 'function') {
-      return await mod.getTurnDiffSummary(turnId, workspaceRoot);
+      return await mod.getTurnDiffSummary(turnId, workspaceRoot, { lang });
     }
   } catch (err) {
     return { ok: false, error: err.message, files: [] };
   }
-  return { ok: false, error: 'Модуль чекпоинтов недоступен', files: [] };
+  return { ok: false, error: pickLang(lang, 'Модуль чекпоинтов недоступен', 'Checkpoints module unavailable'), files: [] };
 }
 
-export async function safeRollbackTurn(turnId = 'latest', workspaceRoot = '') {
+export async function safeRollbackTurn(turnId = 'latest', workspaceRoot = '', opts = {}) {
+  const lang = opts?.lang || 'en';
   try {
     const mod = await getShadowGuard();
     if (mod && typeof mod.rollbackTurn === 'function') {
-      return await mod.rollbackTurn(turnId, workspaceRoot);
+      return await mod.rollbackTurn(turnId, workspaceRoot, { lang });
     }
   } catch (err) {
     return { ok: false, error: err.message };
   }
-  return { ok: false, error: 'Модуль отката хода недоступен' };
+  return { ok: false, error: pickLang(lang, 'Модуль отката хода недоступен', 'Turn rollback module unavailable') };
 }
 
 export async function safeListShadowWorktrees(workspaceRoot = '') {
@@ -389,7 +398,14 @@ export async function safeGetWiretapFaults(workspaceRoot = '', state = {}) {
     const mod = await getRuntimeWiretapMod();
     if (mod && typeof mod.getLatestWiretapFaults === 'function') {
       const res = mod.getLatestWiretapFaults(workspaceRoot, { limit: 6 });
-      return Array.isArray(res?.faults) ? res.faults : [];
+      const rawFaults = Array.isArray(res?.faults) ? res.faults : [];
+      if (typeof mod.formatFaultForComposer === 'function') {
+        return rawFaults.map((f) => ({
+          ...f,
+          composerPromptEn: f.composerPromptEn || mod.formatFaultForComposer(f, { lang: 'en' }),
+        }));
+      }
+      return rawFaults;
     }
   } catch {}
   return [];

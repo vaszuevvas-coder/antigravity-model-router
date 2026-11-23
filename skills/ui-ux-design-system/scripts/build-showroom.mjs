@@ -12,6 +12,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { normalizeLang, readActiveUiLanguage } from '../../../core/i18n.mjs';
 
 function escapeHtml(str) {
   return String(str ?? '')
@@ -176,52 +177,84 @@ function buildVariantDocument(variant = {}) {
  * @param {Array<{ id?: string, label: string, subtitle?: string, html: string, css?: string, js?: string }>} [spec.variants=[]]
  * @returns {{ ok: boolean, html: string, variantCount: number }}
  */
-export function generateShowroomHtml(spec = {}) {
+export function generateShowroomHtml(spec = {}, options = {}) {
   if (!spec || typeof spec !== 'object') {
     return { ok: false, html: '', variantCount: 0 };
   }
 
-  const title = String(spec.title || 'Витрина вариантов дизайна и анимации (A / B / C)');
+  const showLang = normalizeLang(options.lang || spec.lang || readActiveUiLanguage(), 'en');
+  const isEn = showLang === 'en';
+  const title = String(spec.title || (isEn ? 'Design & Motion Showroom (A / B / C)' : 'Витрина вариантов дизайна и анимации (A / B / C)'));
   const hasExplicitVariants = Array.isArray(spec.variants) && spec.variants.length > 0;
   const hasExplicitRefs = Array.isArray(spec.references) && spec.references.length > 0;
   const rawVariants = hasExplicitVariants
     ? spec.variants
     : hasExplicitRefs
       ? spec.references
-      : [
-        {
-          id: 'A',
-          label: 'Вариант A — Светлая редакционная студия',
-          subtitle: 'Тёплый бумажный холст + контрастная типографика и асимметричная сплит-сетка',
-          stageBg: '#f7f3eb',
-          accentColor: '#c85a32',
-          css: `body { background: #f7f3eb; color: #1c1917; } .editorial { width: 100%; max-width: 440px; padding: 18px 22px; border-radius: 6px; background: #fffdf9; border: 1.5px solid #1c1917; box-shadow: 5px 5px 0 #1c1917; display: grid; grid-template-columns: 1.3fr 1fr; gap: 14px; align-items: center; animation: reveal calc(0.42s * var(--anim-scale, 1)) cubic-bezier(0.16, 1, 0.3, 1) forwards; } @keyframes reveal { 0% { transform: translateY(12px); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }`,
-          html: `<div class="editorial"><div><div style="font-size:10px;color:#c85a32;letter-spacing:1.2px;font-weight:800;">EDITORIAL PAPER</div><div style="font-size:20px;font-weight:800;margin-top:4px;font-family:Georgia,serif;color:#1c1917;">Тёплая студия</div><div style="font-size:12px;color:#57534e;margin-top:4px;">Чистая иерархия и воздух</div></div><div style="background:#f3ede2;border:1px solid #d6cfc2;padding:10px;border-radius:4px;text-align:center;"><div style="font-size:18px;font-weight:800;color:#c85a32;">98.4%</div><div style="font-size:10px;color:#57534e;">Точность</div></div></div>`
-        },
-        {
-          id: 'B',
-          label: 'Вариант B — Архитектурный Bento-дашборд',
-          subtitle: 'Модульная плиточная матрица + глубокий графит и кобальтовый акцент',
-          stageBg: '#eef2f6',
-          accentColor: '#2563eb',
-          css: `body { background: #eef2f6; color: #0f172a; } .bento { width: 100%; max-width: 450px; display: grid; grid-template-columns: 1.2fr 1fr; gap: 10px; animation: snapIn calc(0.36s * var(--anim-scale, 1)) cubic-bezier(0.22, 1, 0.36, 1) forwards; } .tile { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 14px; box-shadow: 0 4px 12px rgba(15,23,42,0.06); } @keyframes snapIn { 0% { transform: scale(0.94); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }`,
-          html: `<div class="bento"><div class="tile"><div style="font-size:10px;color:#2563eb;font-weight:700;">BENTO MATRIX</div><div style="font-size:18px;font-weight:800;margin-top:4px;color:#0f172a;">Модульная сетка</div><div style="font-size:11px;color:#64748b;margin-top:4px;">Быстрый обзор метрик</div></div><div class="tile" style="background:#1e293b;color:#f8fafc;border-color:#1e293b;"><div style="font-size:10px;color:#93c5fd;">АКТИВНОСТЬ</div><div style="font-size:20px;font-weight:800;margin-top:6px;">+42%</div></div></div>`
-        },
-        {
-          id: 'C',
-          label: 'Вариант C — Атмосферный обсидиан и янтарь',
-          subtitle: 'Глубокий тёмный холст + тёплое янтарное свечение и плавный каскад',
-          stageBg: '#12100e',
-          accentColor: '#f59e0b',
-          css: `body { background: #12100e; color: #fafaf9; } .studio-card { width: 100%; max-width: 430px; padding: 18px 24px; border-radius: 16px; background: linear-gradient(145deg, #1c1917 0%, #141210 100%); border: 1px solid rgba(245,158,11,0.35); box-shadow: 0 14px 32px rgba(0,0,0,0.55); animation: floatIn calc(0.48s * var(--anim-scale, 1)) cubic-bezier(0.34, 1.56, 0.64, 1) forwards; } @keyframes floatIn { 0% { transform: translateY(16px) scale(0.9); opacity: 0; } 100% { transform: translateY(0) scale(1); opacity: 1; } }`,
-          html: `<div class="studio-card"><div style="font-size:10px;color:#f59e0b;font-weight:700;letter-spacing:0.8px;">OBSIDIAN & AMBER</div><div style="font-size:20px;font-weight:800;margin-top:6px;color:#fafaf9;">Кинематографичный контраст</div><div style="font-size:12px;color:#a8a29e;margin-top:4px;">Глубокие тени и тёплый отклик</div></div>`
-        }
-      ];
+      : (isEn
+          ? [
+              {
+                id: 'A',
+                label: 'Variant A — Light Editorial Studio',
+                subtitle: 'Warm paper canvas + high-contrast serif typography and asymmetric split grid',
+                stageBg: '#f7f3eb',
+                accentColor: '#c85a32',
+                css: `body { background: #f7f3eb; color: #1c1917; } .editorial { width: 100%; max-width: 440px; padding: 18px 22px; border-radius: 6px; background: #fffdf9; border: 1.5px solid #1c1917; box-shadow: 5px 5px 0 #1c1917; display: grid; grid-template-columns: 1.3fr 1fr; gap: 14px; align-items: center; animation: reveal calc(0.42s * var(--anim-scale, 1)) cubic-bezier(0.16, 1, 0.3, 1) forwards; } @keyframes reveal { 0% { transform: translateY(12px); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }`,
+                html: `<div class="editorial"><div><div style="font-size:10px;color:#c85a32;letter-spacing:1.2px;font-weight:800;">EDITORIAL PAPER</div><div style="font-size:20px;font-weight:800;margin-top:4px;font-family:Georgia,serif;color:#1c1917;">Warm Studio</div><div style="font-size:12px;color:#57534e;margin-top:4px;">Crisp hierarchy and breathing room</div></div><div style="background:#f3ede2;border:1px solid #d6cfc2;padding:10px;border-radius:4px;text-align:center;"><div style="font-size:18px;font-weight:800;color:#c85a32;">98.4%</div><div style="font-size:10px;color:#57534e;">Accuracy</div></div></div>`
+              },
+              {
+                id: 'B',
+                label: 'Variant B — Architectural Bento Dashboard',
+                subtitle: 'Modular tile matrix + deep slate surfaces and cobalt accent',
+                stageBg: '#eef2f6',
+                accentColor: '#2563eb',
+                css: `body { background: #eef2f6; color: #0f172a; } .bento { width: 100%; max-width: 450px; display: grid; grid-template-columns: 1.2fr 1fr; gap: 10px; animation: snapIn calc(0.36s * var(--anim-scale, 1)) cubic-bezier(0.22, 1, 0.36, 1) forwards; } .tile { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 14px; box-shadow: 0 4px 12px rgba(15,23,42,0.06); } @keyframes snapIn { 0% { transform: scale(0.94); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }`,
+                html: `<div class="bento"><div class="tile"><div style="font-size:10px;color:#2563eb;font-weight:700;">BENTO MATRIX</div><div style="font-size:18px;font-weight:800;margin-top:4px;color:#0f172a;">Modular Grid</div><div style="font-size:11px;color:#64748b;margin-top:4px;">Fast metric overview</div></div><div class="tile" style="background:#1e293b;color:#f8fafc;border-color:#1e293b;"><div style="font-size:10px;color:#93c5fd;">ACTIVITY</div><div style="font-size:20px;font-weight:800;margin-top:6px;">+42%</div></div></div>`
+              },
+              {
+                id: 'C',
+                label: 'Variant C — Atmospheric Obsidian & Amber',
+                subtitle: 'Deep dark canvas + warm amber glow and fluid spring cascade',
+                stageBg: '#12100e',
+                accentColor: '#f59e0b',
+                css: `body { background: #12100e; color: #fafaf9; } .studio-card { width: 100%; max-width: 430px; padding: 18px 24px; border-radius: 16px; background: linear-gradient(145deg, #1c1917 0%, #141210 100%); border: 1px solid rgba(245,158,11,0.35); box-shadow: 0 14px 32px rgba(0,0,0,0.55); animation: floatIn calc(0.48s * var(--anim-scale, 1)) cubic-bezier(0.34, 1.56, 0.64, 1) forwards; } @keyframes floatIn { 0% { transform: translateY(16px) scale(0.9); opacity: 0; } 100% { transform: translateY(0) scale(1); opacity: 1; } }`,
+                html: `<div class="studio-card"><div style="font-size:10px;color:#f59e0b;font-weight:700;letter-spacing:0.8px;">OBSIDIAN & AMBER</div><div style="font-size:20px;font-weight:800;margin-top:6px;color:#fafaf9;">Cinematic Contrast</div><div style="font-size:12px;color:#a8a29e;margin-top:4px;">Deep shadows and warm tactile feedback</div></div>`
+              }
+            ]
+          : [
+              {
+                id: 'A',
+                label: 'Вариант A — Светлая редакционная студия',
+                subtitle: 'Тёплый бумажный холст + контрастная типографика и асимметричная сплит-сетка',
+                stageBg: '#f7f3eb',
+                accentColor: '#c85a32',
+                css: `body { background: #f7f3eb; color: #1c1917; } .editorial { width: 100%; max-width: 440px; padding: 18px 22px; border-radius: 6px; background: #fffdf9; border: 1.5px solid #1c1917; box-shadow: 5px 5px 0 #1c1917; display: grid; grid-template-columns: 1.3fr 1fr; gap: 14px; align-items: center; animation: reveal calc(0.42s * var(--anim-scale, 1)) cubic-bezier(0.16, 1, 0.3, 1) forwards; } @keyframes reveal { 0% { transform: translateY(12px); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }`,
+                html: `<div class="editorial"><div><div style="font-size:10px;color:#c85a32;letter-spacing:1.2px;font-weight:800;">EDITORIAL PAPER</div><div style="font-size:20px;font-weight:800;margin-top:4px;font-family:Georgia,serif;color:#1c1917;">Тёплая студия</div><div style="font-size:12px;color:#57534e;margin-top:4px;">Чистая иерархия и воздух</div></div><div style="background:#f3ede2;border:1px solid #d6cfc2;padding:10px;border-radius:4px;text-align:center;"><div style="font-size:18px;font-weight:800;color:#c85a32;">98.4%</div><div style="font-size:10px;color:#57534e;">Точность</div></div></div>`
+              },
+              {
+                id: 'B',
+                label: 'Вариант B — Архитектурный Bento-дашборд',
+                subtitle: 'Модульная плиточная матрица + глубокий графит и кобальтовый акцент',
+                stageBg: '#eef2f6',
+                accentColor: '#2563eb',
+                css: `body { background: #eef2f6; color: #0f172a; } .bento { width: 100%; max-width: 450px; display: grid; grid-template-columns: 1.2fr 1fr; gap: 10px; animation: snapIn calc(0.36s * var(--anim-scale, 1)) cubic-bezier(0.22, 1, 0.36, 1) forwards; } .tile { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 14px; box-shadow: 0 4px 12px rgba(15,23,42,0.06); } @keyframes snapIn { 0% { transform: scale(0.94); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }`,
+                html: `<div class="bento"><div class="tile"><div style="font-size:10px;color:#2563eb;font-weight:700;">BENTO MATRIX</div><div style="font-size:18px;font-weight:800;margin-top:4px;color:#0f172a;">Модульная сетка</div><div style="font-size:11px;color:#64748b;margin-top:4px;">Быстрый обзор метрик</div></div><div class="tile" style="background:#1e293b;color:#f8fafc;border-color:#1e293b;"><div style="font-size:10px;color:#93c5fd;">АКТИВНОСТЬ</div><div style="font-size:20px;font-weight:800;margin-top:6px;">+42%</div></div></div>`
+              },
+              {
+                id: 'C',
+                label: 'Вариант C — Атмосферный обсидиан и янтарь',
+                subtitle: 'Глубокий тёмный холст + тёплое янтарное свечение и плавный каскад',
+                stageBg: '#12100e',
+                accentColor: '#f59e0b',
+                css: `body { background: #12100e; color: #fafaf9; } .studio-card { width: 100%; max-width: 430px; padding: 18px 24px; border-radius: 16px; background: linear-gradient(145deg, #1c1917 0%, #141210 100%); border: 1px solid rgba(245,158,11,0.35); box-shadow: 0 14px 32px rgba(0,0,0,0.55); animation: floatIn calc(0.48s * var(--anim-scale, 1)) cubic-bezier(0.34, 1.56, 0.64, 1) forwards; } @keyframes floatIn { 0% { transform: translateY(16px) scale(0.9); opacity: 0; } 100% { transform: translateY(0) scale(1); opacity: 1; } }`,
+                html: `<div class="studio-card"><div style="font-size:10px;color:#f59e0b;font-weight:700;letter-spacing:0.8px;">OBSIDIAN & AMBER</div><div style="font-size:20px;font-weight:800;margin-top:6px;color:#fafaf9;">Кинематографичный контраст</div><div style="font-size:12px;color:#a8a29e;margin-top:4px;">Глубокие тени и тёплый отклик</div></div>`
+              }
+            ]);
 
   const cardsHtml = rawVariants.slice(0, 6).map((v, idx) => {
     const theme = inferVariantVisualTheme(v, idx);
     const badge = escapeHtml(v.id || String.fromCharCode(65 + idx));
-    const label = escapeHtml(v.label || `Вариант ${badge}`);
+    const label = escapeHtml(v.label || `${isEn ? 'Variant' : 'Вариант'} ${badge}`);
     const sub = escapeHtml(v.subtitle || '');
     const srcdoc = escapeSrcdoc(buildVariantDocument(v));
     const stageBgStyle = escapeHtml(theme.stageBgCss || '#111318');
@@ -234,9 +267,9 @@ export function generateShowroomHtml(spec = {}) {
     const refMetaHtml = hasRefMeta
       ? `
         <div class="variant-ref-meta">
-          ${showThumbInMeta ? `<img class="ref-thumb" src="${escapeHtml(refImgSrc)}" alt="Референс ${badge}">` : ''}
+          ${showThumbInMeta ? `<img class="ref-thumb" src="${escapeHtml(refImgSrc)}" alt="${isEn ? 'Reference' : 'Референс'} ${badge}">` : ''}
           <div class="ref-meta-body">
-            ${safeUrl ? `<a class="ref-link" href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">🔗 Источник: ${escapeHtml(formatSourceHostLabel(safeUrl))}</a>` : ''}
+            ${safeUrl ? `<a class="ref-link" href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">🔗 ${isEn ? 'Source' : 'Источник'}: ${escapeHtml(formatSourceHostLabel(safeUrl))}</a>` : ''}
             ${notesText ? `<div class="ref-notes">${escapeHtml(notesText)}</div>` : ''}
           </div>
         </div>`
@@ -250,7 +283,7 @@ export function generateShowroomHtml(spec = {}) {
             <strong class="variant-title">${label}</strong>
             ${sub ? `<div class="variant-sub">${sub}</div>` : ''}
           </div>
-          <button type="button" class="btn-sm" onclick="replaySingle(${idx})">↻ Повтор</button>
+          <button type="button" class="btn-sm" onclick="replaySingle(${idx})">${isEn ? '↻ Replay' : '↻ Повтор'}</button>
         </div>
         <div class="stage-wrap" id="wrap-${idx}" style="background: ${stageBgStyle};">
           <iframe id="frame-${idx}" class="stage-frame" sandbox="allow-scripts" srcdoc="${srcdoc}"></iframe>
@@ -261,10 +294,10 @@ export function generateShowroomHtml(spec = {}) {
   const extraRefsHtml = (hasExplicitVariants && hasExplicitRefs)
     ? `
   <section class="ref-strip-section">
-    <div class="ref-strip-title">🌐 Исходные веб-референсы</div>
+    <div class="ref-strip-title">🌐 ${isEn ? 'Source web references' : 'Исходные веб-референсы'}</div>
     <div class="ref-strip-grid">
       ${spec.references.slice(0, 6).map((r, rIdx) => {
-        const rLabel = escapeHtml(r.label || `Референс ${rIdx + 1}`);
+        const rLabel = escapeHtml(r.label || `${isEn ? 'Reference' : 'Референс'} ${rIdx + 1}`);
         const rImg = resolveReferenceImageSrc(r.referenceImage);
         const rUrl = sanitizeExternalUrl(r.sourceUrl);
         const rNotes = normalizeNotesText(r.notes);
@@ -283,7 +316,7 @@ export function generateShowroomHtml(spec = {}) {
     : '';
 
   const fullHtml = `<!DOCTYPE html>
-<html lang="ru">
+<html lang="${isEn ? 'en' : 'ru'}">
 <head>
 <meta charset="UTF-8">
 <title>${escapeHtml(title)}</title>
@@ -383,12 +416,12 @@ export function generateShowroomHtml(spec = {}) {
   <div class="toolbar">
     <div class="toolbar-title">🎨 ${escapeHtml(title)}</div>
     <div class="controls">
-      <button type="button" class="btn-primary" onclick="replayAll()">▶ Проиграть все (Replay)</button>
-      <span style="font-size:12px;color:var(--sub);margin-left:4px;">Скорость:</span>
+      <button type="button" class="btn-primary" onclick="replayAll()">${isEn ? '▶ Replay all' : '▶ Проиграть все (Replay)'}</button>
+      <span style="font-size:12px;color:var(--sub);margin-left:4px;">${isEn ? 'Speed:' : 'Скорость:'}</span>
       <button type="button" class="speed-btn" data-rate="0.25" onclick="setSpeed(0.25)">0.25x</button>
       <button type="button" class="speed-btn" data-rate="0.5" onclick="setSpeed(0.5)">0.5x</button>
       <button type="button" class="speed-btn active" data-rate="1" onclick="setSpeed(1)">1x</button>
-      <button type="button" id="bgBtn" onclick="toggleCheckerboard()">🏁 Альфа-сетка (Видео)</button>
+      <button type="button" id="bgBtn" onclick="toggleCheckerboard()">${isEn ? '🏁 Alpha grid (Video)' : '🏁 Альфа-сетка (Видео)'}</button>
     </div>
   </div>
   <div class="grid">
@@ -842,12 +875,13 @@ function inferVariantVisualTheme(variant = {}, idx = 0) {
   return base;
 }
 
-function renderVariantCardOnCanvas(rgba, canvasW, canvasH, offsetX, offsetY, cardW, cardH, variant, idx) {
+function renderVariantCardOnCanvas(rgba, canvasW, canvasH, offsetX, offsetY, cardW, cardH, variant, idx, lang = '') {
   const safeVariant = variant && typeof variant === 'object' && !Array.isArray(variant) ? variant : {};
+  const isEnCard = normalizeLang(lang || safeVariant.lang || readActiveUiLanguage(), 'en') === 'en';
   const safeIdx = Number.isFinite(Number(idx)) ? Math.max(0, Math.floor(Number(idx))) : 0;
   const theme = inferVariantVisualTheme(safeVariant, safeIdx);
   const badge = String(safeVariant.id || String.fromCharCode(65 + safeIdx)).slice(0, 2);
-  const title = String(safeVariant.label || `Вариант ${badge}`);
+  const title = String(safeVariant.label || `${isEnCard ? 'Variant' : 'Вариант'} ${badge}`);
   const subtitle = String(safeVariant.subtitle || theme.name);
 
   // Extract readable text snippets from variant.html
@@ -860,7 +894,7 @@ function renderVariantCardOnCanvas(rgba, canvasW, canvasH, offsetX, offsetY, car
   const innerTag = htmlTexts[0] || theme.name;
   const innerHeading = htmlTexts[1] || title;
   const innerDesc = htmlTexts[2] || subtitle;
-  const innerMetric = htmlTexts[3] || `ВЫБРАТЬ ${badge}`;
+  const innerMetric = htmlTexts[3] || `${isEnCard ? 'SELECT' : 'ВЫБРАТЬ'} ${badge}`;
 
   // 1. Outer frame background with vertical gradient matching variant's light/dark stageBg
   drawRoundedRect(
@@ -934,7 +968,7 @@ function renderVariantCardOnCanvas(rgba, canvasW, canvasH, offsetX, offsetY, car
 
     // Editorial CTA button
     drawRoundedRect(rgba, canvasW, canvasH, stageX + 20, stageY + 136, 148, 36, Math.min(6, theme.radius), theme.accent, null, 0);
-    drawBitmapText(rgba, canvasW, canvasH, `КОНЦЕПТ ${badge}`, stageX + 36, stageY + 148, 2, [255, 255, 255, 255], 12);
+    drawBitmapText(rgba, canvasW, canvasH, `${isEnCard ? 'CONCEPT' : 'КОНЦЕПТ'} ${badge}`, stageX + 36, stageY + 148, 2, [255, 255, 255, 255], 12);
 
     // Right side metric/feature box
     const rightX = stageX + leftW + 10;
@@ -953,7 +987,7 @@ function renderVariantCardOnCanvas(rgba, canvasW, canvasH, offsetX, offsetY, car
       1
     );
     drawBitmapText(rgba, canvasW, canvasH, innerMetric, rightX + 14, stageY + 66, 2, theme.accent, 12);
-    drawBitmapText(rgba, canvasW, canvasH, 'АКЦЕНТ ПАЛИТРЫ', rightX + 14, stageY + 98, 1, theme.textSub, 18);
+    drawBitmapText(rgba, canvasW, canvasH, isEnCard ? 'PALETTE ACCENT' : 'АКЦЕНТ ПАЛИТРЫ', rightX + 14, stageY + 98, 1, theme.textSub, 18);
   } else if (theme.layoutMode === 'bento') {
     // Bento Multi-Tile Grid Layout (3 modular tiles)
     const gap = 10;
@@ -968,7 +1002,7 @@ function renderVariantCardOnCanvas(rgba, canvasW, canvasH, offsetX, offsetY, car
     drawBitmapText(rgba, canvasW, canvasH, innerHeading, stageX + 16, stageY + 52, 2, theme.textPrimary, 18);
     drawBitmapText(rgba, canvasW, canvasH, innerDesc, stageX + 16, stageY + 80, 1, theme.textSub, 30);
     drawRoundedRect(rgba, canvasW, canvasH, stageX + 16, stageY + 140, 136, 34, 8, theme.accent, null, 0);
-    drawBitmapText(rgba, canvasW, canvasH, `ВЫБРАТЬ ${badge}`, stageX + 32, stageY + 151, 2, [255, 255, 255, 255], 12);
+    drawBitmapText(rgba, canvasW, canvasH, `${isEnCard ? 'SELECT' : 'ВЫБРАТЬ'} ${badge}`, stageX + 32, stageY + 151, 2, [255, 255, 255, 255], 12);
 
     // Top-right accent tile
     const col2X = stageX + col1W + gap;
@@ -1020,7 +1054,7 @@ function renderVariantCardOnCanvas(rgba, canvasW, canvasH, offsetX, offsetY, car
       [255, 255, 255, 90],
       1
     );
-    drawBitmapText(rgba, canvasW, canvasH, `ВЫБРАТЬ ${badge}`, btnX + 24, btnY + 12, 2, [255, 255, 255, 255], 14);
+    drawBitmapText(rgba, canvasW, canvasH, `${isEnCard ? 'SELECT' : 'ВЫБРАТЬ'} ${badge}`, btnX + 24, btnY + 12, 2, [255, 255, 255, 255], 14);
 
     const chipW = 128;
     const chipX = stageX + stageW - chipW - 24;
@@ -1055,17 +1089,17 @@ function renderVariantCardOnCanvas(rgba, canvasW, canvasH, offsetX, offsetY, car
   );
 }
 
-export function renderVariantPreviewPngBuffer(variant = {}, idx = 0, width = 600, height = 340) {
+export function renderVariantPreviewPngBuffer(variant = {}, idx = 0, width = 600, height = 340, lang = '') {
   const safeVariant = variant && typeof variant === 'object' && !Array.isArray(variant) ? variant : {};
   const safeIdx = Number.isFinite(Number(idx)) ? Math.max(0, Math.floor(Number(idx))) : 0;
   const safeW = Number.isFinite(Number(width)) && Number(width) > 0 ? Math.min(2400, Math.max(64, Math.floor(Number(width)))) : 600;
   const safeH = Number.isFinite(Number(height)) && Number(height) > 0 ? Math.min(2400, Math.max(64, Math.floor(Number(height)))) : 340;
   const rgba = Buffer.alloc(safeW * safeH * 4, 0);
-  renderVariantCardOnCanvas(rgba, safeW, safeH, 0, 0, safeW, safeH, safeVariant, safeIdx);
+  renderVariantCardOnCanvas(rgba, safeW, safeH, 0, 0, safeW, safeH, safeVariant, safeIdx, lang);
   return encodeRgbaToPngBuffer(safeW, safeH, rgba);
 }
 
-export function renderOverviewGridPngBuffer(variants = [], cardW = 560, cardH = 340) {
+export function renderOverviewGridPngBuffer(variants = [], cardW = 560, cardH = 340, lang = '') {
   const safeList = Array.isArray(variants) ? variants : [];
   const list = safeList.slice(0, 3);
   const safeCardW = Number.isFinite(Number(cardW)) && Number(cardW) > 0 ? Math.min(1600, Math.max(64, Math.floor(Number(cardW)))) : 560;
@@ -1081,7 +1115,7 @@ export function renderOverviewGridPngBuffer(variants = [], cardW = 560, cardH = 
 
   list.forEach((v, idx) => {
     const ox = pad + idx * (safeCardW + gap);
-    renderVariantCardOnCanvas(rgba, totalW, totalH, ox, pad, safeCardW, safeCardH, v, idx);
+    renderVariantCardOnCanvas(rgba, totalW, totalH, ox, pad, safeCardW, safeCardH, v, idx, lang);
   });
 
   return encodeRgbaToPngBuffer(totalW, totalH, rgba);
@@ -1107,10 +1141,11 @@ export function findHeadlessBrowserExecutable() {
   return null;
 }
 
-function buildSnapshotStandaloneHtml(variant = {}, idx = 0) {
+function buildSnapshotStandaloneHtml(variant = {}, idx = 0, lang = '') {
+  const isEnSnap = normalizeLang(lang || variant?.lang || readActiveUiLanguage(), 'en') === 'en';
   const theme = inferVariantVisualTheme(variant, idx);
   const badge = escapeHtml(variant.id || String.fromCharCode(65 + idx));
-  const label = escapeHtml(variant.label || `Вариант ${badge}`);
+  const label = escapeHtml(variant.label || `${isEnSnap ? 'Variant' : 'Вариант'} ${badge}`);
   const sub = escapeHtml(variant.subtitle || '');
   const css = String(variant.css || '');
   const refImgSrc = resolveReferenceImageSrc(variant.referenceImage);
@@ -1128,7 +1163,7 @@ function buildSnapshotStandaloneHtml(variant = {}, idx = 0) {
     : '';
 
   return `<!DOCTYPE html>
-<html lang="ru">
+<html lang="${isEnSnap ? 'en' : 'ru'}">
 <head>
 <meta charset="UTF-8">
 <style>
@@ -1186,7 +1221,9 @@ function buildSnapshotStandaloneHtml(variant = {}, idx = 0) {
  * Uses headless Edge/Chrome when available and falls back to the built-in pure-Node PNG renderer.
  */
 export function generateShowroomVisualPreviews(spec = {}, outputDir, options = {}) {
-  const res = generateShowroomHtml(spec);
+  const prevLang = normalizeLang(options.lang || spec.lang || readActiveUiLanguage(), 'en');
+  const isEnPrev = prevLang === 'en';
+  const res = generateShowroomHtml(spec, { lang: prevLang });
   if (!res.ok) return { ok: false, screenshots: [], overviewScreenshot: '', carouselMarkdown: '' };
 
   fs.mkdirSync(outputDir, { recursive: true });
@@ -1212,7 +1249,7 @@ export function generateShowroomVisualPreviews(spec = {}, outputDir, options = {
     if (browserExe && tmpProfileDir) {
       try {
         const snapHtmlPath = path.join(tmpProfileDir, `snap-${badge}.html`);
-        fs.writeFileSync(snapHtmlPath, buildSnapshotStandaloneHtml(v, i), 'utf8');
+        fs.writeFileSync(snapHtmlPath, buildSnapshotStandaloneHtml(v, i, prevLang), 'utf8');
         const fileUrl = pathToFileURL(snapHtmlPath).href;
         execFileSync(
           browserExe,
@@ -1276,7 +1313,7 @@ export function generateShowroomVisualPreviews(spec = {}, outputDir, options = {
     } catch {}
   }
   if (!overviewCapturedByBrowser) {
-    const overviewBuf = renderOverviewGridPngBuffer(variants, 560, 340);
+    const overviewBuf = renderOverviewGridPngBuffer(variants, 560, 340, prevLang);
     fs.writeFileSync(overviewPath, overviewBuf);
   }
 
@@ -1293,20 +1330,20 @@ export function generateShowroomVisualPreviews(spec = {}, outputDir, options = {
 
   const slides = variants.map((v, i) => {
     const badge = String(v.id || String.fromCharCode(65 + i));
-    const label = v.label || `Вариант ${badge}`;
+    const label = v.label || `${isEnPrev ? 'Variant' : 'Вариант'} ${badge}`;
     const sub = v.subtitle ? ` — ${v.subtitle}` : '';
     const normPath = toArtifactImgPath(screenshots[i]);
     const safeUrl = sanitizeExternalUrl(v.sourceUrl);
     const notesText = normalizeNotesText(v.notes);
     const lines = [`![${label}](${normPath})`, `**${label}**${sub}`];
-    if (notesText) lines.push(`- **Разбор приёмов:** ${notesText}`);
-    if (safeUrl) lines.push(`- 🔗 Источник: [${formatSourceHostLabel(safeUrl)}](${safeUrl})`);
+    if (notesText) lines.push(`- **${isEnPrev ? 'Technique breakdown' : 'Разбор приёмов'}:** ${notesText}`);
+    if (safeUrl) lines.push(`- 🔗 ${isEnPrev ? 'Source' : 'Источник'}: [${formatSourceHostLabel(safeUrl)}](${safeUrl})`);
     return lines.join('\n');
   });
 
   const normOverview = toArtifactImgPath(overviewPath);
   const carouselMarkdown = [
-    `![Сравнение вариантов A / B / C](${normOverview})`,
+    `![${isEnPrev ? 'Compare variants A / B / C' : 'Сравнение вариантов A / B / C'}](${normOverview})`,
     '',
     '````carousel',
     slides.join('\n<!-- slide -->\n'),
@@ -1353,19 +1390,24 @@ if (isMain) {
   let artifactDir = '';
   let shouldOpen = false;
   let fastPng = false;
+  let cliLang = '';
   const positional = [];
 
   for (let i = 0; i < rawArgs.length; i++) {
     const arg = rawArgs[i];
     if (arg === '--help' || arg === '-h') {
       console.log(
-        'Usage: node build-showroom.mjs [spec.json] [out.html] [--artifact-dir <dir>] [--open] [--fast-png] [--demo]'
+        'Usage: node build-showroom.mjs [spec.json] [out.html] [--artifact-dir <dir>] [--lang en|ru] [--open] [--fast-png] [--demo]'
       );
       process.exit(0);
     } else if (arg === '--open') {
       shouldOpen = true;
     } else if (arg === '--fast-png') {
       fastPng = true;
+    } else if (arg === '--lang' && rawArgs[i + 1]) {
+      cliLang = rawArgs[++i];
+    } else if (arg.startsWith('--lang=')) {
+      cliLang = arg.slice('--lang='.length);
     } else if (arg === '--artifact-dir' && rawArgs[i + 1]) {
       artifactDir = path.resolve(rawArgs[++i]);
     } else if (arg.startsWith('--artifact-dir=')) {
@@ -1391,12 +1433,13 @@ if (isMain) {
     outPath = path.join(artifactDir, path.basename(outPath));
   }
 
+  const resolvedCliLang = normalizeLang(cliLang || spec.lang || readActiveUiLanguage(), 'en');
   const outDir = artifactDir || path.dirname(outPath);
-  const res = generateShowroomHtml(spec);
+  const res = generateShowroomHtml(spec, { lang: resolvedCliLang });
   fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(outPath, res.html, 'utf8');
 
-  const previews = generateShowroomVisualPreviews(spec, outDir, { fastPng });
+  const previews = generateShowroomVisualPreviews(spec, outDir, { fastPng, lang: resolvedCliLang });
   const opened = shouldOpen ? openFileInDefaultBrowser(outPath) : false;
 
   console.log(

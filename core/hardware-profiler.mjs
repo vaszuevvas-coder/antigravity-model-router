@@ -12,6 +12,7 @@ import os from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWriteJsonSync, safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
+import { normalizeLang } from './i18n.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PLUGIN_ROOT = join(__dirname, '..');
@@ -455,6 +456,7 @@ export function probeAnyGpu(opts = {}) {
     backendHint: 'cpu',
     vramReliable: false,
     name: 'Дискретная GPU не обнаружена (режим CPU + RAM)',
+    nameEn: 'No discrete GPU detected (CPU + RAM mode)',
     totalMb: 0,
     usedMb: 0,
     freeMb: 0,
@@ -589,6 +591,7 @@ export function resolveGpuModelPairForVramCap(vramCapMb = 4096) {
       vramCapMb: cap,
       tierKey: 'ultra_20gb_plus',
       labelRu: 'Ультра (20+ ГБ): gemma4:12b + qwen3-embedding:8b',
+      labelEn: 'Ultra (20+ GB): gemma4:12b + qwen3-embedding:8b',
       gpuChatModel: 'gemma4:12b',
       gpuEmbedModel: 'qwen3-embedding:8b',
       gpuContextTokens: 16384,
@@ -600,6 +603,7 @@ export function resolveGpuModelPairForVramCap(vramCapMb = 4096) {
       vramCapMb: cap,
       tierKey: 'workstation_14_16gb',
       labelRu: 'Максимум 16 ГБ (14–16 ГБ): gemma4:12b + qwen3-embedding:4b',
+      labelEn: 'Max 16 GB (14–16 GB): gemma4:12b + qwen3-embedding:4b',
       gpuChatModel: 'gemma4:12b',
       gpuEmbedModel: 'qwen3-embedding:4b',
       gpuContextTokens: 16384,
@@ -611,6 +615,7 @@ export function resolveGpuModelPairForVramCap(vramCapMb = 4096) {
       vramCapMb: cap,
       tierKey: 'large_chat_12gb',
       labelRu: 'Крупный чат (12 ГБ): gemma4:12b + qwen3-embedding:0.6b',
+      labelEn: 'Large Chat (12 GB): gemma4:12b + qwen3-embedding:0.6b',
       gpuChatModel: 'gemma4:12b',
       gpuEmbedModel: 'qwen3-embedding:0.6b',
       gpuContextTokens: 12288,
@@ -622,6 +627,7 @@ export function resolveGpuModelPairForVramCap(vramCapMb = 4096) {
       vramCapMb: cap,
       tierKey: 'balanced_8_10gb',
       labelRu: 'Средний (8–10 ГБ): qwen3:4b + qwen3-embedding:4b',
+      labelEn: 'Balanced (8–10 GB): qwen3:4b + qwen3-embedding:4b',
       gpuChatModel: 'qwen3:4b',
       gpuEmbedModel: 'qwen3-embedding:4b',
       gpuContextTokens: 12288,
@@ -632,6 +638,7 @@ export function resolveGpuModelPairForVramCap(vramCapMb = 4096) {
     vramCapMb: cap,
     tierKey: 'compact_4_6gb',
     labelRu: 'Компакт (4–6 ГБ): qwen3:4b + qwen3-embedding:0.6b',
+    labelEn: 'Compact (4–6 GB): qwen3:4b + qwen3-embedding:0.6b',
     gpuChatModel: 'qwen3:4b',
     gpuEmbedModel: 'qwen3-embedding:0.6b',
     gpuContextTokens: 8192,
@@ -724,6 +731,7 @@ export function recommendHardwareSettings({
 
   let tierId = 'cpu_ram_only';
   let tierLabelRu = 'Контур CPU + RAM (без нагрузки на видеокарту)';
+  let tierLabelEn = 'CPU + RAM Pipeline (no GPU load)';
   let gpuPreset = {
     gpuMaxVramMb: 4096,
     gpuChatModel: 'qwen3:4b',
@@ -744,7 +752,9 @@ export function recommendHardwareSettings({
       downloadedSet.has('qwen3-embedding:0.6b')
         ? 'qwen3-embedding:0.6b'
         : pair.gpuEmbedModel;
-    tierLabelRu = `Мощная GPU (${Math.round(vramMb / 1024)} ГБ VRAM) · Полная дистилляция логов + семантический индекс`;
+    const vramGb = Math.round(vramMb / 1024);
+    tierLabelRu = `Мощная GPU (${vramGb} ГБ VRAM) · Полная дистилляция логов + семантический индекс`;
+    tierLabelEn = `High-VRAM GPU (${vramGb} GB VRAM) · Full log distillation + semantic index`;
     gpuPreset = {
       gpuMaxVramMb: capMb,
       gpuChatModel: pair.gpuChatModel,
@@ -756,7 +766,9 @@ export function recommendHardwareSettings({
     };
   } else if (isUsableGpu && vramMb >= 7168) {
     tierId = 'mid_gpu_8gb';
-    tierLabelRu = `Средняя GPU (${Math.round(vramMb / 1024)} ГБ VRAM) · Облегчённая модель 4B без свопа в ОЗУ`;
+    const vramGb = Math.round(vramMb / 1024);
+    tierLabelRu = `Средняя GPU (${vramGb} ГБ VRAM) · Облегчённая модель 4B без свопа в ОЗУ`;
+    tierLabelEn = `Mid-Range GPU (${vramGb} GB VRAM) · Lightweight 4B model with zero RAM swap`;
     gpuPreset = {
       gpuMaxVramMb: 6144,
       gpuChatModel: 'qwen3:4b',
@@ -768,7 +780,9 @@ export function recommendHardwareSettings({
     };
   } else if (isUsableGpu && vramMb >= 4096) {
     tierId = 'entry_gpu_4_6gb';
-    tierLabelRu = `Начальная GPU (${Math.round(vramMb / 1024)} ГБ VRAM) · Компактный индекс 0.6B + 4B`;
+    const vramGb = Math.round(vramMb / 1024);
+    tierLabelRu = `Начальная GPU (${vramGb} ГБ VRAM) · Компактный индекс 0.6B + 4B`;
+    tierLabelEn = `Entry GPU (${vramGb} GB VRAM) · Compact 0.6B + 4B pipeline`;
     gpuPreset = {
       gpuMaxVramMb: 4096,
       gpuChatModel: 'qwen3:4b',
@@ -797,20 +811,31 @@ export function recommendHardwareSettings({
   const gpuAutoEnable = Boolean(isUsableGpu && ollama?.installed);
 
   let vendorTipRu = 'Вся экономия токенов работает через многопоточный CPU и In-RAM буфер — видеокарта не требуется.';
+  let vendorTipEn = 'Full token savings work via multi-threaded CPU and In-RAM buffer — no GPU required.';
   if (gpu?.vendor === 'nvidia' && isUsableGpu) {
     vendorTipRu = ollama?.installed
       ? 'Обнаружена NVIDIA CUDA + Ollama: готово к аппаратному ускорению без доп. настроек.'
       : 'Обнаружена видеокарта NVIDIA, но Ollama не установлена — GPU-помощник безопасно выключен (можно включить после установки Ollama).';
+    vendorTipEn = ollama?.installed
+      ? 'NVIDIA CUDA + Ollama detected: ready for hardware acceleration out of the box.'
+      : 'NVIDIA GPU detected, but Ollama is not installed yet — GPU assistant safely disabled until Ollama is installed.';
   } else if (gpu?.vendor === 'amd') {
     vendorTipRu = isUsableGpu
       ? 'Видеокарта AMD Radeon: Ollama поддерживает ускорение через ROCm / Vulkan (при необходимости задайте OLLAMA_VULKAN=1).'
       : 'Встроенная графика AMD: тяжёлые модели отключены во избежание тормозов, активен быстрый контур CPU + RAM.';
+    vendorTipEn = isUsableGpu
+      ? 'AMD Radeon GPU: Ollama supports ROCm / Vulkan acceleration (set OLLAMA_VULKAN=1 if needed).'
+      : 'Integrated AMD graphics: heavy GPU models disabled to prevent slowdowns; fast CPU + RAM pipeline is active.';
   } else if (gpu?.vendor === 'intel') {
     vendorTipRu = isUsableGpu
       ? 'Видеокарта Intel Arc: для аппаратного ускорения в Ollama рекомендуется режим Vulkan (OLLAMA_VULKAN=1).'
       : 'Интегрированная графика Intel: GPU-модели отключены, чтобы не отнимать системную ОЗУ; активен CPU + RAM.';
+    vendorTipEn = isUsableGpu
+      ? 'Intel Arc GPU: Vulkan mode (OLLAMA_VULKAN=1) is recommended for hardware acceleration in Ollama.'
+      : 'Integrated Intel graphics: GPU models disabled to preserve system RAM; fast CPU + RAM pipeline is active.';
   } else if (gpu?.vendor === 'apple') {
     vendorTipRu = 'Apple Silicon (Metal Unified Memory): общее скоростное поле памяти идеально подходит для локальных моделей Ollama.';
+    vendorTipEn = 'Apple Silicon (Metal Unified Memory): shared high-bandwidth memory is ideal for local Ollama models.';
   }
 
   const subPreset =
@@ -861,9 +886,11 @@ export function recommendHardwareSettings({
   return {
     tierId,
     tierLabelRu,
+    tierLabelEn,
     gpuViable: isUsableGpu,
     gpuAutoEnable,
     vendorTipRu,
+    vendorTipEn,
     cascadeBundle,
     ceilings,
     gpuEnabledPreset: {
@@ -1124,11 +1151,14 @@ export async function ensureHardwareCalibratedOnce(opts = {}) {
  * @param {object} profile
  * @param {object} [currentState={}]
  */
-export function buildAiHardwareTuningPrompt(profile = {}, currentState = {}) {
+export function buildAiHardwareTuningPrompt(profile = {}, currentState = {}, opts = {}) {
+  const isEn = normalizeLang(opts?.lang ?? currentState?.uiLanguage, 'ru') === 'en';
   const sys = profile.system || {};
   const gpu = profile.gpu || {};
   const oll = profile.ollama || {};
-  const sub = currentState.subscriptionTier === 'ultra' ? 'Ultra / Max' : 'Pro (беречь квоту)';
+  const sub = currentState.subscriptionTier === 'ultra'
+    ? 'Ultra / Max'
+    : (isEn ? 'Pro (preserve quota)' : 'Pro (беречь квоту)');
 
   const passport = {
     os: `${sys.platform || process.platform} (${sys.arch || process.arch})`,
@@ -1144,7 +1174,7 @@ export function buildAiHardwareTuningPrompt(profile = {}, currentState = {}) {
       currentRamBudgetMb: currentState.ramMaxBudgetMb || sys.recommendedRamBudgetMb || 4096,
     },
     gpu: {
-      name: gpu.name || 'Unknown',
+      name: isEn ? (gpu.nameEn || gpu.name || 'Unknown') : (gpu.name || 'Unknown'),
       vendor: gpu.vendor || 'none',
       isDiscrete: Boolean(gpu.isDiscrete),
       vramMb: gpu.totalMb || 0,
@@ -1156,6 +1186,20 @@ export function buildAiHardwareTuningPrompt(profile = {}, currentState = {}) {
       downloadedModels: Array.isArray(oll.downloadedModels) ? oll.downloadedModels.map((m) => `${m.name} (${m.sizeGb}GB)`) : [],
     },
   };
+
+  if (isEn) {
+    return [
+      'Auto-optimize my The Tunnel (antigravity-model-router) plugin settings for this machine hardware passport:',
+      '```json',
+      JSON.stringify(passport, null, 2),
+      '```',
+      'What to do:',
+      `1. Evaluate my CPU, RAM capacity, GPU (NVIDIA / AMD / Intel / Apple / integrated), and subscription tier (${sub}).`,
+      '2. Check currently available local Ollama models (chat/log distillation + lightweight multilingual embeddings) that strictly fit inside my VRAM limit without RAM swapping or freezes (accounting for CUDA / ROCm / Vulkan / Metal, or disable GPU models if CPU+RAM is optimal).',
+      '3. Update ONLY the configuration file `~/.gemini/config/plugins/antigravity-model-router/router-state.json` (and memory limit in `mcp_config.json` if changing `ramMaxBudgetMb`). STRICTLY DO NOT modify plugin source files (`core/*.mjs`, `sidecars/*`) so updates remain clean.',
+      '4. Briefly summarize in English which limits were configured and which `ollama pull ...` commands (or env vars like `OLLAMA_VULKAN=1` for AMD/Intel) to run if needed.',
+    ].join('\n');
+  }
 
   return [
     'Проведи авто-оптимизацию моих настроек плагина The Tunnel (antigravity-model-router) под характеристики этого компьютера:',
@@ -1217,12 +1261,28 @@ function buildOllamaModelPromptContext(profile = {}, currentState = {}, gpuSnaps
   return { summary, installedModels, currentChat, currentEmbed, vramCapMb, capGb };
 }
 
-export function buildAiModelSearchPrompt(profile = {}, currentState = {}, gpuSnapshot = null) {
+export function buildAiModelSearchPrompt(profile = {}, currentState = {}, gpuSnapshot = null, opts = {}) {
+  const isEn = normalizeLang(opts?.lang ?? currentState?.uiLanguage, 'ru') === 'en';
   const { summary, installedModels, currentChat, currentEmbed, capGb } = buildOllamaModelPromptContext(
     profile,
     currentState,
     gpuSnapshot
   );
+
+  if (isEn) {
+    const installedText = installedModels.length > 0 ? installedModels.join(', ') : 'none installed / Ollama sleeping';
+    return [
+      'Find up-to-date local Ollama models for my hardware and check whether my current pair should be upgraded:',
+      '```json',
+      JSON.stringify(summary, null, 2),
+      '```',
+      'What to do:',
+      `1. Account for currently installed models (${installedText}) and active router pair: chat/distillation — \`${currentChat}\`, embedder — \`${currentEmbed}\` within a \`${capGb} GB\` VRAM limit.`,
+      '2. Search Ollama library / web for newer or higher-quality alternatives for both roles: a fast log/code distillation model (`gpuChatModel`) + a compact multilingual embedder (`gpuEmbedModel`) that strictly fit my VRAM limit without RAM swapping.',
+      '3. Briefly compare top candidates against my current models (code quality, EN/multilingual quality, speed, VRAM footprint) and provide ready `ollama pull ...` commands.',
+      '4. After my confirmation (or if requested right away), pull the selected models and update only `~/.gemini/config/plugins/antigravity-model-router/router-state.json` (`gpuChatModel` / `gpuEmbedModel`) without modifying plugin source code.',
+    ].join('\n');
+  }
 
   return [
     'Найди актуальные на сегодня локальные модели Ollama для моего ПК и проверь, стоит ли обновить текущие:',
@@ -1237,7 +1297,8 @@ export function buildAiModelSearchPrompt(profile = {}, currentState = {}, gpuSna
   ].join('\n');
 }
 
-export function buildVramFitModelPrompt(profile = {}, currentState = {}, gpuSnapshot = null) {
+export function buildVramFitModelPrompt(profile = {}, currentState = {}, gpuSnapshot = null, opts = {}) {
+  const isEn = normalizeLang(opts?.lang ?? currentState?.uiLanguage, 'ru') === 'en';
   const { summary, installedModels, currentChat, currentEmbed, vramCapMb, capGb } = buildOllamaModelPromptContext(
     profile,
     currentState,
@@ -1246,7 +1307,22 @@ export function buildVramFitModelPrompt(profile = {}, currentState = {}, gpuSnap
   const vramFit = gpuSnapshot?.vramFit || null;
   const recommendedPull =
     vramFit?.recommendedPullModel || (vramCapMb < 11264 ? 'qwen3:4b' : 'gemma4:12b');
-  const installedListText = installedModels.length > 0 ? installedModels.join(', ') : 'список пуст / Ollama спит';
+  const installedListText = installedModels.length > 0
+    ? installedModels.join(', ')
+    : (isEn ? 'none installed / Ollama sleeping' : 'список пуст / Ollama спит');
+
+  if (isEn) {
+    return [
+      `I capped VRAM to **${capGb} GB (${vramCapMb} MB)**, and none of the installed Ollama models (${installedListText}) fit as a log/code distillation chat model alongside \`${currentEmbed}\` (current \`${currentChat}\` is blocked).`,
+      '```json',
+      JSON.stringify(summary, null, 2),
+      '```',
+      'What to do:',
+      `1. Recommend 2–3 compact Ollama models for \`gpuChatModel\` (distilling logs, stacktraces, and code) that fit strictly inside **${capGb} GB VRAM** together with \`${currentEmbed}\` without swapping to system RAM (consider \`${recommendedPull}\` and modern equivalents of similar footprint).`,
+      '2. List each candidate’s exact VRAM footprint and ready `ollama pull ...` commands.',
+      '3. After my confirmation (or immediately if I ask), pull the chosen model with `ollama pull` and update `gpuChatModel` in `~/.gemini/config/plugins/antigravity-model-router/router-state.json` without editing plugin source code.',
+    ].join('\n');
+  }
 
   return [
     `Я ограничил лимит видеопамяти до **${capGb} ГБ (${vramCapMb} МБ)**, но среди установленных моделей Ollama (${installedListText}) нет чат-модели для сжатия логов и кода, которая помещается в этот лимит вместе с эмбеддером \`${currentEmbed}\` (текущая \`${currentChat}\` заблокирована).`,

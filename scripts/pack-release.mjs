@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
+import { detectOsLocale, normalizeLang } from '../core/i18n.mjs';
 import { buildPanelUi } from '../core/panel-ui-builder.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -87,6 +88,49 @@ const UNINSTALL_BAT_CONTENT = [
   ')',
   '',
   '"%NODE_EXE%" "%~dp0install.js" --uninstall %*',
+  'set "EXIT_CODE=!ERRORLEVEL!"',
+  'if "!SILENT_MODE!"=="0" pause',
+  'exit /b !EXIT_CODE!',
+  '',
+].join('\r\n');
+
+const UNINSTALL_BAT_EN_CONTENT = [
+  '@echo off',
+  'chcp 65001 >nul',
+  'setlocal EnableExtensions EnableDelayedExpansion',
+  'title Uninstall The Tunnel',
+  'cd /d "%~dp0"',
+  '',
+  'set "SILENT_MODE=0"',
+  'for %%A in (%*) do (',
+  '  if /I "%%~A"=="--silent" set "SILENT_MODE=1"',
+  '  if /I "%%~A"=="/S" set "SILENT_MODE=1"',
+  ')',
+  '',
+  'set "NODE_EXE="',
+  'for /f "delims=" %%P in (\'where node.exe 2^>nul\') do (',
+  '  if not defined NODE_EXE if exist "%%~P" set "NODE_EXE=%%~P"',
+  ')',
+  'if not defined NODE_EXE (',
+  '  for %%D in (',
+  '    "%ProgramFiles%\\nodejs"',
+  '    "%ProgramFiles(x86)%\\nodejs"',
+  '    "%LOCALAPPDATA%\\Programs\\nodejs"',
+  '    "%NVM_SYMLINK%"',
+  '    "%VOLTA_HOME%\\bin"',
+  '    "%USERPROFILE%\\scoop\\apps\\nodejs\\current"',
+  '  ) do (',
+  '    if not defined NODE_EXE if not "%%~D"=="" if exist "%%~D\\node.exe" set "NODE_EXE=%%~D\\node.exe"',
+  '  )',
+  ')',
+  '',
+  'if not defined NODE_EXE (',
+  '  echo [ERROR] Node.js was not found. Run Setup.exe --uninstall or delete the plugin folder manually.',
+  '  if "!SILENT_MODE!"=="0" pause',
+  '  exit /b 1',
+  ')',
+  '',
+  '"%NODE_EXE%" "%~dp0install.js" --uninstall --lang=en %*',
   'set "EXIT_CODE=!ERRORLEVEL!"',
   'if "!SILENT_MODE!"=="0" pause',
   'exit /b !EXIT_CODE!',
@@ -519,12 +563,13 @@ function findCscCompiler() {
 }
 
 function buildInstallerCSharpSource(version) {
-  const safeVersion = String(version || '3.31.0').replace(/[^0-9A-Za-z._-]/g, '');
+  const safeVersion = String(version || '3.32.0').replace(/[^0-9A-Za-z._-]/g, '');
   // Строго C# 5.0 (без $"" интерполяции, ?., ??=, nameof, auto-property initializers)
   return `using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
@@ -540,6 +585,7 @@ namespace AntigravityModelRouterSetup
         public bool Silent;
         public bool Uninstall;
         public string TargetDir;
+        public string Lang;
     }
 
     internal static class Program
@@ -547,6 +593,30 @@ namespace AntigravityModelRouterSetup
         private const string PluginName = "antigravity-model-router";
         private const string PluginVersion = "${safeVersion}";
         private const string ResourceName = "Antigravity.Payload.zip";
+        internal static string UiLang = DetectDefaultLang();
+
+        internal static string DetectDefaultLang()
+        {
+            string envLang = Environment.GetEnvironmentVariable("TUNNEL_LANG");
+            if (!string.IsNullOrEmpty(envLang))
+            {
+                string low = envLang.Trim().ToLowerInvariant();
+                if (low.StartsWith("ru")) return "ru";
+                if (low.StartsWith("en")) return "en";
+            }
+            try
+            {
+                string iso = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
+                if (string.Equals(iso, "ru", StringComparison.OrdinalIgnoreCase)) return "ru";
+            }
+            catch { }
+            return "en";
+        }
+
+        internal static string T(string ruText, string enText)
+        {
+            return string.Equals(UiLang, "ru", StringComparison.OrdinalIgnoreCase) ? ruText : enText;
+        }
 
         [DllImport("user32.dll")]
         private static extern bool SetProcessDPIAware();
@@ -555,6 +625,7 @@ namespace AntigravityModelRouterSetup
         private static int Main(string[] args)
         {
             SetupOptions opts = ParseArgs(args);
+            UiLang = !string.IsNullOrEmpty(opts.Lang) ? opts.Lang : DetectDefaultLang();
             if (opts.Silent)
             {
                 return RunSilent(opts);
@@ -581,6 +652,7 @@ namespace AntigravityModelRouterSetup
             opts.Silent = false;
             opts.Uninstall = false;
             opts.TargetDir = "";
+            opts.Lang = DetectDefaultLang();
             if (args == null) return opts;
 
             for (int i = 0; i < args.Length; i++)
@@ -595,6 +667,16 @@ namespace AntigravityModelRouterSetup
                 else if (lower == "--uninstall" || lower == "uninstall" || lower == "/u")
                 {
                     opts.Uninstall = true;
+                }
+                else if (lower == "--lang" && i + 1 < args.Length)
+                {
+                    string val = args[++i].Trim().ToLowerInvariant();
+                    opts.Lang = val.StartsWith("ru") ? "ru" : "en";
+                }
+                else if (lower.StartsWith("--lang="))
+                {
+                    string val = a.Substring("--lang=".Length).Trim().ToLowerInvariant();
+                    opts.Lang = val.StartsWith("ru") ? "ru" : "en";
                 }
                 else if (lower == "--target" && i + 1 < args.Length)
                 {
@@ -706,7 +788,7 @@ namespace AntigravityModelRouterSetup
             {
                 if (stream == null)
                 {
-                    throw new InvalidOperationException("Встроенный архив плагина не найден в ресурсах.");
+                    throw new InvalidOperationException(T("Встроенный архив плагина не найден в ресурсах.", "Embedded plugin payload archive was not found in resources."));
                 }
                 using (ZipArchive archive = new ZipArchive(stream, ZipArchiveMode.Read, false, Encoding.UTF8))
                 {
@@ -725,7 +807,7 @@ namespace AntigravityModelRouterSetup
                         string destPath = Path.GetFullPath(Path.Combine(tempDir, rel));
                         if (!destPath.StartsWith(tempDirFull, StringComparison.OrdinalIgnoreCase))
                         {
-                            throw new InvalidOperationException("Обнаружен небезопасный путь в архиве: " + entry.FullName);
+                            throw new InvalidOperationException(T("Обнаружен небезопасный путь в архиве: ", "Unsafe archive entry path detected: ") + entry.FullName);
                         }
                         string parent = Path.GetDirectoryName(destPath);
                         if (!string.IsNullOrEmpty(parent))
@@ -738,7 +820,7 @@ namespace AntigravityModelRouterSetup
             }
             if (log != null)
             {
-                log("[✓] Файлы плагина v" + PluginVersion + " распакованы во временную папку.");
+                log(T("[✓] Файлы плагина v", "[OK] Extracted plugin v") + PluginVersion + T(" распакованы во временную папку.", " files to temporary directory."));
             }
             return tempDir;
         }
@@ -787,6 +869,7 @@ namespace AntigravityModelRouterSetup
         internal static int ExecuteInstallOrUninstall(SetupOptions opts, Action<string> log)
         {
             string targetDir = ResolveTargetDir(opts.TargetDir);
+            string cliLang = !string.IsNullOrEmpty(opts.Lang) ? opts.Lang : UiLang;
             string nodeExe = FindNodeExecutable();
 
             if (opts.Uninstall)
@@ -798,7 +881,7 @@ namespace AntigravityModelRouterSetup
                     {
                         tempDir = ExtractPayloadToTemp(null);
                         string installJs = Path.Combine(tempDir, "install.js");
-                        string args = QuoteArg(installJs) + " --uninstall --target " + QuoteArg(targetDir);
+                        string args = QuoteArg(installJs) + " --uninstall --target " + QuoteArg(targetDir) + " --lang " + QuoteArg(cliLang);
                         if (opts.Silent) args += " --silent";
                         return RunExternalProcess(nodeExe, args, tempDir, log);
                     }
@@ -814,13 +897,13 @@ namespace AntigravityModelRouterSetup
             {
                 if (opts.Silent && HasWinget())
                 {
-                    if (log != null) log("[i] Node.js не найден. Установка OpenJS.NodeJS.LTS через winget...");
+                    if (log != null) log(T("[i] Node.js не найден. Установка OpenJS.NodeJS.LTS через winget...", "[i] Node.js not found. Installing OpenJS.NodeJS.LTS via winget..."));
                     RunExternalProcess("winget", "install --id OpenJS.NodeJS.LTS -e --silent --accept-package-agreements --accept-source-agreements", "", log);
                     nodeExe = FindNodeExecutable();
                 }
                 if (string.IsNullOrEmpty(nodeExe))
                 {
-                    if (log != null) log("[ОШИБКА] Node.js v22+ не найден. Установите Node.js LTS с https://nodejs.org/");
+                    if (log != null) log(T("[ОШИБКА] Node.js v22+ не найден. Установите Node.js LTS с https://nodejs.org/", "[ERROR] Node.js v22+ was not found. Install Node.js LTS from https://nodejs.org/"));
                     return 2;
                 }
             }
@@ -830,7 +913,7 @@ namespace AntigravityModelRouterSetup
             {
                 extractDir = ExtractPayloadToTemp(log);
                 string installJsPath = Path.Combine(extractDir, "install.js");
-                string nodeArgs = QuoteArg(installJsPath) + " --target " + QuoteArg(targetDir);
+                string nodeArgs = QuoteArg(installJsPath) + " --target " + QuoteArg(targetDir) + " --lang " + QuoteArg(cliLang);
                 if (opts.Silent) nodeArgs += " --silent";
                 return RunExternalProcess(nodeExe, nodeArgs, extractDir, log);
             }
@@ -844,7 +927,7 @@ namespace AntigravityModelRouterSetup
         {
             if (!Directory.Exists(targetDir))
             {
-                if (log != null) log("[i] Плагин не найден в: " + targetDir);
+                if (log != null) log(T("[i] Плагин не найден в: ", "[i] Plugin was not found at: ") + targetDir);
                 return 0;
             }
             string statePath = Path.Combine(targetDir, "router-state.json");
@@ -855,11 +938,11 @@ namespace AntigravityModelRouterSetup
                 {
                     string backupPath = Path.Combine(parentDir, PluginName + "-state.backup.json");
                     File.Copy(statePath, backupPath, true);
-                    if (log != null) log("[✓] Резервная копия настроек сохранена: " + backupPath);
+                    if (log != null) log(T("[✓] Резервная копия настроек сохранена: ", "[OK] Settings backup saved: ") + backupPath);
                 }
             }
             Directory.Delete(targetDir, true);
-            if (log != null) log("[✓] Плагин удалён из: " + targetDir);
+            if (log != null) log(T("[✓] Плагин удалён из: ", "[OK] Plugin removed from: ") + targetDir);
             return 0;
         }
 
@@ -920,7 +1003,7 @@ namespace AntigravityModelRouterSetup
             Color textMuted = Color.FromArgb(82, 82, 91);
             Color accentTeal = Color.FromArgb(15, 118, 110);
 
-            Text = "Установка The Tunnel v${safeVersion}";
+            Text = Program.T("Установка The Tunnel v", "Install The Tunnel v") + "${safeVersion}";
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
@@ -937,7 +1020,7 @@ namespace AntigravityModelRouterSetup
             catch { }
 
             Label lblTitle = new Label();
-            lblTitle.Text = "The Tunnel · Диспетчер моделей ИИ";
+            lblTitle.Text = Program.T("The Tunnel · Диспетчер моделей ИИ", "The Tunnel · AI Model Router");
             lblTitle.Font = new Font("Segoe UI", 14f, FontStyle.Bold);
             lblTitle.ForeColor = textPrimary;
             lblTitle.AutoSize = true;
@@ -945,7 +1028,7 @@ namespace AntigravityModelRouterSetup
             Controls.Add(lblTitle);
 
             Label lblSubtitle = new Label();
-            lblSubtitle.Text = "Автоматическая установка и обновление плагина v${safeVersion} (3D-автопилот, RAM-кэш, Ollama GPU)";
+            lblSubtitle.Text = Program.T("Автоматическая установка и обновление плагина v${safeVersion} (3D-автопилот, RAM-кэш, Ollama GPU)", "Automatic install & update v${safeVersion} (3D autopilot, RAM cache, Ollama GPU)");
             lblSubtitle.ForeColor = textMuted;
             lblSubtitle.AutoSize = true;
             lblSubtitle.Location = new Point(26, 48);
@@ -964,10 +1047,10 @@ namespace AntigravityModelRouterSetup
             };
             Controls.Add(card);
 
-            _lblPluginStatus = AddInfoRow(card, "Статус плагина:", "...", 16);
-            _lblNodeStatus = AddInfoRow(card, "Среда Node.js:", "...", 44);
+            _lblPluginStatus = AddInfoRow(card, Program.T("Статус плагина:", "Plugin status:"), "...", 16);
+            _lblNodeStatus = AddInfoRow(card, Program.T("Среда Node.js:", "Node.js runtime:"), "...", 44);
             _lblAntigravityStatus = AddInfoRow(card, "Google Antigravity:", "...", 72);
-            _lblTargetPath = AddInfoRow(card, "Папка установки:", _targetDir, 100);
+            _lblTargetPath = AddInfoRow(card, Program.T("Папка установки:", "Install folder:"), _targetDir, 100);
 
             _txtLog = new TextBox();
             _txtLog.Multiline = true;
@@ -979,11 +1062,11 @@ namespace AntigravityModelRouterSetup
             _txtLog.BorderStyle = BorderStyle.FixedSingle;
             _txtLog.Location = new Point(24, 228);
             _txtLog.Size = new Size(592, 182);
-            _txtLog.Text = "Готово к установке. Нажмите кнопку ниже, чтобы начать.";
+            _txtLog.Text = Program.T("Готово к установке. Нажмите кнопку ниже, чтобы начать.", "Ready to install. Click the button below to begin.");
             Controls.Add(_txtLog);
 
             _btnInstall = new Button();
-            _btnInstall.Text = "Установить плагин";
+            _btnInstall.Text = Program.T("Установить плагин", "Install plugin");
             _btnInstall.BackColor = accentTeal;
             _btnInstall.ForeColor = Color.White;
             _btnInstall.FlatStyle = FlatStyle.Flat;
@@ -995,15 +1078,15 @@ namespace AntigravityModelRouterSetup
             _btnInstall.Click += (s, e) => StartInstallFlow();
             Controls.Add(_btnInstall);
 
-            _btnUninstall = CreateSecondaryButton("Удалить", new Point(226, 424), new Size(110, 36), bgCard, borderSubtle, textPrimary);
+            _btnUninstall = CreateSecondaryButton(Program.T("Удалить", "Uninstall"), new Point(226, 424), new Size(110, 36), bgCard, borderSubtle, textPrimary);
             _btnUninstall.Click += (s, e) => StartUninstallFlow();
             Controls.Add(_btnUninstall);
 
-            _btnOpenDir = CreateSecondaryButton("Открыть папку", new Point(348, 424), new Size(138, 36), bgCard, borderSubtle, textPrimary);
+            _btnOpenDir = CreateSecondaryButton(Program.T("Открыть папку", "Open folder"), new Point(348, 424), new Size(138, 36), bgCard, borderSubtle, textPrimary);
             _btnOpenDir.Click += (s, e) => OpenTargetFolder();
             Controls.Add(_btnOpenDir);
 
-            _btnClose = CreateSecondaryButton("Закрыть", new Point(498, 424), new Size(118, 36), bgCard, borderSubtle, textPrimary);
+            _btnClose = CreateSecondaryButton(Program.T("Закрыть", "Close"), new Point(498, 424), new Size(118, 36), bgCard, borderSubtle, textPrimary);
             _btnClose.Click += (s, e) => Close();
             Controls.Add(_btnClose);
         }
@@ -1047,21 +1130,25 @@ namespace AntigravityModelRouterSetup
         private void RefreshDiagnostics()
         {
             bool installed = File.Exists(Path.Combine(_targetDir, "plugin.json"));
-            _lblPluginStatus.Text = installed ? "Установлен (можно обновить с сохранением настроек)" : "Не установлен";
-            _btnInstall.Text = installed ? "Обновить плагин" : "Установить плагин";
+            _lblPluginStatus.Text = installed
+                ? Program.T("Установлен (можно обновить с сохранением настроек)", "Installed (can update preserving settings)")
+                : Program.T("Не установлен", "Not installed");
+            _btnInstall.Text = installed
+                ? Program.T("Обновить плагин", "Update plugin")
+                : Program.T("Установить плагин", "Install plugin");
             _btnUninstall.Enabled = !_busy && Directory.Exists(_targetDir);
 
             string nodeExe = Program.FindNodeExecutable();
             if (!string.IsNullOrEmpty(nodeExe))
             {
                 string ver = Program.GetNodeVersion(nodeExe);
-                _lblNodeStatus.Text = "Найден (" + (ver.Length > 0 ? ver : nodeExe) + ")";
+                _lblNodeStatus.Text = Program.T("Найден (", "Found (") + (ver.Length > 0 ? ver : nodeExe) + ")";
             }
             else
             {
                 _lblNodeStatus.Text = Program.HasWinget()
-                    ? "Не найден (доступна автоустановка через winget)"
-                    : "Не найден (требуется Node.js LTS)";
+                    ? Program.T("Не найден (доступна автоустановка через winget)", "Not found (auto-install via winget available)")
+                    : Program.T("Не найден (требуется Node.js LTS)", "Not found (Node.js LTS required)");
             }
 
             string localApp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -1069,15 +1156,15 @@ namespace AntigravityModelRouterSetup
             string geminiDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gemini");
             if (File.Exists(agExe))
             {
-                _lblAntigravityStatus.Text = "Найден (Antigravity.exe)";
+                _lblAntigravityStatus.Text = Program.T("Найден (Antigravity.exe)", "Found (Antigravity.exe)");
             }
             else if (Directory.Exists(geminiDir))
             {
-                _lblAntigravityStatus.Text = "Профиль ~/.gemini обнаружен";
+                _lblAntigravityStatus.Text = Program.T("Профиль ~/.gemini обнаружен", "Profile ~/.gemini detected");
             }
             else
             {
-                _lblAntigravityStatus.Text = "Профиль ~/.gemini будет создан автоматически";
+                _lblAntigravityStatus.Text = Program.T("Профиль ~/.gemini будет создан автоматически", "Profile ~/.gemini will be created automatically");
             }
             _lblTargetPath.Text = _targetDir;
         }
@@ -1117,8 +1204,11 @@ namespace AntigravityModelRouterSetup
                 {
                     MessageBox.Show(
                         this,
-                        "Node.js не найден в системе. Пожалуйста, установите Node.js LTS с сайта https://nodejs.org/ и повторите запуск.",
-                        "Требуется Node.js",
+                        Program.T(
+                            "Node.js не найден в системе. Пожалуйста, установите Node.js LTS с сайта https://nodejs.org/ и повторите запуск.",
+                            "Node.js was not found on this system. Please install Node.js LTS from https://nodejs.org/ and retry."
+                        ),
+                        Program.T("Требуется Node.js", "Node.js required"),
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Warning
                     );
@@ -1126,8 +1216,11 @@ namespace AntigravityModelRouterSetup
                 }
                 DialogResult ans = MessageBox.Show(
                     this,
-                    "Для работы плагина требуется Node.js LTS.\\nУстановить OpenJS.NodeJS.LTS автоматически через winget прямо сейчас?",
-                    "Автоустановка Node.js",
+                    Program.T(
+                        "Для работы плагина требуется Node.js LTS.\\nУстановить OpenJS.NodeJS.LTS автоматически через winget прямо сейчас?",
+                        "Node.js LTS is required to run this plugin.\\nInstall OpenJS.NodeJS.LTS automatically via winget now?"
+                    ),
+                    Program.T("Автоустановка Node.js", "Auto-install Node.js"),
                     MessageBoxButtons.YesNo,
                     MessageBoxIcon.Question
                 );
@@ -1137,7 +1230,7 @@ namespace AntigravityModelRouterSetup
 
             _txtLog.Clear();
             SetBusy(true);
-            AppendLog("Запуск установки The Tunnel...");
+            AppendLog(Program.T("Запуск установки The Tunnel...", "Starting The Tunnel installation..."));
 
             Thread worker = new Thread(() =>
             {
@@ -1146,7 +1239,7 @@ namespace AntigravityModelRouterSetup
                 {
                     if (installWingetNode)
                     {
-                        AppendLog("[i] Установка OpenJS.NodeJS.LTS через winget...");
+                        AppendLog(Program.T("[i] Установка OpenJS.NodeJS.LTS через winget...", "[i] Installing OpenJS.NodeJS.LTS via winget..."));
                         int wgCode = Program.RunExternalProcess(
                             "winget",
                             "install --id OpenJS.NodeJS.LTS -e --accept-package-agreements --accept-source-agreements",
@@ -1155,19 +1248,20 @@ namespace AntigravityModelRouterSetup
                         );
                         if (wgCode != 0)
                         {
-                            AppendLog("[WARN] winget завершился с кодом " + wgCode + ". Проверяем наличие Node.js...");
+                            AppendLog(Program.T("[WARN] winget завершился с кодом ", "[WARN] winget exited with code ") + wgCode + Program.T(". Проверяем наличие Node.js...", ". Checking for Node.js..."));
                         }
                     }
                     SetupOptions runOpts = new SetupOptions();
                     runOpts.Silent = false;
                     runOpts.Uninstall = false;
                     runOpts.TargetDir = _targetDir;
+                    runOpts.Lang = Program.UiLang;
                     code = Program.ExecuteInstallOrUninstall(runOpts, AppendLog);
                 }
                 catch (Exception ex)
                 {
                     code = 1;
-                    AppendLog("[ОШИБКА] " + ex.Message);
+                    AppendLog(Program.T("[ОШИБКА] ", "[ERROR] ") + ex.Message);
                 }
                 ExitCode = code;
                 if (!IsDisposed)
@@ -1180,8 +1274,11 @@ namespace AntigravityModelRouterSetup
                         {
                             MessageBox.Show(
                                 this,
-                                "Плагин The Tunnel успешно установлен.\\nПерезапустите Google Antigravity для применения изменений.",
-                                "Установка завершена",
+                                Program.T(
+                                    "Плагин The Tunnel успешно установлен.\\nПерезапустите Google Antigravity для применения изменений.",
+                                    "The Tunnel plugin has been installed.\\nRestart Google Antigravity to apply changes."
+                                ),
+                                Program.T("Установка завершена", "Installation complete"),
                                 MessageBoxButtons.OK,
                                 MessageBoxIcon.Information
                             );
@@ -1190,8 +1287,8 @@ namespace AntigravityModelRouterSetup
                         {
                             MessageBox.Show(
                                 this,
-                                "Установка завершилась с ошибкой (код " + code + "). Подробности смотрите в журнале.",
-                                "Ошибка установки",
+                                Program.T("Установка завершилась с ошибкой (код ", "Installation failed (exit code ") + code + Program.T("). Подробности смотрите в журнале.", "). Check the log for details."),
+                                Program.T("Ошибка установки", "Installation error"),
                                 MessageBoxButtons.OK,
                                 MessageBoxIcon.Error
                             );
@@ -1208,8 +1305,8 @@ namespace AntigravityModelRouterSetup
             if (_busy) return;
             DialogResult confirm = MessageBox.Show(
                 this,
-                "Удалить плагин из папки:\\n" + _targetDir + "\\n\\nРезервная копия настроек router-state.json будет сохранена рядом с папкой плагина.",
-                "Подтверждение удаления",
+                Program.T("Удалить плагин из папки:\\n", "Remove plugin from folder:\\n") + _targetDir + Program.T("\\n\\nРезервная копия настроек router-state.json будет сохранена рядом с папкой плагина.", "\\n\\nA backup of router-state.json will be kept next to the plugin folder."),
+                Program.T("Подтверждение удаления", "Confirm removal"),
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question
             );
@@ -1217,7 +1314,7 @@ namespace AntigravityModelRouterSetup
 
             _txtLog.Clear();
             SetBusy(true);
-            AppendLog("Удаление плагина...");
+            AppendLog(Program.T("Удаление плагина...", "Removing plugin..."));
 
             Thread worker = new Thread(() =>
             {
@@ -1228,12 +1325,13 @@ namespace AntigravityModelRouterSetup
                     runOpts.Silent = false;
                     runOpts.Uninstall = true;
                     runOpts.TargetDir = _targetDir;
+                    runOpts.Lang = Program.UiLang;
                     code = Program.ExecuteInstallOrUninstall(runOpts, AppendLog);
                 }
                 catch (Exception ex)
                 {
                     code = 1;
-                    AppendLog("[ОШИБКА] " + ex.Message);
+                    AppendLog(Program.T("[ОШИБКА] ", "[ERROR] ") + ex.Message);
                 }
                 ExitCode = code;
                 if (!IsDisposed)
@@ -1258,7 +1356,7 @@ namespace AntigravityModelRouterSetup
             }
             else
             {
-                MessageBox.Show(this, "Папка ещё не создана: " + openPath, "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(this, Program.T("Папка ещё не создана: ", "Folder does not exist yet: ") + openPath, Program.T("Информация", "Information"), MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         }
     }
@@ -1271,6 +1369,7 @@ namespace AntigravityModelRouterSetup
  * @param {{ repoRoot?: string, outDir?: string, zipOnly?: boolean, silent?: boolean }} [options]
  */
 export function buildReleasePackages(options = {}) {
+  const isRuPack = normalizeLang(options.lang || detectOsLocale(), 'en') === 'ru';
   const repoRoot = path.resolve(options.repoRoot || DEFAULT_REPO_ROOT);
   const outDir = path.resolve(options.outDir || path.join(repoRoot, 'dist'));
   const zipOnly = Boolean(options.zipOnly);
@@ -1279,13 +1378,13 @@ export function buildReleasePackages(options = {}) {
   const pluginJsonPath = path.join(repoRoot, 'plugin.json');
   const pkgJsonPath = path.join(repoRoot, 'package.json');
   if (!fs.existsSync(pluginJsonPath) || !fs.existsSync(pkgJsonPath)) {
-    throw new Error('Отсутствуют plugin.json или package.json в корне репозитория');
+    throw new Error(isRuPack ? 'Отсутствуют plugin.json или package.json в корне репозитория' : 'Missing plugin.json or package.json in repository root');
   }
   const pluginJson = JSON.parse(fs.readFileSync(pluginJsonPath, 'utf8'));
   const pkgJson = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
-  const version = String(pluginJson.version || pkgJson.version || '3.31.0');
+  const version = String(pluginJson.version || pkgJson.version || '3.32.0');
   if (pluginJson.version && pkgJson.version && pluginJson.version !== pkgJson.version) {
-    throw new Error(`Несовпадение версий: plugin.json=${pluginJson.version}, package.json=${pkgJson.version}`);
+    throw new Error(isRuPack ? `Несовпадение версий: plugin.json=${pluginJson.version}, package.json=${pkgJson.version}` : `Version mismatch: plugin.json=${pluginJson.version}, package.json=${pkgJson.version}`);
   }
 
   buildPanelUi({ repoRoot });
@@ -1330,6 +1429,7 @@ export function buildReleasePackages(options = {}) {
     );
 
     fs.writeFileSync(path.join(stageDir, 'Удалить плагин.bat'), UNINSTALL_BAT_CONTENT, 'utf8');
+    fs.writeFileSync(path.join(stageDir, 'uninstall.bat'), UNINSTALL_BAT_EN_CONTENT, 'utf8');
 
     const stagedFiles = collectFilesForZip(stageDir);
     fs.mkdirSync(outDir, { recursive: true });
@@ -1356,7 +1456,7 @@ export function buildReleasePackages(options = {}) {
     }));
     const zipBuffer = buildZipBuffer(portableZipEntries);
     fs.writeFileSync(zipOutPath, zipBuffer);
-    log(`[✓] Собран портативный архив: ${zipOutPath} (${(zipBuffer.length / 1024).toFixed(1)} КБ)`);
+    log(isRuPack ? `[✓] Собран портативный архив: ${zipOutPath} (${(zipBuffer.length / 1024).toFixed(1)} КБ)` : `[OK] Built portable archive: ${zipOutPath} (${(zipBuffer.length / 1024).toFixed(1)} KB)`);
 
     let exeOutPath = '';
     const cscPath = !zipOnly ? findCscCompiler() : '';
@@ -1400,9 +1500,9 @@ export function buildReleasePackages(options = {}) {
         { encoding: 'utf8', timeout: 30000 }
       );
       const exeStat = fs.statSync(exeOutPath);
-      log(`[✓] Собран автономный установщик: ${exeOutPath} (${(exeStat.size / 1024).toFixed(1)} КБ)`);
+      log(isRuPack ? `[✓] Собран автономный установщик: ${exeOutPath} (${(exeStat.size / 1024).toFixed(1)} КБ)` : `[OK] Built standalone installer: ${exeOutPath} (${(exeStat.size / 1024).toFixed(1)} KB)`);
     } else if (!zipOnly && process.platform === 'win32') {
-      log('[WARN] csc.exe (.NET Framework 4.x) не найден — сборка .exe пропущена, создан только ZIP.');
+      log(isRuPack ? '[WARN] csc.exe (.NET Framework 4.x) не найден — сборка .exe пропущена, создан только ZIP.' : '[WARN] csc.exe (.NET Framework 4.x) not found — skipped .exe build, created ZIP only.');
     }
 
     const artifacts = [];
@@ -1434,7 +1534,7 @@ export function buildReleasePackages(options = {}) {
       artifacts,
     };
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
-    log(`[✓] Контрольные суммы записаны: ${sumsPath}`);
+    log(isRuPack ? `[✓] Контрольные суммы записаны: ${sumsPath}` : `[OK] Checksums saved: ${sumsPath}`);
 
     return {
       ok: true,

@@ -162,22 +162,23 @@ function resolveMatchingTestRelPath(wsRoot, relSource, explicitTestPath = '') {
  */
 export function runSemanticMutationGuard(opts = {}) {
   const safeOpts = asObj(opts);
+  const isEn = String(safeOpts.lang || '').trim().toLowerCase() === 'en';
   const rawWs = asStr(safeOpts.workspaceRoot, 1024).trim();
   const rawFile = asStr(safeOpts.filePath, 1024).trim();
   if (!rawWs || rawWs.startsWith('-') || !existsSync(rawWs) || !rawFile || BLOCKED_KEYS.has(rawFile)) {
-    return { ok: false, error: 'Не указаны корректные workspaceRoot и filePath' };
+    return { ok: false, error: isEn ? 'Valid workspaceRoot and filePath are required' : 'Не указаны корректные workspaceRoot и filePath' };
   }
 
   const wsRoot = resolve(rawWs);
   const absFile = isAbsolute(rawFile) ? resolve(rawFile) : resolve(wsRoot, rawFile);
   const relFile = relative(wsRoot, absFile);
   if (!relFile || relFile.startsWith('..') || isAbsolute(relFile) || !existsSync(absFile)) {
-    return { ok: false, error: 'Целевой файл не найден в рабочей директории' };
+    return { ok: false, error: isEn ? 'Target file not found inside workspace root' : 'Целевой файл не найден в рабочей директории' };
   }
 
   const relTest = resolveMatchingTestRelPath(wsRoot, relFile, asStr(safeOpts.testFilePath, 1024).trim());
   if (!relTest) {
-    return { ok: false, error: 'Не найден связанный тест (*.test.mjs) для мутационной проверки' };
+    return { ok: false, error: isEn ? 'No matching test (*.test.mjs) found for mutation guard' : 'Не найден связанный тест (*.test.mjs) для мутационной проверки' };
   }
 
   const origCode = readFileSync(absFile, 'utf8');
@@ -200,7 +201,7 @@ export function runSemanticMutationGuard(opts = {}) {
     copyWorkspaceSubsetToTemp(wsRoot, tempRoot);
     const tempTarget = join(tempRoot, relFile);
     if (!existsSync(tempTarget)) {
-      return { ok: false, error: 'Не удалось подготовить изолированную копию файла' };
+      return { ok: false, error: isEn ? 'Failed to prepare isolated copy of file' : 'Не удалось подготовить изолированную копию файла' };
     }
 
     // Ensure baseline test passes before testing mutants
@@ -215,7 +216,7 @@ export function runSemanticMutationGuard(opts = {}) {
     if (baseRun.status !== 0) {
       return {
         ok: false,
-        error: `Базовый тест (${relTest}) уже падает до внесения мутаций`,
+        error: isEn ? `Baseline test (${relTest}) already fails before mutations` : `Базовый тест (${relTest}) уже падает до внесения мутаций`,
       };
     }
 

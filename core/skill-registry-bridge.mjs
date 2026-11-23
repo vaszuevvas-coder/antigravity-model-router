@@ -216,14 +216,16 @@ export function quarantineAndAuditSkillCandidate(opts = {}) {
     extraFiles = {},
     existingSkillsRoot = DEFAULT_SKILLS_ROOT,
     cacheDir = '',
+    lang = 'ru',
   } = opts && typeof opts === 'object' && !Array.isArray(opts) ? opts : {};
+  const isEn = String(lang || '').trim().toLowerCase() === 'en';
   const cleanSlug = validateSkillSlug(slug);
   if (!cleanSlug) {
-    return { ok: false, approved: false, error: 'invalid_skill_slug', reasons: ['Некорректный slug навыка'] };
+    return { ok: false, approved: false, error: 'invalid_skill_slug', reasons: [isEn ? 'Invalid skill slug' : 'Некорректный slug навыка'] };
   }
   const mdText = typeof skillMarkdown === 'string' ? skillMarkdown : '';
   if (!mdText.trim()) {
-    return { ok: false, approved: false, error: 'empty_skill_markdown', reasons: ['Пустой SKILL.md'] };
+    return { ok: false, approved: false, error: 'empty_skill_markdown', reasons: [isEn ? 'Empty SKILL.md' : 'Пустой SKILL.md'] };
   }
 
   const baseCache = ensureTunnelCacheDir(cacheDir ? resolve(cacheDir) : resolveTunnelCacheDir(PLUGIN_ROOT));
@@ -239,7 +241,9 @@ export function quarantineAndAuditSkillCandidate(opts = {}) {
       kind: 'skill',
       severity: 'critical',
       ruleId: 'skill_oversized_or_binary',
-      message: `SKILL.md превышает лимит ${Math.round(MAX_QUARANTINE_FILE_BYTES / 1024)} КБ или содержит бинарные данные`,
+      message: isEn
+        ? `SKILL.md exceeds ${Math.round(MAX_QUARANTINE_FILE_BYTES / 1024)} KB limit or contains binary data`
+        : `SKILL.md превышает лимит ${Math.round(MAX_QUARANTINE_FILE_BYTES / 1024)} КБ или содержит бинарные данные`,
       excerpt: '',
     });
   }
@@ -257,7 +261,9 @@ export function quarantineAndAuditSkillCandidate(opts = {}) {
           kind: 'skill',
           severity: 'critical',
           ruleId: 'skill_oversized_or_binary',
-          message: `Запрещённое бинарное или исполняемое вложение: ${safeRel}`,
+          message: isEn
+            ? `Forbidden binary or executable attachment: ${safeRel}`
+            : `Запрещённое бинарное или исполняемое вложение: ${safeRel}`,
           excerpt: safeRel,
         });
         continue;
@@ -268,7 +274,9 @@ export function quarantineAndAuditSkillCandidate(opts = {}) {
           kind: 'skill',
           severity: 'critical',
           ruleId: 'skill_oversized_or_binary',
-          message: `Вложение превышает 512 КБ или является бинарным: ${safeRel}`,
+          message: isEn
+            ? `Attachment exceeds 512 KB or is binary: ${safeRel}`
+            : `Вложение превышает 512 КБ или является бинарным: ${safeRel}`,
           excerpt: safeRel,
         });
         continue;
@@ -283,7 +291,9 @@ export function quarantineAndAuditSkillCandidate(opts = {}) {
           kind: 'skill',
           severity: 'critical',
           ruleId: 'skill_oversized_or_binary',
-          message: `Вложение ${safeRel} превышает 512 КБ или содержит нулевые байты`,
+          message: isEn
+            ? `Attachment ${safeRel} exceeds 512 KB or contains null bytes`
+            : `Вложение ${safeRel} превышает 512 КБ или содержит нулевые байты`,
           excerpt: safeRel,
         });
         continue;
@@ -298,7 +308,7 @@ export function quarantineAndAuditSkillCandidate(opts = {}) {
   // Scan ALL quarantined files (SKILL.md + scripts/* + references/* + evals/*), never SKILL.md alone
   const allQuarantinedFiles = collectFilesRecursive(qDir);
   for (const qFile of allQuarantinedFiles) {
-    shieldFindings.push(...scanSkillFile(qFile.fullPath));
+    shieldFindings.push(...scanSkillFile(qFile.fullPath, { lang: isEn ? 'en' : 'ru' }));
   }
   const shieldBlocking = shieldFindings.filter((f) => f.severity === 'critical' || f.severity === 'high');
   const existingAbs = resolve(existingSkillsRoot || DEFAULT_SKILLS_ROOT);
@@ -309,13 +319,26 @@ export function quarantineAndAuditSkillCandidate(opts = {}) {
 
   const reasons = [];
   if (shieldBlocking.length > 0) {
-    reasons.push(`AgentShield заблокировал угрозу: ${Array.from(new Set(shieldBlocking.map((f) => f.ruleId))).join(', ')}`);
+    reasons.push(
+      isEn
+        ? `AgentShield blocked threat: ${Array.from(new Set(shieldBlocking.map((f) => f.ruleId))).join(', ')}`
+        : `AgentShield заблокировал угрозу: ${Array.from(new Set(shieldBlocking.map((f) => f.ruleId))).join(', ')}`
+    );
   }
   if ((skillAudit?.errorsCount || 0) > 0) {
-    reasons.push(`Skill-Architect обнаружил ошибки (${skillAudit.errorsCount}): ${(skillAudit.findings || []).filter((f) => f.severity === 'error').map((f) => f.id).join(', ')}`);
+    const ids = (skillAudit.findings || []).filter((f) => f.severity === 'error').map((f) => f.id).join(', ');
+    reasons.push(
+      isEn
+        ? `Skill-Architect found errors (${skillAudit.errorsCount}): ${ids}`
+        : `Skill-Architect обнаружил ошибки (${skillAudit.errorsCount}): ${ids}`
+    );
   }
   if (maxCollision >= 0.55) {
-    reasons.push(`Высокая коллизия триггеров (>=0.55) с существующими навыками (${maxCollision})`);
+    reasons.push(
+      isEn
+        ? `High trigger collision (>=0.55) with existing skills (${maxCollision})`
+        : `Высокая коллизия триггеров (>=0.55) с существующими навыками (${maxCollision})`
+    );
   }
 
   const approved = shieldBlocking.length === 0 && (skillAudit?.errorsCount || 0) === 0 && maxCollision < 0.55;
@@ -348,6 +371,7 @@ export function installQuarantinedSkill(opts = {}) {
     source = 'external',
     force = false,
     dryRun = false,
+    lang = 'ru',
   } = opts && typeof opts === 'object' && !Array.isArray(opts) ? opts : {};
   const cleanSlug = validateSkillSlug(slug);
   if (!cleanSlug) {
@@ -380,6 +404,7 @@ export function installQuarantinedSkill(opts = {}) {
     extraFiles: mergedExtra,
     existingSkillsRoot: existingSkillsRoot || targetSkillsDir,
     cacheDir,
+    lang,
   });
 
   const cleanupQuarantine = (dir) => {
@@ -476,7 +501,9 @@ export async function importSkillFromSource(opts = {}) {
     dryRun = false,
     fetchImpl = globalThis.fetch,
     timeoutMs = 5000,
+    lang = 'ru',
   } = opts && typeof opts === 'object' && !Array.isArray(opts) ? opts : {};
+  const isEn = String(lang || '').trim().toLowerCase() === 'en';
   const cleanSource = String(source || '').trim();
   const cleanSlug = validateSkillSlug(slug);
   if (!cleanSource || !cleanSlug) {
@@ -498,7 +525,11 @@ export async function importSkillFromSource(opts = {}) {
         blocked: true,
         securityBlocked: true,
         error: 'skill_file_oversized',
-        reasons: [`SKILL.md превышает безопасный лимит ${Math.round(MAX_QUARANTINE_FILE_BYTES / 1024)} КБ`],
+        reasons: [
+          isEn
+            ? `SKILL.md exceeds safe limit ${Math.round(MAX_QUARANTINE_FILE_BYTES / 1024)} KB`
+            : `SKILL.md превышает безопасный лимит ${Math.round(MAX_QUARANTINE_FILE_BYTES / 1024)} КБ`,
+        ],
       };
     }
     const md = readFileSync(skillMdFile, 'utf8');
@@ -529,6 +560,7 @@ export async function importSkillFromSource(opts = {}) {
       cacheDir,
       force,
       dryRun,
+      lang,
     });
   }
 
@@ -580,6 +612,7 @@ export async function importSkillFromSource(opts = {}) {
     cacheDir,
     force,
     dryRun,
+    lang,
   });
   return { ...res, sourceUrl: fetchedUrl };
 }

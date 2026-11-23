@@ -22,12 +22,16 @@ description: Context-driven UI/UX tokens, anti-clone synthesis, Impeccable audit
 
 ## 3. Preview Gate & `ask_question` Protocol (`uiInspirationMode`)
 Before UI/CSS/VFX edits, inspect `uiInspirationMode` (`'ask'` | `'showroom'` | `'web_refs'`):
-1. **Q1 (Skip if `'showroom'` or `'web_refs'`)**: Emit exact RU strings:
-   - Question: `"Дизайн и анимации: как подготовим визуальные примеры перед внедрением в код?"`
-   - Options: `"(Recommended) Сгенерировать 3 авторских варианта (A/B/C) в интерактивной витрине"` | `"Поискать референсы в интернете (укажите стиль в следующем шаге или в поле «Другое»)"` | `"Гибрид: найти рефы в интернете → собрать по ним 3 прототипа A/B/C"` | `"Без превью — сразу внедрять в код"`
-2. **Q2 (Target Style — emit RU prompt + 3 fresh domain-specific RU options)**:
-   - Question: `"Какое визуальное направление возьмём за основу для [project/screen summary]? (В поле «Другое» можно кратко описать любой свой вкус, например: «жидкое стекло Apple»)"`
-   - Option 1: `"(Recommended) Сравнить 3 разных концепта под задачу: A) [...] + B) [...] + C) [...]"`; Option 2: contrasting light/editorial direction; Option 3: atmospheric/tactile/modular direction; Option 4: `"Сохранить и аккуратно развить текущий стиль проекта"`.
+1. **Q1 (Skip if `'showroom'` or `'web_refs'`)**: Emit in the active user language (`uiLanguage`, EN or RU):
+   - EN Question: `"Design & animations: how should we prepare visual examples before implementing code?"`
+   - EN Options: `"(Recommended) Generate 3 bespoke variants (A/B/C) in an interactive showroom"` | `"Search open web design references (specify style next or in 'Other')"` | `"Hybrid: search web references → build 3 A/B/C prototypes"` | `"Skip preview — implement directly in code"`
+   - RU Question: `"Дизайн и анимации: как подготовим визуальные примеры перед внедрением в код?"`
+   - RU Options: `"(Recommended) Сгенерировать 3 авторских варианта (A/B/C) в интерактивной витрине"` | `"Поискать референсы в интернете (укажите стиль в следующем шаге или в поле «Другое»)"` | `"Гибрид: найти рефы в интернете → собрать по ним 3 прототипа A/B/C"` | `"Без превью — сразу внедрять в код"`
+2. **Q2 (Target Style — emit in the active user language `uiLanguage` with 3 fresh domain-specific options)**:
+   - EN Question: `"Which visual direction should we choose for [project/screen summary]? (You can also describe your own taste in 'Other', e.g., 'Apple liquid glass')"`
+   - EN Option 1: `"(Recommended) Compare 3 tailored concepts: A) [...] + B) [...] + C) [...]"`; Option 2: contrasting light/editorial direction; Option 3: atmospheric/tactile/modular direction; Option 4: `"Keep and carefully evolve the current project style"`.
+   - RU Question: `"Какое визуальное направление возьмём за основу для [project/screen summary]? (В поле «Другое» можно кратко описать любой свой вкус, например: «жидкое стекло Apple»)"`
+   - RU Option 1: `"(Recommended) Сравнить 3 разных концепта под задачу: A) [...] + B) [...] + C) [...]"`; Option 2: contrasting light/editorial direction; Option 3: atmospheric/tactile/modular direction; Option 4: `"Сохранить и аккуратно развить текущий стиль проекта"`.
 3. **Local A/B/C Showroom (`showroom` / Q1.1)**: Never ask users to pick A/B/C from text alone; run `node "<skill_dir>/scripts/build-showroom.mjs" <spec.json> --artifact-dir "<artifactDir>" --open` and embed `showroom-overview.png` + `carousel` of `variant-A/B/C.png` into `<artifactDir>/ui-variants-preview.md` (`UserFacing: true`) before `ask_question`.
 
 ## 4. Open Web Reference Pipeline (`fetch-web-refs.mjs`)

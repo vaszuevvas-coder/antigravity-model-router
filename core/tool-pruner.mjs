@@ -1,6 +1,6 @@
 /**
  * @file tool-pruner.mjs
- * @description Когнитивный 3D-маршрутизатор The Tunnel (3D Cognitive Router v3.31.0):
+ * @description Когнитивный 3D-маршрутизатор The Tunnel (3D Cognitive Router v3.32.0):
  * Оценивает реальный охват графа кода (Scope-Scout + PageRank), строит 3D-тензор
  * Ширина × Глубина × Неопределённость/Риск, генерирует адаптивные варианты плана и проверяет селектор модели Gemini 4.
  */
@@ -11,6 +11,7 @@ import {
   resolveEffectivePreTaskGatePolicy,
 } from './model-profile.mjs';
 import { expandRuQueryToEnTerms } from './ru-en-lexicon.mjs';
+import { normalizeLang, resolveStateLanguage } from './i18n.mjs';
 
 // Регулярные выражения и паттерны для классификации домена задачи
 const DOMAIN_PATTERNS = {
@@ -778,10 +779,13 @@ export function computeTask3DMatrix({
       isHighBlast: false,
       isExploratory: false,
       riskRu: 'Консультация',
+      riskEn: 'Consultation',
       matrixId: 'read_only',
       tensorId: 'read_only',
       labelRu: 'Консультация (без правок кода)',
+      labelEn: 'Consultation (read-only)',
       label3DRu: 'Консультация (без правок кода)',
+      label3DEn: 'Consultation (read-only)',
       grade: subsystemHits >= 2 ? 'M' : 'S',
       phase: 'standard',
       isDeepAuditOrArch: false,
@@ -854,10 +858,15 @@ export function computeTask3DMatrix({
   const tensorId = `${matrixId}_${riskShort}`;
 
   const breadthRu = breadth === 'wide' ? 'Широкий охват' : (breadth === 'moderate' ? 'Средний охват' : 'Точечный охват');
+  const breadthEn = breadth === 'wide' ? 'Wide Scope' : (breadth === 'moderate' ? 'Moderate Scope' : 'Narrow Scope');
   const depthRu = depth === 'deep_arch' ? 'Глубокая логика/архитектура' : (depth === 'integrated' ? 'Связная интеграция' : 'Типовая правка');
+  const depthEn = depth === 'deep_arch' ? 'Deep Logic & Architecture' : (depth === 'integrated' ? 'Connected Integration' : 'Routine Edit');
   const riskRu = riskMode === 'critical_blast' ? 'Критическое ядро (High-Blast)' : (riskMode === 'exploratory' ? 'Поисковая/вариативная' : 'Прозрачная спека');
+  const riskEn = riskMode === 'critical_blast' ? 'Critical Core (High-Blast)' : (riskMode === 'exploratory' ? 'Exploratory / Forks' : 'Clear Spec');
   const labelRu = `${breadthRu} × ${depthRu}`;
+  const labelEn = `${breadthEn} × ${depthEn}`;
   const label3DRu = `${breadthRu} × ${depthRu} × ${riskRu}`;
+  const label3DEn = `${breadthEn} × ${depthEn} × ${riskEn}`;
 
   let grade = 'M';
   let phase = 'standard';
@@ -904,10 +913,13 @@ export function computeTask3DMatrix({
     isHighBlast,
     isExploratory,
     riskRu,
+    riskEn,
     matrixId,
     tensorId,
     labelRu,
+    labelEn,
     label3DRu,
+    label3DEn,
     grade,
     phase,
     isDeepAuditOrArch,
@@ -930,66 +942,106 @@ export function buildAdaptive3DOptionsBlueprint({
   scope = {},
   state = {},
   recModelRu = '',
+  recModelEn = '',
   compiledSpec = null,
   grillSignal = null,
+  lang = '',
 } = {}) {
+  const uiLang = lang ? normalizeLang(lang, 'ru') : resolveStateLanguage(state, 'ru');
+  const isEn = uiLang === 'en';
   const m = matrix3D || {};
   const tensorId = m.tensorId || m.matrixId || 'standard';
   const matchedFiles = Array.isArray(scope?.matchedFiles) ? scope.matchedFiles : [];
   const rawTargets = matchedFiles.length > 0
     ? matchedFiles.slice(0, 3).map((f) => String(f?.file || '').trim()).filter(Boolean)
     : (Array.isArray(compiledSpec?.targetFiles) ? compiledSpec.targetFiles.slice(0, 3) : []);
-  const targetLabel = rawTargets.length > 0 ? rawTargets.join(', ') : '<целевые файлы после среза>';
+  const targetLabel = rawTargets.length > 0
+    ? rawTargets.join(', ')
+    : (isEn ? '<target files after slice>' : '<целевые файлы после среза>');
   const reverseDeps = Number(scope?.totalReverseDependents || 0);
   const swarmAllowed = m.breadth === 'wide' && state?.swarmMode !== 'off';
   const isProSub = state.subscriptionTier !== 'ultra';
-  const modelTag = recModelRu || (isProSub
-    ? 'Orchestrator (Neon · Высокий)'
-    : 'Orchestrator (Neon · Высокий) / Orchestrator (Carbon · Средний/Высокий)');
+  const modelTag = isEn
+    ? (recModelEn || recModelRu || (isProSub
+        ? 'Orchestrator (Neon · High)'
+        : 'Orchestrator (Neon · High) / Orchestrator (Carbon · Medium/High)'))
+    : (recModelRu || (isProSub
+        ? 'Orchestrator (Neon · Высокий)'
+        : 'Orchestrator (Neon · Высокий) / Orchestrator (Carbon · Средний/Высокий)'));
 
   let slots;
   if ((m.depth === 'deep_arch' && m.breadth !== 'wide') || (m.riskMode === 'exploratory' && m.breadth === 'narrow')) {
-    // Ветка A: точечный/средний охват со сложным багом, гонкой, утечкой или исследовательским поиском
-    slots = [
-      `(Recommended) Локализовать корень в ${targetLabel} (слайсинг/ddmin), внести точечный фикс и проверить микро-тестами (${modelTag})`,
-      `Только диагностика (read-only): найти точную причину и показать 2 варианта патча в чате без правок на диске`,
-      `Усиленный стресс-аудит смежных узлов на гонки и краевые баги с авто-фиксом (deep-stress-auditor + тесты)`,
-    ];
+    slots = isEn
+      ? [
+          `(Recommended) Pinpoint root cause in ${targetLabel} (slicing/ddmin), apply surgical fix, and verify with micro-tests (${modelTag})`,
+          'Diagnostics only (read-only): find exact root cause and show 2 patch options in chat without editing disk',
+          'Deep stress audit across coupled nodes for races & edge bugs with auto-fix (deep-stress-auditor + tests)',
+        ]
+      : [
+          `(Recommended) Локализовать корень в ${targetLabel} (слайсинг/ddmin), внести точечный фикс и проверить микро-тестами (${modelTag})`,
+          `Только диагностика (read-only): найти точную причину и показать 2 варианта патча в чате без правок на диске`,
+          `Усиленный стресс-аудит смежных узлов на гонки и краевые баги с авто-фиксом (deep-stress-auditor + тесты)`,
+        ];
   } else if (m.breadth === 'wide' && m.depth === 'routine' && !m.isHighBlast) {
-    // Ветка C: широкая однотипная рутина
-    slots = [
-      `(Recommended) Пакетный рефакторинг по ${targetLabel} (ast-codemod-refactor${swarmAllowed ? ' / параллельный /swarm на Hydrogen' : ''}) + проверка синтаксиса (${modelTag})`,
-      `Последовательный пофайловый дифф-проход одной моделью без роя (экономно по квоте, строгий контроль)`,
-      `Сухой прогон (dry-run): сначала показать полный список точек замены без записи на диск`,
-    ];
+    slots = isEn
+      ? [
+          `(Recommended) Batch refactor across ${targetLabel} (ast-codemod-refactor${swarmAllowed ? ' / parallel /swarm on Hydrogen' : ''}) + syntax checks (${modelTag})`,
+          'Sequential per-file diff pass using a single model without Swarm (quota-saver, strict manual control)',
+          'Dry-run first: preview complete replacement list before writing to disk',
+        ]
+      : [
+          `(Recommended) Пакетный рефакторинг по ${targetLabel} (ast-codemod-refactor${swarmAllowed ? ' / параллельный /swarm на Hydrogen' : ''}) + проверка синтаксиса (${modelTag})`,
+          `Последовательный пофайловый дифф-проход одной моделью без роя (экономно по квоте, строгий контроль)`,
+          `Сухой прогон (dry-run): сначала показать полный список точек замены без записи на диск`,
+        ];
   } else if (m.riskMode === 'critical_blast') {
-    // Ветка B: критическое ядро с высоким радиусом поражения
-    const depsNote = reverseDeps > 0 ? `${reverseDeps} связей` : 'контракты ядра';
-    slots = [
-      `(Recommended) Аккуратное обновление ${targetLabel} с сохранением совместимости (${depsNote}) + прогон затронутых тестов (${modelTag})`,
-      `Изолированный контур: правка в песочнице workspace:"share"${swarmAllowed ? ' (/swarm)' : ''} + независимая ревизия контрактов @verifier перед слиянием`,
-      `Минимально-инвазивный патч только ключевого узла без перестройки соседних модулей (минимум риска регрессии)`,
-    ];
+    const depsNoteRu = reverseDeps > 0 ? `${reverseDeps} связей` : 'контракты ядра';
+    const depsNoteEn = reverseDeps > 0 ? `${reverseDeps} reverse deps` : 'core contracts';
+    slots = isEn
+      ? [
+          `(Recommended) Backward-compatible update of ${targetLabel} (${depsNoteEn}) + run impacted tests (${modelTag})`,
+          `Isolated contour: edit in workspace:"share" sandbox${swarmAllowed ? ' (/swarm)' : ''} + independent @verifier contract review before merge`,
+          'Minimal-invasive patch to the core node only without restructuring neighbor modules (lowest regression risk)',
+        ]
+      : [
+          `(Recommended) Аккуратное обновление ${targetLabel} с сохранением совместимости (${depsNoteRu}) + прогон затронутых тестов (${modelTag})`,
+          `Изолированный контур: правка в песочнице workspace:"share"${swarmAllowed ? ' (/swarm)' : ''} + независимая ревизия контрактов @verifier перед слиянием`,
+          `Минимально-инвазивный патч только ключевого узла без перестройки соседних модулей (минимум риска регрессии)`,
+        ];
   } else if (m.breadth === 'wide') {
-    // Ветка D: широкий охват integrated / deep_arch
-    slots = [
-      `(Recommended) Поэтапная архитектура (${modelTag}): единый контракт для ${targetLabel} → реализация и сквозные тесты`,
-      `Параллельная сборка модулей в share-ветках (/swarm на Hydrogen) + финальная приёмка архитектором @verifier`,
-      `Сначала только проектирование контрактов и декомпозиция плана без изменения кода`,
-    ];
+    slots = isEn
+      ? [
+          `(Recommended) Phased architecture (${modelTag}): unified contract for ${targetLabel} -> implementation & E2E tests`,
+          'Parallel module assembly in share branches (/swarm on Hydrogen) + final @verifier architecture review',
+          'Contract design & plan decomposition only first without modifying source files',
+        ]
+      : [
+          `(Recommended) Поэтапная архитектура (${modelTag}): единый контракт для ${targetLabel} → реализация и сквозные тесты`,
+          `Параллельная сборка модулей в share-ветках (/swarm на Hydrogen) + финальная приёмка архитектором @verifier`,
+          `Сначала только проектирование контрактов и декомпозиция плана без изменения кода`,
+        ];
   } else {
-    // Ветка E: умеренный/точечный охват (вкл. exploratory фичи)
-    slots = [
-      `(Recommended) Целевая реализация в ${targetLabel} по текущим конвенциям проекта + авто-тесты (${modelTag})`,
-      `Расширенный вариант: попутно обновить смежные контракты и покрыть граничные случаи тестами`,
-      `Компактный минимальный патч только основной логики (быстро и экономно по токенам)`,
-    ];
+    slots = isEn
+      ? [
+          `(Recommended) Targeted implementation in ${targetLabel} matching repo conventions + automated tests (${modelTag})`,
+          'Extended pass: update adjacent contracts and cover boundary edge cases with tests',
+          'Compact minimal patch covering core logic only (fast & token-efficient)',
+        ]
+      : [
+          `(Recommended) Целевая реализация в ${targetLabel} по текущим конвенциям проекта + авто-тесты (${modelTag})`,
+          `Расширенный вариант: попутно обновить смежные контракты и покрыть граничные случаи тестами`,
+          `Компактный минимальный патч только основной логики (быстро и экономно по токенам)`,
+        ];
   }
 
   const grillGateSuffix = grillSignal?.mode === 'offer_in_gate'
-    ? ' | + Add 2nd compact ask_question item: "Нужен ли детальный опрос (Grill-Me) по развилкам и краевым случаям перед выполнением?" with options: "(Recommended) Нет, ТЗ понятное — сразу выполнять выбранный план" | "Да, блиц-опрос (1 раунд по главным спорным развилкам)" | "Да, полный Grill-Me (дерево решений + фиксация в SPEC.md)".'
+    ? (isEn
+        ? ' | + Add 2nd compact ask_question item: "Run a clarifying interview (Grill-Me) on decision-tree forks and edge cases first?" with options: "(Recommended) No, spec is clear — proceed with the selected plan" | "Yes, blitz interview (1 round on main forks)" | "Yes, full Grill-Me interview (decision tree + record in SPEC.md)".'
+        : ' | + Add 2nd compact ask_question item: "Нужен ли детальный опрос (Grill-Me) по развилкам и краевым случаям перед выполнением?" with options: "(Recommended) Нет, ТЗ понятное — сразу выполнять выбранный план" | "Да, блиц-опрос (1 раунд по главным спорным развилкам)" | "Да, полный Grill-Me (дерево решений + фиксация в SPEC.md)".')
     : '';
-  const formattedBlueprint = `🧩 [3D Adaptive Options Blueprint (${tensorId})]: Synthesize 3 task-specific RU options AFTER code inspection, reflecting YOUR post-scout optimal model in option #1 and naming REAL inspected files & trade-offs (NEVER copy static clichés or blind pre-estimates): 1) ${slots[0]} | 2) ${slots[1]} | 3) ${slots[2]}${grillGateSuffix}`;
+  const formattedBlueprint = isEn
+    ? `🧩 [3D Adaptive Options Blueprint (${tensorId})]: Synthesize 3 task-specific EN options AFTER code inspection, reflecting YOUR post-scout optimal model in option #1 and naming REAL inspected files & trade-offs (NEVER copy static clichés or blind pre-estimates): 1) ${slots[0]} | 2) ${slots[1]} | 3) ${slots[2]}${grillGateSuffix}`
+    : `🧩 [3D Adaptive Options Blueprint (${tensorId})]: Synthesize 3 task-specific RU options AFTER code inspection, reflecting YOUR post-scout optimal model in option #1 and naming REAL inspected files & trade-offs (NEVER copy static clichés or blind pre-estimates): 1) ${slots[0]} | 2) ${slots[1]} | 3) ${slots[2]}${grillGateSuffix}`;
 
   return {
     tensorId,
@@ -1037,13 +1089,14 @@ export function detectGrillMeSignals(promptText = '', matrix3D = null, state = {
  * @param {{ grillSignal?: object, grade?: string, matrix3D?: object }} [opts={}]
  * @returns {string}
  */
-export function buildGrillMeDirective({ grillSignal = null, grade = 'M' } = {}) {
+export function buildGrillMeDirective({ grillSignal = null, grade = 'M', lang = 'ru' } = {}) {
   const mode = grillSignal?.mode || 'none';
+  const langLabel = normalizeLang(lang, 'ru') === 'en' ? 'EN' : 'RU';
   if (mode === 'explicit' || mode === 'always') {
     const specHint = (grade === 'L' || grade === 'XL')
       ? ' Record settled decisions in SPEC.md or Pinned Decisions before editing.'
       : '';
-    return `🔥 [Grill-Me Design-Tree Frontier: ACTIVE (${mode})] (1) Look up repository facts yourself via RAM/slices (never ask the user codebase facts); (2) Map unsettled product/architecture forks as a decision tree and ask ONLY the current independent frontier (2–3 concise RU questions per round via ask_question, option #1 "(Recommended)"); (3) Repeat until frontier is clear before coding.${specHint}`;
+    return `🔥 [Grill-Me Design-Tree Frontier: ACTIVE (${mode})] (1) Look up repository facts yourself via RAM/slices (never ask the user codebase facts); (2) Map unsettled product/architecture forks as a decision tree and ask ONLY the current independent frontier (2–3 concise ${langLabel} questions per round via ask_question, option #1 "(Recommended)"); (3) Repeat until frontier is clear before coding.${specHint}`;
   }
   if (mode === 'offer_in_gate') {
     return '🔥 [Grill-Me Available] Pre-Task Gate offers optional Grill-Me design-tree interview; launch frontier questioning only if user selects it.';
@@ -1235,12 +1288,18 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
     };
   }
 
+  const uiLang = resolveStateLanguage(state, 'ru');
+  const isEnUi = uiLang === 'en';
   const { grade, phase, isDeepAuditOrArch } = matrix3D;
   const modelProfile = context?.modelProfile || null;
   const evalComplexity = !signals.isReadOnlyQuestion || Boolean(signals.isModalAnalyticalQuestion);
-  const selectorSnapshot = evalComplexity ? formatSelectorSnapshotForPrompt(modelProfile) : '';
+  const selectorSnapshot = evalComplexity ? formatSelectorSnapshotForPrompt(modelProfile, uiLang) : '';
   const selectorEval = evaluateSelectorMatchForTask({ modelProfile, grade, isDeepAuditOrArch, matrix2D: matrix3D, state });
   const recModelRu = selectorEval.recommendedRu || 'Hydrogen · Средний/Высокий или Orchestrator (Neon · Средний/Высокий)';
+  const recModelEn = selectorEval.recommendedEn || 'Hydrogen · Medium/High or Orchestrator (Neon · Medium/High)';
+  const recModel = isEnUi ? recModelEn : recModelRu;
+  const evalTip = isEnUi ? (selectorEval.tipEn || selectorEval.tipRu) : selectorEval.tipRu;
+  const label3D = isEnUi ? (matrix3D.label3DEn || matrix3D.label3DRu) : matrix3D.label3DRu;
   const gatePolicy = !signals.isReadOnlyQuestion
     ? resolveEffectivePreTaskGatePolicy({ state, modelProfile, grade })
     : { shouldAskModelGate: false, effectiveThreshold: 'OFF', orchestratorBypassSM: false };
@@ -1249,26 +1308,31 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
     : { matchedIds: [], specs: [], targetFiles: [], formattedSpec: '', formatted: '' };
 
   const grillSignal = detectGrillMeSignals(promptText, matrix3D, state);
-  const grillDirective = buildGrillMeDirective({ grillSignal, grade, matrix3D });
+  const grillDirective = buildGrillMeDirective({ grillSignal, grade, matrix3D, lang: uiLang });
 
   let budgetHint = '';
   let optionsBlueprint = null;
   const isProSub = state.subscriptionTier !== 'ultra';
   const subTag = isProSub ? 'Sub: Pro (max: Neon, no Carbon)' : 'Sub: Ultra';
-  const modelExamplesEn = isProSub
-    ? 'Hydrogen · Средний/Высокий, Neon · Высокий/XHigh, or Orchestrator (Neon · Средний/Высокий/XHigh)'
-    : 'Hydrogen · Средний/Высокий, Carbon · Высокий, Orchestrator (Neon · Средний/Высокий/XHigh), or Orchestrator (Carbon · Средний/Высокий)';
+  const modelExamples = isEnUi
+    ? (isProSub
+        ? 'Hydrogen · Medium/High, Neon · High/XHigh, or Orchestrator (Neon · Medium/High/XHigh)'
+        : 'Hydrogen · Medium/High, Carbon · High, Orchestrator (Neon · Medium/High/XHigh), or Orchestrator (Carbon · Medium/High)')
+    : (isProSub
+        ? 'Hydrogen · Средний/Высокий, Neon · Высокий/XHigh, or Orchestrator (Neon · Средний/Высокий/XHigh)'
+        : 'Hydrogen · Средний/Высокий, Carbon · Высокий, Orchestrator (Neon · Средний/Высокий/XHigh), or Orchestrator (Carbon · Средний/Высокий)');
   const noBareRuleEn = isProSub
     ? 'NEVER write bare Hydrogen/Neon or bare Orchestrator (Neon) without depth; NEVER recommend Carbon on Pro'
     : 'NEVER write bare Hydrogen/Neon/Carbon or bare Orchestrator (Neon/Carbon) without depth';
+  const replyLangCode = isEnUi ? 'EN' : 'RU';
   if (signals.isReadOnlyQuestion) {
     if (signals.isModalAnalyticalQuestion) {
       const lines = [
-        `💬 [Read-Only / Modal Triage: ${matrix3D.label3DRu} (${matrix3D.tensorId} -> pre-read ~${grade})${selectorSnapshot ? ` | ${selectorSnapshot}` : ''} | ${subTag} | Optimal: ${recModelRu}]`,
-        `Reply directly in RU without ask_question. If your answer proposes code changes or implementation, MUST end with preliminary scope (S/M/L/XL), affected files, and recommended model with explicit thinking/planner depth (${recModelRu}; ${noBareRuleEn}).`,
+        `💬 [Read-Only / Modal Triage: ${label3D} (${matrix3D.tensorId} -> pre-read ~${grade})${selectorSnapshot ? ` | ${selectorSnapshot}` : ''} | ${subTag} | Optimal: ${recModel}]`,
+        `Reply directly in ${replyLangCode} without ask_question. If your answer proposes code changes or implementation, MUST end with preliminary scope (S/M/L/XL), affected files, and recommended model with explicit thinking/planner depth (${recModel}; ${noBareRuleEn}).`,
       ];
-      if (selectorEval.tipRu) {
-        lines.push(`🎚️ [Pre-Read Selector Hint (re-verify after code read)] ${selectorEval.tipRu}`);
+      if (evalTip) {
+        lines.push(`🎚️ [Pre-Read Selector Hint (re-verify after code read)] ${evalTip}`);
       }
       if (scope.scopeHint) {
         lines.push(scope.scopeHint);
@@ -1278,7 +1342,7 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
       }
       budgetHint = lines.join('\n');
     } else {
-      const baseReadOnly = `💬 [Read-Only] (${subTag} | Optimal: ${recModelRu}) Reply directly in RU without ask_question. If your answer proposes code changes or implementation, MUST end with preliminary scope (S/M/L/XL), affected files, and recommended model with explicit thinking/planner depth (${recModelRu}; ${noBareRuleEn}).`;
+      const baseReadOnly = `💬 [Read-Only] (${subTag} | Optimal: ${recModel}) Reply directly in ${replyLangCode} without ask_question. If your answer proposes code changes or implementation, MUST end with preliminary scope (S/M/L/XL), affected files, and recommended model with explicit thinking/planner depth (${recModel}; ${noBareRuleEn}).`;
       budgetHint = (grillSignal.mode === 'explicit' && grillDirective) ? `${baseReadOnly}\n${grillDirective}` : baseReadOnly;
     }
   } else {
@@ -1291,11 +1355,11 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
       : '';
     const modeNote = `${gatePolicy.orchestratorBypassSM ? ' | Smart-Synergy: skip S/M gate' : silentTag}${!silentTag ? strategyTag : ''}`;
     const lines = [
-      `🧭 [3D Triage: ${matrix3D.label3DRu} (${matrix3D.tensorId} -> pre-read ~${grade})${selectorSnapshot ? ` | ${selectorSnapshot}` : ''} | ${subTag} | Optimal: ${recModelRu}${modeNote}]`,
+      `🧭 [3D Triage: ${label3D} (${matrix3D.tensorId} -> pre-read ~${grade})${selectorSnapshot ? ` | ${selectorSnapshot}` : ''} | ${subTag} | Optimal: ${recModel}${modeNote}]`,
       buildAdaptiveReasoningDirective(matrix3D, modelProfile),
     ];
-    if (selectorEval.tipRu) {
-      lines.push(`🎚️ [Pre-Read Selector Hint (re-verify after code read)] ${selectorEval.tipRu}`);
+    if (evalTip) {
+      lines.push(`🎚️ [Pre-Read Selector Hint (re-verify after code read)] ${evalTip}`);
     }
     if (grillDirective && grillSignal.mode !== 'offer_in_gate') {
       lines.push(grillDirective);
@@ -1306,24 +1370,24 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
         scope,
         state,
         recModelRu,
+        recModelEn,
         compiledSpec,
         grillSignal,
+        lang: uiLang,
       });
-      const isEnUi = String(state?.uiLanguage || '').trim().toLowerCase() === 'en';
       lines.push(
         isEnUi
-          ? `🚦 [Pre-Task Gate: ON (${grade})] Inspect target slices FIRST, then determine the TRUE post-scout grade (S/M/L/XL) & optimal model WITH explicit thinking/planner depth (e.g. ${modelExamplesEn} — ${noBareRuleEn}) from actual code (override pre-read ~${grade} if code is simpler or deeper!) and reflect YOUR AI verdict identically in EN chat, ask_question header ("Scope", "Recommended power", + "💡 Mode tip" on mismatch), and option #1.`
-          : `🚦 [Pre-Task Gate: ON (${grade})] Inspect target slices FIRST, then determine the TRUE post-scout grade (S/M/L/XL) & optimal model WITH explicit thinking/planner depth (e.g. ${modelExamplesEn} — ${noBareRuleEn}) from actual code (override pre-read ~${grade} if code is simpler or deeper!) and reflect YOUR AI verdict identically in RU chat, ask_question header ("Объём", "Рекомендуемая мощность", + "💡 Совет по режиму" on mismatch), and option #1.`
+          ? `🚦 [Pre-Task Gate: ON (${grade})] Inspect target slices FIRST, then determine the TRUE post-scout grade (S/M/L/XL) & optimal model WITH explicit thinking/planner depth (e.g. ${modelExamples} — ${noBareRuleEn}) from actual code (override pre-read ~${grade} if code is simpler or deeper!) and reflect YOUR AI verdict identically in EN chat, ask_question header ("Scope", "Recommended power", + "💡 Mode tip" on mismatch), and option #1.`
+          : `🚦 [Pre-Task Gate: ON (${grade})] Inspect target slices FIRST, then determine the TRUE post-scout grade (S/M/L/XL) & optimal model WITH explicit thinking/planner depth (e.g. ${modelExamples} — ${noBareRuleEn}) from actual code (override pre-read ~${grade} if code is simpler or deeper!) and reflect YOUR AI verdict identically in RU chat, ask_question header ("Объём", "Рекомендуемая мощность", + "💡 Совет по режиму" on mismatch), and option #1.`
       );
       if (optionsBlueprint?.formattedBlueprint) {
         lines.push(optionsBlueprint.formattedBlueprint);
       }
     } else if (grade !== 'S') {
-      const isEnUi = String(state?.uiLanguage || '').trim().toLowerCase() === 'en';
       lines.push(
         isEnUi
-          ? `📋 [Triage Summary (${grade})] Include a concise EN summary of task scope (${grade}), key steps, and optimal model WITH explicit thinking/planner depth (e.g. ${modelExamplesEn}; ${noBareRuleEn}; rec: ${recModelRu}) in your reply/badge.`
-          : `📋 [Triage Summary (${grade})] Include a concise RU summary of task scope (${grade}), key steps, and optimal model WITH explicit thinking/planner depth (e.g. ${modelExamplesEn}; ${noBareRuleEn}; rec: ${recModelRu}) in your reply/badge.`
+          ? `📋 [Triage Summary (${grade})] Include a concise EN summary of task scope (${grade}), key steps, and optimal model WITH explicit thinking/planner depth (e.g. ${modelExamples}; ${noBareRuleEn}; rec: ${recModel}) in your reply/badge.`
+          : `📋 [Triage Summary (${grade})] Include a concise RU summary of task scope (${grade}), key steps, and optimal model WITH explicit thinking/planner depth (e.g. ${modelExamples}; ${noBareRuleEn}; rec: ${recModel}) in your reply/badge.`
       );
     }
     if (compiledSpec.formattedSpec) {

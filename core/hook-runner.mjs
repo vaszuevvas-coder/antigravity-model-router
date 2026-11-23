@@ -45,8 +45,8 @@ function buildStaticSessionStartHeader(state = {}) {
   const isEn = resolveUserLanguage(state) === 'en';
   const lines = [
     isEn
-      ? '# The Tunnel v3.31.0 (EN-Internal / EN-Chat)'
-      : '# The Tunnel v3.31.0 (EN-Internal / RU-Chat)',
+      ? '# The Tunnel v3.32.0 (EN-Internal / EN-Chat)'
+      : '# The Tunnel v3.32.0 (EN-Internal / RU-Chat)',
     isEn
       ? '- User replies/UI/Role/toolSummary: 100% English.'
       : '- User replies/UI/Role/toolSummary: 100% Russian.',
@@ -649,6 +649,15 @@ const DOMAIN_LABELS_RU = {
   general: 'общий профиль',
 };
 
+const DOMAIN_LABELS_EN = {
+  algo_refactor: 'code & refactoring',
+  ui_browser: 'UI & frontend',
+  backend_db: 'backend & DB',
+  devops: 'infra & CLI',
+  docs: 'documentation',
+  general: 'general profile',
+};
+
 /**
  * Собирает нуль-токенную карточку режима через metadata.user_markdown (Antigravity 2.0):
  * строка отображается пользователю в интерфейсе чата и не расходует контекст модели.
@@ -663,22 +672,38 @@ export function buildZeroTokenUserBadgeStep({
   isPreReadEstimate = false,
 } = {}) {
   if (state?.showBadge === false) return null;
+  const isEn = resolveUserLanguage(state) === 'en';
   const cleanGrade = String(grade || 'M').toUpperCase();
   const strat = state?.strategy || state?.routingMode || '';
   const subSuffix = state?.subscriptionTier === 'ultra' ? ' · Ultra' : '';
-  const modeLabel =
-    strat === 'pro_architect' || strat === 'performance'
-      ? `Pro-Архитектор${subSuffix}`
-      : strat === 'flash_dispatcher' || strat === 'economy'
-        ? `Flash-Диспетчер${subSuffix}`
-        : `Автопилот v3.31.0${subSuffix}`;
-  const executor = modelProfile?.displayRu || modelProfile?.displayNameRu || modelProfile?.shortLabel || 'Текущий исполнитель';
+  const modeLabel = isEn
+    ? (strat === 'pro_architect' || strat === 'performance'
+        ? `Pro Architect${subSuffix}`
+        : strat === 'flash_dispatcher' || strat === 'economy'
+          ? `Flash Dispatcher${subSuffix}`
+          : `Autopilot v3.32.0${subSuffix}`)
+    : (strat === 'pro_architect' || strat === 'performance'
+        ? `Pro-Архитектор${subSuffix}`
+        : strat === 'flash_dispatcher' || strat === 'economy'
+          ? `Flash-Диспетчер${subSuffix}`
+          : `Автопилот v3.32.0${subSuffix}`);
+  const executor = isEn
+    ? (modelProfile?.displayEn || modelProfile?.shortLabel || modelProfile?.displayRu || modelProfile?.displayNameRu || 'Current executor')
+    : (modelProfile?.displayRu || modelProfile?.displayNameRu || modelProfile?.shortLabel || 'Текущий исполнитель');
   const domainKey = String(pruningResult?.domain || 'general').trim();
-  const domainRu = DOMAIN_LABELS_RU[domainKey] || domainKey;
-  const gradeSegment = isPreReadEstimate
-    ? `**Пред-оценка:** ~${cleanGrade} (уточнит ИИ по коду)`
-    : `**Сложность:** ${cleanGrade}`;
-  const md = `> 🎯 **Режим:** ${modeLabel} | ${gradeSegment} | **Исполнитель:** ${executor} | **Профиль:** ${domainRu} · [The Tunnel](sidecar://antigravity-model-router/panel/)`;
+  const domainLabel = isEn
+    ? (DOMAIN_LABELS_EN[domainKey] || domainKey)
+    : (DOMAIN_LABELS_RU[domainKey] || domainKey);
+  const gradeSegment = isEn
+    ? (isPreReadEstimate
+        ? `**Est. Scope:** ~${cleanGrade} (AI refines from code)`
+        : `**Scope:** ${cleanGrade}`)
+    : (isPreReadEstimate
+        ? `**Пред-оценка:** ~${cleanGrade} (уточнит ИИ по коду)`
+        : `**Сложность:** ${cleanGrade}`);
+  const md = isEn
+    ? `> 🎯 **Mode:** ${modeLabel} | ${gradeSegment} | **Executor:** ${executor} | **Profile:** ${domainLabel} · [The Tunnel](sidecar://antigravity-model-router/panel/)`
+    : `> 🎯 **Режим:** ${modeLabel} | ${gradeSegment} | **Исполнитель:** ${executor} | **Профиль:** ${domainLabel} · [The Tunnel](sidecar://antigravity-model-router/panel/)`;
   return {
     systemMessage: {
       systemMessage: '',
@@ -933,7 +958,10 @@ export async function handleSessionStart(payload = {}, rawState = {}) {
       });
       if (driftRes.hasDrift && injection?.injectSteps?.[0]?.systemMessage) {
         const curMsg = injection.injectSteps[0].systemMessage.systemMessage || '';
-        const notice = `\n\n> 🔄 **[Plugin Drift]** Установленный плагин отстаёт от dev-репозитория (${driftRes.driftedFiles.join(', ')}). После завершения правок выполните \`node install.js\`.`;
+        const isEnDrift = resolveUserLanguage(effectiveState) === 'en';
+        const notice = isEnDrift
+          ? `\n\n> 🔄 **[Plugin Drift]** Installed plugin is behind dev repository (${driftRes.driftedFiles.join(', ')}). Run \`node install.js\` after finishing edits.`
+          : `\n\n> 🔄 **[Plugin Drift]** Установленный плагин отстаёт от dev-репозитория (${driftRes.driftedFiles.join(', ')}). После завершения правок выполните \`node install.js\`.`;
         injection.injectSteps[0].systemMessage.systemMessage = `${curMsg}${notice}`;
       }
     } catch {}
@@ -1199,7 +1227,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
       }
     }
 
-    // 2. Когнитивный ИИ-Автопилот v3.31.0 (3D-матрица Breadth × Depth × Risk + безлимитное EN-мышление на Gemini 4)
+    // 2. Когнитивный ИИ-Автопилот v3.32.0 (3D-матрица Breadth × Depth × Risk + безлимитное EN-мышление на Gemini 4)
     if (baseState.thinkingLimiter !== false && toolPruner && typeof toolPruner.estimateTaskGradeAndThinkingBudget === 'function') {
       try {
         const budgetRes = toolPruner.estimateTaskGradeAndThinkingBudget(userInput, effectiveState, {
@@ -1458,11 +1486,15 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
       prevTurnSnapshot.wasReadOnly !== true &&
       prevTurnSnapshot.preTaskGateRequired !== false
     ) {
-      const activeDisp = activeModelProfile?.displayRu || prevTurnSnapshot.selectorCurrent || 'auto';
-      const orchReminder = !activeModelProfile?.isOrchestrator
-        ? ` On multi-file L/XL, Deep, or High-Blast tasks, prefer Orchestrator (Neon · Высокий/XHigh) / Orchestrator (Carbon · Средний/Высокий) over standalone Carbon/Neon (-24% quota + fast Hydrogen edits) and include "💡 Совет по режиму" when active selector differs (if <plan_execute_protocol> or exit_plan_mode is active in your system prompt, UI is already in Оркестратор · ${activeDisp} — treat active selector as Оркестратор · ${activeDisp} and skip redundant standalone switch advice)!`
-        : '';
       const isEnLang = resolveUserLanguage(state) === 'en';
+      const activeDisp = isEnLang
+        ? (activeModelProfile?.displayEn || activeModelProfile?.displayRu || prevTurnSnapshot.selectorCurrent || 'auto')
+        : (activeModelProfile?.displayRu || prevTurnSnapshot.selectorCurrent || 'auto');
+      const orchReminder = !activeModelProfile?.isOrchestrator
+        ? (isEnLang
+            ? ` On multi-file L/XL, Deep, or High-Blast tasks, prefer Orchestrator (Neon · High/XHigh) / Orchestrator (Carbon · Medium/High) over standalone Carbon/Neon (-24% quota + fast Hydrogen edits) and include "💡 Mode tip" when active selector differs (if <plan_execute_protocol> or exit_plan_mode is active in your system prompt, UI is already in Orchestrator · ${activeDisp} — treat active selector as Orchestrator · ${activeDisp} and skip redundant standalone switch advice)!`
+            : ` On multi-file L/XL, Deep, or High-Blast tasks, prefer Orchestrator (Neon · Высокий/XHigh) / Orchestrator (Carbon · Средний/Высокий) over standalone Carbon/Neon (-24% quota + fast Hydrogen edits) and include "💡 Совет по режиму" when active selector differs (if <plan_execute_protocol> or exit_plan_mode is active in your system prompt, UI is already in Оркестратор · ${activeDisp} — treat active selector as Оркестратор · ${activeDisp} and skip redundant standalone switch advice)!`)
+        : '';
       const carryLine = isEnLang
         ? `🧭 [Post-Scout AI Triage | Active Selector: ${activeDisp}] Base final scope (S/M/L/XL) & optimal model strictly on the files you just inspected (override pre-read ~${prevTurnSnapshot.grade || 'M'} if code is simpler or deeper), and keep EN chat, ask_question ("Scope", "Recommended power", "💡 Mode tip" if optimal != ${activeDisp}), and option #1 100% synchronized; ALWAYS include explicit thinking/planner depth for BOTH standalone models AND Orchestrator (e.g. Hydrogen · Medium/High, Neon · High/XHigh, Carbon · High, Orchestrator (Neon · Medium/High/XHigh), Orchestrator (Carbon · Medium/High) — never bare model or bare Orchestrator names).${orchReminder}`
         : `🧭 [Post-Scout AI Triage | Active Selector: ${activeDisp}] Base final scope (S/M/L/XL) & optimal model strictly on the files you just inspected (override pre-read ~${prevTurnSnapshot.grade || 'M'} if code is simpler or deeper), and keep RU chat, ask_question ("Объём", "Рекомендуемая мощность", "💡 Совет по режиму" if optimal != ${activeDisp}), and option #1 100% synchronized; ALWAYS include explicit thinking/planner depth for BOTH standalone models AND Orchestrator (e.g. Hydrogen · Средний/Высокий, Neon · Высокий/XHigh, Carbon · Высокий, Orchestrator (Neon · Средний/Высокий/XHigh), Orchestrator (Carbon · Средний/Высокий) — never bare model or bare Orchestrator names).${orchReminder}`;
@@ -1615,6 +1647,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
           pattern: fric.candidatePattern,
           targetSkill: fric.targetSkillHint || '',
           hub: hubMod.knowledgeHub,
+          lang: resolveUserLanguage(baseState),
         });
         if (rec?.readyForPromotion && rec.promotionHint) {
           blastRadiusHint = blastRadiusHint ? `${blastRadiusHint}\n${rec.promotionHint}` : rec.promotionHint;
@@ -1651,6 +1684,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
         thresholdTokens: effectiveCompactionThreshold,
         workspaceRoot: wsPath,
         phaseTransition: pendingPhaseTransition,
+        lang: resolveUserLanguage(baseState),
       });
       if (compRes?.compactionNotice) {
         compactionNotice = compRes.compactionNotice;
@@ -1832,7 +1866,8 @@ function consumeReadBatchAdvisory(convoId = 'default') {
  * @param {object} params
  * @returns {{ decision: 'allow'|'deny', reason?: string }}
  */
-function evaluateSubagentInvokeGuard({ args = {}, convoId = 'default', modelProfile = null } = {}) {
+function evaluateSubagentInvokeGuard({ args = {}, convoId = 'default', modelProfile = null, state = {} } = {}) {
+  const isEn = resolveUserLanguage(state) === 'en';
   const typeName = String(args.TypeName || '').toLowerCase();
   const subModel = String(args.Model || 'inherit').toLowerCase();
   const workspace = String(args.Workspace || 'inherit').toLowerCase();
@@ -1845,7 +1880,9 @@ function evaluateSubagentInvokeGuard({ args = {}, convoId = 'default', modelProf
 
   if ((modelProfile?.isOrchestrator || modelProfile?.isHydrogen || modelProfile?.isNeon) && subModel === 'flash' && isWriteWork) {
     warningKey = `flash_downgrade::${convoId}::${typeName}`;
-    reason = '🛡️ [Hydrogen/Neon/Orchestrator Subagent Guard] Не понижайте правки кода до Model:"flash" (3.8 Flash). Выполняйте правки напрямую на Hydrogen/Neon или укажите Model:"inherit" (повторный вызов пропустит принудительно).';
+    reason = isEn
+      ? '🛡️ [Hydrogen/Neon/Orchestrator Subagent Guard] Do not downgrade code edits to Model:"flash" (3.8 Flash). Apply edits directly on Hydrogen/Neon or pass Model:"inherit" (a retry will be allowed automatically).'
+      : '🛡️ [Hydrogen/Neon/Orchestrator Subagent Guard] Не понижайте правки кода до Model:"flash" (3.8 Flash). Выполняйте правки напрямую на Hydrogen/Neon или укажите Model:"inherit" (повторный вызов пропустит принудительно).';
   } else if (isWriteWork && workspace === 'inherit') {
     const guardFile = join(CACHE_DIR, 'subagent-guard.json');
     let recentConcurrent = false;
@@ -1861,7 +1898,9 @@ function evaluateSubagentInvokeGuard({ args = {}, convoId = 'default', modelProf
     } catch {}
     if (recentConcurrent) {
       warningKey = `parallel_inherit::${convoId}::${typeName}`;
-      reason = '🛡️ [Parallel Write Guard] Обнаружен параллельный запуск пишущего субагента с Workspace:"inherit". Передайте Workspace:"share" для изоляции правок без конфликтов (повторный вызов пропустит принудительно).';
+      reason = isEn
+        ? '🛡️ [Parallel Write Guard] Parallel write subagent spawn detected with Workspace:"inherit". Pass Workspace:"share" to isolate edits without conflicts (a retry will be allowed automatically).'
+        : '🛡️ [Parallel Write Guard] Обнаружен параллельный запуск пишущего субагента с Workspace:"inherit". Передайте Workspace:"share" для изоляции правок без конфликтов (повторный вызов пропустит принудительно).';
     }
   }
 
@@ -1947,7 +1986,7 @@ const STATIC_CLICHE_PATTERNS = [
 export function isGenericBoilerplateAskOptions(options = [], qText = '') {
   if (!Array.isArray(options) || options.length < 2) return false;
   const combined = `${qText} ${options.join(' ')}`;
-  if (/(?:витрин[аеыу]|референс|прототип[аы]\s+a\/b\/c|целевой\s+стиль|визуальн[а-яё]*\s+направлен)/i.test(combined)) {
+  if (/(?:витрин[аеыу]|референс|прототип[аы]\s+a\/b\/c|целевой\s+стиль|визуальн[а-яё]*\s+направлен|showroom|reference|a\/b\/c|target\s+style|visual\s+direction)/i.test(combined)) {
     return false;
   }
 
@@ -1964,7 +2003,7 @@ export function isGenericBoilerplateAskOptions(options = [], qText = '') {
   const joinedOpts = options.join(' ');
   const hasConcreteContext =
     /\b[\w.-]+\.(?:m?js|cjs|tsx?|jsx?|html|css|json|py|md|sh|bat)\b/i.test(joinedOpts) ||
-    /\b(?:ast-codemod|ddmin|stress-auditor|slicer|dry-run|read-only|sse|polling)\b|(?:кэш|миграц|совместимост|регрессион|контракт)/i.test(joinedOpts) ||
+    /\b(?:ast-codemod|ddmin|stress-auditor|slicer|dry-run|read-only|sse|polling|cache|migration|compatibility|regression|contract)\b|(?:кэш|миграц|совместимост|регрессион|контракт)/i.test(joinedOpts) ||
     /`[^`]{2,}`/.test(joinedOpts);
 
   return !hasConcreteContext;
@@ -2148,9 +2187,12 @@ function evaluateEditPreTaskGateGuard({
     });
   } catch {}
 
+  const isEn = resolveUserLanguage(state) === 'en';
   return {
     decision: 'deny',
-    reason: `🚦 [Pre-Task Gate Guard] Включено подтверждение перед правками (confirmBeforeRun: true, порог: ${policy?.effectiveThreshold || state.confirmThreshold || 'M'}, объём: ${effGrade}), но интерактивное окно ask_question в этом ходе ещё не вызывалось. Сначала вызовите ask_question с 3 предметными вариантами плана (укажите реальные файлы и оптимальную модель), и только после ответа пользователя вносите правки в код.`,
+    reason: isEn
+      ? `🚦 [Pre-Task Gate Guard] Pre-edit confirmation is enabled (confirmBeforeRun: true, threshold: ${policy?.effectiveThreshold || state.confirmThreshold || 'M'}, scope: ${effGrade}), but ask_question has not been called in this turn yet. Call ask_question first with 3 concrete plan options (listing real target files and the optimal model), and only apply edits after the user replies.`
+      : `🚦 [Pre-Task Gate Guard] Включено подтверждение перед правками (confirmBeforeRun: true, порог: ${policy?.effectiveThreshold || state.confirmThreshold || 'M'}, объём: ${effGrade}), но интерактивное окно ask_question в этом ходе ещё не вызывалось. Сначала вызовите ask_question с 3 предметными вариантами плана (укажите реальные файлы и оптимальную модель), и только после ответа пользователя вносите правки в код.`,
   };
 }
 
@@ -2211,11 +2253,13 @@ export async function handlePreToolUse(payload = {}, rawState = {}) {
 
   // 0s. Защита фоновых воркеров Роя и контроль согласованности XL/селектора на ask_question
   if (toolName === 'ask_question') {
+    const isEnHook = resolveUserLanguage(state) === 'en';
     if (swarmCtx?.role === 'swarm_worker') {
       return {
         decision: 'deny',
-        reason:
-          '🐝 [Swarm Worker Guard] Фоновые воркеры Роя не общаются с пользователем через ask_question (это вызовет вечное ожидание). Отправьте вопрос или блокер координатору на общую доску: post_message{text:"@coordinator ..."}.',
+        reason: isEnHook
+          ? '🐝 [Swarm Worker Guard] Background Swarm workers must not message the user via ask_question (it causes an infinite wait). Send your question or blocker to the coordinator on the shared board: post_message{text:"@coordinator ..."}.'
+          : '🐝 [Swarm Worker Guard] Фоновые воркеры Роя не общаются с пользователем через ask_question (это вызовет вечное ожидание). Отправьте вопрос или блокер координатору на общую доску: post_message{text:"@coordinator ..."}.',
       };
     }
     return evaluateAskQuestionSelectorGuard({
@@ -2252,9 +2296,12 @@ export async function handlePreToolUse(payload = {}, rawState = {}) {
             : { shouldAskModelGate: true, effectiveThreshold: state.confirmThreshold || 'M' };
           const mustBlock = prev.preTaskGateRequired === true || (prev.wasReadOnly === false && Boolean(policy?.shouldAskModelGate));
           if (mustBlock) {
+            const isEnHook = resolveUserLanguage(state) === 'en';
             return {
               decision: 'deny',
-              reason: `🚦 [Pre-Task Gate Guard (Orchestrator)] Включено подтверждение перед выполнением плана (confirmBeforeRun: true, порог: ${policy?.effectiveThreshold || state.confirmThreshold || 'M'}, объём: ${effGrade}), но интерактивное окно ask_question в этом ходе ещё не вызывалось. Сначала вызовите ask_question с 3 предметными вариантами плана, дождитесь ответа пользователя, и только после этого вызывайте exit_plan_mode.`,
+              reason: isEnHook
+                ? `🚦 [Pre-Task Gate Guard (Orchestrator)] Pre-execution confirmation is enabled (confirmBeforeRun: true, threshold: ${policy?.effectiveThreshold || state.confirmThreshold || 'M'}, scope: ${effGrade}), but ask_question has not been called in this turn yet. Call ask_question first with 3 concrete plan options, wait for the user reply, and only then call exit_plan_mode.`
+                : `🚦 [Pre-Task Gate Guard (Orchestrator)] Включено подтверждение перед выполнением плана (confirmBeforeRun: true, порог: ${policy?.effectiveThreshold || state.confirmThreshold || 'M'}, объём: ${effGrade}), но интерактивное окно ask_question в этом ходе ещё не вызывалось. Сначала вызовите ask_question с 3 предметными вариантами плана, дождитесь ответа пользователя, и только после этого вызывайте exit_plan_mode.`,
             };
           }
         }
@@ -2286,7 +2333,7 @@ export async function handlePreToolUse(payload = {}, rawState = {}) {
 
   // 0s-sub. Страховка invoke_subagent (запрет даунгрейда правок на Flash и гонок Workspace:"inherit")
   if (toolName === 'invoke_subagent') {
-    return evaluateSubagentInvokeGuard({ args, convoId: convoKey, modelProfile: resolvePreToolModelProfile() });
+    return evaluateSubagentInvokeGuard({ args, convoId: convoKey, modelProfile: resolvePreToolModelProfile(), state });
   }
 
   // 0s-swarm. Перехват управления Роем (фиксация координатора и защита title/статуса от фоновых воркеров)
@@ -2297,9 +2344,12 @@ export async function handlePreToolUse(payload = {}, rawState = {}) {
         : { role: 'standalone', isolationKey: convoKey };
       if (swCtx.role === 'swarm_worker') {
         if (String(args.action || '').toLowerCase() === 'title') {
+          const isEnHook = resolveUserLanguage(state) === 'en';
           return {
             decision: 'deny',
-            reason: '🐝 [Swarm Guard] Фоновый воркер Роя не может менять заголовок (swarm action:"title" разрешён только координатору).',
+            reason: isEnHook
+              ? '🐝 [Swarm Guard] Background Swarm worker cannot rename the swarm (swarm action:"title" is reserved for the coordinator).'
+              : '🐝 [Swarm Guard] Фоновый воркер Роя не может менять заголовок (swarm action:"title" разрешён только координатору).',
           };
         }
         return { decision: 'allow' };
@@ -2719,7 +2769,7 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
             conversationId: payload.conversationId || '',
             question: qText.slice(0, 120),
             answer: finalAns.slice(0, 140),
-            category: /дизайн|стил|визуал|палитр|анимац/i.test(qText) ? 'ui_style' : 'autopilot_plan',
+            category: /дизайн|стил|визуал|палитр|анимац|design|style|visual|palette|animat/i.test(qText) ? 'ui_style' : 'autopilot_plan',
           });
         }
       }
@@ -2893,6 +2943,7 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
           args: { CommandLine: String(args.CommandLine || args.command || args.cmd || '') },
           resultText: safeCmdOutput || safeErrStr,
           isError: Boolean(payload.error),
+          lang: resolveUserLanguage(state),
         });
         if (stallRes?.stalled && stallRes.formattedAlert) {
           enqueuePostCommandHint(postConvoKey, stallRes.formattedAlert);
@@ -3187,11 +3238,16 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
               });
               const locList = mergedIssues.slice(0, 3).map((it) => `L${it.line} (${it.kind})`).join(', ');
               const hasSkippedTest = mergedIssues.some((it) => it.kind === 'skipped_test');
+              const isEnPost = resolveUserLanguage(state) === 'en';
               enqueuePostCommandHint(
                 postConvoKey,
                 hasSkippedTest
-                  ? `🚧 [Unlazy Test Gate (${basename(filePath)})] В диффе добавлены отключённые тесты или заглушки: ${locList}. Уберите skip/todo до финального ответа.`
-                  : `🚧 [Unlazy Stub Check (${basename(filePath)})] Обнаружены новые заглушки/TODO: ${locList}. Доведите реализацию до конца до финального ответа.`
+                  ? (isEnPost
+                      ? `🚧 [Unlazy Test Gate (${basename(filePath)})] Skipped tests or stubs added in diff: ${locList}. Remove skip/todo before final reply.`
+                      : `🚧 [Unlazy Test Gate (${basename(filePath)})] В диффе добавлены отключённые тесты или заглушки: ${locList}. Уберите skip/todo до финального ответа.`)
+                  : (isEnPost
+                      ? `🚧 [Unlazy Stub Check (${basename(filePath)})] New stubs/TODOs detected: ${locList}. Finish the implementation before final reply.`
+                      : `🚧 [Unlazy Stub Check (${basename(filePath)})] Обнаружены новые заглушки/TODO: ${locList}. Доведите реализацию до конца до финального ответа.`)
               );
             } else if (toolName === 'write_file') {
               completionGates.clearSessionFileStubs?.({ conversationId: postConvoKey, filePath });
@@ -3229,6 +3285,7 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
               signalType: churn.signalType,
               pattern: churn.candidatePattern,
               hub: knowledgeHubMod.knowledgeHub,
+              lang: resolveUserLanguage(state),
             });
           }
         }
@@ -3460,17 +3517,21 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
       try {
         const [mutMod] = await loadDepsByNames(['cpuMutationGuard']);
         if (mutMod?.runSemanticMutationGuard) {
+          const mutLang = resolveUserLanguage(state);
           const mutRes = mutMod.runSemanticMutationGuard({
             workspaceRoot: effectiveFileWs,
             filePath,
             maxMutants: 3,
             timeoutMs: 6000,
+            lang: mutLang,
           });
           if (mutRes?.ok && mutRes.survived > 0) {
             const firstSurv = mutRes.survivors?.[0];
             enqueuePostCommandHint(
               postConvoKey,
-              `🧬 [Mutation Guard] Выжило ${mutRes.survived}/${mutRes.totalMutants} граничных мутантов в ${mutRes.file} (L${firstSurv?.line || '?'}: ${firstSurv?.original || ''} -> ${firstSurv?.mutated || ''}). Проверьте граничные тесты.`
+              mutLang === 'en'
+                ? `🧬 [Mutation Guard] ${mutRes.survived}/${mutRes.totalMutants} boundary mutants survived in ${mutRes.file} (L${firstSurv?.line || '?'}: ${firstSurv?.original || ''} -> ${firstSurv?.mutated || ''}). Check edge-case tests.`
+                : `🧬 [Mutation Guard] Выжило ${mutRes.survived}/${mutRes.totalMutants} граничных мутантов в ${mutRes.file} (L${firstSurv?.line || '?'}: ${firstSurv?.original || ''} -> ${firstSurv?.mutated || ''}). Проверьте граничные тесты.`
             );
           }
         }
@@ -3681,6 +3742,7 @@ export async function handleStop(payload = {}, rawState = {}) {
           hasError: hasErr,
           terminationReason: termReason,
           maxBlocks: 2,
+          lang: resolveUserLanguage(state),
         });
         if (gateRes?.shouldWarn && gateRes.formattedSystemMessage) {
           return { systemMessage: gateRes.formattedSystemMessage };

@@ -16,6 +16,7 @@ import { invalidateReadCacheForConvo } from './read-dedup.mjs';
 import { atomicWriteJsonSync, safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
 import { ensureTunnelCacheDir, resolveTunnelCacheDir } from './cache-dir.mjs';
 import { extractDeterministicFactTable } from './cpu-sbfl-healer.mjs';
+import { normalizeLang, pickLang } from './i18n.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
@@ -789,7 +790,10 @@ export async function checkHistoryCompaction({
   workspaceRoot = '',
   phaseTransition = '',
   strategicMinFillRatio = 0.55,
+  lang = 'ru',
 } = {}) {
+  const resolvedLang = normalizeLang(lang, 'ru');
+  const isEn = resolvedLang === 'en';
   const resolved = resolveTranscriptPath(transcriptPath, conversationId);
   const rawConvoId = String(resolved.conversationId || conversationId || 'default').trim() || 'default';
   const safeRawConvoId = UNSAFE_PROTO_KEYS.has(rawConvoId) ? 'default' : rawConvoId;
@@ -948,7 +952,11 @@ export async function checkHistoryCompaction({
           `📦 [Autonomous Context Overflow Guard] Epoch #${currentEpoch} (${totalFillPercent}%, ~${lastStepPromptTokens} tok). ` +
           `Background digest & Session Handoff saved to \`${digestPath || '.cache/compaction-digest'}\`.` +
           summaryBlock +
-          `AUTONOMOUS ACTION: At the very end of your Russian reply, add 1 concise friendly line advising the user that this chat has grown large (~${Math.round(lastStepPromptTokens / 1000)}k tok) and they can open a fresh chat (Session Handoff will auto-restore goals & touched files) or run /compact.`;
+          pickLang(
+            resolvedLang,
+            `AUTONOMOUS ACTION: At the very end of your Russian reply, add 1 concise friendly line advising the user that this chat has grown large (~${Math.round(lastStepPromptTokens / 1000)}k tok) and they can open a fresh chat (Session Handoff will auto-restore goals & touched files) or run /compact.`,
+            `AUTONOMOUS ACTION: At the very end of your English reply, add 1 concise friendly line advising the user that this chat has grown large (~${Math.round(lastStepPromptTokens / 1000)}k tok) and they can open a fresh chat (Session Handoff will auto-restore goals & touched files) or run /compact.`
+          );
       }
     }
   }
@@ -998,14 +1006,20 @@ export async function checkHistoryCompaction({
             } catch {}
           }
           strategicCompactionSuggested = true;
-          const phaseLabelMap = {
-            explore_to_edit: 'разведка и план завершены перед правками',
-            verify_passed: 'тесты и верификация пройдены',
-            milestone_done: 'этап задачи завершён',
-          };
-          const phaseRu = phaseLabelMap[cleanPhase] || cleanPhase;
+          const phaseLabelMap = isEn
+            ? {
+                explore_to_edit: 'exploration and planning complete before edits',
+                verify_passed: 'tests and verification passed',
+                milestone_done: 'task milestone completed',
+              }
+            : {
+                explore_to_edit: 'разведка и план завершены перед правками',
+                verify_passed: 'тесты и верификация пройдены',
+                milestone_done: 'этап задачи завершён',
+              };
+          const phaseLabel = phaseLabelMap[cleanPhase] || cleanPhase;
           compactionNotice =
-            `🧭 [Strategic Compact · ${cleanPhase}] Context is at ${fillPercent}% of Epoch #${currentEpoch} (~${lastStepPromptTokens} tok) right at a clean phase boundary (${phaseRu}). ` +
+            `🧭 [Strategic Compact · ${cleanPhase}] Context is at ${fillPercent}% of Epoch #${currentEpoch} (~${lastStepPromptTokens} tok) right at a clean phase boundary (${phaseLabel}). ` +
             `Digest & Session Handoff saved to \`${digestPath || '.cache/compaction-digest'}\`. ` +
             `AUTONOMOUS ACTION: Suggest running /compact (or opening a fresh chat with Session Handoff) before starting the next phase so Gemini 4 Implicit Cache stays clean.`;
         }

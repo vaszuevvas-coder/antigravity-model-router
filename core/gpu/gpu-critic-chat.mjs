@@ -8,6 +8,7 @@ import https from 'node:https';
 import path, { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { redactSecretsInText } from '../security-guard.mjs';
+import { detectTextLanguage, normalizeLang, pickLang, readActiveUiLanguage } from '../i18n.mjs';
 import {
   DEFAULT_GPU_CONFIG,
   clampInt,
@@ -1004,30 +1005,38 @@ export function auditLocalChatAnswerGrounding(answer = '', groundingIndex = {}) 
       : Number(Math.max(0, (verifiedFiles.length + verifiedSymbols.length - crossFileMismatches.length - unverifiedLineCitations.length) / totalChecked).toFixed(3));
 
   const warnParts = [];
+  const warnPartsEn = [];
   if (unverifiedFiles.length > 0) {
-    warnParts.push(
-      `не найдены файлы в индексе: ${unverifiedFiles.slice(0, 5).map((f) => `\`${f}\``).join(', ')}`
-    );
+    const joined = unverifiedFiles.slice(0, 5).map((f) => `\`${f}\``).join(', ');
+    warnParts.push(`не найдены файлы в индексе: ${joined}`);
+    warnPartsEn.push(`files not found in index: ${joined}`);
   }
   if (unverifiedSymbols.length > 0) {
-    warnParts.push(
-      `не подтверждены символы в RAG/AST: ${unverifiedSymbols.slice(0, 6).map((s) => `\`${s}\``).join(', ')}`
-    );
+    const joined = unverifiedSymbols.slice(0, 6).map((s) => `\`${s}\``).join(', ');
+    warnParts.push(`не подтверждены символы в RAG/AST: ${joined}`);
+    warnPartsEn.push(`symbols unverified in RAG/AST: ${joined}`);
   }
   if (crossFileMismatches.length > 0) {
     warnParts.push(
       `перепутаны модули символов: ${crossFileMismatches.slice(0, 4).map((m) => `\`${m.symbol}\` (указан \`${m.claimedFile}\`, реально в \`${m.actualFiles[0]}\`)`).join(', ')}`
     );
+    warnPartsEn.push(
+      `symbol file mismatches: ${crossFileMismatches.slice(0, 4).map((m) => `\`${m.symbol}\` (claimed in \`${m.claimedFile}\`, actually in \`${m.actualFiles[0]}\`)`).join(', ')}`
+    );
   }
   if (unverifiedLineCitations.length > 0) {
-    warnParts.push(
-      `строки вне загруженных RAG-срезов: ${unverifiedLineCitations.slice(0, 4).map((c) => `\`${c}\``).join(', ')}`
-    );
+    const joined = unverifiedLineCitations.slice(0, 4).map((c) => `\`${c}\``).join(', ');
+    warnParts.push(`строки вне загруженных RAG-срезов: ${joined}`);
+    warnPartsEn.push(`line numbers outside loaded RAG slices: ${joined}`);
   }
   const outOfContextWarningRu = outOfContextSymbols.length > 0
     ? `упомянуты символы из индекса без полного тела в текущих срезах: ${outOfContextSymbols.slice(0, 5).map((s) => `\`${s}\``).join(', ')}`
     : '';
+  const outOfContextWarningEn = outOfContextSymbols.length > 0
+    ? `referenced indexed symbols without full body in current slices: ${outOfContextSymbols.slice(0, 5).map((s) => `\`${s}\``).join(', ')}`
+    : '';
   const warningRu = warnParts.join('; ');
+  const warningEn = warnPartsEn.join('; ');
 
   return {
     grounded,
@@ -1040,7 +1049,9 @@ export function auditLocalChatAnswerGrounding(answer = '', groundingIndex = {}) 
     crossFileMismatches,
     unverifiedLineCitations,
     outOfContextWarningRu,
+    outOfContextWarningEn,
     warningRu,
+    warningEn,
   };
 }
 
@@ -1158,6 +1169,7 @@ export async function runLocalProjectChat({
   cfgOverride = null,
   httpJsonFn = null,
   hwProbeFn = null,
+  lang = '',
 } = {}) {
   const rawQuery = String(query || '').trim().slice(0, 12000);
   if (!rawQuery) {
@@ -1168,12 +1180,14 @@ export async function runLocalProjectChat({
   }
 
   const cfg = cfgOverride ? loadGpuConfig(cfgOverride) : loadGpuConfig();
+  const replyLang = normalizeLang(lang || cfg.uiLanguage || detectTextLanguage(rawQuery, readActiveUiLanguage()), 'en');
+  const isEnReply = replyLang === 'en';
   if (!cfg.gpuEnabled) {
     return {
       ok: false,
       skippedGpuDisabled: true,
       answer: '',
-      error: 'Локальный GPU-движок выключен в настройках',
+      error: isEnReply ? 'Local GPU engine is disabled in settings' : 'Локальный GPU-движок выключен в настройках',
     };
   }
 
@@ -1241,7 +1255,9 @@ export async function runLocalProjectChat({
       needsModelDownload: Boolean(fit.needsModelDownload),
       recommendedPullModel: fit.recommendedPullModel || '',
       answer: '',
-      error: fit.reasonRu || `Модель ${requestedModel} превышает лимит ${fit.capGb} ГБ VRAM`,
+      error: isEnReply
+        ? (fit.reasonEn || fit.reasonRu || `Model ${requestedModel} exceeds ${fit.capGb} GB VRAM limit`)
+        : (fit.reasonRu || `Модель ${requestedModel} превышает лимит ${fit.capGb} ГБ VRAM`),
     };
   }
 
@@ -1296,9 +1312,13 @@ export async function runLocalProjectChat({
   const wsTitle = String(workspaceName || '').trim();
   const systemPrompt = [
     `You are a local AI coding assistant running 100% locally on the developer's GPU${wsTitle ? ` for workspace "${wsTitle}"` : ''}.`,
-    'Think carefully through code contracts, imports, and call flows before answering, then respond clearly and concisely in Russian (using backticks for symbol names, file paths, and code).',
+    isEnReply
+      ? 'Think carefully through code contracts, imports, and call flows before answering, then respond clearly and concisely in English (using backticks for symbol names, file paths, and code).'
+      : 'Think carefully through code contracts, imports, and call flows before answering, then respond clearly and concisely in Russian (using backticks for symbol names, file paths, and code).',
     'Ground every file path, function signature, symbol name, numeric constant, and behavior strictly in [VERIFIED PROJECT MANIFEST] and [PROJECT RAG CONTEXT], citing exact `[file:L#-L#]` slices.',
-    'NEVER guess, extrapolate, or invent missing functions, files, line numbers, CLI flags, or APIs; if the provided slices do not contain the answer, explicitly state: "В предоставленных срезах кода этого нет".',
+    isEnReply
+      ? 'NEVER guess, extrapolate, or invent missing functions, files, line numbers, CLI flags, or APIs; if the provided slices do not contain the answer, explicitly state: "This is not present in the provided code slices".'
+      : 'NEVER guess, extrapolate, or invent missing functions, files, line numbers, CLI flags, or APIs; if the provided slices do not contain the answer, explicitly state: "В предоставленных срезах кода этого нет".',
   ].join(' ');
 
   const inputBudgetTokens = Math.max(
@@ -1377,7 +1397,7 @@ export async function runLocalProjectChat({
     workInfoOverride: {
       op: 'local_chat',
       model: targetModel,
-      detail: `Локальный RAG-чат (${targetModel})`,
+      detail: isEnReply ? `Local RAG Chat (${targetModel})` : `Локальный RAG-чат (${targetModel})`,
     },
   };
 
@@ -1448,7 +1468,7 @@ export async function runLocalProjectChat({
       answer: '',
       model: targetModel,
       latencyMs,
-      error: 'Локальная модель вернула пустой ответ',
+      error: isEnReply ? 'Local model returned an empty response' : 'Локальная модель вернула пустой ответ',
     };
   }
 
@@ -1552,21 +1572,38 @@ export async function runLocalProjectChat({
     if (allowCorrectiveRetry !== false && remainingBudgetMs >= 3500 && !signal?.aborted) {
       const violationParts = [];
       if (grounding.unverifiedFiles.length > 0) {
-        violationParts.push(`несуществующие файлы: ${grounding.unverifiedFiles.slice(0, 6).join(', ')}`);
+        violationParts.push(
+          isEnReply
+            ? `non-existent files: ${grounding.unverifiedFiles.slice(0, 6).join(', ')}`
+            : `несуществующие файлы: ${grounding.unverifiedFiles.slice(0, 6).join(', ')}`
+        );
       }
       if (grounding.unverifiedSymbols.length > 0) {
-        violationParts.push(`выдуманные символы: ${grounding.unverifiedSymbols.slice(0, 8).join(', ')}`);
+        violationParts.push(
+          isEnReply
+            ? `hallucinated symbols: ${grounding.unverifiedSymbols.slice(0, 8).join(', ')}`
+            : `выдуманные символы: ${grounding.unverifiedSymbols.slice(0, 8).join(', ')}`
+        );
       }
       if (grounding.crossFileMismatches.length > 0) {
         violationParts.push(
-          `ошибочная привязка файлов: ${grounding.crossFileMismatches
-            .slice(0, 4)
-            .map((m) => `${m.symbol} не в ${m.claimedFile}, а в ${m.actualFiles[0]}`)
-            .join('; ')}`
+          isEnReply
+            ? `wrong file attribution: ${grounding.crossFileMismatches
+                .slice(0, 4)
+                .map((m) => `${m.symbol} is not in ${m.claimedFile}, actually in ${m.actualFiles[0]}`)
+                .join('; ')}`
+            : `ошибочная привязка файлов: ${grounding.crossFileMismatches
+                .slice(0, 4)
+                .map((m) => `${m.symbol} не в ${m.claimedFile}, а в ${m.actualFiles[0]}`)
+                .join('; ')}`
         );
       }
       if (grounding.unverifiedLineCitations.length > 0) {
-        violationParts.push(`неверные номера строк: ${grounding.unverifiedLineCitations.slice(0, 5).join(', ')}`);
+        violationParts.push(
+          isEnReply
+            ? `invalid line numbers: ${grounding.unverifiedLineCitations.slice(0, 5).join(', ')}`
+            : `неверные номера строк: ${grounding.unverifiedLineCitations.slice(0, 5).join(', ')}`
+        );
       }
       const validRangesHint = effectiveRagSources
         .slice(0, 6)
@@ -1576,7 +1613,9 @@ export async function runLocalProjectChat({
         '[CORRECTION CONSTRAINTS]',
         `Previous draft failed grounding check (${violationParts.join(' | ')}).`,
         validRangesHint ? `Allowed exact slice citations: ${validRangesHint}.` : '',
-        'Answer the [USER QUESTION] again cleanly in Russian, strictly removing every unverified file/symbol/line citation and using ONLY symbols present in [VERIFIED PROJECT MANIFEST] and [PROJECT RAG CONTEXT]. If information is missing, state "В предоставленных срезах кода этого нет".',
+        isEnReply
+          ? 'Answer the [USER QUESTION] again cleanly in English, strictly removing every unverified file/symbol/line citation and using ONLY symbols present in [VERIFIED PROJECT MANIFEST] and [PROJECT RAG CONTEXT]. If information is missing, state "This is not present in the provided code slices".'
+          : 'Answer the [USER QUESTION] again cleanly in Russian, strictly removing every unverified file/symbol/line citation and using ONLY symbols present in [VERIFIED PROJECT MANIFEST] and [PROJECT RAG CONTEXT]. If information is missing, state "В предоставленных срезах кода этого нет".',
       ].filter(Boolean).join('\n');
 
       const retryTurnContent = `${buildUserTurn(capStringByCharsOnLine(effectiveRagRaw, Math.floor(inputBudgetTokens * ragBudgetShare) * 3.2))}\n\n${correctionBlock}`;
@@ -1642,8 +1681,10 @@ export async function runLocalProjectChat({
       latencyMs = Date.now() - t0;
     }
 
-    if (!grounding.grounded && grounding.warningRu) {
-      answer = `${answer}\n\n> ⚠️ Сверка с индексом RAM: ${grounding.warningRu}`;
+    if (!grounding.grounded && (grounding.warningRu || grounding.warningEn)) {
+      answer = isEnReply
+        ? `${answer}\n\n> ⚠️ RAM index verification: ${grounding.warningEn || grounding.warningRu}`
+        : `${answer}\n\n> ⚠️ Сверка с индексом RAM: ${grounding.warningRu || grounding.warningEn}`;
     }
   }
 
@@ -1664,7 +1705,9 @@ export async function runLocalProjectChat({
       signal,
     });
     if (claimVerification && claimVerification.verified === false && claimVerification.unsupportedClaims.length > 0) {
-      answer = `${answer}\n\n> 🔎 Проверка утверждений по коду: не все детали подтверждены срезами (${claimVerification.unsupportedClaims.slice(0, 2).join('; ')}).`;
+      answer = isEnReply
+        ? `${answer}\n\n> 🔎 Claim verification against code: not all details are confirmed by slices (${claimVerification.unsupportedClaims.slice(0, 2).join('; ')}).`
+        : `${answer}\n\n> 🔎 Проверка утверждений по коду: не все детали подтверждены срезами (${claimVerification.unsupportedClaims.slice(0, 2).join('; ')}).`;
     }
   }
 
@@ -1677,7 +1720,7 @@ export async function runLocalProjectChat({
   }));
 
   const isExplicitNoContextRefusal =
-    /в\s+предоставленных\s+срезах\s+кода\s+этого\s+нет/i.test(answer) &&
+    /(?:в\s+предоставленных\s+срезах\s+кода\s+этого\s+нет|not\s+(?:present|found)\s+in\s+the\s+provided\s+(?:code\s+)?slices)/i.test(answer) &&
     (grounding?.verifiedFiles?.length || 0) === 0 &&
     (grounding?.verifiedSymbols?.length || 0) === 0;
 
@@ -1781,7 +1824,7 @@ export async function generateIdleModuleSymbolCard({
       workInfoOverride: {
         op: 'symbol_card',
         model: body.model,
-        detail: `Паспорт модуля ${path.basename(cleanRel)}`,
+        detail: (readActiveUiLanguage() === 'en') ? `Module Card ${path.basename(cleanRel)}` : `Паспорт модуля ${path.basename(cleanRel)}`,
       },
     });
 
@@ -1912,7 +1955,9 @@ export async function reviewGitDiffHunkLocally({
       workInfoOverride: {
         op: 'local_bugbot',
         model: body.model,
-        detail: relPath ? `Локальный BugBot (${path.basename(relPath)})` : 'Локальный BugBot диффа',
+        detail: (readActiveUiLanguage() === 'en')
+          ? (relPath ? `Local BugBot (${path.basename(relPath)})` : 'Local diff BugBot')
+          : (relPath ? `Локальный BugBot (${path.basename(relPath)})` : 'Локальный BugBot диффа'),
       },
     });
 

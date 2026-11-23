@@ -29,6 +29,7 @@ function buildDefaultSentinelSnapshot(currentState = {}) {
     enabled,
     state: st.sentinelEnabled === false ? 'disabled' : 'idle',
     currentTaskRu: st.sentinelEnabled === false ? 'Выключен' : 'Ожидание простоя',
+    currentTaskEn: st.sentinelEnabled === false ? 'Disabled' : 'Idle (waiting)',
     preemptedCount: 0,
     speculativeHits: 0,
     shadowGuard: {
@@ -53,6 +54,7 @@ function buildDefaultSentinelSnapshot(currentState = {}) {
       enabled: Boolean(st.sentinelShadowTests),
       lastStatus: 'idle',
       lastSummaryRu: 'Выкл (предохранитель)',
+      lastSummaryEn: 'Off (safety guard)',
     },
   };
 }

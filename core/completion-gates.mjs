@@ -12,6 +12,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureTunnelCacheDir, resolveTunnelCacheDir } from './cache-dir.mjs';
 import { safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
+import { normalizeLang, pickLang } from './i18n.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
@@ -521,7 +522,8 @@ export function getSessionStubSummary(opts = {}) {
   return { totalIssues, files };
 }
 
-export function checkProjectCompletionInvariants(workspaceRoot = '', touchedFiles = []) {
+export function checkProjectCompletionInvariants(workspaceRoot = '', touchedFiles = [], { lang = 'ru' } = {}) {
+  const isEn = normalizeLang(lang, 'ru') === 'en';
   const warnings = [];
   if (!workspaceRoot || typeof workspaceRoot !== 'string' || !existsSync(workspaceRoot)) {
     return { ok: true, warnings, gates: null };
@@ -550,7 +552,9 @@ export function checkProjectCompletionInvariants(workspaceRoot = '', touchedFile
         if (newestSrcMtime > bundleMtime + 50) {
           warnings.push({
             kind: 'ui_bundle_stale',
-            message: 'Изменены шаблоны sidecars/panel/ui-src/, но бандл sidecars/panel/ui.html не пересобран (вызовите buildPanelUi).',
+            message: isEn
+              ? 'sidecars/panel/ui-src/ templates changed without rebuilding sidecars/panel/ui.html (run buildPanelUi).'
+              : 'Изменены шаблоны sidecars/panel/ui-src/, но бандл sidecars/panel/ui.html не пересобран (вызовите buildPanelUi).',
           });
         }
       } catch {}
@@ -567,20 +571,26 @@ export function checkProjectCompletionInvariants(workspaceRoot = '', touchedFile
       if (gatesSummary.malformed.length > 0) {
         warnings.push({
           kind: 'gates_malformed',
-          message: `GATES.md содержит синтаксические замечания: ${gatesSummary.malformed.slice(0, 2).join('; ')}`,
+          message: isEn
+            ? `GATES.md contains syntax issues: ${gatesSummary.malformed.slice(0, 2).join('; ')}`
+            : `GATES.md содержит синтаксические замечания: ${gatesSummary.malformed.slice(0, 2).join('; ')}`,
         });
       }
       if (gatesSummary.unmet.length > 0) {
         const sample = gatesSummary.unmet.slice(0, 3).map((g) => g.id).join(', ');
         warnings.push({
           kind: 'gates_unmet',
-          message: `В GATES.md остались незакрытые критерии (${gatesSummary.unmet.length}/${gatesSummary.total}: ${sample}).`,
+          message: isEn
+            ? `GATES.md still has unmet acceptance criteria (${gatesSummary.unmet.length}/${gatesSummary.total}: ${sample}).`
+            : `В GATES.md остались незакрытые критерии (${gatesSummary.unmet.length}/${gatesSummary.total}: ${sample}).`,
         });
       }
       if (gatesSummary.abandoned.length > 0) {
         warnings.push({
           kind: 'gates_abandoned',
-          message: `В GATES.md отмечены отложенные критерии (${gatesSummary.abandoned.map((g) => g.id).join(', ')}) — требуется явная передача пользователю.`,
+          message: isEn
+            ? `GATES.md marks abandoned criteria (${gatesSummary.abandoned.map((g) => g.id).join(', ')}) — explicit user handoff required.`
+            : `В GATES.md отмечены отложенные критерии (${gatesSummary.abandoned.map((g) => g.id).join(', ')}) — требуется явная передача пользователю.`,
         });
       }
     } catch {}
@@ -608,11 +618,14 @@ export function evaluateStopCompletionGates(opts = {}) {
     maxBlocks = 2,
     stateFile = '',
     nowMs = Date.now(),
+    lang = 'ru',
   } = opts && typeof opts === 'object' && !Array.isArray(opts) ? opts : {};
   if (hasError || /(?:abort|cancel|interrupt|error)/i.test(String(terminationReason || ''))) {
     return { ok: true, shouldWarn: false, warnings: [], formattedSystemMessage: '' };
   }
 
+  const resolvedLang = normalizeLang(lang, 'ru');
+  const isEn = resolvedLang === 'en';
   const warnings = [];
   const stubRes = getSessionStubSummary({ conversationId, stateFile, nowMs });
   if (stubRes.totalIssues > 0) {
@@ -622,11 +635,13 @@ export function evaluateStopCompletionGates(opts = {}) {
       .join('; ');
     warnings.push({
       kind: 'added_stubs',
-      message: `В изменённых файлах обнаружены новые незакрытые заглушки/TODO (${stubRes.totalIssues}: ${sample}).`,
+      message: isEn
+        ? `New unresolved stubs/TODOs found in edited files (${stubRes.totalIssues}: ${sample}).`
+        : `В изменённых файлах обнаружены новые незакрытые заглушки/TODO (${stubRes.totalIssues}: ${sample}).`,
     });
   }
 
-  const invRes = checkProjectCompletionInvariants(workspaceRoot, touchedFiles);
+  const invRes = checkProjectCompletionInvariants(workspaceRoot, touchedFiles, { lang: resolvedLang });
   if (invRes.warnings.length > 0) {
     warnings.push(...invRes.warnings);
   }
@@ -636,12 +651,16 @@ export function evaluateStopCompletionGates(opts = {}) {
     const editedShort = verFresh.lastEditedFile ? verFresh.lastEditedFile.split('/').pop() : 'source';
     warnings.push({
       kind: 'stale_tests',
-      message: `Устаревший прогон тестов (stale): файл ${editedShort} редактировался ПОСЛЕ последнего запуска тестов — перезапусти проверку перед завершением.`,
+      message: isEn
+        ? `Stale test run: ${editedShort} was edited AFTER the last test run — re-run tests before finishing.`
+        : `Устаревший прогон тестов (stale): файл ${editedShort} редактировался ПОСЛЕ последнего запуска тестов — перезапусти проверку перед завершением.`,
     });
   } else if (verFresh.state === 'fail') {
     warnings.push({
       kind: 'failing_tests',
-      message: `Последний прогон тестов завершился с ошибками (failed: ${verFresh.failed || 1}) — добейся зелёного статуса.`,
+      message: isEn
+        ? `Last test run failed (failed: ${verFresh.failed || 1}) — resolve failures to reach a passing run.`
+        : `Последний прогон тестов завершился с ошибками (failed: ${verFresh.failed || 1}) — добейся зелёного статуса.`,
     });
   }
 
@@ -688,7 +707,11 @@ export function evaluateStopCompletionGates(opts = {}) {
   }
 
   const lines = [
-    `🚧 [Completion Gate ${currentCount}/${safeMax}] Перед завершением проверь незакрытые пункты:`,
+    pickLang(
+      resolvedLang,
+      `🚧 [Completion Gate ${currentCount}/${safeMax}] Перед завершением проверь незакрытые пункты:`,
+      `🚧 [Completion Gate ${currentCount}/${safeMax}] Resolve these open items before finishing:`
+    ),
     ...warnings.slice(0, 4).map((w) => `- ${w.message}`),
   ];
 
@@ -708,8 +731,9 @@ export function assessDiffSurgicalDiscipline(
   oldText = '',
   newText = '',
   filePath = '',
-  { maxExpansionRatio = 4.0, minOldLines = 40 } = {}
+  { maxExpansionRatio = 4.0, minOldLines = 40, lang = 'ru' } = {}
 ) {
+  const isEn = normalizeLang(lang, 'ru') === 'en';
   const cleanPath = String(filePath || '').replace(/\\/g, '/');
   if (
     !oldText ||
@@ -743,10 +767,18 @@ export function assessDiffSurgicalDiscipline(
 
   const warnings = [];
   if (oldLines >= minOldLines && expansionRatio > maxExpansionRatio && (newLines - oldLines) >= 180) {
-    warnings.push(`Karpathy Surgical Guard: файл вырос в ${expansionRatio}× (${oldLines} -> ${newLines} строк) — проверь, нет ли спекулятивного раздувания вне ТЗ.`);
+    warnings.push(
+      isEn
+        ? `Karpathy Surgical Guard: file grew ${expansionRatio}x (${oldLines} -> ${newLines} lines) — verify no speculative bloat outside scope.`
+        : `Karpathy Surgical Guard: файл вырос в ${expansionRatio}× (${oldLines} -> ${newLines} строк) — проверь, нет ли спекулятивного раздувания вне ТЗ.`
+    );
   }
   if (newTrivialWrappers >= 3) {
-    warnings.push(`Karpathy Simplicity Guard: добавлено ${newTrivialWrappers} однострочных обёрток-прокладок — используй прямой вызов вместо лишних слоёв.`);
+    warnings.push(
+      isEn
+        ? `Karpathy Simplicity Guard: ${newTrivialWrappers} trivial pass-through wrappers added — call underlying helpers directly.`
+        : `Karpathy Simplicity Guard: добавлено ${newTrivialWrappers} однострочных обёрток-прокладок — используй прямой вызов вместо лишних слоёв.`
+    );
   }
 
   return {

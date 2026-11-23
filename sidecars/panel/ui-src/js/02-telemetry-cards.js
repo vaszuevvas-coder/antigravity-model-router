@@ -10,7 +10,7 @@
 
     function formatExactInt(num) {
       const n = Math.round(Number(num || 0));
-      return n.toLocaleString('ru-RU');
+      return n.toLocaleString(isRu() ? 'ru-RU' : 'en-US');
     }
 
     function formatK(num) {
@@ -21,22 +21,43 @@
       return String(Math.round(n));
     }
 
-    const SWARM_MODE_LABELS = {
-      auto_xl: 'Авто XL',
-      aggressive_l: 'Командный L+',
-      auto_all: 'Авто все',
-      always_ask: 'Спрашивать',
-      manual_only: 'По /swarm',
-      off: 'Рой выкл'
-    };
+    function getSwarmModeLabel(modeKey) {
+      const map = {
+        auto_xl: L('Авто XL', 'Auto XL'),
+        aggressive_l: L('Командный L+', 'Team L+'),
+        auto_all: L('Авто все', 'Auto All'),
+        always_ask: L('Спрашивать', 'Ask'),
+        manual_only: L('По /swarm', 'On /swarm'),
+        off: L('Рой выкл', 'Swarm Off')
+      };
+      return map[modeKey] || L('Авто XL', 'Auto XL');
+    }
 
-    const SWARM_TIER_HINTS = {
-      hydrogen_auto: 'авторы правок автоматически сядут на быстрый Gemini 4 Hydrogen в ветках share',
-      neon_auto: 'авторы правок будут работать на мощной кодинг-модели Gemini 4 Neon в ветках share',
-      argon_auto: 'авторы правок будут работать на сбалансированном Gemini 4 Argon в ветках share',
-      carbon_auto: 'авторы правок будут работать на старшем архитекторе Gemini 4 Carbon в ветках share',
-      inherit: 'все воркеры Роя будут наследовать выбранную в селекторе модель'
-    };
+    function getSwarmTierHint(tierKey) {
+      const map = {
+        hydrogen_auto: L(
+          'авторы правок автоматически сядут на быстрый Gemini 4 Hydrogen в ветках share',
+          'workers automatically code on fast Gemini 4 Hydrogen in share workspaces'
+        ),
+        neon_auto: L(
+          'авторы правок будут работать на мощной кодинг-модели Gemini 4 Neon в ветках share',
+          'workers code on Gemini 4 Neon in share workspaces'
+        ),
+        argon_auto: L(
+          'авторы правок будут работать на сбалансированном Gemini 4 Argon в ветках share',
+          'workers code on balanced Gemini 4 Argon in share workspaces'
+        ),
+        carbon_auto: L(
+          'авторы правок будут работать на старшем архитекторе Gemini 4 Carbon в ветках share',
+          'workers code on flagship architect Gemini 4 Carbon in share workspaces'
+        ),
+        inherit: L(
+          'все воркеры Роя будут наследовать выбранную в селекторе модель',
+          'all Swarm workers inherit the currently selected chat model'
+        )
+      };
+      return map[tierKey] || map.hydrogen_auto;
+    }
 
     function renderSwarmTelemetry(sw, s) {
       const dotEl = document.getElementById('swarmStatusDot');
@@ -52,24 +73,24 @@
       const tierKey = activeSub === 'pro' && rawTierKey === 'carbon_auto'
         ? 'neon_auto'
         : (activeSub === 'pro' && rawTierKey === 'argon_auto' ? 'hydrogen_auto' : rawTierKey);
-      const tierHint = SWARM_TIER_HINTS[tierKey] || SWARM_TIER_HINTS.hydrogen_auto;
+      const tierHint = getSwarmTierHint(tierKey);
       const isSwarmActive = Boolean(sw && sw.active && sw.totalSpawned > 0);
 
       if (isSwarmActive) {
         dotEl.className = 'swarm-dot active';
-        const titlePart = sw.title ? ('«' + sw.title + '»') : 'Активный Рой';
-        headEl.textContent = '🐝 ' + titlePart + ' · В строю: ' + sw.activeWorkers + ' из ' + sw.totalSpawned;
+        const titlePart = sw.title ? (L('«', '"') + sw.title + L('»', '"')) : L('Активный Рой', 'Active Swarm');
+        headEl.textContent = '🐝 ' + titlePart + L(' · В строю: ', ' · Active: ') + sw.activeWorkers + L(' из ', ' of ') + sw.totalSpawned;
         badgeEl.className = 'swarm-pill';
         const neonPart = (sw.neonWorkers > 0) ? (' · Neon: ' + sw.neonWorkers) : '';
-        badgeEl.textContent = 'Hydrogen: ' + (sw.hydrogenWorkers || 0) + neonPart + ' · Проверок: ' + (sw.verifiers || 0);
+        badgeEl.textContent = 'Hydrogen: ' + (sw.hydrogenWorkers || 0) + neonPart + L(' · Проверок: ', ' · Verifiers: ') + (sw.verifiers || 0);
 
         const extras = [];
-        extras.push('Авторов: ' + (sw.authors || 0));
-        if (sw.verifiers > 0) extras.push('Ревизоров: ' + sw.verifiers);
-        if (sw.supportWorkers > 0) extras.push('Монитор/Обзор: ' + sw.supportWorkers);
-        if (sw.channelsCount > 0) extras.push('Каналов: #' + sw.channelsCount);
-        if (sw.modelSwitches > 0) extras.push('Смен модели (квота): ' + sw.modelSwitches);
-        if (sw.boardPosts > 0) extras.push('Сообщений на доске: ' + sw.boardPosts);
+        extras.push(L('Авторов: ', 'Authors: ') + (sw.authors || 0));
+        if (sw.verifiers > 0) extras.push(L('Ревизоров: ', 'Verifiers: ') + sw.verifiers);
+        if (sw.supportWorkers > 0) extras.push(L('Монитор/Обзор: ', 'Monitor/Overview: ') + sw.supportWorkers);
+        if (sw.channelsCount > 0) extras.push(L('Каналов: #', 'Channels: #') + sw.channelsCount);
+        if (sw.modelSwitches > 0) extras.push(L('Смен модели (квота): ', 'Model switches (quota): ') + sw.modelSwitches);
+        if (sw.boardPosts > 0) extras.push(L('Сообщений на доске: ', 'Board posts: ') + sw.boardPosts);
         detailsEl.textContent = extras.join(' · ');
 
         const aliveMembers = Array.isArray(sw.members) ? sw.members.filter((m) => m && m.alive) : [];
@@ -78,7 +99,7 @@
           chipsBar.innerHTML = aliveMembers.slice(0, 10).map((m) => {
             const cls = m.role === 'verifier' ? 'swarm-chip verifier' : (m.isHydrogen ? 'swarm-chip hydrogen' : (m.isNeon ? 'swarm-chip neon' : 'swarm-chip'));
             const wsBadge = m.workspace === 'share' ? ' [share]' : '';
-            return '<span class="' + cls + '" title="Модель: ' + escapeHtml(m.model || 'inherit') + '">@' + escapeHtml(m.name) + wsBadge + '</span>';
+            return '<span class="' + cls + '" title="' + L('Модель: ', 'Model: ') + escapeHtml(m.model || 'inherit') + '">@' + escapeHtml(m.name) + wsBadge + '</span>';
           }).join('');
         } else {
           chipsBar.style.display = 'none';
@@ -87,30 +108,39 @@
       } else {
         dotEl.className = 'swarm-dot';
         badgeEl.className = 'swarm-pill idle';
-        badgeEl.textContent = SWARM_MODE_LABELS[modeKey] || 'Авто XL';
+        badgeEl.textContent = getSwarmModeLabel(modeKey);
         chipsBar.style.display = 'none';
         chipsBar.innerHTML = '';
 
         if (modeKey === 'off') {
-          headEl.textContent = 'Командный Рой отключён';
-          detailsEl.textContent = 'Все задачи выполняются одиночной моделью или штатным Оркестратором без подъёма доски Роя';
+          headEl.textContent = L('Командный Рой отключён', 'Agent Swarm disabled');
+          detailsEl.textContent = L(
+            'Все задачи выполняются одиночной моделью или штатным Оркестратором без подъёма доски Роя',
+            'All tasks run on a single model or native Orchestrator without spawning a Swarm board'
+          );
         } else if (modeKey === 'manual_only') {
-          headEl.textContent = 'Дежурный режим · Запуск только вручную (/swarm)';
-          detailsEl.textContent = 'Защита фоновых воркеров от зависаний и страховка квот включатся сразу после команды /swarm';
+          headEl.textContent = L('Дежурный режим · Запуск только вручную (/swarm)', 'Standby mode · Manual trigger only (/swarm)');
+          detailsEl.textContent = L(
+            'Защита фоновых воркеров от зависаний и страховка квот включатся сразу после команды /swarm',
+            'Worker stall monitor and quota failover activate as soon as you type /swarm'
+          );
         } else if (modeKey === 'always_ask') {
-          headEl.textContent = 'Режим с подтверждением на задачах L и XL';
-          detailsEl.textContent = 'Агент предложит подключить Рой перед стартом: ' + tierHint;
+          headEl.textContent = L('Режим с подтверждением на задачах L и XL', 'Ask before spawning on L and XL tasks');
+          detailsEl.textContent = L('Агент предложит подключить Рой перед стартом: ', 'Agent will suggest enabling Swarm before starting: ') + tierHint;
         } else if (modeKey === 'auto_all') {
-          headEl.textContent = 'Максимальный Рой: подключается на многомодульных задачах';
-          detailsEl.textContent = 'Координатор планирует, а ' + tierHint;
+          headEl.textContent = L('Максимальный Рой: подключается на многомодульных задачах', 'Max Swarm: enabled on multi-module tasks');
+          detailsEl.textContent = L('Координатор планирует, а ', 'Coordinator plans while ') + tierHint;
         } else if (modeKey === 'aggressive_l') {
-          headEl.textContent = 'Готов к запуску на многофайловых задачах (L и XL)';
-          detailsEl.textContent = 'Координатор планирует на вашей модели, а ' + tierHint;
+          headEl.textContent = L('Готов к запуску на многофайловых задачах (L и XL)', 'Ready for multi-file tasks (L and XL)');
+          detailsEl.textContent = L('Координатор планирует на вашей модели, а ', 'Coordinator plans on your chat model while ') + tierHint;
         } else {
-          headEl.textContent = 'Адаптивный режим: бережёт квоту на S/M/L, включает Рой на XL';
+          headEl.textContent = L('Адаптивный режим: бережёт квоту на S/M/L, включает Рой на XL', 'Adaptive mode: saves quota on S/M/L, enables Swarm on XL');
           detailsEl.textContent = tierKey === 'hydrogen_auto'
-            ? 'На обычных задачах работает быстрый контур · На крупных XL (4+ модулей) поднимется экономный Hydrogen-Рой + Ревизор'
-            : 'На крупных XL (4+ модулей) поднимется Рой: ' + tierHint;
+            ? L(
+                'На обычных задачах работает быстрый контур · На крупных XL (4+ модулей) поднимется экономный Hydrogen-Рой + Ревизор',
+                'Fast single-agent loop for standard tasks · On XL (4+ modules), spawns economical Hydrogen Swarm + Verifier'
+              )
+            : (L('На крупных XL (4+ модулей) поднимется Рой: ', 'On large XL (4+ modules) Swarm spawns: ') + tierHint);
         }
       }
     }
@@ -126,10 +156,10 @@
       const rc = (_lastTelemetrySnapshot && _lastTelemetrySnapshot.ramCalls) || {};
       const slicesCnt = Math.max(Number(rc.slices || 0), Number((ramCache && ramCache.slices) || 0));
       const searchesCnt = Math.max(Number(rc.searches || 0), Number((ramCache && ramCache.searches) || 0));
-      ramSavedEl.textContent = '~' + formatK(savedRamTok) + ' ток.';
+      ramSavedEl.textContent = '~' + formatK(savedRamTok) + L(' ток.', ' tok');
       ramSavedEl.title =
-        'Экономия памяти In-RAM: ~' + formatExactInt(savedRamTok) + ' ток. ' +
-        '(срезов кода: ' + formatExactInt(slicesCnt) + ' · поисков в ОЗУ: ' + formatExactInt(searchesCnt) + ')';
+        L('Экономия памяти In-RAM: ~', 'In-RAM cache savings: ~') + formatExactInt(savedRamTok) + L(' ток. ', ' tok ') +
+        L('(срезов кода: ', '(code slices: ') + formatExactInt(slicesCnt) + L(' · поисков в ОЗУ: ', ' · RAM searches: ') + formatExactInt(searchesCnt) + ')';
     }
 
     function updateHeaderSessionPill(t) {
@@ -137,8 +167,13 @@
       const chatsCount = Number(t.totalChats || 0);
       const convoEl = document.getElementById('convoShortId');
       if (convoEl) {
-        convoEl.textContent = chatsCount > 0 ? ('Все чаты (' + chatsCount + ')') : 'Все чаты · Автопилот';
-        convoEl.title = 'Сводная статистика собирается по всем открытым и завершённым диалогам без путаницы между параллельными чатами';
+        convoEl.textContent = chatsCount > 0
+          ? L('Все чаты (' + chatsCount + ')', 'All Chats (' + chatsCount + ')')
+          : L('Все чаты · Автопилот', 'All Chats · Autopilot');
+        convoEl.title = L(
+          'Сводная статистика собирается по всем открытым и завершённым диалогам без путаницы между параллельными чатами',
+          'Aggregated telemetry across all active and past chats without mixing parallel conversations'
+        );
       }
     }
 
@@ -149,7 +184,7 @@
         const hitRate = Number(bk.cacheHitRate ?? t.cacheHitRate ?? 0);
         const cacheHitBadgeEl = document.getElementById('metricCacheHitBadge');
         if (cacheHitBadgeEl) {
-          cacheHitBadgeEl.textContent = 'Кэш: ' + hitRate + '%';
+          cacheHitBadgeEl.textContent = L('Кэш: ', 'Cache: ') + hitRate + '%';
           cacheHitBadgeEl.className = 'swarm-pill ' + (hitRate >= 50 ? 'active' : 'idle');
         }
       }
@@ -161,10 +196,10 @@
         if (isSwarmActive) {
           badgeEl.className = 'swarm-pill';
           const neonPart = (sw.neonWorkers > 0) ? (' · Neon: ' + sw.neonWorkers) : '';
-          badgeEl.textContent = 'Hydrogen: ' + (sw.hydrogenWorkers || 0) + neonPart + ' · Проверок: ' + (sw.verifiers || 0);
+          badgeEl.textContent = 'Hydrogen: ' + (sw.hydrogenWorkers || 0) + neonPart + L(' · Проверок: ', ' · Verifiers: ') + (sw.verifiers || 0);
         } else {
           badgeEl.className = 'swarm-pill idle';
-          badgeEl.textContent = SWARM_MODE_LABELS[modeKey] || 'Авто XL';
+          badgeEl.textContent = getSwarmModeLabel(modeKey);
         }
       }
     }
@@ -182,17 +217,17 @@
       const gpuSaved = Number(bk.gpu ?? t.gpuSavedTokens ?? 0);
       const hitRate = Number(bk.cacheHitRate ?? t.cacheHitRate ?? 0);
       if (savedTotalEl) {
-        savedTotalEl.textContent = '~' + formatK(t.totalSavedTokens || 0) + ' ток.';
+        savedTotalEl.textContent = '~' + formatK(t.totalSavedTokens || 0) + L(' ток.', ' tok');
         savedTotalEl.title =
-          'Сэкономлено всего: ~' + formatExactInt(t.totalSavedTokens || 0) + ' ток. ' +
-          '(кэш промптов ~' + formatExactInt(cacheSaved) +
+          L('Сэкономлено всего: ~', 'Total saved: ~') + formatExactInt(t.totalSavedTokens || 0) + L(' ток. ', ' tok ') +
+          L('(кэш промптов ~', '(prompt cache ~') + formatExactInt(cacheSaved) +
           ' + RAM ~' + formatExactInt(ramSaved) +
           ' + CPU ~' + formatExactInt(cpuSaved) +
-          ' + GPU ~' + formatExactInt(gpuSaved) + ' ток.)';
+          ' + GPU ~' + formatExactInt(gpuSaved) + L(' ток.)', ' tok)');
       }
       const cacheHitBadgeEl = document.getElementById('metricCacheHitBadge');
       if (cacheHitBadgeEl) {
-        cacheHitBadgeEl.textContent = 'Кэш: ' + hitRate + '%';
+        cacheHitBadgeEl.textContent = L('Кэш: ', 'Cache: ') + hitRate + '%';
         cacheHitBadgeEl.className = 'swarm-pill ' + (hitRate >= 50 ? 'active' : 'idle');
       }
       const setBkCell = (id, val) => {
@@ -209,11 +244,13 @@
         if (ac && ac.steps > 0) {
           const acSaved = Number(ac.cacheSavedTokens || 0) + Number(ac.ramSavedTokens || 0);
           summaryEl.textContent =
-            'Текущий чат: ~' + formatExactInt(acSaved) +
-            ' ток. сэкономлено (контекст ' + formatK(ac.lastContextTokens || 0) + ')';
+            L('Текущий чат: ~', 'Current chat: ~') + formatExactInt(acSaved) +
+            L(' ток. сэкономлено (контекст ', ' tok saved (context ') + formatK(ac.lastContextTokens || 0) + ')';
         } else {
-          summaryEl.textContent =
-            'Текущий чат: ожидание первого хода · Авто-перенос контекста в новый чат включён';
+          summaryEl.textContent = L(
+            'Текущий чат: ожидание первого хода · Авто-перенос контекста в новый чат включён',
+            'Current chat: awaiting first turn · Auto-handoff to new chats is active'
+          );
         }
       }
 
@@ -241,16 +278,16 @@
       if (createBtn) {
         createBtn.disabled = !wtEnabled;
         createBtn.title = wtEnabled
-          ? 'Создать изолированную копию репозитория git worktree'
-          : 'Включите «Изолированная Git-песочница» в экспертных параметрах';
+          ? L('Создать изолированную копию репозитория git worktree', 'Create an isolated git worktree sandbox')
+          : L('Включите «Изолированная Git-песочница» в экспертных параметрах', 'Enable "Isolated Git Sandbox" in Expert Settings');
       }
       if (!box) return;
       if (!wtEnabled) {
-        box.innerHTML = '<span>Git-песочница отключена в экспертных параметрах</span>';
+        box.innerHTML = '<span>' + L('Git-песочница отключена в экспертных параметрах', 'Git sandbox is disabled in Expert Settings') + '</span>';
         return;
       }
       if (!_latestWorktreesList || _latestWorktreesList.length === 0) {
-        box.innerHTML = '<span>Изолированных песочниц не создано</span>';
+        box.innerHTML = '<span>' + L('Изолированных песочниц не создано', 'No isolated sandboxes created') + '</span>';
         return;
       }
       let html = '';
@@ -264,8 +301,8 @@
               '<div class="checkpoint-meta">' + escapeHtml(wtId) + ' · ' + escapeHtml((wt.baseHead || '').slice(0, 7)) + '</div>' +
             '</div>' +
             '<div style="display: flex; gap: 3px; flex-shrink: 0;">' +
-              '<button type="button" class="win-btn" style="padding: 1px 5px; font-size: 10px;" data-action="worktreeAction" data-mode="promote" data-id="' + escapeHtml(wtId) + '" title="Перенести проверенные правки в проект (с бэкапом)">✓ Применить</button>' +
-              '<button type="button" class="win-btn" style="padding: 1px 5px; font-size: 10px;" data-action="worktreeAction" data-mode="discard" data-id="' + escapeHtml(wtId) + '" title="Удалить изолированную песочницу без изменений в проекте">✕</button>' +
+              '<button type="button" class="win-btn" style="padding: 1px 5px; font-size: 10px;" data-action="worktreeAction" data-mode="promote" data-id="' + escapeHtml(wtId) + '" title="' + L('Перенести проверенные правки в проект (с бэкапом)', 'Promote verified edits to workspace (with backup)') + '">' + L('✓ Применить', '✓ Apply') + '</button>' +
+              '<button type="button" class="win-btn" style="padding: 1px 5px; font-size: 10px;" data-action="worktreeAction" data-mode="discard" data-id="' + escapeHtml(wtId) + '" title="' + L('Удалить изолированную песочницу без изменений в проекте', 'Discard isolated sandbox without changing workspace') + '">✕</button>' +
             '</div>' +
           '</div>';
       }
@@ -286,6 +323,7 @@
       if (!container) return;
 
       const showProjTag = _selectedWorkspaceMode === '__all__';
+      const localeTag = isRu() ? 'ru-RU' : 'en-US';
 
       if (_checkpointsViewMode === 'turns' && _latestTurnCheckpointsList.length > 0) {
         let html = '';
@@ -294,26 +332,26 @@
           const tId = t.turnId || ('turn_' + i);
           const tWs = t.workspaceRoot || '';
           const tProj = t.projectName || getWorkspaceBasename(tWs);
-          const title = t.turnLabel || (Array.isArray(t.files) && t.files[0]) || 'Правки хода';
-          const time = t.timestamp ? new Date(t.timestamp).toLocaleTimeString() : 'недавно';
+          const title = pickText(t, 'turnLabel', 'turnLabelEn', '') || (Array.isArray(t.files) && t.files[0]) || L('Правки хода', 'Turn edits');
+          const time = t.timestamp ? new Date(t.timestamp).toLocaleTimeString(localeTag) : L('недавно', 'recently');
           const filesHint = (Array.isArray(t.files) ? t.files.slice(0, 3).join(', ') : '') + (t.filesCount > 3 ? (' +' + (t.filesCount - 3)) : '');
           const diffExtra = (_activeTurnDiffPreview && _activeTurnDiffPreview.turnId === tId)
-            ? (' · +' + (_activeTurnDiffPreview.totalAdded || 0) + '/-' + (_activeTurnDiffPreview.totalRemoved || 0) + ' стр.')
+            ? (' · +' + (_activeTurnDiffPreview.totalAdded || 0) + '/-' + (_activeTurnDiffPreview.totalRemoved || 0) + L(' стр.', ' lines'))
             : '';
           const projBadge = (showProjTag && tProj)
-            ? ('<button type="button" class="cp-project-badge" data-action="selectPanelWorkspaceChip" data-ws="' + escapeHtml(tWs) + '" title="Переключиться на проект ' + escapeHtml(tWs || tProj) + '">📁 ' + escapeHtml(tProj) + '</button>')
+            ? ('<button type="button" class="cp-project-badge" data-action="selectPanelWorkspaceChip" data-ws="' + escapeHtml(tWs) + '" title="' + L('Переключиться на проект ', 'Switch to project ') + escapeHtml(tWs || tProj) + '">📁 ' + escapeHtml(tProj) + '</button>')
             : '';
           const btnHtml = t.allRestored
-            ? '<span style="font-size: 10px; color: var(--accent-cyan); flex-shrink: 0;">✓ Восст. хода</span>'
+            ? '<span style="font-size: 10px; color: var(--accent-cyan); flex-shrink: 0;">' + L('✓ Восст. хода', '✓ Turn restored') + '</span>'
             : '<div style="display: flex; gap: 3px; flex-shrink: 0;">' +
-                '<button type="button" class="win-btn" style="padding: 1px 5px; font-size: 10px;" data-action="showTurnDiff" data-id="' + escapeHtml(tId) + '" data-ws="' + escapeHtml(tWs) + '" title="Показать статистику изменений за ход">Diff</button>' +
-                '<button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px;" data-action="rollbackTurnById" data-id="' + escapeHtml(tId) + '" data-ws="' + escapeHtml(tWs) + '">↶ Ход</button>' +
+                '<button type="button" class="win-btn" style="padding: 1px 5px; font-size: 10px;" data-action="showTurnDiff" data-id="' + escapeHtml(tId) + '" data-ws="' + escapeHtml(tWs) + '" title="' + L('Показать статистику изменений за ход', 'Show diff summary for this turn') + '">Diff</button>' +
+                '<button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px;" data-action="rollbackTurnById" data-id="' + escapeHtml(tId) + '" data-ws="' + escapeHtml(tWs) + '">' + L('↶ Ход', '↶ Turn') + '</button>' +
               '</div>';
           html +=
             '<div class="checkpoint-item">' +
               '<div class="checkpoint-info">' +
                 '<div class="checkpoint-file" title="' + escapeHtml(filesHint) + '">' + escapeHtml(title) + '</div>' +
-                '<div class="checkpoint-meta">' + projBadge + escapeHtml(time) + ' · ' + escapeHtml(String(t.filesCount || 0)) + ' ф. (' + escapeHtml(filesHint || '—') + ')' + escapeHtml(diffExtra) + '</div>' +
+                '<div class="checkpoint-meta">' + projBadge + escapeHtml(time) + ' · ' + escapeHtml(String(t.filesCount || 0)) + L(' ф. (', ' f. (') + escapeHtml(filesHint || '—') + ')' + escapeHtml(diffExtra) + '</div>' +
               '</div>' +
               btnHtml +
             '</div>';
@@ -324,7 +362,7 @@
 
       const list = _latestCheckpointsList;
       if (!list || !list.length) {
-        container.innerHTML = '<div style="color: var(--text-sub); font-size: 11px; padding: 4px;">Снимки файлов для выбранного проекта не найдены</div>';
+        container.innerHTML = '<div style="color: var(--text-sub); font-size: 11px; padding: 4px;">' + L('Снимки файлов для выбранного проекта не найдены', 'No file snapshots found for the selected project') + '</div>';
         return;
       }
       let html = '';
@@ -333,17 +371,18 @@
         const cpId = cp.id || cp.checkpointId || ('cp_' + i);
         const cpWs = cp.workspaceRoot || '';
         const cpProj = cp.projectName || getWorkspaceBasename(cpWs);
-        const file = cp.fileName || cp.file || cp.filePath || 'Файл';
+        const file = cp.fileName || cp.file || cp.filePath || L('Файл', 'File');
         const fullPath = cp.filePath || file;
-        const time = cp.time || (cp.timestamp ? new Date(cp.timestamp).toLocaleTimeString() : 'недавно');
+        const time = cp.time || (cp.timestamp ? new Date(cp.timestamp).toLocaleTimeString(localeTag) : L('недавно', 'recently'));
         const isRestored = !!cp.restored;
-        const status = isRestored ? 'откачен ✓' : (cp.status || 'сохранён');
+        const rawStatus = cp.status === 'сохранён' ? L('сохранён', 'saved') : cp.status;
+        const status = isRestored ? L('откачен ✓', 'rolled back ✓') : (rawStatus || L('сохранён', 'saved'));
         const projBadge = (showProjTag && cpProj)
-          ? ('<button type="button" class="cp-project-badge" data-action="selectPanelWorkspaceChip" data-ws="' + escapeHtml(cpWs) + '" title="Переключиться на проект ' + escapeHtml(cpWs || cpProj) + '">📁 ' + escapeHtml(cpProj) + '</button>')
+          ? ('<button type="button" class="cp-project-badge" data-action="selectPanelWorkspaceChip" data-ws="' + escapeHtml(cpWs) + '" title="' + L('Переключиться на проект ', 'Switch to project ') + escapeHtml(cpWs || cpProj) + '">📁 ' + escapeHtml(cpProj) + '</button>')
           : '';
         const btnHtml = isRestored
-          ? '<span style="font-size: 10px; color: var(--accent-cyan); flex-shrink: 0;">✓ Восст.</span>'
-          : '<button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px; flex-shrink: 0;" data-action="rollbackSpecific" data-id="' + escapeHtml(cpId) + '" data-ws="' + escapeHtml(cpWs) + '">Откат</button>';
+          ? '<span style="font-size: 10px; color: var(--accent-cyan); flex-shrink: 0;">' + L('✓ Восст.', '✓ Restored') + '</span>'
+          : '<button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px; flex-shrink: 0;" data-action="rollbackSpecific" data-id="' + escapeHtml(cpId) + '" data-ws="' + escapeHtml(cpWs) + '">' + L('Откат', 'Rollback') + '</button>';
         html +=
           '<div class="checkpoint-item">' +
             '<div class="checkpoint-info">' +
@@ -373,7 +412,7 @@
       const emptyEl = document.getElementById('skillsFilterEmptyMsg');
       if (emptyEl) {
         if (visibleCount === 0 && currentSkillQuery) {
-          emptyEl.textContent = 'Ничего не найдено по запросу «' + currentSkillQuery + '»';
+          emptyEl.textContent = L('Ничего не найдено по запросу «', 'No matches found for "') + currentSkillQuery + L('»', '"');
           emptyEl.hidden = false;
         } else {
           emptyEl.hidden = true;
@@ -388,24 +427,25 @@
       if (!container) return;
 
       let offCount = 0;
-      const sigParts = [];
+      const sigParts = [getUiLanguage()];
       for (let i = 0; i < discoveredSkills.length; i++) {
         const sk = discoveredSkills[i];
         if (modes[sk.id] === 'off') offCount++;
-        const humanTitle = sk.title || sk.id;
-        sigParts.push(String(sk.id || '') + '\x1f' + String(humanTitle) + '\x1f' + String(sk.hint || ''));
+        const humanTitle = pickText(sk, 'title', 'titleEn', sk.id);
+        const humanHint = pickText(sk, 'hint', 'hintEn', '');
+        sigParts.push(String(sk.id || '') + '\x1f' + String(humanTitle) + '\x1f' + String(humanHint));
       }
 
       const summaryLabel = document.getElementById('skillsSummaryLabel');
       if (summaryLabel) {
         summaryLabel.textContent = offCount > 0
-          ? ('Авто: ' + (discoveredSkills.length - offCount) + ', Выкл: ' + offCount)
-          : ('Все ' + discoveredSkills.length + ' в умном Авто-режиме');
+          ? (L('Авто: ', 'Auto: ') + (discoveredSkills.length - offCount) + L(', Выкл: ', ', Off: ') + offCount)
+          : (L('Все ', 'All ') + discoveredSkills.length + L(' в умном Авто-режиме', ' in Smart Auto mode'));
       }
 
       if (!discoveredSkills.length) {
         _lastSkillsDomSig = '';
-        container.innerHTML = '<div style="color: var(--text-sub); font-size: 11px; padding: 4px;">Все возможности управляются ИИ-автопилотом</div>';
+        container.innerHTML = '<div style="color: var(--text-sub); font-size: 11px; padding: 4px;">' + L('Все возможности управляются ИИ-автопилотом', 'All capabilities are managed by AI Autopilot') + '</div>';
         return;
       }
 
@@ -431,8 +471,9 @@
       for (let i = 0; i < discoveredSkills.length; i++) {
         const sk = discoveredSkills[i];
         const mode = modes[sk.id] === 'off' ? 'off' : 'auto';
-        const humanTitle = sk.title || sk.id;
-        const searchHay = (String(humanTitle) + ' ' + String(sk.id || '') + ' ' + String(sk.hint || '')).toLowerCase();
+        const humanTitle = pickText(sk, 'title', 'titleEn', sk.id);
+        const humanHint = pickText(sk, 'hint', 'hintEn', '');
+        const searchHay = (String(humanTitle) + ' ' + String(sk.title || '') + ' ' + String(sk.titleEn || '') + ' ' + String(sk.id || '') + ' ' + String(humanHint)).toLowerCase();
 
         rowsHtml +=
           '<div class="skill-item" data-skill-id="' + escapeHtml(sk.id) + '" data-search="' + escapeHtml(searchHay) + '">' +
@@ -441,11 +482,11 @@
                 '<span>' + escapeHtml(humanTitle) + '</span>' +
                 '<span class="skill-id-tag">' + escapeHtml(sk.id) + '</span>' +
               '</div>' +
-              '<div class="skill-hint">' + escapeHtml(sk.hint) + '</div>' +
+              '<div class="skill-hint">' + escapeHtml(humanHint) + '</div>' +
             '</div>' +
             '<div class="skill-mode-group">' +
-              '<button type="button" class="skill-btn' + (mode === 'auto' ? ' active-auto' : '') + '" data-action="setSkillMode" data-skill="' + escapeHtml(sk.id) + '" data-mode="auto" title="ИИ сам включает этот навык только тогда, когда вы просите подходящую задачу">Авто (ИИ сам)</button>' +
-              '<button type="button" class="skill-btn' + (mode === 'off' ? ' active-off' : '') + '" data-action="setSkillMode" data-skill="' + escapeHtml(sk.id) + '" data-mode="off" title="Временно запретить использование этого навыка">Выкл</button>' +
+              '<button type="button" class="skill-btn' + (mode === 'auto' ? ' active-auto' : '') + '" data-action="setSkillMode" data-skill="' + escapeHtml(sk.id) + '" data-mode="auto" title="' + L('ИИ сам включает этот навык только тогда, когда вы просите подходящую задачу', 'AI activates this skill automatically only when your task matches') + '">' + L('Авто (ИИ сам)', 'Auto (AI)') + '</button>' +
+              '<button type="button" class="skill-btn' + (mode === 'off' ? ' active-off' : '') + '" data-action="setSkillMode" data-skill="' + escapeHtml(sk.id) + '" data-mode="off" title="' + L('Временно запретить использование этого навыка', 'Temporarily disable this skill') + '">' + L('Выкл', 'Off') + '</button>' +
             '</div>' +
           '</div>';
       }
@@ -463,23 +504,23 @@
 
       const st = (cb && cb.status) ? String(cb.status).toUpperCase() : 'CLOSED';
       const count = Number(cb && cb.repeatCount !== undefined ? cb.repeatCount : 0);
-      const reason = (cb && cb.reason) ? String(cb.reason) : '';
+      const reason = pickText(cb, 'reason', 'reasonEn', '');
 
       if (st === 'TRIPPED') {
         dot.className = 'circuit-dot tripped';
-        badge.textContent = 'БЛОКИРОВКА ЦИКЛА (' + (count || 3) + '/3)';
+        badge.textContent = L('БЛОКИРОВКА ЦИКЛА (', 'LOOP TRIPPED (') + (count || 3) + '/3)';
         badge.style.color = 'var(--status-err)';
-        reasonEl.textContent = reason || 'Автомат сработал: обнаружено 3-кратное зацикливание правок!';
+        reasonEl.textContent = reason || L('Автомат сработал: обнаружено 3-кратное зацикливание правок!', 'Circuit tripped: 3 consecutive edit loops detected!');
       } else if (st === 'WARNING') {
         dot.className = 'circuit-dot warning';
-        badge.textContent = 'ВНИМАНИЕ (' + count + '/3)';
+        badge.textContent = L('ВНИМАНИЕ (', 'WARNING (') + count + '/3)';
         badge.style.color = 'var(--status-warn)';
-        reasonEl.textContent = reason || 'Повторяющиеся ошибки в шагах: риск срабатывания стоп-крана.';
+        reasonEl.textContent = reason || L('Повторяющиеся ошибки в шагах: риск срабатывания стоп-крана.', 'Repeated step errors: risk of tripping circuit breaker.');
       } else {
         dot.className = 'circuit-dot closed';
-        badge.textContent = 'НОРМА (' + count + '/3)';
+        badge.textContent = L('НОРМА (', 'OK (') + count + '/3)';
         badge.style.color = 'var(--status-ok)';
-        reasonEl.textContent = reason || 'Автомат замкнут. Защита от зацикливания правок активна.';
+        reasonEl.textContent = reason || L('Автомат замкнут. Защита от зацикливания правок активна.', 'Circuit closed. Edit-loop protection is active.');
       }
     }
 
@@ -493,9 +534,9 @@
       const fallbackThresh = (currentState && Number(currentState.compactionTokenThreshold)) || 120000;
       const threshK = formatK(comp && comp.thresholdTokens ? comp.thresholdTokens : fallbackThresh);
       const totalTok = Number(comp && comp.lastPromptTokens ? comp.lastPromptTokens : 0);
-      const totalSuffix = epoch > 0 && totalTok > 0 ? ' (всего ' + formatK(totalTok) + ')' : '';
+      const totalSuffix = epoch > 0 && totalTok > 0 ? (L(' (всего ', ' (total ') + formatK(totalTok) + ')') : '';
 
-      label.textContent = 'Эпоха #' + epoch + ' · ' + fill + '% от ' + threshK + totalSuffix;
+      label.textContent = L('Эпоха #', 'Epoch #') + epoch + ' · ' + fill + L('% от ', '% of ') + threshK + totalSuffix;
       bar.style.width = fill + '%';
     }
 
@@ -512,7 +553,7 @@
       if (!container) return;
 
       if (!pitfalls || !Array.isArray(pitfalls) || pitfalls.length === 0) {
-        container.innerHTML = '<div style="color: var(--text-sub); font-size: 10.5px; padding: 2px;">Пока нет зафиксированных сбоев/откатов</div>';
+        container.innerHTML = '<div style="color: var(--text-sub); font-size: 10.5px; padding: 2px;">' + L('Пока нет зафиксированных сбоев/откатов', 'No recorded failures or rollbacks yet') + '</div>';
         return;
       }
 
@@ -555,29 +596,33 @@
       const curStats = _latestKnowledgeStats;
       if (badge) {
         if (!sqlEnabled) {
-          badge.textContent = 'Откл.';
+          badge.textContent = L('Откл.', 'Off');
         } else {
           const astCnt = curStats && Number(curStats.astCachedFilesCount || 0);
-          badge.textContent = rList.length + ' рец.' + (astCnt > 0 ? ' · AST:' + astCnt : '');
+          badge.textContent = rList.length + L(' рец.', ' rec.') + (astCnt > 0 ? ' · AST:' + astCnt : '');
         }
       }
       if (extStatsEl) {
         if (!sqlEnabled) {
-          extStatsEl.textContent = 'NVMe-память отключена';
+          extStatsEl.textContent = L('NVMe-память отключена', 'NVMe memory disabled');
         } else {
           const stObj = curStats && typeof curStats === 'object' ? curStats : {};
           const epCnt = Number(stObj.sessionEpisodesCount || 0);
           const ccrCnt = Number(stObj.ccrBlobsCount || 0);
           const repCnt = Number(stObj.repairBucketsCount || 0);
           const instCnt = Number(stObj.instinctsCount || 0);
-          extStatsEl.textContent = 'Эпизоды: ' + epCnt + ' · CCR-блобы: ' + ccrCnt + ' · RepairKV: ' + repCnt + ' · Инстинкты: ' + instCnt;
+          extStatsEl.textContent =
+            L('Эпизоды: ', 'Episodes: ') + epCnt +
+            L(' · CCR-блобы: ', ' · CCR blobs: ') + ccrCnt +
+            ' · RepairKV: ' + repCnt +
+            L(' · Инстинкты: ', ' · Instincts: ') + instCnt;
         }
       }
       if (recBox) {
         if (!sqlEnabled) {
-          recBox.innerHTML = '<div style="color: var(--text-sub); font-size: 10.5px; padding: 2px;">NVMe-память (SQLite) отключена в настройках</div>';
+          recBox.innerHTML = '<div style="color: var(--text-sub); font-size: 10.5px; padding: 2px;">' + L('NVMe-память (SQLite) отключена в настройках', 'NVMe memory (SQLite) is disabled in settings') + '</div>';
         } else if (rList.length === 0) {
-          recBox.innerHTML = '<div style="color: var(--text-sub); font-size: 10.5px; padding: 2px;">Рецепты записываются автоматически при починке тестов</div>';
+          recBox.innerHTML = '<div style="color: var(--text-sub); font-size: 10.5px; padding: 2px;">' + L('Рецепты записываются автоматически при починке тестов', 'Win recipes are recorded automatically when failing tests pass') + '</div>';
         } else {
           recBox.innerHTML = rList.slice(0, 8).map(function (r) {
             const label = (r.errorExcerpt ? r.errorExcerpt + ' → ' : '') + (r.fixSummary || '');
@@ -587,9 +632,9 @@
       }
       if (peerBox) {
         if (!sqlEnabled) {
-          peerBox.innerHTML = '<span>Кросс-репо поиск приостановлен</span>';
+          peerBox.innerHTML = '<span>' + L('Кросс-репо поиск приостановлен', 'Cross-repo search paused') + '</span>';
         } else if (pList.length === 0) {
-          peerBox.innerHTML = '<span>Связанных репозиториев нет</span>';
+          peerBox.innerHTML = '<span>' + L('Связанных репозиториев нет', 'No linked repositories') + '</span>';
         } else {
           peerBox.innerHTML = pList.map(function (p) {
             const pPath = typeof p === 'string' ? p : (p.path || '');
@@ -1216,15 +1261,8 @@
       // Смарт-баннер разговорного ИИ-пилота, профиль воркспейса и авто-запуск Мастера
       if (payload && payload.projectDetection) {
         detectedProjectInfo = payload.projectDetection;
-        const bannerTextEl = document.getElementById('smartBannerText');
-        if (bannerTextEl && detectedProjectInfo.label) {
-          bannerTextEl.innerHTML =
-            '<strong>' + L('ИИ-Пилот активен', 'AI Pilot Active') + '</strong> · ' +
-            L('Профиль воркспейса: ', 'Workspace profile: ') + '<strong>' +
-            L('«', '"') + escHtml(detectedProjectInfo.label) + L('»', '"') +
-            '</strong> · ' + L('Навыки в Авто-режиме', 'Skills in Auto mode');
-        }
       }
+      renderSmartPilotBanner(detectedProjectInfo);
       if (s.onboardingCompleted === false && !wizAutoOpenedOnce) {
         wizAutoOpenedOnce = true;
         openOnboardingWizard(1);
@@ -1343,8 +1381,10 @@
         (data.hardwareCeilings && data.hardwareCeilings.maxCpuThreads) || 0,
         bay.totalRuns || 0,
         sen.enabled === false ? 0 : 1,
+        getUiLanguage(),
         sen.state || 'idle',
         sen.currentTaskRu || '',
+        sen.currentTaskEn || '',
         sen.preemptedCount || 0,
         sen.speculativeHits || 0,
         senSg.status || 'healthy',
@@ -1375,8 +1415,21 @@
         data.activeWorkspace || '',
         data.autoWorkspace || '',
         data.projectDetection ? (data.projectDetection.label || '') : '',
+        data.projectDetection ? (data.projectDetection.labelEn || '') : '',
         Array.isArray(data.knownWorkspaces) ? data.knownWorkspaces.map(function (w) { return (w.workspaceRoot || '') + ':' + (w.checkpointsCount || 0) + ':' + (w.status || ''); }).join(',') : '',
       ].join('|');
+    }
+
+    function renderSmartPilotBanner(info) {
+      const bannerTextEl = document.getElementById('smartBannerText');
+      if (!bannerTextEl || !info) return;
+      const profileLbl = pickText(info, 'label', 'labelEn', '');
+      if (!profileLbl) return;
+      bannerTextEl.innerHTML =
+        '<strong>' + L('ИИ-Пилот активен', 'AI Pilot Active') + '</strong> · ' +
+        L('Профиль воркспейса: ', 'Workspace profile: ') + '<strong>' +
+        L('«', '"') + escHtml(profileLbl) + L('»', '"') +
+        '</strong> · ' + L('Навыки в Авто-режиме', 'Skills in Auto mode');
     }
 
     let _knownUiBuildVersion = null;
@@ -1408,13 +1461,7 @@
       }
       if (data.projectDetection) {
         detectedProjectInfo = data.projectDetection;
-        const bannerTextEl = document.getElementById('smartBannerText');
-        if (bannerTextEl && detectedProjectInfo.label) {
-          bannerTextEl.innerHTML =
-            '<strong>ИИ-Пилот активен</strong> · Профиль воркспейса: <strong>«' +
-            escHtml(detectedProjectInfo.label) +
-            '»</strong> · Навыки в Авто-режиме';
-        }
+        renderSmartPilotBanner(detectedProjectInfo);
       }
       const nextActiveWsKey = normalizeWsClientKey(data.activeWorkspace || '');
       if (
@@ -1541,7 +1588,7 @@
       if (flashStatusTimer) clearTimeout(flashStatusTimer);
       flashStatusTimer = setTimeout(() => {
         flashStatusTimer = null;
-        pill.textContent = 'Готово · Синхронизировано';
+        pill.textContent = L('Готово · Синхронизировано', 'Ready · Synced');
       }, 2500);
     }
 
@@ -1577,11 +1624,11 @@
         }
         const updated = await res.json();
         if (!updated || updated.ok === false || !updated.state) {
-          throw new Error((updated && updated.error) ? updated.error : 'Ответ сервера без state');
+          throw new Error((updated && updated.error) ? updated.error : L('Ответ сервера без state', 'Server response missing state'));
         }
         if (reqSeq === _updateStateSeq) {
           renderPayload(updated);
-          flashStatus('Сохранено в router-state.json ✓');
+          flashStatus(L('Сохранено в router-state.json ✓', 'Saved to router-state.json ✓'));
         }
         return true;
       } catch (err) {
@@ -1590,7 +1637,7 @@
           if (!skipOptimistic) {
             renderPayload(Object.assign({}, lastPayloadCache || {}, { state: prevState }));
           }
-          flashStatus('Ошибка записи: ' + (err && err.message ? err.message : 'сбой'));
+          flashStatus(L('Ошибка записи: ', 'Save error: ') + (err && err.message ? err.message : L('сбой', 'failed')));
         }
         return false;
       }
@@ -1733,15 +1780,15 @@
         const res = await panelFetch('/api/state?adaptive=1', { method: 'GET' });
         const data = await res.json();
         if (!res || !res.ok || !data || typeof data !== 'object' || data.error || data.ok === false) {
-          throw new Error((data && data.error) ? data.error : 'Ошибка ответа сервера');
+          throw new Error((data && data.error) ? data.error : L('Ошибка ответа сервера', 'Server response error'));
         }
         renderPayload(data);
         telemetryLastSig = buildTelemetrySignature(data);
         if (!silent) {
-          flashStatus('Телеметрия, ROI и скиллы обновлены ✓');
+          flashStatus(L('Телеметрия, ROI и скиллы обновлены ✓', 'Telemetry, ROI & skills updated ✓'));
         }
       } catch (e) {
-        console.error('Ошибка обновления:', e);
+        console.error('Refresh error:', e);
       } finally {
         scheduleTelemetryPoll();
       }
@@ -1749,26 +1796,26 @@
 
     async function rollbackLastCheckpoint() {
       try {
-        flashStatus('Откат последней правки...');
+        flashStatus(L('Откат последней правки...', 'Rolling back last edit...'));
         const res = await panelFetch('/api/rollback', {
           method: 'POST',
           body: JSON.stringify({ checkpointId: 'latest' }),
         });
         const result = await res.json();
         if (res && res.ok && result && result.ok !== false && !result.error) {
-          flashStatus('Откат выполнен успешно ✓');
+          flashStatus(L('Откат выполнен успешно ✓', 'Rollback completed ✓'));
           await refreshAll({ silent: true });
         } else {
-          flashStatus('Откат: ' + (result ? (result.message || result.error) : 'нет снимков'));
+          flashStatus(L('Откат: ', 'Rollback: ') + (result ? (result.message || result.error) : L('нет снимков', 'no snapshots')));
         }
       } catch (err) {
-        flashStatus('Ошибка при вызове отката!');
+        flashStatus(L('Ошибка при вызове отката!', 'Error invoking rollback!'));
       }
     }
 
     async function rollbackSpecific(cpId, wsRoot) {
       try {
-        flashStatus('Откат чекпоинта...');
+        flashStatus(L('Откат чекпоинта...', 'Rolling back snapshot...'));
         const payload = { checkpointId: cpId };
         if (wsRoot) payload.rootDir = wsRoot;
         const res = await panelFetch('/api/rollback', {
@@ -1777,13 +1824,13 @@
         });
         const result = await res.json();
         if (res && res.ok && result && result.ok !== false && !result.error) {
-          flashStatus('Снимок ' + cpId + ' восстановлен ✓');
+          flashStatus(L('Снимок ', 'Snapshot ') + cpId + L(' восстановлен ✓', ' restored ✓'));
           await refreshAll({ silent: true });
         } else {
-          flashStatus('Ошибка отката: ' + (result ? (result.message || result.error) : 'сбой'));
+          flashStatus(L('Ошибка отката: ', 'Rollback error: ') + (result ? (result.message || result.error) : L('сбой', 'failed')));
         }
       } catch (err) {
-        flashStatus('Ошибка вызова rollback!');
+        flashStatus(L('Ошибка вызова rollback!', 'Error calling rollback!'));
       }
     }
 
@@ -1794,7 +1841,7 @@
 
     async function rollbackTurnById(turnId, wsRoot) {
       try {
-        flashStatus('Откат всех правок хода...');
+        flashStatus(L('Откат всех правок хода...', 'Rolling back turn edits...'));
         const payload = { turnId: turnId || 'latest' };
         if (wsRoot) payload.rootDir = wsRoot;
         const res = await panelFetch('/api/checkpoints/rollback-turn', {
@@ -1803,14 +1850,14 @@
         });
         const result = await res.json();
         if (res && res.ok && result && result.ok !== false) {
-          flashStatus('Откат хода выполнен (' + (result.count || 0) + ' ф.) ✓');
+          flashStatus(L('Откат хода выполнен (', 'Turn rolled back (') + (result.count || 0) + L(' ф.) ✓', ' f.) ✓'));
           _activeTurnDiffPreview = null;
           await refreshAll({ silent: true });
         } else {
-          flashStatus('Откат хода: ' + (result ? (result.error || 'нет снимков') : 'сбой'));
+          flashStatus(L('Откат хода: ', 'Turn rollback: ') + (result ? (result.error || L('нет снимков', 'no snapshots')) : L('сбой', 'failed')));
         }
       } catch {
-        flashStatus('Ошибка вызова rollback-turn!');
+        flashStatus(L('Ошибка вызова rollback-turn!', 'Error calling rollback-turn!'));
       }
     }
 
@@ -1826,14 +1873,18 @@
         if (res && res.ok && data && data.ok) {
           _activeTurnDiffPreview = data;
           renderCheckpoints();
-          flashStatus('Ход: +' + (data.totalAdded || 0) + '/-' + (data.totalRemoved || 0) + ' строк (' + ((data.files && data.files.length) || 0) + ' ф.)');
+          flashStatus(L('Ход: +', 'Turn: +') + (data.totalAdded || 0) + '/-' + (data.totalRemoved || 0) + L(' строк (', ' lines (') + ((data.files && data.files.length) || 0) + L(' ф.)', ' f.)'));
         }
       } catch {}
     }
 
     async function worktreeAction(mode, id) {
       try {
-        flashStatus(mode === 'create' ? 'Создание Git-песочницы...' : mode === 'promote' ? 'Перенос правок из песочницы...' : 'Обновление Git-песочницы...');
+        flashStatus(mode === 'create'
+          ? L('Создание Git-песочницы...', 'Creating Git sandbox...')
+          : mode === 'promote'
+            ? L('Перенос правок из песочницы...', 'Applying sandbox edits...')
+            : L('Обновление Git-песочницы...', 'Updating Git sandbox...'));
         const res = await panelFetch('/api/worktree/action', {
           method: 'POST',
           body: JSON.stringify({ action: mode || 'list', id: id || '' }),
@@ -1843,32 +1894,36 @@
           renderShadowWorktrees(data.worktrees);
         }
         if (res && res.ok && data && data.ok !== false) {
-          flashStatus(mode === 'promote' ? 'Правки перенесены с чекпоинтом ✓' : mode === 'create' ? 'Git-песочница создана ✓' : 'Песочница обновлена ✓');
+          flashStatus(mode === 'promote'
+            ? L('Правки перенесены с чекпоинтом ✓', 'Edits applied with snapshot ✓')
+            : mode === 'create'
+              ? L('Git-песочница создана ✓', 'Git sandbox created ✓')
+              : L('Песочница обновлена ✓', 'Sandbox updated ✓'));
           if (mode === 'promote') await refreshAll({ silent: true });
         } else {
-          flashStatus('Worktree: ' + ((data && data.error) || 'операция не выполнена'));
+          flashStatus('Worktree: ' + ((data && data.error) || L('операция не выполнена', 'operation failed')));
         }
       } catch {
-        flashStatus('Ошибка обращения к Git-песочнице!');
+        flashStatus(L('Ошибка обращения к Git-песочнице!', 'Error accessing Git sandbox!'));
       }
     }
 
     async function resetCircuitBreaker() {
       try {
-        flashStatus('Сброс автомата Circuit Breaker...');
+        flashStatus(L('Сброс автомата Circuit Breaker...', 'Resetting Circuit Breaker...'));
         const res = await panelFetch('/api/circuit-reset', { method: 'POST' });
         const data = await res.json();
         if (!res || !res.ok || !data || data.ok === false) {
-          throw new Error((data && data.error) ? data.error : 'Сбой сброса');
+          throw new Error((data && data.error) ? data.error : L('Сбой сброса', 'Reset failed'));
         }
         if (data.circuitBreaker) {
           renderCircuitBreaker(data.circuitBreaker);
         }
-        flashStatus('Circuit Breaker сброшен в НОРМУ ✓');
+        flashStatus(L('Circuit Breaker сброшен в НОРМУ ✓', 'Circuit Breaker reset to OK ✓'));
         await refreshAll({ silent: true });
       } catch (err) {
         console.error(err);
-        flashStatus('Ошибка сброса Circuit Breaker!');
+        flashStatus(L('Ошибка сброса Circuit Breaker!', 'Error resetting Circuit Breaker!'));
       }
     }
 
@@ -1884,13 +1939,13 @@
 
       const enabled = !s || s.bayesianRouter !== false;
       if (!enabled) {
-        metaEl.textContent = 'Отключён';
-        domEl.textContent = 'Bayesian v2 приостановлен пользователем.';
+        metaEl.textContent = L('Отключён', 'Disabled');
+        domEl.textContent = L('Bayesian v2 приостановлен пользователем.', 'Bayesian v2 paused by user.');
         fragileEl.innerHTML = '';
         return;
       }
       if (!bayesian) {
-        metaEl.textContent = 'Нет данных';
+        metaEl.textContent = L('Нет данных', 'No data');
         return;
       }
 
@@ -1899,12 +1954,12 @@
       const fpPct = bayesian.overallFirstPassPercent !== undefined ? Number(bayesian.overallFirstPassPercent) : null;
       const expTurns = bayesian.overallExpectedTurns !== undefined ? Number(bayesian.overallExpectedTurns) : null;
       const codynTag = fpPct !== null && expTurns !== null
-        ? (' · 1-й проход: ' + fpPct + '% (~' + expTurns.toFixed(1) + ' итер.)')
+        ? (L(' · 1-й проход: ', ' · 1st-pass: ') + fpPct + '% (~' + expTurns.toFixed(1) + L(' итер.)', ' iter.)'))
         : '';
       const ctxTag = Number(bayesian.contextualUpdates || 0) > 0
-        ? (' · конт. модель: ' + Number(bayesian.contextualUpdates))
+        ? (L(' · конт. модель: ', ' · ctx model: ') + Number(bayesian.contextualUpdates))
         : '';
-      metaEl.textContent = 'Доверие: ' + conf + '% · Запусков: ' + runs + codynTag + ctxTag;
+      metaEl.textContent = L('Доверие: ', 'Confidence: ') + conf + L('% · Запусков: ', '% · Runs: ') + runs + codynTag + ctxTag;
 
       const domainsRaw = Array.isArray(bayesian.domains)
         ? bayesian.domains
@@ -1914,23 +1969,23 @@
         .sort((a, b) => Number(b?.runs || 0) - Number(a?.runs || 0))
         .slice(0, 6);
       domEl.textContent = topDomains.length > 0
-        ? 'Домены: ' + topDomains.map((d) => {
-            const label = d.label || d.name || d.domain || d.key || 'Общий';
-            const fpPart = (Number(d.runs || 0) > 0 && d.firstPassPercent !== undefined) ? (', 1п:' + Number(d.firstPassPercent) + '%') : '';
+        ? L('Домены: ', 'Domains: ') + topDomains.map((d) => {
+            const label = pickText(d, 'label', 'labelEn', d.name || d.domain || d.key || L('Общий', 'General'));
+            const fpPart = (Number(d.runs || 0) > 0 && d.firstPassPercent !== undefined) ? (L(', 1п:', ', 1p:') + Number(d.firstPassPercent) + '%') : '';
             return label + ' (' + (d.confidencePercent ?? 0) + '%' + fpPart + ')';
           }).join(' · ')
-        : 'Домены: базовый априорный профиль (' + conf + '%)';
+        : (L('Домены: базовый априорный профиль (', 'Domains: baseline prior profile (') + conf + '%)');
 
       const fragile = Array.isArray(bayesian.fragileFiles) ? bayesian.fragileFiles : [];
       if (fragile.length === 0) {
-        fragileEl.innerHTML = '<span style="color: var(--status-ok); font-weight:600;">✓ Хрупких файлов с повторными сбоями не зафиксировано</span>';
+        fragileEl.innerHTML = '<span style="color: var(--status-ok); font-weight:600;">' + L('✓ Хрупких файлов с повторными сбоями не зафиксировано', '✓ No fragile files with repeat failures recorded') + '</span>';
       } else {
         fragileEl.innerHTML =
-          '<div style="color: var(--status-warn); font-weight:700; margin-bottom:2px;">⚠️ Матрица хрупкости (Топ-' + fragile.length + '):</div>' +
+          '<div style="color: var(--status-warn); font-weight:700; margin-bottom:2px;">' + L('⚠️ Матрица хрупкости (Топ-', '⚠️ Fragility Matrix (Top-') + fragile.length + '):</div>' +
           fragile
             .map((f) => {
               const relColor = f.reliabilityPercent < 60 ? 'var(--status-err)' : 'var(--status-warn)';
-              const deps = f.dependentsCount > 0 ? ' · связей: ' + Number(f.dependentsCount) : '';
+              const deps = f.dependentsCount > 0 ? (L(' · связей: ', ' · deps: ') + Number(f.dependentsCount)) : '';
               return (
                 '<div style="display:flex; justify-content:space-between; gap:8px;">' +
                   '<code style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + escHtml(f.file) + '</code>' +
@@ -1944,99 +1999,99 @@
 
     async function resetWorkspaceFragility() {
       try {
-        flashStatus('Сброс хрупкости файлов выбранного проекта...');
+        flashStatus(L('Сброс хрупкости файлов выбранного проекта...', 'Resetting workspace file fragility...'));
         const res = await panelFetch('/api/bayesian-reset', {
           method: 'POST',
           body: JSON.stringify({ onlyFragility: true }),
         });
         const data = await res.json();
         if (!res || !res.ok || !data || data.ok === false) {
-          throw new Error((data && data.error) ? data.error : 'Сбой сброса');
+          throw new Error((data && data.error) ? data.error : L('Сбой сброса', 'Reset failed'));
         }
         if (data.summary) {
           renderBayesian(data.summary, currentState);
         }
-        flashStatus('Хрупкость файлов проекта сброшена ✓');
+        flashStatus(L('Хрупкость файлов проекта сброшена ✓', 'Workspace file fragility reset ✓'));
         await refreshAll({ silent: true });
       } catch (err) {
         console.error(err);
-        flashStatus('Ошибка сброса хрупкости проекта!');
+        flashStatus(L('Ошибка сброса хрупкости проекта!', 'Error resetting workspace fragility!'));
       }
     }
 
     async function resetBayesianPriors() {
       try {
-        flashStatus('Сброс весов Байесовского доверия...');
+        flashStatus(L('Сброс весов Байесовского доверия...', 'Resetting Bayesian confidence priors...'));
         const res = await panelFetch('/api/bayesian-reset', { method: 'POST' });
         const data = await res.json();
         if (!res || !res.ok || !data || data.ok === false) {
-          throw new Error((data && data.error) ? data.error : 'Сбой сброса');
+          throw new Error((data && data.error) ? data.error : L('Сбой сброса', 'Reset failed'));
         }
         if (data.summary) {
           renderBayesian(data.summary, currentState);
         }
-        flashStatus('Веса доверия сброшены к базовым ✓');
+        flashStatus(L('Веса доверия сброшены к базовым ✓', 'Bayesian confidence priors reset ✓'));
         await refreshAll({ silent: true });
       } catch (err) {
         console.error(err);
-        flashStatus('Ошибка сброса весов доверия!');
+        flashStatus(L('Ошибка сброса весов доверия!', 'Error resetting confidence weights!'));
       }
     }
 
     async function compactDigest() {
       try {
-        flashStatus('Сборка дайджеста контекста...');
+        flashStatus(L('Сборка дайджеста контекста...', 'Building context digest...'));
         const res = await panelFetch('/api/compact-digest', {
           method: 'POST',
           body: JSON.stringify({ manual: true }),
         });
         const result = await res.json();
         if (res && res.ok && result && result.ok !== false && !result.error) {
-          flashStatus('Дайджест контекста собран ✓');
+          flashStatus(L('Дайджест контекста собран ✓', 'Context digest built ✓'));
           await refreshAll({ silent: true });
         } else {
-          flashStatus('Дайджест: ' + (result ? (result.message || result.error) : 'ошибка'));
+          flashStatus(L('Дайджест: ', 'Digest: ') + (result ? (result.message || result.error) : L('ошибка', 'error')));
         }
       } catch (err) {
         console.error(err);
-        flashStatus('Ошибка сборки дайджеста!');
+        flashStatus(L('Ошибка сборки дайджеста!', 'Error building digest!'));
       }
     }
 
     async function refreshRepoMap() {
       try {
-        flashStatus('Обновление AST-карты проекта...');
+        flashStatus(L('Обновление AST-карты проекта...', 'Refreshing project AST RepoMap...'));
         const res = await panelFetch('/api/repomap', {
           method: 'POST',
           body: JSON.stringify({}),
         });
         const result = await res.json();
         if (res && res.ok && result && result.ok !== false && !result.error) {
-          flashStatus('Карта проекта обновлена ✓');
+          flashStatus(L('Карта проекта обновлена ✓', 'RepoMap updated ✓'));
         } else {
-          flashStatus('Карта проекта: ' + (result ? (result.message || result.error) : 'ошибка'));
+          flashStatus(L('Карта проекта: ', 'RepoMap: ') + (result ? (result.message || result.error) : L('ошибка', 'error')));
         }
       } catch (err) {
         console.error(err);
-        flashStatus('Ошибка обновления карты проекта!');
+        flashStatus(L('Ошибка обновления карты проекта!', 'Error refreshing RepoMap!'));
       }
     }
 
     async function clearPitfalls() {
       try {
-        flashStatus('Очистка реестра граблей...');
+        flashStatus(L('Очистка реестра граблей...', 'Clearing pitfall ledger...'));
         const res = await panelFetch('/api/pitfalls-clear', { method: 'POST' });
         const result = await res.json();
         if (res && res.ok && result && result.ok !== false && !result.error) {
-          flashStatus('Реестр граблей очищен ✓');
+          flashStatus(L('Реестр граблей очищен ✓', 'Pitfall ledger cleared ✓'));
           renderPitfalls([]);
           await refreshAll({ silent: true });
         } else {
-          flashStatus('Ошибка очистки граблей!');
+          flashStatus(L('Ошибка очистки граблей!', 'Error clearing pitfalls!'));
         }
       } catch (err) {
         console.error(err);
-        flashStatus('Ошибка очистки реестра!');
+        flashStatus(L('Ошибка очистки реестра!', 'Error clearing pitfall ledger!'));
       }
     }
 
@@ -2050,7 +2105,7 @@
         const result = await res.json();
         if (res && res.ok && result && result.ok) {
           renderKnowledgeHub(result.recipes || [], undefined, result.stats);
-          flashStatus('Рецепты побед очищены ✓');
+          flashStatus(L('Рецепты побед очищены ✓', 'Win recipes cleared ✓'));
         }
       } catch {}
     }
@@ -2059,7 +2114,7 @@
       const inp = document.getElementById('federatedPeerInput');
       const val = inp ? String(inp.value || '').trim() : '';
       if (!val) {
-        flashStatus('Укажите путь к папке связанного репозитория');
+        flashStatus(L('Укажите путь к папке связанного репозитория', 'Enter the path to the companion repository'));
         return;
       }
       try {
@@ -2072,12 +2127,12 @@
         if (res && res.ok && result && result.ok) {
           if (inp) inp.value = '';
           renderKnowledgeHub(undefined, result.peers || [], result.stats);
-          flashStatus('Репозиторий связан ✓');
+          flashStatus(L('Репозиторий связан ✓', 'Repository linked ✓'));
         } else {
-          flashStatus('Федерация: ' + ((result && result.error) || 'папка не найдена'));
+          flashStatus(L('Федерация: ', 'Federation: ') + ((result && result.error) || L('папка не найдена', 'folder not found')));
         }
       } catch {
-        flashStatus('Ошибка привязки репозитория');
+        flashStatus(L('Ошибка привязки репозитория', 'Error linking repository'));
       }
     }
 
@@ -2092,12 +2147,12 @@
         const result = await res.json();
         if (res && res.ok && result && result.ok) {
           renderKnowledgeHub(undefined, result.peers || [], result.stats);
-          flashStatus('Связь удалена ✓');
+          flashStatus(L('Связь удалена ✓', 'Link removed ✓'));
         } else {
-          flashStatus('Федерация: ' + ((result && result.error) || 'не удалось удалить связь'));
+          flashStatus(L('Федерация: ', 'Federation: ') + ((result && result.error) || L('не удалось удалить связь', 'failed to remove link')));
         }
       } catch {
-        flashStatus('Ошибка удаления связи репозитория');
+        flashStatus(L('Ошибка удаления связи репозитория', 'Error removing repository link'));
       }
     }
 
@@ -2137,7 +2192,7 @@
     function applyHookProfileOverridesToUi(profile) {
       const clean = (profile === 'minimal' || profile === 'strict') ? profile : 'standard';
       const overrides = HOOK_PROFILE_UI_OVERRIDES[clean] || {};
-      const profLabel = clean === 'minimal' ? 'Лёгкий' : 'Строгий';
+      const profLabel = clean === 'minimal' ? L('Лёгкий', 'Minimal') : L('Строгий', 'Strict');
       for (let i = 0; i < HOOK_PROFILE_OVERRIDE_KEYS.length; i++) {
         const key = HOOK_PROFILE_OVERRIDE_KEYS[i];
         const el = document.getElementById('chk-' + key);
@@ -2150,7 +2205,7 @@
           el.checked = Boolean(overrides[key]);
           el.disabled = true;
           if (row) {
-            row.setAttribute('title', 'Управляется активным профилем хуков («' + profLabel + '»)');
+            row.setAttribute('title', L('Управляется активным профилем хуков («' + profLabel + '»)', 'Managed by active hook profile ("' + profLabel + '")'));
           }
         } else {
           el.disabled = false;
@@ -2173,21 +2228,21 @@
       const n = Math.round(Number(rawVal) || 120000);
       const clean = Math.max(16000, Math.min(500000, n));
       void updateState({ compactionTokenThreshold: clean });
-      flashStatus('Порог сжатия эпохи: ' + Math.round(clean / 1000) + 'k ✓');
+      flashStatus(L('Порог сжатия эпохи: ', 'Epoch compaction threshold: ') + Math.round(clean / 1000) + 'k ✓');
     }
 
     async function runAgentShield() {
       const badge = document.getElementById('agentShieldBadge');
       const sumEl = document.getElementById('agentShieldSummary');
       if (badge) {
-        badge.textContent = 'Проверка...';
+        badge.textContent = L('Проверка...', 'Scanning...');
         badge.className = 'swarm-pill active';
       }
       try {
         const res = await panelFetch('/api/shield', { method: 'GET' });
         const data = await res.json();
         if (!res || !res.ok || !data || data.ok === false) {
-          throw new Error((data && data.error) || 'Ошибка аудита AgentShield');
+          throw new Error((data && data.error) || L('Ошибка аудита AgentShield', 'AgentShield audit error'));
         }
         if (badge) {
           badge.textContent = String(data.score ?? 100) + '/100 (' + (data.grade || 'A') + ')';
@@ -2195,24 +2250,25 @@
         }
         if (sumEl) {
           const findings = Array.isArray(data.findings) ? data.findings : [];
+          const summaryTxt = pickText(data, 'summaryRu', 'summaryEn', '');
           if (findings.length === 0) {
-            sumEl.textContent = data.summaryRu || 'Угроз не обнаружено';
+            sumEl.textContent = summaryTxt || L('Угроз не обнаружено', 'No threats detected');
           } else {
-            sumEl.innerHTML = '<div>' + escapeHtml(data.summaryRu || '') + '</div>' +
+            sumEl.innerHTML = '<div>' + escapeHtml(summaryTxt) + '</div>' +
               findings.slice(0, 6).map(function (f) {
                 return '<div class="pitfall-item"><span class="pitfall-bullet">⚠️</span><span><strong>[' +
-                  escapeHtml(String(f.severity || '').toUpperCase()) + ']</strong> ' + escapeHtml(f.message || '') +
+                  escapeHtml(String(f.severity || '').toUpperCase()) + ']</strong> ' + escapeHtml(pickText(f, 'message', 'messageEn', f.message || '')) +
                   '</span></div>';
               }).join('');
           }
         }
-        flashStatus('Аудит AgentShield завершён ✓');
+        flashStatus(L('Аудит AgentShield завершён ✓', 'AgentShield audit completed ✓'));
       } catch (err) {
         if (badge) {
-          badge.textContent = 'Ошибка';
+          badge.textContent = L('Ошибка', 'Error');
           badge.className = 'swarm-pill warn';
         }
-        if (sumEl) sumEl.textContent = (err && err.message) ? err.message : 'Сбой запуска AgentShield';
+        if (sumEl) sumEl.textContent = (err && err.message) ? err.message : L('Сбой запуска AgentShield', 'Failed to run AgentShield');
       }
     }
 
@@ -2221,15 +2277,15 @@
       if (!box) return;
       const list = Array.isArray(items) ? items : [];
       if (list.length === 0) {
-        box.innerHTML = '<div>Пока нет накопленных инстинктов для текущего проекта.</div>';
+        box.innerHTML = '<div>' + L('Пока нет накопленных инстинктов для текущего проекта.', 'No learned instincts for this workspace yet.') + '</div>';
         return;
       }
       box.innerHTML = list.slice(0, 12).map(function (it) {
         const pct = Math.round(Number(it.effectiveConfidence || it.confidence || 0) * 100);
         const promoBtn = (!it.promotedSkill && it.readyForPromotion)
-          ? '<button type="button" class="win-btn" style="padding:1px 6px;font-size:10px;" data-action="promoteInstinct" data-arg="' + escapeHtml(it.id) + '">В навык</button>'
+          ? '<button type="button" class="win-btn" style="padding:1px 6px;font-size:10px;" data-action="promoteInstinct" data-arg="' + escapeHtml(it.id) + '">' + L('В навык', 'Promote') + '</button>'
           : (it.promotedSkill ? '<span style="color:var(--status-ok);">✓ ' + escapeHtml(it.promotedSkill) + '</span>' : '');
-        const delBtn = '<button type="button" class="win-btn" style="padding:1px 5px;font-size:10px;" data-action="deleteInstinct" data-arg="' + escapeHtml(it.id) + '" title="Удалить инстинкт">✕</button>';
+        const delBtn = '<button type="button" class="win-btn" style="padding:1px 5px;font-size:10px;" data-action="deleteInstinct" data-arg="' + escapeHtml(it.id) + '" title="' + L('Удалить инстинкт', 'Delete instinct') + '">✕</button>';
         return '<div class="pitfall-item" style="justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;">' +
           '<span style="min-width:0;flex:1 1 160px;word-break:break-word;"><strong>' + pct + '%</strong> (x' + Number(it.evidenceCount || 1) + ') ' + escapeHtml(it.pattern || '') + '</span>' +
           '<span style="display:inline-flex;align-items:center;gap:4px;flex-shrink:0;">' + promoBtn + delBtn + '</span>' +
@@ -2245,10 +2301,10 @@
         if (res && res.ok && data && data.ok) {
           renderProjectInstinctsList(data.items || []);
           if (data.stats) renderKnowledgeHub(undefined, undefined, data.stats);
-          if (!silent) flashStatus('Список инстинктов обновлён ✓');
+          if (!silent) flashStatus(L('Список инстинктов обновлён ✓', 'Project instincts refreshed ✓'));
         }
       } catch {
-        if (!silent) flashStatus('Ошибка загрузки инстинктов проекта');
+        if (!silent) flashStatus(L('Ошибка загрузки инстинктов проекта', 'Error loading project instincts'));
       }
     }
 
@@ -2264,13 +2320,13 @@
         if (res && res.ok && data && data.ok) {
           renderProjectInstinctsList(data.items || []);
           if (data.stats) renderKnowledgeHub(undefined, undefined, data.stats);
-          flashStatus('Инстинкт повышен в навык ' + (data.skillSlug || '') + ' ✓');
+          flashStatus(L('Инстинкт повышен в навык ', 'Instinct promoted to skill ') + (data.skillSlug || '') + ' ✓');
           await refreshAll({ silent: true });
         } else {
-          flashStatus('Не удалось повысить инстинкт: ' + ((data && data.error) || 'ошибка'));
+          flashStatus(L('Не удалось повысить инстинкт: ', 'Failed to promote instinct: ') + ((data && data.error) || L('ошибка', 'error')));
         }
       } catch {
-        flashStatus('Ошибка повышения инстинкта в навык');
+        flashStatus(L('Ошибка повышения инстинкта в навык', 'Error promoting instinct to skill'));
       }
     }
 
@@ -2286,12 +2342,12 @@
         if (res && res.ok && data && data.ok) {
           renderProjectInstinctsList(data.items || []);
           if (data.stats) renderKnowledgeHub(undefined, undefined, data.stats);
-          flashStatus('Инстинкт удалён ✓');
+          flashStatus(L('Инстинкт удалён ✓', 'Instinct deleted ✓'));
         } else {
-          flashStatus('Удаление инстинкта: ' + ((data && data.error) || 'не найден'));
+          flashStatus(L('Удаление инстинкта: ', 'Delete instinct: ') + ((data && data.error) || L('не найден', 'not found')));
         }
       } catch {
-        flashStatus('Ошибка удаления инстинкта');
+        flashStatus(L('Ошибка удаления инстинкта', 'Error deleting instinct'));
       }
     }
 
@@ -2299,54 +2355,55 @@
       const box = document.getElementById('setupDoctorBox');
       if (!box) return;
       if (!rec || rec.ok === false) {
-        box.innerHTML = '<div style="color: var(--status-warn);">Не удалось проанализировать стек проекта: ' +
-          escapeHtml((rec && rec.error) || 'ошибка') + '</div>';
+        box.innerHTML = '<div style="color: var(--status-warn);">' + L('Не удалось проанализировать стек проекта: ', 'Failed to analyze project stack: ') +
+          escapeHtml((rec && rec.error) || L('ошибка', 'error')) + '</div>';
         return;
       }
       const st = rec.stack || {};
-      const langs = Array.isArray(st.languages) && st.languages.length ? st.languages.join(', ') : 'авто';
+      const langs = Array.isArray(st.languages) && st.languages.length ? st.languages.join(', ') : L('авто', 'auto');
       const fws = Array.isArray(st.frameworks) && st.frameworks.length ? (' · ' + st.frameworks.join(', ')) : '';
       const hyg = Array.isArray(rec.projectHygieneSuggestions) ? rec.projectHygieneSuggestions : [];
       const skills = Array.isArray(rec.recommendedLocalSkills) ? rec.recommendedLocalSkills : [];
       const ext = Array.isArray(rec.externalIntegrations) ? rec.externalIntegrations : [];
       const recProf = rec.recommendedHookProfile || 'standard';
-      const profLabel = recProf === 'strict' ? 'Строгий' : (recProf === 'minimal' ? 'Лёгкий' : 'Стандарт');
+      const profLabel = recProf === 'strict' ? L('Строгий', 'Strict') : (recProf === 'minimal' ? L('Лёгкий', 'Minimal') : L('Стандарт', 'Standard'));
+      const profReason = pickText(rec, 'hookProfileReasonRu', 'hookProfileReasonEn', '');
       const applyableKinds = new Set(['hook_profile', 'agentignore', 'design_md', 'gates_md']);
 
       let html =
         '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px;">' +
-          '<strong style="color:var(--accent-cyan);">🩺 Setup Doctor · ' + escapeHtml(langs + fws) + ' (' + Number(st.totalFiles || 0) + ' ф.)</strong>' +
-          '<button type="button" class="win-btn" style="padding:1px 6px;font-size:10px;" data-action="loadSetupDoctor">↻ Пересканировать</button>' +
+          '<strong style="color:var(--accent-cyan);">🩺 Setup Doctor · ' + escapeHtml(langs + fws) + ' (' + Number(st.totalFiles || 0) + L(' ф.)', ' files)') + '</strong>' +
+          '<button type="button" class="win-btn" style="padding:1px 6px;font-size:10px;" data-action="loadSetupDoctor">' + L('↻ Пересканировать', '↻ Rescan') + '</button>' +
         '</div>' +
         '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px;color:var(--text-sub);">' +
-          '<span style="min-width:0;flex:1 1 170px;">Рекомендованный профиль: <strong>' + escapeHtml(profLabel) + '</strong>' +
-          (rec.hookProfileReasonRu ? (' — ' + escapeHtml(rec.hookProfileReasonRu)) : '') + '</span>' +
-          '<button type="button" class="win-btn" style="padding:1px 7px;font-size:10px;" data-action="applySetupDoctorItem" data-arg="hook_profile">Применить профиль</button>' +
+          '<span style="min-width:0;flex:1 1 170px;">' + L('Рекомендованный профиль: ', 'Recommended profile: ') + '<strong>' + escapeHtml(profLabel) + '</strong>' +
+          (profReason ? (' — ' + escapeHtml(profReason)) : '') + '</span>' +
+          '<button type="button" class="win-btn" style="padding:1px 7px;font-size:10px;" data-action="applySetupDoctorItem" data-arg="hook_profile">' + L('Применить профиль', 'Apply profile') + '</button>' +
         '</div>';
 
       if (hyg.length > 0) {
         html += hyg.slice(0, 4).map(function (h) {
           const canApply = applyableKinds.has(h.kind);
           const btnHtml = canApply
-            ? '<button type="button" class="win-btn" style="padding:1px 6px;font-size:10px;flex-shrink:0;" data-action="applySetupDoctorItem" data-arg="' + escapeHtml(h.kind) + '">Применить</button>'
+            ? '<button type="button" class="win-btn" style="padding:1px 6px;font-size:10px;flex-shrink:0;" data-action="applySetupDoctorItem" data-arg="' + escapeHtml(h.kind) + '">' + L('Применить', 'Apply') + '</button>'
             : '';
           return '<div class="pitfall-item" style="justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;">' +
-            '<span style="min-width:0;flex:1 1 160px;">⚙️ ' + escapeHtml(h.titleRu || h.kind || '') + '</span>' +
+            '<span style="min-width:0;flex:1 1 160px;">⚙️ ' + escapeHtml(pickText(h, 'titleRu', 'titleEn', h.kind || '')) + '</span>' +
             btnHtml +
             '</div>';
         }).join('');
       } else {
-        html += '<div style="color:var(--status-ok);font-size:10.5px;">✓ Базовая гигиена проекта (`.agentignore` / конфиги) в порядке</div>';
+        html += '<div style="color:var(--status-ok);font-size:10.5px;">' + L('✓ Базовая гигиена проекта (`.agentignore` / конфиги) в порядке', '✓ Baseline project hygiene (.agentignore / configs) looks good') + '</div>';
       }
 
       if (skills.length > 0) {
-        html += '<div style="margin-top:4px;font-size:10.5px;color:var(--text-sub);">Навыки под стек: ' +
+        html += '<div style="margin-top:4px;font-size:10.5px;color:var(--text-sub);">' + L('Навыки под стек: ', 'Stack skills: ') +
           skills.slice(0, 4).map(function (s) { return '<code>' + escapeHtml(s.slug) + '</code>'; }).join(', ') +
           '</div>';
       }
       if (ext.length > 0) {
-        html += '<div style="margin-top:2px;font-size:10.5px;color:var(--text-sub);">Интеграции: ' +
-          ext.slice(0, 4).map(function (e) { return escapeHtml(e.name || e.id); }).join(', ') +
+        html += '<div style="margin-top:2px;font-size:10.5px;color:var(--text-sub);">' + L('Интеграции: ', 'Integrations: ') +
+          ext.slice(0, 4).map(function (e) { return escapeHtml(pickText(e, 'name', 'nameEn', e.id)); }).join(', ') +
           '</div>';
       }
       box.innerHTML = html;
@@ -2356,13 +2413,13 @@
       const box = document.getElementById('setupDoctorBox');
       if (!box) return;
       box.style.display = 'block';
-      box.innerHTML = '<div style="color:var(--text-sub);">Анализ стека и гигиены проекта...</div>';
+      box.innerHTML = '<div style="color:var(--text-sub);">' + L('Анализ стека и гигиены проекта...', 'Analyzing project stack & hygiene...') + '</div>';
       try {
         const res = await panelFetch('/api/setup-recommendations', { method: 'GET' });
         const data = await res.json();
         renderSetupDoctorReport(data);
       } catch {
-        box.innerHTML = '<div style="color:var(--status-warn);">Ошибка запроса Setup Doctor</div>';
+        box.innerHTML = '<div style="color:var(--status-warn);">' + L('Ошибка запроса Setup Doctor', 'Setup Doctor request failed') + '</div>';
       }
     }
 
@@ -2379,7 +2436,7 @@
     async function applySetupDoctorItem(kind) {
       if (!kind) return;
       try {
-        flashStatus('Применение рекомендации Setup Doctor...');
+        flashStatus(L('Применение рекомендации Setup Doctor...', 'Applying Setup Doctor recommendation...'));
         const res = await panelFetch('/api/setup-recommendations/apply', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2388,14 +2445,14 @@
         const data = await res.json();
         if (res && res.ok && data && data.ok) {
           if (data.recommendation) renderSetupDoctorReport(data.recommendation);
-          flashStatus((data.detail || 'Рекомендация применена') + ' ✓');
+          flashStatus((pickText(data, 'detail', 'detailEn', '') || L('Рекомендация применена', 'Recommendation applied')) + ' ✓');
           await refreshAll({ silent: true });
           if (kind === 'gates_md') void refreshGatesStatus({ silent: true });
         } else {
-          flashStatus('Setup Doctor: ' + ((data && (data.detail || data.error)) || 'не удалось применить'));
+          flashStatus('Setup Doctor: ' + ((data && (pickText(data, 'detail', 'detailEn', '') || data.error)) || L('не удалось применить', 'failed to apply')));
         }
       } catch {
-        flashStatus('Ошибка применения рекомендации Setup Doctor');
+        flashStatus(L('Ошибка применения рекомендации Setup Doctor', 'Error applying Setup Doctor recommendation'));
       }
     }
 
@@ -2415,7 +2472,7 @@
       const resBox = document.getElementById('skillRegistryResults');
       const query = srcInp ? String(srcInp.value || '').trim() : '';
       if (resBox) {
-        resBox.innerHTML = '<div>Поиск по локальному и внешнему каталогу...</div>';
+        resBox.innerHTML = '<div>' + L('Поиск по локальному и внешнему каталогу...', 'Searching local and remote catalog...') + '</div>';
       }
       try {
         const res = await panelFetch('/api/skills/search', {
@@ -2428,14 +2485,14 @@
         const locals = Array.isArray(data && data.localMatches) ? data.localMatches : [];
         const remotes = Array.isArray(data && data.remoteMatches) ? data.remoteMatches : [];
         if (locals.length === 0 && remotes.length === 0) {
-          resBox.innerHTML = '<div>Совпадений не найдено.' +
-            (data && data.offlineFallback ? ' (Внешний каталог офлайн — можно ввести owner/repo вручную и нажать «Проверить и импортировать».)' : '') +
+          resBox.innerHTML = '<div>' + L('Совпадений не найдено.', 'No matches found.') +
+            (data && data.offlineFallback ? L(' (Внешний каталог офлайн — можно ввести owner/repo вручную и нажать «Проверить и импортировать».)', ' (Remote catalog offline — enter owner/repo manually and click "Audit & import".)') : '') +
             '</div>';
           return;
         }
         let html = '';
         if (locals.length > 0) {
-          html += '<div style="margin-bottom:4px;font-weight:600;color:var(--status-ok);">Локально установлено: ' +
+          html += '<div style="margin-bottom:4px;font-weight:600;color:var(--status-ok);">' + L('Локально установлено: ', 'Installed locally: ') +
             locals.slice(0, 6).map(function (m) { return '<code>' + escapeHtml(m.slug || m.id || m.name) + '</code>'; }).join(', ') +
             '</div>';
         }
@@ -2444,7 +2501,7 @@
             const btn = m.sourceRepo
               ? '<button type="button" class="win-btn" style="padding:1px 6px;font-size:10px;flex-shrink:0;" data-action="importExternalSkill" data-source="' +
                 escapeHtml(m.sourceRepo) + '" data-slug="' + escapeHtml(m.slug || '') + '">' +
-                (m.alreadyInstalled ? 'Обновить' : 'Импорт') + '</button>'
+                (m.alreadyInstalled ? L('Обновить', 'Update') : L('Импорт', 'Import')) + '</button>'
               : '';
             return '<div class="pitfall-item" style="justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;">' +
               '<span style="min-width:0;flex:1 1 150px;"><strong>' + escapeHtml(m.slug || m.name) + '</strong>' +
@@ -2454,12 +2511,12 @@
           }).join('');
         }
         if (data && data.offlineFallback) {
-          html += '<div style="color:var(--text-sub);font-size:10px;margin-top:2px;">Внешний реестр недоступен (offline fallback).</div>';
+          html += '<div style="color:var(--text-sub);font-size:10px;margin-top:2px;">' + L('Внешний реестр недоступен (offline fallback).', 'Remote registry unavailable (offline fallback).') + '</div>';
         }
         resBox.innerHTML = html;
-        flashStatus('Поиск навыков завершён ✓');
+        flashStatus(L('Поиск навыков завершён ✓', 'Skill search complete ✓'));
       } catch {
-        if (resBox) resBox.innerHTML = '<div style="color:var(--status-warn);">Ошибка поиска по каталогу навыков</div>';
+        if (resBox) resBox.innerHTML = '<div style="color:var(--status-warn);">' + L('Ошибка поиска по каталогу навыков', 'Error searching skill catalog') + '</div>';
       }
     }
 
@@ -2474,10 +2531,10 @@
         slug = (parts[parts.length - 1] || '').toLowerCase().replace(/[^a-z0-9-_]/g, '-').replace(/^-+|-+$/g, '');
       }
       if (!source || !slug) {
-        flashStatus('Укажите источник (owner/repo или локальную папку) и slug навыка');
+        flashStatus(L('Укажите источник (owner/repo или локальную папку) и slug навыка', 'Specify source (owner/repo or local folder) and skill slug'));
         return;
       }
-      if (resBox) resBox.innerHTML = '<div>Карантинная проверка AgentShield для <code>' + escapeHtml(slug) + '</code>...</div>';
+      if (resBox) resBox.innerHTML = '<div>' + L('Карантинная проверка AgentShield для ', 'AgentShield quarantine audit for ') + '<code>' + escapeHtml(slug) + '</code>...</div>';
       try {
         const res = await panelFetch('/api/skills/import', {
           method: 'POST',
@@ -2490,19 +2547,19 @@
             renderSkills(data.skills, (currentState && currentState.skillModes) || {});
           }
           if (resBox) {
-            resBox.innerHTML = '<div style="color:var(--status-ok);">✓ Навык <code>' + escapeHtml(data.slug || slug) + '</code> прошёл карантин AgentShield и установлен.</div>';
+            resBox.innerHTML = '<div style="color:var(--status-ok);">' + L('✓ Навык ', '✓ Skill ') + '<code>' + escapeHtml(data.slug || slug) + '</code>' + L(' прошёл карантин AgentShield и установлен.', ' passed AgentShield quarantine and was installed.') + '</div>';
           }
-          flashStatus('Навык ' + (data.slug || slug) + ' импортирован ✓');
+          flashStatus(L('Навык ', 'Skill ') + (data.slug || slug) + L(' импортирован ✓', ' imported ✓'));
           await refreshAll({ silent: true });
         } else {
           const reasons = Array.isArray(data && data.reasons) ? data.reasons : [];
-          const msg = (data && data.securityBlocked ? 'Заблокировано AgentShield: ' : 'Импорт отклонён: ') +
-            (reasons.length ? reasons.slice(0, 3).join('; ') : ((data && data.error) || 'не прошёл проверку'));
+          const msg = (data && data.securityBlocked ? L('Заблокировано AgentShield: ', 'Blocked by AgentShield: ') : L('Импорт отклонён: ', 'Import rejected: ')) +
+            (reasons.length ? reasons.slice(0, 3).join('; ') : ((data && data.error) || L('не прошёл проверку', 'failed audit')));
           if (resBox) resBox.innerHTML = '<div style="color:var(--status-warn);">' + escapeHtml(msg) + '</div>';
-          flashStatus('Импорт навыка отклонён');
+          flashStatus(L('Импорт навыка отклонён', 'Skill import rejected'));
         }
       } catch {
-        if (resBox) resBox.innerHTML = '<div style="color:var(--status-warn);">Ошибка карантинного импорта навыка</div>';
+        if (resBox) resBox.innerHTML = '<div style="color:var(--status-warn);">' + L('Ошибка карантинного импорта навыка', 'Skill quarantine import error') + '</div>';
       }
     }
 
@@ -2510,14 +2567,14 @@
       const box = document.getElementById('sessionEpisodesContainer');
       if (!box) return;
       box.style.display = 'block';
-      box.innerHTML = '<div style="color:var(--text-sub);padding:2px;">Загрузка эпизодов памяти...</div>';
+      box.innerHTML = '<div style="color:var(--text-sub);padding:2px;">' + L('Загрузка эпизодов памяти...', 'Loading memory episodes...') + '</div>';
       try {
         const res = await panelFetch('/api/knowledge/episodes?limit=12', { method: 'GET' });
         const data = await res.json();
         const items = Array.isArray(data && data.items) ? data.items : [];
         if (data && data.stats) renderKnowledgeHub(undefined, undefined, data.stats);
         if (items.length === 0) {
-          box.innerHTML = '<div style="color:var(--text-sub);padding:2px;">Пока нет записанных эпизодов прошлых сессий.</div>';
+          box.innerHTML = '<div style="color:var(--text-sub);padding:2px;">' + L('Пока нет записанных эпизодов прошлых сессий.', 'No recorded session episodes yet.') + '</div>';
           return;
         }
         box.innerHTML = items.map(function (ep) {
@@ -2526,9 +2583,9 @@
             escapeHtml((ep.date || '') + ' · ' + (ep.kind || 'session')) + ']</strong> ' +
             escapeHtml((ep.title || ep.shortId || '') + filesStr) + '</span></div>';
         }).join('');
-        flashStatus('Загружено эпизодов памяти: ' + items.length + ' ✓');
+        flashStatus(L('Загружено эпизодов памяти: ', 'Loaded memory episodes: ') + items.length + ' ✓');
       } catch {
-        box.innerHTML = '<div style="color:var(--status-warn);padding:2px;">Ошибка загрузки эпизодов памяти</div>';
+        box.innerHTML = '<div style="color:var(--status-warn);padding:2px;">' + L('Ошибка загрузки эпизодов памяти', 'Error loading memory episodes') + '</div>';
       }
     }
 
@@ -2538,12 +2595,12 @@
         const data = await res.json();
         if (res && res.ok && data && data.ok) {
           if (data.quotaPacer) renderWiretapAndQuota(undefined, data.quotaPacer);
-          flashStatus('Временные паузы Combo сброшены ✓');
+          flashStatus(L('Временные паузы Combo сброшены ✓', 'Combo cooldowns reset ✓'));
         } else {
-          flashStatus('Combo: ' + ((data && data.error) || 'ошибка сброса'));
+          flashStatus('Combo: ' + ((data && data.error) || L('ошибка сброса', 'reset error')));
         }
       } catch {
-        flashStatus('Ошибка сброса пауз Combo');
+        flashStatus(L('Ошибка сброса пауз Combo', 'Error resetting Combo cooldowns'));
       }
     }
 
@@ -2556,16 +2613,16 @@
         const data = await res.json();
         if (res && res.ok && data && data.ok) {
           if (!data.exists) {
-            badge.textContent = 'GATES.md: файл не создан';
+            badge.textContent = L('GATES.md: файл не создан', 'GATES.md: not created');
             badge.style.color = 'var(--text-sub)';
           } else {
-            badge.textContent = 'GATES.md: ' + Number(data.metCount || 0) + '/' + Number(data.total || 0) + ' выполнено';
+            badge.textContent = 'GATES.md: ' + Number(data.metCount || 0) + '/' + Number(data.total || 0) + L(' выполнено', ' met');
             badge.style.color = Number(data.unmetCount || 0) > 0 ? 'var(--status-warn)' : 'var(--status-ok)';
           }
-          if (!silent) flashStatus('Статус GATES.md обновлён ✓');
+          if (!silent) flashStatus(L('Статус GATES.md обновлён ✓', 'GATES.md status updated ✓'));
         }
       } catch {
-        if (!silent) flashStatus('Ошибка проверки GATES.md');
+        if (!silent) flashStatus(L('Ошибка проверки GATES.md', 'Error checking GATES.md'));
       }
     }
 
@@ -2580,15 +2637,15 @@
         const data = await res.json();
         if (res && res.ok && data && data.ok) {
           if (badge) {
-            badge.textContent = 'GATES.md: ' + Number(data.metCount || 0) + '/' + Number(data.total || 0) + ' выполнено';
+            badge.textContent = 'GATES.md: ' + Number(data.metCount || 0) + '/' + Number(data.total || 0) + L(' выполнено', ' met');
             badge.style.color = 'var(--status-ok)';
           }
-          flashStatus('Журнал GATES.md готов ✓');
+          flashStatus(L('Журнал GATES.md готов ✓', 'GATES.md created ✓'));
         } else {
-          flashStatus('GATES.md: ' + ((data && data.error) || 'ошибка создания'));
+          flashStatus('GATES.md: ' + ((data && data.error) || L('ошибка создания', 'creation error')));
         }
       } catch {
-        flashStatus('Ошибка создания GATES.md');
+        flashStatus(L('Ошибка создания GATES.md', 'Error creating GATES.md'));
       }
     }
 
@@ -2597,33 +2654,33 @@
       const badge = document.getElementById('graphDebtStatusBadge');
       if (!drawer) return;
       drawer.style.display = 'block';
-      drawer.innerHTML = '<div style="color:var(--text-sub);">Построение графа архитектуры Graphify v2...</div>';
+      drawer.innerHTML = '<div style="color:var(--text-sub);">' + L('Построение графа архитектуры Graphify v2...', 'Building Graphify v2 architecture graph...') + '</div>';
       try {
         const res = await panelFetch('/api/graph', { method: 'GET' });
         const data = await res.json();
         if (!res || !res.ok || !data || !data.ok) {
-          drawer.innerHTML = '<div style="color:var(--status-warn);">Граф недоступен: ' + escapeHtml((data && data.error) || 'ошибка') + '</div>';
+          drawer.innerHTML = '<div style="color:var(--status-warn);">' + L('Граф недоступен: ', 'Graph unavailable: ') + escapeHtml((data && data.error) || L('ошибка', 'error')) + '</div>';
           return;
         }
         const warmth = data.cacheWarmth || {};
         const warmthLabel = warmth.status === 'warm'
-          ? ('🔥 Кэш тёплый (' + Number(warmth.remainingSeconds || 0) + 'с)')
+          ? (L('🔥 Кэш тёплый (', '🔥 Cache warm (') + Number(warmth.remainingSeconds || 0) + L('с)', 's)'))
           : warmth.status === 'cooling'
-            ? ('⏳ Кэш остывает (' + Number(warmth.remainingSeconds || 0) + 'с)')
-            : '❄️ Кэш холодный';
+            ? (L('⏳ Кэш остывает (', '⏳ Cache cooling (') + Number(warmth.remainingSeconds || 0) + L('с)', 's)'))
+            : L('❄️ Кэш холодный', '❄️ Cache cold');
         const reuse = data.reuse || {};
         const reuseLabel = reuse.reusePct !== null && reuse.reusePct !== undefined
-          ? ('Reuse: ' + Number(reuse.reusePct) + '% (' + Number(reuse.reusedCount || 0) + ' исп. / ' + Number(reuse.newCount || 0) + ' нов.)')
+          ? ('Reuse: ' + Number(reuse.reusePct) + '% (' + Number(reuse.reusedCount || 0) + L(' исп. / ', ' used / ') + Number(reuse.newCount || 0) + L(' нов.)', ' new)'))
           : 'Reuse: —';
         if (badge) {
-          badge.textContent = 'Q=' + Number(data.modularityQ || 0) + ' · ' + Number((data.clusters || []).length) + ' класт. · ' + reuseLabel;
+          badge.textContent = 'Q=' + Number(data.modularityQ || 0) + ' · ' + Number((data.clusters || []).length) + L(' класт. · ', ' clust. · ') + reuseLabel;
         }
         const clustersHtml = (data.clusters || []).slice(0, 6).map(function (c) {
           const wPct = Math.min(100, Math.max(14, Math.round((Number(c.size || 1) / Math.max(1, Number(data.fileCount || 1))) * 100)));
           return '<div style="margin-bottom:4px;">' +
             '<div style="display:flex;justify-content:space-between;gap:6px;">' +
               '<strong>' + escapeHtml(c.label || c.id) + '</strong>' +
-              '<span style="color:var(--text-sub);">' + Number(c.size || 0) + ' ф. · hub: ' + escapeHtml((c.hubFile || '').split('/').pop()) + '</span>' +
+              '<span style="color:var(--text-sub);">' + Number(c.size || 0) + L(' ф. · hub: ', ' f. · hub: ') + escapeHtml((c.hubFile || '').split('/').pop()) + '</span>' +
             '</div>' +
             '<div style="height:4px;background:var(--border-subtle);border-radius:2px;overflow:hidden;margin-top:2px;">' +
               '<div style="height:100%;width:' + wPct + '%;background:var(--accent-cyan);"></div>' +
@@ -2646,11 +2703,11 @@
             '<span>' + escapeHtml(reuseLabel) + ' · ' + escapeHtml(data.topologyHash || '') + '</span>' +
           '</div>' +
           (godsHtml ? '<div style="margin-bottom:6px;">' + godsHtml + '</div>' : '') +
-          (clustersHtml || '<div style="color:var(--text-sub);">Кластеры не обнаружены</div>') +
-          (bridgesHtml ? '<div style="margin-top:6px;border-top:1px solid var(--border-subtle);padding-top:4px;"><strong>Межкластерные мосты:</strong>' + bridgesHtml + '</div>' : '');
-        flashStatus('Карта архитектуры Graphify v2 обновлена ✓');
+          (clustersHtml || '<div style="color:var(--text-sub);">' + L('Кластеры не обнаружены', 'No clusters detected') + '</div>') +
+          (bridgesHtml ? '<div style="margin-top:6px;border-top:1px solid var(--border-subtle);padding-top:4px;"><strong>' + L('Межкластерные мосты:', 'Cross-cluster bridges:') + '</strong>' + bridgesHtml + '</div>' : '');
+        flashStatus(L('Карта архитектуры Graphify v2 обновлена ✓', 'Graphify v2 architecture map updated ✓'));
       } catch {
-        drawer.innerHTML = '<div style="color:var(--status-warn);">Ошибка загрузки графа архитектуры</div>';
+        drawer.innerHTML = '<div style="color:var(--status-warn);">' + L('Ошибка загрузки графа архитектуры', 'Error loading architecture graph') + '</div>';
       }
     }
 
@@ -2659,22 +2716,25 @@
       const badge = document.getElementById('graphDebtStatusBadge');
       if (!drawer) return;
       drawer.style.display = 'block';
-      drawer.innerHTML = '<div style="color:var(--text-sub);">Сканирование меток техдолга shortcut:...</div>';
+      drawer.innerHTML = '<div style="color:var(--text-sub);">' + L('Сканирование меток техдолга shortcut:...', 'Scanning shortcut: tech debt markers...') + '</div>';
       try {
         const res = await panelFetch('/api/debt', { method: 'GET' });
         const data = await res.json();
         if (!res || !res.ok || !data || !data.ok) {
-          drawer.innerHTML = '<div style="color:var(--status-warn);">Ошибка сканирования техдолга</div>';
+          drawer.innerHTML = '<div style="color:var(--status-warn);">' + L('Ошибка сканирования техдолга', 'Error scanning tech debt') + '</div>';
           return;
         }
         const items = Array.isArray(data.items) ? data.items : [];
         if (badge) {
-          badge.textContent = 'Техдолг shortcut: ' + items.length + ' (no-trigger: ' + Number(data.noTriggerCount || 0) + ')';
+          badge.textContent = L('Техдолг shortcut: ', 'Shortcut debt: ') + items.length + ' (no-trigger: ' + Number(data.noTriggerCount || 0) + ')';
           badge.style.color = Number(data.noTriggerCount || 0) > 0 ? 'var(--status-warn)' : 'var(--status-ok)';
         }
         if (items.length === 0) {
-          drawer.textContent = '✅ Осознанный техдолг (shortcut:) не обнаружен. Чистый реестр (' + Number(data.scannedFiles || 0) + ' файлов).';
-          flashStatus('Техдолг shortcut: 0 меток ✓');
+          drawer.textContent = L(
+            '✅ Осознанный техдолг (shortcut:) не обнаружен. Чистый реестр (' + Number(data.scannedFiles || 0) + ' файлов).',
+            '✅ No deliberate shortcut: debt found. Clean ledger (' + Number(data.scannedFiles || 0) + ' files).'
+          );
+          flashStatus(L('Техдолг shortcut: 0 меток ✓', 'Shortcut debt: 0 markers ✓'));
           return;
         }
         drawer.innerHTML = items.slice(0, 25).map(function (it) {
@@ -2684,9 +2744,9 @@
             '<strong>' + escapeHtml(it.file + ':' + it.line) + '</strong> — ' + escapeHtml(it.ceiling || '') + upg + warnTag +
           '</span></div>';
         }).join('');
-        flashStatus('Найдено меток shortcut: ' + items.length + ' ✓');
+        flashStatus(L('Найдено меток shortcut: ', 'Found shortcut markers: ') + items.length + ' ✓');
       } catch {
-        drawer.innerHTML = '<div style="color:var(--status-warn);">Ошибка чтения реестра техдолга</div>';
+        drawer.innerHTML = '<div style="color:var(--status-warn);">' + L('Ошибка чтения реестра техдолга', 'Error reading tech debt ledger') + '</div>';
       }
     }
 

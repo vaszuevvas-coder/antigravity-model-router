@@ -28,14 +28,14 @@
 
     function getWorkspaceDisplayLabel(targetWs) {
       const targetKey = normalizeWsClientKey(targetWs);
-      if (!targetKey) return 'Проект';
+      if (!targetKey) return L('Проект', 'Project');
       for (let i = 0; i < _knownWorkspacesList.length; i++) {
         const w = _knownWorkspacesList[i];
         if (w && normalizeWsClientKey(w.workspaceRoot) === targetKey) {
-          return w.displayLabel || w.projectName || getWorkspaceBasename(targetWs) || 'Проект';
+          return w.displayLabel || w.projectName || getWorkspaceBasename(targetWs) || L('Проект', 'Project');
         }
       }
-      return getWorkspaceBasename(targetWs) || 'Проект';
+      return getWorkspaceBasename(targetWs) || L('Проект', 'Project');
     }
 
     function getSelectedWorkspaceDisplayName() {
@@ -118,7 +118,7 @@
           }
         }
 
-        const sigParts = [autoLabel, _selectedWorkspaceMode];
+        const sigParts = [getUiLanguage(), autoLabel, _selectedWorkspaceMode];
         for (let i = 0; i < list.length; i++) {
           const w = list[i];
           sigParts.push([w.workspaceRoot, w.displayLabel || w.projectName, w.checkpointsCount || 0, w.status || ''].join(':'));
@@ -130,8 +130,10 @@
 
           const autoOpt = document.createElement('option');
           autoOpt.value = '__auto__';
-          autoOpt.dataset.name = autoLabel ? ('🔄 Авто (' + autoLabel + ')') : '🔄 Авто (активный чат)';
-          autoOpt.dataset.vram = 'Авто';
+          autoOpt.dataset.name = autoLabel
+            ? L('🔄 Авто (' + autoLabel + ')', '🔄 Auto (' + autoLabel + ')')
+            : L('🔄 Авто (активный чат)', '🔄 Auto (active chat)');
+          autoOpt.dataset.vram = L('Авто', 'Auto');
           autoOpt.textContent = autoOpt.dataset.name;
           sel.appendChild(autoOpt);
 
@@ -144,18 +146,18 @@
             opt.dataset.name = '📁 ' + lbl;
             opt.textContent = '📁 ' + lbl;
             if (Number(w.checkpointsCount || 0) > 0) {
-              opt.dataset.size = Number(w.checkpointsCount) + ' сн.';
+              opt.dataset.size = Number(w.checkpointsCount) + L(' сн.', ' snap.');
             }
             if (w.status === 'running' || w.status === 'waiting_user') {
-              opt.dataset.vram = '● В работе';
+              opt.dataset.vram = L('● В работе', '● Active');
             }
             sel.appendChild(opt);
           }
 
           const allOpt = document.createElement('option');
           allOpt.value = '__all__';
-          allOpt.dataset.name = '🗂 Все проекты (общая лента)';
-          allOpt.dataset.size = 'Все';
+          allOpt.dataset.name = L('🗂 Все проекты (общая лента)', '🗂 All projects (combined feed)');
+          allOpt.dataset.size = L('Все', 'All');
           allOpt.textContent = allOpt.dataset.name;
           sel.appendChild(allOpt);
         }
@@ -188,16 +190,22 @@
       renderLocalRagMessages();
       const shieldBadgeEl = document.getElementById('agentShieldBadge');
       if (shieldBadgeEl) {
-        shieldBadgeEl.textContent = 'Не проверено';
+        shieldBadgeEl.textContent = L('Не проверено', 'Not checked');
         shieldBadgeEl.className = 'swarm-pill idle';
       }
       const shieldSumEl = document.getElementById('agentShieldSummary');
       if (shieldSumEl) {
-        shieldSumEl.innerHTML = 'Аудит конфигов MCP, хуков и <code>SKILL.md</code> на секреты и prompt-injection.';
+        shieldSumEl.innerHTML = L(
+          'Аудит конфигов MCP, хуков и <code>SKILL.md</code> на секреты и prompt-injection.',
+          'Audits MCP configs, hooks, and <code>SKILL.md</code> for secrets and prompt injection.'
+        );
       }
       const instinctsEl = document.getElementById('projectInstinctsList');
       if (instinctsEl) {
-        instinctsEl.innerHTML = '<div>Нажмите «Инстинкты проекта» для просмотра накопленных паттернов.</div>';
+        instinctsEl.innerHTML = '<div>' + L(
+          'Нажмите «Инстинкты проекта» для просмотра накопленных паттернов.',
+          'Click "Project Instincts" to view learned workspace patterns.'
+        ) + '</div>';
       }
       const doctorBoxEl = document.getElementById('setupDoctorBox');
       if (doctorBoxEl) {
@@ -211,12 +219,14 @@
       }
       const gatesBadgeEl = document.getElementById('gatesStatusBadge');
       if (gatesBadgeEl) {
-        gatesBadgeEl.textContent = 'GATES.md: не проверен';
+        gatesBadgeEl.textContent = L('GATES.md: не проверен', 'GATES.md: not checked');
         gatesBadgeEl.style.color = 'var(--text-sub)';
       }
       syncWorkspaceSwitcherBadge();
-      const label = clean === '__all__' ? 'Все проекты' : (clean === '__auto__' ? 'Авто (активный чат)' : getSelectedWorkspaceDisplayName());
-      flashStatus('Переключение на «' + label + '»...');
+      const label = clean === '__all__'
+        ? L('Все проекты', 'All projects')
+        : (clean === '__auto__' ? L('Авто (активный чат)', 'Auto (active chat)') : getSelectedWorkspaceDisplayName());
+      flashStatus(L('Переключение на «' + label + '»...', 'Switching to "' + label + '"...'));
       await refreshAll({ silent: true });
       loadSmartComposerContext();
       const expBox = document.getElementById('expertDetailsBox');
@@ -353,7 +363,7 @@
       const slugInp = document.getElementById('extSkillSlugInput');
       if (srcInp) srcInp.value = String(repo || '').trim();
       if (slugInp) slugInp.value = String(slug || '').trim();
-      flashStatus('Пресет выбран — нажмите «Проверить и импортировать»');
+      flashStatus(L('Пресет выбран — нажмите «Проверить и импортировать»', 'Preset selected — click "Audit & import"'));
     }
 
     function resetAllSkillsToAuto() {
@@ -594,7 +604,7 @@
 
     async function wizRescanHw() {
       try {
-        flashStatus('Сканирование процессора, ОЗУ и видеокарты...');
+        flashStatus(L('Сканирование процессора, ОЗУ и видеокарты...', 'Scanning CPU, RAM, and GPU...'));
         const res = await panelFetch('/api/hardware', {
           method: 'POST',
           body: JSON.stringify({ action: 'scan', subscriptionTier: wizDraft.subscriptionTier })
@@ -616,10 +626,10 @@
           wizDraft.gpuAutoDistillLogs = Boolean(gpuPre.gpuAutoDistillLogs);
           wizDraft.gpuSemanticSearch = Boolean(gpuPre.gpuSemanticSearch);
           renderWizardStep();
-          flashStatus('Система просканирована · Подобраны оптимальные лимиты ✓');
+          flashStatus(L('Система просканирована · Подобраны оптимальные лимиты ✓', 'System scanned · Optimal limits applied ✓'));
         }
       } catch (e) {
-        flashStatus('Ошибка сканирования системы');
+        flashStatus(L('Ошибка сканирования системы', 'System scan error'));
       }
     }
 

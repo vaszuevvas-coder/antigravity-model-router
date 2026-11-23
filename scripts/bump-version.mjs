@@ -99,7 +99,7 @@ const COMPANION_VERSION_RULES = [
   },
   {
     rel: 'sidecars/panel/sidecar.json',
-    patterns: [[/(пульт управления(?:\s+Liquid Glass)?\s+v)\d+\.\d+(?:\.\d+)?/, (v) => `$1${v}`]],
+    patterns: [[/((?:пульт управления(?:\s+Liquid Glass)?|control panel(?:\s+Liquid Glass)?)\s+v)\d+\.\d+(?:\.\d+)?/i, (v) => `$1${v}`]],
   },
   {
     rel: 'Установить плагин.bat',
@@ -109,7 +109,7 @@ const COMPANION_VERSION_RULES = [
     rel: 'core/hook-runner.mjs',
     patterns: [
       [/(# The Tunnel\s+v)\d+\.\d+(?:\.\d+)?/g, (v) => `$1${v}`],
-      [/(['`]Автопилот\s+v)\d+\.\d+(?:\.\d+)?/g, (v) => `$1${v}`],
+      [/(['`](?:Автопилот|Autopilot)\s+v)\d+\.\d+(?:\.\d+)?/g, (v) => `$1${v}`],
       [/(Когнитивный ИИ-Автопилот\s+v)\d+\.\d+(?:\.\d+)?/, (v) => `$1${v}`],
     ],
   },
@@ -141,7 +141,7 @@ const COMPANION_VERSION_RULES = [
     rel: 'install.js',
     patterns: [
       [/(srcManifest\?\.version \? String\(srcManifest\.version\) :\s*')\d+\.\d+(?:\.\d+)?(')/, (v) => `$1${v}$2`],
-      [/(The Tunnel\s+v)\d+\.\d+(?:\.\d+)?(:)/g, (v) => `$1${v}$2`],
+      [/(The Tunnel\s+v)\d+\.\d+(?:\.\d+)?(:|\s+maintenance:)/g, (v) => `$1${v}$2`],
     ],
   },
   {
@@ -201,6 +201,10 @@ const COMPANION_VERSION_RULES = [
   {
     rel: 'scripts/benchmark-token-roi.mjs',
     patterns: [[/(\breturn\s+')\d+\.\d+(?:\.\d+)?(';)/, (v) => `$1${v}$2`]],
+  },
+  {
+    rel: '.github/ISSUE_TEMPLATE/bug_report.md',
+    patterns: [[/(\[e\.g\.,\s*v)\d+\.\d+(?:\.\d+)?(\])/, (v) => `$1${v}$2`]],
   },
 ];
 
@@ -265,7 +269,7 @@ export function syncVersionFiles({ repoRoot = DEFAULT_REPO_ROOT, target = 'check
   if (!dryRun) {
     pkgJson.version = nextVersion;
     if (typeof pkgJson.description === 'string') {
-      pkgJson.description = pkgJson.description.replace(/(диспетчер моделей(?: ИИ)?\s+)v\d+\.\d+(?:\.\d+)?/, `$1v${nextVersion}`);
+      pkgJson.description = pkgJson.description.replace(/((?:диспетчер моделей(?: ИИ)?|model router)\s+)v\d+\.\d+(?:\.\d+)?/i, `$1v${nextVersion}`);
     }
     pluginJson.version = nextVersion;
     if (typeof pluginJson.description === 'string') {

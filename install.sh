@@ -22,19 +22,52 @@ if ! command -v node >/dev/null 2>&1 && [ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]; 
   . "${NVM_DIR:-$HOME/.nvm}/nvm.sh" >/dev/null 2>&1 || true
 fi
 
+INSTALL_LANG="${TUNNEL_LANG:-}"
+PREV_ARG=""
+for arg in "$@"; do
+  if [ "$PREV_ARG" = "--lang" ]; then
+    INSTALL_LANG="$arg"
+    PREV_ARG=""
+    continue
+  fi
+  case "$arg" in
+    --lang=*) INSTALL_LANG="${arg#--lang=}" ;;
+    --lang) PREV_ARG="--lang" ;;
+  esac
+done
+if [ -z "$INSTALL_LANG" ]; then
+  case "${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}" in
+    ru*|RU*) INSTALL_LANG="ru" ;;
+    *) INSTALL_LANG="en" ;;
+  esac
+fi
+
 if ! command -v node >/dev/null 2>&1; then
-  echo "[ОШИБКА] Node.js не найден (требуется версия >= 22)." >&2
-  if [ "$(uname -s)" = "Darwin" ]; then
-    echo "Установите Node.js LTS через Homebrew: brew install node" >&2
+  if [ "$INSTALL_LANG" = "ru" ]; then
+    echo "[ОШИБКА] Node.js не найден (требуется версия >= 22)." >&2
+    if [ "$(uname -s)" = "Darwin" ]; then
+      echo "Установите Node.js LTS через Homebrew: brew install node" >&2
+    else
+      echo "Установите Node.js LTS с https://nodejs.org/ или через nvm: nvm install --lts" >&2
+    fi
   else
-    echo "Установите Node.js LTS с https://nodejs.org/ или через nvm: nvm install --lts" >&2
+    echo "[ERROR] Node.js was not found (version >= 22 required)." >&2
+    if [ "$(uname -s)" = "Darwin" ]; then
+      echo "Install Node.js LTS via Homebrew: brew install node" >&2
+    else
+      echo "Install Node.js LTS from https://nodejs.org/ or via nvm: nvm install --lts" >&2
+    fi
   fi
   exit 1
 fi
 
 NODE_MAJOR=$(node -p "Number(process.versions.node.split('.')[0])" 2>/dev/null || echo 0)
 if [ "$NODE_MAJOR" -lt 22 ]; then
-  echo "[ОШИБКА] Требуется Node.js >= 22 (установлена v$(node -v)). Обновите Node.js LTS." >&2
+  if [ "$INSTALL_LANG" = "ru" ]; then
+    echo "[ОШИБКА] Требуется Node.js >= 22 (установлена v$(node -v)). Обновите Node.js LTS." >&2
+  else
+    echo "[ERROR] Node.js >= 22 is required (found v$(node -v)). Please upgrade to Node.js LTS." >&2
+  fi
   exit 1
 fi
 

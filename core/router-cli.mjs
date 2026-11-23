@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * @file router-cli.mjs
- * @description Единый интерфейс командной строки (CLI) для The Tunnel v3.31.0.
+ * @description Единый интерфейс командной строки (CLI) для The Tunnel v3.32.0.
  * Предоставляет команды диагностики, анализа символов, слайсинга, кодомода и резервного копирования профиля.
  */
 
@@ -27,13 +27,14 @@ import { checkProjectCompletionInvariants, initAcceptanceGatesMarkdown } from '.
 import { scanShortcutDebt } from './shortcut-debt-ledger.mjs';
 import { listOpenSpecDeltas, listReusableBlocks, readOpenSpecDelta, saveReusableBlock, upsertOpenSpecDelta } from './reusable-blocks-specs.mjs';
 import { aggregateEvalIteration, initSkillEvalsTemplate } from '../skills/skill-architect/scripts/eval-skill-benchmark.mjs';
-import { formatProjectSetupReportRu, recommendProjectSetup } from './project-setup-recommender.mjs';
+import { formatProjectSetupReport, formatProjectSetupReportRu, recommendProjectSetup } from './project-setup-recommender.mjs';
 import { importSkillFromSource, searchSkillsCatalog } from './skill-registry-bridge.mjs';
 import { clearExpiredComboCooldowns, DEFAULT_COMBO_CHAINS, recordComboProviderCooldown, resolveComboFailoverTarget } from './quota-pacer.mjs';
 import { auditAllSkills, auditSkill } from '../skills/skill-architect/scripts/audit-skill.mjs';
 import { extractVariableSlice } from '../skills/program-slicer-ocd/scripts/slice-variable.mjs';
 import { runCodemod } from '../skills/ast-codemod-refactor/scripts/run-codemod.mjs';
 import { applySymbolReplacement } from './diff-patcher.mjs';
+import { normalizeLang, readActiveUiLanguage } from './i18n.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = resolve(__dirname, '..');
@@ -195,7 +196,7 @@ export function backupRouterProfile(backupPath = '', options = {}) {
 
     const pluginMeta = safeReadJsonSync(join(PLUGIN_ROOT, 'plugin.json'), {});
     const snapshot = {
-      version: String(pluginMeta?.version || '3.31.0'),
+      version: String(pluginMeta?.version || '3.32.0'),
       createdAt: new Date().toISOString(),
       state,
       cacheFiles
@@ -380,7 +381,7 @@ export function getRouterStatusSummary(workspaceRoot = process.cwd()) {
   } catch {}
 
   const pluginMeta = safeReadJsonSync(join(PLUGIN_ROOT, 'plugin.json'), {});
-  const version = String(pluginMeta?.version || '3.31.0');
+  const version = String(pluginMeta?.version || '3.32.0');
   const formatted = `🛡️ [Router Status] v${version} | Strategy: ${strategy} | Profile: ${hookProfile} | Guardrails: ${activeGuardrails}/${totalGuardrails} active | Skills: ${skillsCount} ready`;
 
   return {
@@ -397,7 +398,21 @@ export function getRouterStatusSummary(workspaceRoot = process.cwd()) {
 
 // Диспетчер командной строки CLI
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const args = process.argv.slice(2);
+  const rawArgs = process.argv.slice(2);
+  let explicitLang = '';
+  const args = [];
+  for (let i = 0; i < rawArgs.length; i++) {
+    const a = String(rawArgs[i] || '');
+    if (a.startsWith('--lang=')) {
+      explicitLang = a.slice('--lang='.length).trim();
+    } else if (a === '--lang' && i + 1 < rawArgs.length) {
+      explicitLang = String(rawArgs[++i] || '').trim();
+    } else {
+      args.push(a);
+    }
+  }
+  const cliLang = normalizeLang(explicitLang || readActiveUiLanguage(), 'en');
+  const isEnCli = cliLang === 'en';
   const cmd = args[0] || 'status';
 
   if (cmd === 'status') {
@@ -643,12 +658,18 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       console.log(JSON.stringify(res, null, 2));
     } else {
       const items = res.items || [];
-      console.log(`🧠 [Инстинкты проекта] Найдено: ${items.length} (${wsDir})`);
+      console.log(
+        isEnCli
+          ? `🧠 [Project Instincts] Found: ${items.length} (${wsDir})`
+          : `🧠 [Инстинкты проекта] Найдено: ${items.length} (${wsDir})`
+      );
       for (const it of items) {
         const confPct = Math.round((it.effectiveConfidence || 0) * 100);
         const tag = it.promotedSkill
           ? `✅ -> ${it.promotedSkill}`
-          : (it.readyForPromotion ? '🚀 Готов к /evolve' : '⏳ Накопление');
+          : (it.readyForPromotion
+              ? (isEnCli ? '🚀 Ready for /evolve' : '🚀 Готов к /evolve')
+              : (isEnCli ? '⏳ Accumulating' : '⏳ Накопление'));
         console.log(`  - [${it.id.slice(0, 8)}] ${confPct}% (x${it.evidenceCount}) ${tag}: ${it.pattern}`);
       }
     }
@@ -665,7 +686,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     }
     const res = evolveReadyInstincts({ workspaceRoot: wsDir, skillSlug, dryRun });
     console.log(
-      `🚀 [Эволюция инстинктов] Кандидатов: ${res.candidatesCount} | Повышено в навыки: ${res.promoted.length}${res.dryRun ? ' (предпросмотр)' : ''}`
+      isEnCli
+        ? `🚀 [Instinct Evolution] Candidates: ${res.candidatesCount} | Promoted to skills: ${res.promoted.length}${res.dryRun ? ' (dry-run)' : ''}`
+        : `🚀 [Эволюция инстинктов] Кандидатов: ${res.candidatesCount} | Повышено в навыки: ${res.promoted.length}${res.dryRun ? ' (предпросмотр)' : ''}`
     );
     for (const p of res.promoted) {
       console.log(`  - ${p.skillSlug || 'preview'}: ${p.pattern}`);
@@ -683,11 +706,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       else if (a === '--strict') strictMode = true;
       else if (a === '--dir' && i + 1 < shArgs.length) wsDir = resolve(shArgs[++i]);
     }
-    const res = auditAgentEnvironment({ workspaceRoot: wsDir, includeGlobal });
+    const res = auditAgentEnvironment({ workspaceRoot: wsDir, includeGlobal, lang: cliLang });
     if (asJson) {
       console.log(JSON.stringify(res, null, 2));
     } else {
-      console.log(`🛡️ [AgentShield] ${res.summaryRu}`);
+      console.log(`🛡️ [AgentShield] ${isEnCli ? (res.summaryEn || res.summaryRu) : (res.summaryRu || res.summaryEn)}`);
       for (const f of res.findings) {
         console.log(`  - [${String(f.severity || 'low').toUpperCase()} · ${f.ruleId}] ${f.file}: ${f.message}`);
       }
@@ -759,14 +782,22 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       if (args.includes('--json')) {
         console.log(JSON.stringify(res, null, 2));
       } else if (res.ok) {
-        console.log(`🚧 [GATES.md] Создан шаблон критериев приёмки: ${res.outPath} (${res.count} пунктов)`);
+        console.log(
+          isEnCli
+            ? `🚧 [GATES.md] Created acceptance gates template: ${res.outPath} (${res.count} items)`
+            : `🚧 [GATES.md] Создан шаблон критериев приёмки: ${res.outPath} (${res.count} пунктов)`
+        );
       } else {
-        console.error(`⚠️ [GATES.md] ${res.reason || 'Не удалось создать файл'} (${res.outPath})`);
+        console.error(
+          isEnCli
+            ? `⚠️ [GATES.md] ${res.reason || 'Failed to create file'} (${res.outPath})`
+            : `⚠️ [GATES.md] ${res.reason || 'Не удалось создать файл'} (${res.outPath})`
+        );
         process.exit(1);
       }
     } else {
       const targetDir = resolve(args.find((a, idx) => idx > 0 && !a.startsWith('-')) || process.cwd());
-      const res = checkProjectCompletionInvariants(targetDir, []);
+      const res = checkProjectCompletionInvariants(targetDir, [], { lang: cliLang });
       if (args.includes('--json')) {
         console.log(JSON.stringify(res, null, 2));
       } else {
@@ -782,11 +813,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   } else if (cmd === 'doctor' || cmd === 'setup-recommend') {
     const targetDir = resolve(args.find((a, idx) => idx > 0 && !a.startsWith('-')) || process.cwd());
     const st = safeReadJsonSync(getRouterStateFile(), () => ({}), { selfHeal: true });
-    const res = recommendProjectSetup({ workspaceRoot: targetDir, currentState: st });
+    const res = recommendProjectSetup({ workspaceRoot: targetDir, currentState: st, lang: cliLang });
     if (args.includes('--json')) {
       console.log(JSON.stringify(res, null, 2));
     } else {
-      console.log(formatProjectSetupReportRu(res));
+      console.log(formatProjectSetupReport(res, cliLang));
     }
     if (!res.ok) process.exit(1);
   } else if (cmd === 'find-skills') {
@@ -798,13 +829,17 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     if (asJson) {
       console.log(JSON.stringify(res, null, 2));
     } else {
-      console.log(`🔎 [Поиск навыков] Запрос: "${query || '*'}" | Локальных: ${res.localMatches.length} | Внешних: ${res.remoteMatches.length}${res.offlineFallback ? ' (офлайн)' : ''}`);
+      console.log(
+        isEnCli
+          ? `🔎 [Skill Search] Query: "${query || '*'}" | Local: ${res.localMatches.length} | Remote: ${res.remoteMatches.length}${res.offlineFallback ? ' (offline)' : ''}`
+          : `🔎 [Поиск навыков] Запрос: "${query || '*'}" | Локальных: ${res.localMatches.length} | Внешних: ${res.remoteMatches.length}${res.offlineFallback ? ' (офлайн)' : ''}`
+      );
       for (const s of res.localMatches) {
-        console.log(`  ✅ [локальный] ${s.slug}: ${s.description.slice(0, 110)}`);
+        console.log(`  ✅ [${isEnCli ? 'local' : 'локальный'}] ${s.slug}: ${s.description.slice(0, 110)}`);
       }
       for (const s of res.remoteMatches) {
-        const tag = s.alreadyInstalled ? '⚠️ уже установлен' : (s.sourceRepo || 'skills.sh');
-        console.log(`  🌐 [${tag}] ${s.slug} (${s.installs || 0} уст.): ${s.description.slice(0, 100)}`);
+        const tag = s.alreadyInstalled ? (isEnCli ? '⚠️ already installed' : '⚠️ уже установлен') : (s.sourceRepo || 'skills.sh');
+        console.log(`  🌐 [${tag}] ${s.slug} (${s.installs || 0} ${isEnCli ? 'installs' : 'уст.'}): ${s.description.slice(0, 100)}`);
       }
     }
   } else if (cmd === 'import-skill') {
@@ -834,13 +869,22 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       ...(targetSkillsDir ? { targetSkillsDir } : {}),
       dryRun,
       force,
+      lang: cliLang,
     });
     if (asJson) {
       console.log(JSON.stringify(res, null, 2));
     } else if (res.ok) {
-      console.log(`🛡️ [Импорт навыка] ${res.slug}: ${res.dryRun ? 'проверка пройдена (dry-run)' : `установлен в ${res.installedDir}`}`);
+      console.log(
+        isEnCli
+          ? `🛡️ [Skill Import] ${res.slug}: ${res.dryRun ? 'dry-run passed' : `installed to ${res.installedDir}`}`
+          : `🛡️ [Импорт навыка] ${res.slug}: ${res.dryRun ? 'проверка пройдена (dry-run)' : `установлен в ${res.installedDir}`}`
+      );
     } else {
-      console.error(`❌ [Импорт навыка] Заблокирован (${res.error || (res.reasons || []).join('; ')})`);
+      console.error(
+        isEnCli
+          ? `❌ [Skill Import] Blocked (${res.error || (res.reasons || []).join('; ')})`
+          : `❌ [Импорт навыка] Заблокирован (${res.error || (res.reasons || []).join('; ')})`
+      );
     }
     if (!res.ok) process.exit(1);
   } else if (cmd === 'combo') {
@@ -866,10 +910,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     if (asJson) {
       console.log(JSON.stringify(res, null, 2));
     } else {
-      console.log(`🔀 [Combo Failover · ${res.combo}] Активная цель: ${res.selected}`);
-      console.log(`   Цепочка: ${res.chain.join(' -> ')}`);
+      console.log(`🔀 [Combo Failover · ${res.combo}] ${isEnCli ? 'Active target' : 'Активная цель'}: ${res.selected}`);
+      console.log(`   ${isEnCli ? 'Chain' : 'Цепочка'}: ${res.chain.join(' -> ')}`);
       if (res.skippedOnCooldown.length) {
-        console.log(`   На паузе (cooldown): ${res.skippedOnCooldown.map((s) => `${s.model} (${s.reason})`).join(', ')}`);
+        console.log(`   ${isEnCli ? 'On cooldown' : 'На паузе (cooldown)'}: ${res.skippedOnCooldown.map((s) => `${s.model} (${s.reason})`).join(', ')}`);
       }
     }
   } else if (cmd === 'audit-ui') {

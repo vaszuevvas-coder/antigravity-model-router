@@ -8,6 +8,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { safeReadJsonSync } from '../../core/safe-json.mjs';
+import { normalizeLang, pickLang } from '../../core/i18n.mjs';
 import { getPricingPhaseStatus } from '../../core/model-profile.mjs';
 import { attachSidecarSecurityMiddleware, isValidWorkspaceDir, startSidecarHostWatchdog, validateRequestOrigin } from './lib/panel-security.mjs';
 import {
@@ -191,7 +192,7 @@ function getPluginVersion() {
     const ver = typeof meta?.version === 'string' ? meta.version.trim() : '';
     if (ver) return ver;
   } catch {}
-  return '3.31.0';
+  return '3.32.0';
 }
 
 function getUiBuildVersion() {
@@ -632,6 +633,7 @@ export async function startSidecarPanel(options = {}) {
         force: Boolean(data?.force),
         wsPath: wsRoot,
         cfgOverride: curState,
+        lang: normalizeLang(curState?.uiLanguage, 'en'),
       };
       const daemonRes = process.env.TUNNEL_TEST_ISOLATE_INSTALLED === '1'
         ? null
@@ -674,7 +676,8 @@ export async function startSidecarPanel(options = {}) {
       const fallback = await fetchSentinelPanelStatus(wsRoot, curState, { force: true });
       return { ok: true, sentinel: fallback };
     } catch (err) {
-      return { ok: false, error: err?.message || 'Ошибка выполнения Фонового Дозора' };
+      const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка выполнения Фонового Дозора', 'Background Sentinel execution failed') };
     }
   }, 'POST');
 
@@ -682,7 +685,7 @@ export async function startSidecarPanel(options = {}) {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
     const cpWs = resolveCheckpointScopeWs(data, activeWs);
-    return await safeRollbackCheckpoint(data?.checkpointId || 'latest', cpWs);
+    return await safeRollbackCheckpoint(data?.checkpointId || 'latest', cpWs, { lang: normalizeLang(loadState()?.uiLanguage, 'en') });
   }, 'POST');
 
   app.api('/api/checkpoints/turns', async (data) => {
@@ -700,35 +703,37 @@ export async function startSidecarPanel(options = {}) {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
     const cpWs = resolveCheckpointScopeWs(data, activeWs);
-    return await safeGetTurnDiffSummary(data?.turnId || 'latest', cpWs);
+    return await safeGetTurnDiffSummary(data?.turnId || 'latest', cpWs, { lang: normalizeLang(loadState()?.uiLanguage, 'en') });
   }, 'POST');
 
   app.api('/api/checkpoints/rollback-turn', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
     const cpWs = resolveCheckpointScopeWs(data, activeWs);
-    return await safeRollbackTurn(data?.turnId || 'latest', cpWs);
+    return await safeRollbackTurn(data?.turnId || 'latest', cpWs, { lang: normalizeLang(loadState()?.uiLanguage, 'en') });
   }, 'POST');
 
   app.api('/api/worktree/action', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+    const curState = loadState();
+    const lang = normalizeLang(curState?.uiLanguage, 'en');
     const mod = await getShadowWorktreeMod();
-    if (!mod) return { ok: false, error: 'Модуль Git-песочницы недоступен' };
+    if (!mod) return { ok: false, error: pickLang(lang, 'Модуль Git-песочницы недоступен', 'Git sandbox module unavailable') };
     const act = String(data?.action || 'list').trim();
     if (act === 'create') {
-      const created = mod.createShadowWorktree({ workspaceRoot: activeWs, label: data?.label || '', state: loadState() });
+      const created = mod.createShadowWorktree({ workspaceRoot: activeWs, label: data?.label || '', state: curState, lang });
       return { ...created, worktrees: mod.listShadowWorktrees(activeWs) };
     }
     if (act === 'diff') {
-      return mod.getShadowWorktreeDiff({ id: data?.id || '', workspaceRoot: activeWs });
+      return mod.getShadowWorktreeDiff({ id: data?.id || '', workspaceRoot: activeWs, lang });
     }
     if (act === 'promote') {
-      const res = mod.promoteShadowWorktree({ id: data?.id || '', workspaceRoot: activeWs, cleanup: data?.cleanup !== false });
+      const res = mod.promoteShadowWorktree({ id: data?.id || '', workspaceRoot: activeWs, cleanup: data?.cleanup !== false, lang });
       return { ...res, worktrees: mod.listShadowWorktrees(activeWs) };
     }
     if (act === 'discard') {
-      const res = mod.discardShadowWorktree({ id: data?.id || '', workspaceRoot: activeWs });
+      const res = mod.discardShadowWorktree({ id: data?.id || '', workspaceRoot: activeWs, lang });
       return { ...res, worktrees: mod.listShadowWorktrees(activeWs) };
     }
     return { ok: true, worktrees: mod.listShadowWorktrees(activeWs) };
@@ -742,24 +747,28 @@ export async function startSidecarPanel(options = {}) {
   app.api('/api/wiretap/fault', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+    const curState = loadState();
+    const lang = normalizeLang(curState?.uiLanguage, 'en');
     const mod = await getRuntimeWiretapMod();
-    if (!mod) return { ok: false, error: 'Модуль Wiretap недоступен' };
+    if (!mod) return { ok: false, error: pickLang(lang, 'Модуль Wiretap недоступен', 'Runtime Wiretap module unavailable') };
     const ingestRes = mod.ingestRuntimeFault({
       workspaceRoot: activeWs,
       source: data?.source || 'panel',
       command: data?.command || '',
       rawError: data?.rawError || data?.error || '',
       exitCode: data?.exitCode ?? 1,
-      state: loadState(),
+      state: curState,
+      lang,
     });
-    return { ...ingestRes, faults: await safeGetWiretapFaults(activeWs, loadState()) };
+    return { ...ingestRes, faults: await safeGetWiretapFaults(activeWs, curState) };
   }, 'POST');
 
   app.api('/api/wiretap/clear', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     const mod = await getRuntimeWiretapMod();
-    if (!mod) return { ok: false, error: 'Модуль Wiretap недоступен' };
+    if (!mod) return { ok: false, error: pickLang(lang, 'Модуль Wiretap недоступен', 'Runtime Wiretap module unavailable') };
     return mod.clearWiretapFaults(activeWs);
   }, 'POST');
 
@@ -846,9 +855,10 @@ export async function startSidecarPanel(options = {}) {
         isDir = false;
       }
       if (!isDir || normPeer(candAbs) === activeNorm) {
+        const lang = normalizeLang(loadState()?.uiLanguage, 'en');
         return {
           ok: false,
-          error: 'Папка репозитория не найдена или совпадает с текущим проектом',
+          error: pickLang(lang, 'Папка репозитория не найдена или совпадает с текущим проектом', 'Repository folder not found or matches current workspace'),
           peers: hub.getFederatedWorkspaces(activeWs),
           stats: hub.getStats(activeWs),
         };
@@ -878,34 +888,39 @@ export async function startSidecarPanel(options = {}) {
 
   app.api('/api/shield', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
       const { auditAgentEnvironment } = await import('../../core/agent-shield.mjs');
       const includeGlobal = !(data?.workspaceOnly === '1' || data?.workspaceOnly === true || data?.workspaceOnly === 'true');
-      return auditAgentEnvironment({ workspaceRoot: activeWs, includeGlobal });
+      return auditAgentEnvironment({ workspaceRoot: activeWs, includeGlobal, lang });
     } catch (err) {
-      return { ok: false, error: err?.message || 'Ошибка аудита AgentShield' };
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка аудита AgentShield', 'AgentShield audit failed') };
     }
   }, 'GET');
 
   app.api('/api/setup-recommendations', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const curState = loadState();
+    const lang = normalizeLang(curState?.uiLanguage, 'en');
     try {
       const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
       const { recommendProjectSetup } = await import('../../core/project-setup-recommender.mjs');
-      return recommendProjectSetup({ workspaceRoot: activeWs, currentState: loadState() });
+      return recommendProjectSetup({ workspaceRoot: activeWs, currentState: curState });
     } catch (err) {
-      return { ok: false, error: err?.message || 'Ошибка диагностики стека проекта' };
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка диагностики стека проекта', 'Setup Doctor analysis failed') };
     }
   }, 'GET');
 
   app.api('/api/setup-recommendations/apply', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const curState = loadState();
+    const lang = normalizeLang(curState?.uiLanguage, 'en');
     try {
       const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
       const kind = typeof data?.kind === 'string' ? data.kind.trim().toLowerCase() : '';
       const { recommendProjectSetup } = await import('../../core/project-setup-recommender.mjs');
-      const rec = recommendProjectSetup({ workspaceRoot: activeWs, currentState: loadState() });
+      const rec = recommendProjectSetup({ workspaceRoot: activeWs, currentState: curState });
       let applied = false;
       let detail = '';
 
@@ -916,26 +931,30 @@ export async function startSidecarPanel(options = {}) {
         };
         saveState(patch);
         applied = true;
-        detail = `Применён профиль хуков ${patch.hookProfile}`;
+        detail = pickLang(lang, `Применён профиль хуков ${patch.hookProfile}`, `Applied hook profile ${patch.hookProfile}`);
       } else if (kind === 'agentignore') {
         const outPath = join(activeWs, '.agentignore');
         if (!existsSync(outPath) || data?.overwrite) {
           writeFileSync(outPath, '.env*\nsecrets/\n*.pem\n*.key\n', 'utf8');
         }
         applied = true;
-        detail = 'Создан файл .agentignore (UTF-8)';
+        detail = pickLang(lang, 'Создан файл .agentignore (UTF-8)', 'Created .agentignore (UTF-8)');
       } else if (kind === 'design_md') {
         const { generateDesignMdFromCode } = await import('../../skills/ui-ux-design-system/scripts/extract-design-md.mjs');
         const mdRes = generateDesignMdFromCode(activeWs, { write: true, overwrite: Boolean(data?.overwrite) });
         applied = Boolean(mdRes?.ok);
-        detail = mdRes?.ok ? 'Сгенерирован DESIGN.md' : (mdRes?.reason || mdRes?.error || 'Не удалось создать DESIGN.md');
+        detail = mdRes?.ok
+          ? pickLang(lang, 'Сгенерирован DESIGN.md', 'Generated DESIGN.md')
+          : (mdRes?.reason || mdRes?.error || pickLang(lang, 'Не удалось создать DESIGN.md', 'Failed to generate DESIGN.md'));
       } else if (kind === 'gates_md') {
         const { initAcceptanceGatesMarkdown } = await import('../../core/completion-gates.mjs');
-        const gRes = initAcceptanceGatesMarkdown(activeWs, { overwrite: Boolean(data?.overwrite) });
+        const gRes = initAcceptanceGatesMarkdown(activeWs, { overwrite: Boolean(data?.overwrite), lang });
         applied = Boolean(gRes?.ok || gRes?.exists);
-        detail = gRes?.ok ? 'Создан журнал GATES.md' : (gRes?.reason || 'GATES.md уже существует');
+        detail = gRes?.ok
+          ? pickLang(lang, 'Создан журнал GATES.md', 'Created GATES.md checklist')
+          : (gRes?.reason || pickLang(lang, 'GATES.md уже существует', 'GATES.md already exists'));
       } else {
-        return { ok: false, error: 'Неизвестный тип рекомендации Setup Doctor' };
+        return { ok: false, error: pickLang(lang, 'Неизвестный тип рекомендации Setup Doctor', 'Unknown Setup Doctor recommendation kind') };
       }
 
       const freshRec = recommendProjectSetup({ workspaceRoot: activeWs, currentState: loadState() });
@@ -948,12 +967,13 @@ export async function startSidecarPanel(options = {}) {
         state: loadState(),
       };
     } catch (err) {
-      return { ok: false, error: err?.message || 'Ошибка применения рекомендации Setup Doctor' };
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка применения рекомендации Setup Doctor', 'Failed to apply Setup Doctor recommendation') };
     }
   }, 'POST');
 
   app.api('/api/skills/search', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
       const { searchSkillsCatalog } = await import('../../core/skill-registry-bridge.mjs');
@@ -962,14 +982,16 @@ export async function startSidecarPanel(options = {}) {
         workspaceRoot: activeWs,
         includeRemote: data?.includeRemote !== false,
         limit: Number(data?.limit) || 8,
+        lang,
       });
     } catch (err) {
-      return { ok: false, error: err?.message || 'Ошибка поиска навыков', localMatches: [], remoteMatches: [] };
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка поиска навыков', 'Skill search failed'), localMatches: [], remoteMatches: [] };
     }
   }, 'POST');
 
   app.api('/api/skills/import', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
       const { importSkillFromSource } = await import('../../core/skill-registry-bridge.mjs');
@@ -978,6 +1000,7 @@ export async function startSidecarPanel(options = {}) {
         slug: typeof data?.slug === 'string' ? data.slug : '',
         force: Boolean(data?.force),
         dryRun: Boolean(data?.dryRun),
+        lang,
       });
       if (panelRuntime?.discoverSkillsCache) {
         panelRuntime.discoverSkillsCache.ts = 0;
@@ -987,12 +1010,13 @@ export async function startSidecarPanel(options = {}) {
         skills: discoverSkills(activeWs),
       };
     } catch (err) {
-      return { ok: false, installed: false, error: err?.message || 'Ошибка карантинного импорта навыка' };
+      return { ok: false, installed: false, error: err?.message || pickLang(lang, 'Ошибка карантинного импорта навыка', 'Skill quarantine import failed') };
     }
   }, 'POST');
 
   app.api('/api/instincts', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
       const mod = await getKnowledgeHubMod();
@@ -1004,12 +1028,13 @@ export async function startSidecarPanel(options = {}) {
       const listed = hub.listInstincts({ workspaceRoot: activeWs, includePromoted, minConfidence: 0.1, limit: 30 });
       return { ok: true, items: listed.items || [], stats: hub.getStats(activeWs) };
     } catch (err) {
-      return { ok: false, error: err?.message || 'Ошибка чтения инстинктов', items: [] };
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка чтения инстинктов', 'Failed to read instincts'), items: [] };
     }
   }, 'GET');
 
   app.api('/api/instincts/promote', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
       const mod = await getKnowledgeHubMod();
@@ -1021,17 +1046,19 @@ export async function startSidecarPanel(options = {}) {
         workspaceRoot: activeWs,
         skillSlug: typeof data?.skillSlug === 'string' ? data.skillSlug : '',
         hub,
+        lang,
       });
       if (!res.ok) return res;
       const listed = hub.listInstincts({ workspaceRoot: activeWs, includePromoted: false, minConfidence: 0.1, limit: 30 });
       return { ...res, items: listed.items || [], stats: hub.getStats(activeWs) };
     } catch (err) {
-      return { ok: false, error: err?.message || 'Ошибка повышения инстинкта в навык' };
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка повышения инстинкта в навык', 'Failed to promote instinct to skill') };
     }
   }, 'POST');
 
   app.api('/api/instincts/delete', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
       const mod = await getKnowledgeHubMod();
@@ -1046,7 +1073,7 @@ export async function startSidecarPanel(options = {}) {
       const listed = hub.listInstincts({ workspaceRoot: activeWs, includePromoted: false, minConfidence: 0.1, limit: 30 });
       return { ...delRes, ok: Boolean(delRes?.ok), items: listed.items || [], stats: hub.getStats(activeWs) };
     } catch (err) {
-      return { ok: false, error: err?.message || 'Ошибка удаления инстинкта', items: [] };
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка удаления инстинкта', 'Failed to delete instinct'), items: [] };
     }
   }, 'POST');
 
@@ -1066,7 +1093,8 @@ export async function startSidecarPanel(options = {}) {
       });
       return { ok: true, items: res.items || [], stats: hub.getStats(activeWs) };
     } catch (err) {
-      return { ok: false, error: err?.message || 'Ошибка чтения эпизодов памяти', items: [] };
+      const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка чтения эпизодов памяти', 'Failed to read memory episodes'), items: [] };
     }
   }, 'GET');
 
@@ -1091,16 +1119,18 @@ export async function startSidecarPanel(options = {}) {
         items: parsed?.items || [],
       };
     } catch (err) {
-      return { ok: false, error: err?.message || 'Ошибка чтения GATES.md' };
+      const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка чтения GATES.md', 'Failed to read GATES.md') };
     }
   }, 'GET');
 
   app.api('/api/gates', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
       const { initAcceptanceGatesMarkdown, parseAcceptanceGatesMarkdown } = await import('../../core/completion-gates.mjs');
-      const initRes = initAcceptanceGatesMarkdown(activeWs, { overwrite: Boolean(data?.overwrite) });
+      const initRes = initAcceptanceGatesMarkdown(activeWs, { overwrite: Boolean(data?.overwrite), lang });
       const gatesPath = join(activeWs, 'GATES.md');
       const parsed = existsSync(gatesPath) ? parseAcceptanceGatesMarkdown(readFileSync(gatesPath, 'utf8')) : null;
       return {
@@ -1113,24 +1143,26 @@ export async function startSidecarPanel(options = {}) {
         items: parsed?.items || [],
       };
     } catch (err) {
-      return { ok: false, error: err?.message || 'Ошибка создания GATES.md' };
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка создания GATES.md', 'Failed to create GATES.md') };
     }
   }, 'POST');
 
   app.api('/api/quota/reset-cooldowns', async (_data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const { clearExpiredComboCooldowns } = await import('../../core/quota-pacer.mjs');
       const cleared = clearExpiredComboCooldowns({ resetAll: true });
       const quotaPacer = await safeGetQuotaForecast(loadState());
       return { ok: true, cleared, quotaPacer };
     } catch (err) {
-      return { ok: false, error: err?.message || 'Ошибка сброса пауз Combo' };
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка сброса пауз Combo', 'Failed to reset Combo cooldowns') };
     }
   }, 'POST');
 
   app.api('/api/graph', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
       const { RamMemoryEngine } = await import('../../core/ram-memory-engine.mjs');
@@ -1160,12 +1192,13 @@ export async function startSidecarPanel(options = {}) {
         verification,
       };
     } catch (err) {
-      return { ok: false, error: err?.message || 'Ошибка построения графа архитектуры' };
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка построения графа архитектуры', 'Failed to build architecture graph') };
     }
   }, 'GET');
 
   app.api('/api/debt', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
       const { scanShortcutDebt } = await import('../../core/shortcut-debt-ledger.mjs');
@@ -1174,7 +1207,7 @@ export async function startSidecarPanel(options = {}) {
       });
       return res;
     } catch (err) {
-      return { ok: false, error: err?.message || 'Ошибка сканирования техдолга shortcut:' };
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка сканирования техдолга shortcut:', 'Failed to scan shortcut debt ledger') };
     }
   }, 'GET');
 
@@ -1221,9 +1254,11 @@ export async function startSidecarPanel(options = {}) {
 
   app.api('/api/gpu', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const curGpuState = loadState();
+    const lang = normalizeLang(curGpuState?.uiLanguage, 'en');
     try {
       const mod = await getLocalGpuMod();
-      if (!mod) return { ok: false, error: 'Модуль GPU недоступен' };
+      if (!mod) return { ok: false, error: pickLang(lang, 'Модуль GPU недоступен', 'Local GPU module unavailable') };
       const action = data?.action || 'status';
       if (action === 'unload' || action === 'warm' || action === 'enforce_cap' || action === 'warm_host_ram') {
         gpuStatusPanelCache.ts = 0;
@@ -1293,7 +1328,7 @@ export async function startSidecarPanel(options = {}) {
         const wsRoot = await resolveActiveWorkspaceForPanel(data?.rootDir);
         if (!isValidWorkspaceDir(wsRoot)) {
           return new Response(
-            JSON.stringify({ ok: false, status: 400, error: 'Рабочая папка не найдена или недопустима' }),
+            JSON.stringify({ ok: false, status: 400, error: pickLang(lang, 'Рабочая папка не найдена или недопустима', 'Workspace directory not found or invalid') }),
             {
               status: 400,
               contentType: 'application/json',
@@ -1302,7 +1337,7 @@ export async function startSidecarPanel(options = {}) {
           );
         }
         const daemonRes = await postRamDaemonJson('/gpu/warm', { wsPath: wsRoot, maxNewFiles: 350 }, 90000);
-        if (daemonRes && daemonRes.ok) {
+        if (daemonRes && typeof daemonRes.ok === 'boolean' && daemonRes.ok) {
           const snap = await fetchFreshGpuSnap();
           return { ...daemonRes, gpu: snap, viaDaemon: true };
         }
@@ -1310,7 +1345,7 @@ export async function startSidecarPanel(options = {}) {
         const ram = new RamMemoryEngine();
         try {
           const ws = await ram.warmWorkspaceAsync(wsRoot, { startWatcher: false });
-          if (!ws) return { ok: false, error: 'Рабочая папка не найдена' };
+          if (!ws) return { ok: false, error: pickLang(lang, 'Рабочая папка не найдена', 'Workspace directory not found') };
           const idx = await mod.indexWorkspaceVectors(ws.absRoot, ws.files, { maxNewFiles: 350 });
           const snap = await fetchFreshGpuSnap();
           return { ...idx, gpu: snap, viaDaemon: false };
@@ -1321,7 +1356,7 @@ export async function startSidecarPanel(options = {}) {
       if (action === 'test_distill') {
         const res = await mod.distillText({
           text: 'ERROR: TypeError: Cannot read properties of undefined (reading "port") at C:/app/server.js:42:11\n    at Module._compile (node:internal/modules/cjs/loader:1562:14)\nStack trace noise repeated 20 times.',
-          query: 'Какая причина ошибки и в какой строке?',
+          query: pickLang(lang, 'Какая причина ошибки и в какой строке?', 'What is the root cause and line number?'),
           mode: 'error_log',
           maxOutputTokens: 160,
         });
@@ -1337,10 +1372,11 @@ export async function startSidecarPanel(options = {}) {
 
   app.api('/api/hardware', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const curState = loadState();
+    const lang = normalizeLang(curState?.uiLanguage, 'en');
     try {
       const mod = await getHardwareProfilerMod();
-      if (!mod) return { ok: false, error: 'Модуль профилирования железа недоступен' };
-      const curState = loadState();
+      if (!mod) return { ok: false, error: pickLang(lang, 'Модуль профилирования железа недоступен', 'Hardware profiler module unavailable') };
       const action = String(data?.action || 'scan');
       const subTier = data?.subscriptionTier === 'ultra' || curState.subscriptionTier === 'ultra' ? 'ultra' : 'pro';
       const force = action === 'scan' || action === 'rescan' || action === 'auto_apply' || Boolean(data?.force);
@@ -1356,29 +1392,29 @@ export async function startSidecarPanel(options = {}) {
           hardwareProfiled: true,
         };
         const next = saveState(patch);
-        const promptText = mod.buildAiHardwareTuningPrompt(profile, next);
+        const promptText = mod.buildAiHardwareTuningPrompt(profile, next, { lang: normalizeLang(next?.uiLanguage, lang) });
         return { ok: true, state: next, hardwareProfile: profile, appliedPatch: patch, promptText };
       }
 
       if (action === 'model_search_prompt') {
         const gpuSnap = await safeGetGpuStatus({ force: true });
         const promptText = typeof mod.buildAiModelSearchPrompt === 'function'
-          ? mod.buildAiModelSearchPrompt(profile, curState, gpuSnap)
-          : mod.buildAiHardwareTuningPrompt(profile, curState);
+          ? mod.buildAiModelSearchPrompt(profile, curState, gpuSnap, { lang })
+          : mod.buildAiHardwareTuningPrompt(profile, curState, { lang });
         return { ok: true, hardwareProfile: profile, gpu: gpuSnap, promptText };
       }
 
       if (action === 'vram_fit_prompt') {
         const gpuSnap = await safeGetGpuStatus({ force: true });
         const promptText = typeof mod.buildVramFitModelPrompt === 'function'
-          ? mod.buildVramFitModelPrompt(profile, curState, gpuSnap)
+          ? mod.buildVramFitModelPrompt(profile, curState, gpuSnap, { lang })
           : (typeof mod.buildAiModelSearchPrompt === 'function'
-              ? mod.buildAiModelSearchPrompt(profile, curState, gpuSnap)
-              : mod.buildAiHardwareTuningPrompt(profile, curState));
+              ? mod.buildAiModelSearchPrompt(profile, curState, gpuSnap, { lang })
+              : mod.buildAiHardwareTuningPrompt(profile, curState, { lang }));
         return { ok: true, isVramFitPrompt: true, hardwareProfile: profile, gpu: gpuSnap, promptText };
       }
 
-      const promptText = mod.buildAiHardwareTuningPrompt(profile, curState);
+      const promptText = mod.buildAiHardwareTuningPrompt(profile, curState, { lang });
       return { ok: true, hardwareProfile: profile, promptText };
     } catch (err) {
       return { ok: false, error: err.message };
@@ -1387,9 +1423,10 @@ export async function startSidecarPanel(options = {}) {
 
   app.api('/api/hud', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const [hudMod, progMod] = await Promise.all([getFloatingHudMod(), getTaskProgressMod()]);
-      if (!progMod) return { ok: false, error: 'Модуль прогресса задач недоступен' };
+      if (!progMod) return { ok: false, error: pickLang(lang, 'Модуль прогресса задач недоступен', 'Task progress module unavailable') };
       const action = String(data?.action || 'status');
       // Плавающее окно Floating HUD отключено по решению пользователя: гарантируем его остановку
       if (hudMod?.stopFloatingHud) {
@@ -1400,7 +1437,7 @@ export async function startSidecarPanel(options = {}) {
           currentStep: 2,
           totalSteps: 4,
           percent: 55,
-          stepTitle: 'Демо-прогресс в панели',
+          stepTitle: pickLang(lang, 'Демо-прогресс в панели', 'Demo progress in panel'),
           status: 'running',
         });
         return { ok: true, floatingHud: { running: false, enabled: false }, taskProgress: progress };
@@ -1477,8 +1514,9 @@ export async function startSidecarPanel(options = {}) {
       const draft = String(data?.draft || '').slice(0, 600);
       const scopedCtx = prioritizeContextForDraft(draft, ctx);
       const stage = data?.stage === 'fast' ? 'fast' : 'gpu';
-      const fastRes = computeFastRamAutocomplete(draft, scopedCtx);
       const curState = loadState();
+      const autocompleteLang = normalizeLang(curState?.uiLanguage, 'en');
+      const fastRes = computeFastRamAutocomplete(draft, { ...scopedCtx, lang: autocompleteLang });
 
       const verifyFastCandidate = async (candidateText) => {
         if (!candidateText) return '';
@@ -1514,7 +1552,7 @@ export async function startSidecarPanel(options = {}) {
       autocompleteGpuQueue.supersedePending(
         () => true,
         'AUTOCOMPLETE_SUPERSEDED',
-        'Подсказка заменена более новым вводом'
+        pickLang(autocompleteLang, 'Подсказка заменена более новым вводом', 'Suggestion superseded by newer input')
       );
 
       const ac = new AbortController();
@@ -1607,6 +1645,7 @@ export async function startSidecarPanel(options = {}) {
                 symbolsByFile: groundingSymbolsByFile,
                 repoTechTerms: groundingRepoTechTerms,
                 allowedSlashCommands: ALLOWED_SLASH_COMMANDS,
+                lang: autocompleteLang,
                 signal: ac.signal,
               });
             }
@@ -1667,19 +1706,20 @@ export async function startSidecarPanel(options = {}) {
       ) {
         return { ok: false, aborted: true, seq, continuation: '' };
       }
-      return { ok: false, error: err?.message || 'Ошибка автодополнения', continuation: '' };
+      return { ok: false, error: err?.message || pickLang(normalizeLang(loadState()?.uiLanguage, 'en'), 'Ошибка автодополнения', 'Autocomplete failed'), continuation: '' };
     }
   }, 'POST');
 
   app.api('/api/chat-send', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const rawMessage = typeof data?.message === 'string' ? data.message.trim() : '';
       if (!rawMessage) {
-        return { ok: false, code: 'EMPTY_MESSAGE', error: 'Пустой текст запроса', queue: chatMessageQueue.getStats() };
+        return { ok: false, code: 'EMPTY_MESSAGE', error: pickLang(lang, 'Пустой текст запроса', 'Prompt message is empty'), queue: chatMessageQueue.getStats() };
       }
       if (rawMessage.length > 32000) {
-        return { ok: false, code: 'MESSAGE_TOO_LONG', error: 'Слишком длинный текст запроса', queue: chatMessageQueue.getStats() };
+        return { ok: false, code: 'MESSAGE_TOO_LONG', error: pickLang(lang, 'Слишком длинный текст запроса', 'Prompt message is too long'), queue: chatMessageQueue.getStats() };
       }
 
       const rawCid = typeof data?.conversationId === 'string' ? data.conversationId.trim() : '';
@@ -1694,6 +1734,7 @@ export async function startSidecarPanel(options = {}) {
             rootDir: typeof data?.rootDir === 'string' ? data.rootDir : '',
             title: typeof data?.title === 'string' ? data.title : '',
             allowNewConversation: data?.allowNewConversation !== false,
+            lang,
           }),
         { label: 'chat-send', groupKey, maxAgeMs: 45000, timeoutMs: 20000 }
       );
@@ -1706,7 +1747,7 @@ export async function startSidecarPanel(options = {}) {
         ok: false,
         code: err?.code || 'CHAT_QUEUE_ERROR',
         dropped: Boolean(err?.dropped),
-        error: err?.message || 'Ошибка отправки в чат',
+        error: err?.message || pickLang(lang, 'Ошибка отправки в чат', 'Failed to send chat message'),
         queue: chatMessageQueue.getStats(),
       };
     }
@@ -1714,13 +1755,15 @@ export async function startSidecarPanel(options = {}) {
 
   app.api('/api/local-chat', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const curLocalState = loadState();
+    const lang = normalizeLang(curLocalState?.uiLanguage, 'en');
     try {
       const rawMessage = typeof data?.message === 'string' ? data.message.trim() : '';
       if (!rawMessage) {
-        return { ok: false, code: 'EMPTY_MESSAGE', answer: '', error: 'Пустой текст запроса' };
+        return { ok: false, code: 'EMPTY_MESSAGE', answer: '', error: pickLang(lang, 'Пустой текст запроса', 'Prompt message is empty') };
       }
       if (rawMessage.length > 12000) {
-        return { ok: false, code: 'MESSAGE_TOO_LONG', answer: '', error: 'Слишком длинный текст запроса (макс. 12000 символов)' };
+        return { ok: false, code: 'MESSAGE_TOO_LONG', answer: '', error: pickLang(lang, 'Слишком длинный текст запроса (макс. 12000 символов)', 'Prompt message is too long (max 12,000 chars)') };
       }
 
       const cleanMessages = Array.isArray(data?.messages)
@@ -1733,7 +1776,6 @@ export async function startSidecarPanel(options = {}) {
             }))
         : [];
 
-      const curLocalState = loadState();
       const wsRoot = await resolveActiveWorkspaceForPanel(typeof data?.rootDir === 'string' ? data.rootDir : '');
       const daemonRes = (process.env.TUNNEL_TEST_ISOLATE_INSTALLED === '1' || curLocalState.gpuEnabled === false)
         ? null
@@ -1744,6 +1786,7 @@ export async function startSidecarPanel(options = {}) {
               query: rawMessage,
               messages: cleanMessages,
               maxOutputTokens: data?.maxOutputTokens,
+              lang,
             },
             60000
           );
@@ -1753,7 +1796,7 @@ export async function startSidecarPanel(options = {}) {
 
       const gpuMod = await getLocalGpuMod();
       if (!gpuMod || typeof gpuMod.runLocalProjectChat !== 'function') {
-        return { ok: false, answer: '', error: 'Модуль локального GPU-движка недоступен' };
+        return { ok: false, answer: '', error: pickLang(lang, 'Модуль локального GPU-движка недоступен', 'Local GPU engine module unavailable') };
       }
       const gpuCfg = typeof gpuMod.loadGpuConfig === 'function' ? gpuMod.loadGpuConfig(curLocalState) : null;
       if (gpuCfg && !gpuCfg.gpuEnabled) {
@@ -1761,7 +1804,7 @@ export async function startSidecarPanel(options = {}) {
           ok: false,
           skippedGpuDisabled: true,
           answer: '',
-          error: 'Локальный GPU-движок выключен в настройках',
+          error: pickLang(lang, 'Локальный GPU-движок выключен в настройках', 'Local GPU engine is disabled in settings'),
           viaDaemon: false,
         };
       }
@@ -1772,7 +1815,7 @@ export async function startSidecarPanel(options = {}) {
         const warmRes = await ram.warmWorkspaceAsync(wsRoot, { startWatcher: false });
         const ws = warmRes?.ok ? ram.ensureWarm(wsRoot) : null;
         if (!ws || !ws.files) {
-          return { ok: false, answer: '', error: 'Рабочая папка проекта не найдена', viaDaemon: false };
+          return { ok: false, answer: '', error: pickLang(lang, 'Рабочая папка проекта не найдена', 'Project workspace folder not found'), viaDaemon: false };
         }
         let effectiveQuery = rawMessage;
         if (cleanMessages.length > 0) {
@@ -1874,26 +1917,29 @@ export async function startSidecarPanel(options = {}) {
             : null,
           workspaceName: basename(ws.absRoot),
           maxOutputTokens: data?.maxOutputTokens,
+          lang,
         });
         return { ...chatRes, viaDaemon: false };
       } finally {
         ram.evict('all');
       }
     } catch (err) {
+      const lang = normalizeLang(loadState()?.uiLanguage, 'en');
       return {
         ok: false,
         code: err?.code || 'LOCAL_CHAT_ERROR',
         answer: '',
-        error: err?.message || 'Ошибка локального RAG-чата',
+        error: err?.message || pickLang(lang, 'Ошибка локального RAG-чата', 'Local RAG chat failed'),
       };
     }
   }, 'POST');
 
   app.api('/api/composer/at-suggest', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const curState = loadState();
+    const lang = normalizeLang(curState?.uiLanguage, 'en');
     try {
       const wsRoot = await resolveActiveWorkspaceForPanel(typeof data?.rootDir === 'string' ? data.rootDir : '');
-      const curState = loadState();
       const [repoMap, wiretapFaults, knowledgeSnap] = await Promise.all([
         safeGetCachedRepoMap(wsRoot, false).catch(() => null),
         safeGetWiretapFaults(wsRoot, curState),
@@ -1947,36 +1993,42 @@ export async function startSidecarPanel(options = {}) {
         wiretapFaults,
         federatedPeers: knowledgeSnap?.peers || [],
         limit: Number(data?.limit || 10),
+        lang,
       });
     } catch (err) {
-      return { ok: false, items: [], error: err?.message || 'Ошибка загрузки @-подсказок' };
+      return { ok: false, items: [], error: err?.message || pickLang(lang, 'Ошибка загрузки @-подсказок', 'Failed to load @-suggestions') };
     }
   }, 'POST');
 
   app.api('/api/composer/vision', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const curState = loadState();
+    const lang = normalizeLang(curState?.uiLanguage, 'en');
     try {
       const gpuMod = await getLocalGpuMod();
       if (!gpuMod || typeof gpuMod.analyzeUiScreenshotLocally !== 'function') {
-        return { ok: false, error: 'Модуль мультимодального анализа недоступен' };
+        return { ok: false, error: pickLang(lang, 'Модуль мультимодального анализа недоступен', 'Multimodal vision module unavailable') };
       }
       return await gpuMod.analyzeUiScreenshotLocally({
         imageBase64: typeof data?.imageBase64 === 'string' ? data.imageBase64 : '',
         userHint: typeof data?.userHint === 'string' ? data.userHint : '',
         timeoutMs: Number(data?.timeoutMs || 18000),
+        lang,
       });
     } catch (err) {
-      return { ok: false, error: err?.message || 'Ошибка анализа скриншота' };
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка анализа скриншота', 'Screenshot analysis failed') };
     }
   }, 'POST');
 
   app.api('/api/composer/voice-structure', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const curState = loadState();
+    const lang = normalizeLang(curState?.uiLanguage, 'en');
     try {
       const wsRoot = await resolveActiveWorkspaceForPanel(typeof data?.rootDir === 'string' ? data.rootDir : '');
       const gpuMod = await getLocalGpuMod();
       if (!gpuMod || typeof gpuMod.structureVoiceTranscriptLocally !== 'function') {
-        return { ok: false, error: 'Модуль обработки голоса недоступен' };
+        return { ok: false, error: pickLang(lang, 'Модуль обработки голоса недоступен', 'Voice structuring module unavailable') };
       }
       const repoMap = await safeGetCachedRepoMap(wsRoot, false).catch(() => null);
       const workspaceFiles = Array.isArray(repoMap?.filesIndex)
@@ -1985,9 +2037,10 @@ export async function startSidecarPanel(options = {}) {
       return await gpuMod.structureVoiceTranscriptLocally({
         rawTranscript: typeof data?.rawTranscript === 'string' ? data.rawTranscript : '',
         workspaceFiles,
+        lang,
       });
     } catch (err) {
-      return { ok: false, error: err?.message || 'Ошибка структурирования текста' };
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка структурирования текста', 'Text structuring failed') };
     }
   }, 'POST');
 

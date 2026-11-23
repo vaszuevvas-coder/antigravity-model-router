@@ -8,6 +8,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { checkCommandSecurity, redactSecretsInText } from './security-guard.mjs';
+import { normalizeLang, pickLang } from './i18n.mjs';
 
 const MAX_SCAN_FILES = 200;
 const MAX_FILE_BYTES = 512 * 1024;
@@ -20,19 +21,19 @@ const SEVERITY_WEIGHTS = {
 };
 
 const SECRET_PATTERNS = [
-  { id: 'openai_anthropic_key', severity: 'critical', label: 'Захардкоженный API-ключ sk-*', rx: /\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}\b/g },
-  { id: 'github_pat', severity: 'critical', label: 'Захардкоженный токен GitHub PAT', rx: /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{24,})\b/g },
-  { id: 'gitlab_pat', severity: 'critical', label: 'Захардкоженный токен GitLab PAT', rx: /\bglpat-[A-Za-z0-9_-]{20,}\b/g },
-  { id: 'huggingface_token', severity: 'critical', label: 'Захардкоженный токен HuggingFace hf_*', rx: /\bhf_[A-Za-z0-9]{24,}\b/g },
-  { id: 'perplexity_key', severity: 'critical', label: 'Захардкоженный ключ Perplexity pplx-*', rx: /\bpplx-[A-Za-z0-9]{24,}\b/g },
-  { id: 'firecrawl_key', severity: 'critical', label: 'Захардкоженный ключ Firecrawl fc-*', rx: /\bfc-[a-f0-9]{24,}\b/gi },
-  { id: 'google_api_key', severity: 'critical', label: 'Захардкоженный Google API ключ AIza*', rx: /\bAIza[0-9A-Za-z_-]{25,}\b/g },
-  { id: 'aws_access_key', severity: 'critical', label: 'Захардкоженный AWS Access Key AKIA*', rx: /\bAKIA[0-9A-Z]{16}\b/g },
-  { id: 'slack_token', severity: 'high', label: 'Захардкоженный Slack-токен xox*', rx: /\bxox[baprs]-[A-Za-z0-9-]{16,}\b/g },
-  { id: 'private_key_pem', severity: 'critical', label: 'Приватный криптографический ключ PEM', rx: /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/g },
-  { id: 'bearer_token', severity: 'high', label: 'Захардкоженный Bearer-токен', rx: /\bBearer\s+[A-Za-z0-9._-]{25,}/g },
-  { id: 'jwt_token', severity: 'high', label: 'Захардкоженный JWT-токен', rx: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
-  { id: 'db_uri_password', severity: 'critical', label: 'Учётные данные в URI базы данных', rx: /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis):\/\/[^:\s/]+:[^@\s/]{3,}@[^\s"']+/gi },
+  { id: 'openai_anthropic_key', severity: 'critical', label: 'Захардкоженный API-ключ sk-*', labelEn: 'Hardcoded API key sk-*', rx: /\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}\b/g },
+  { id: 'github_pat', severity: 'critical', label: 'Захардкоженный токен GitHub PAT', labelEn: 'Hardcoded GitHub PAT token', rx: /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{24,})\b/g },
+  { id: 'gitlab_pat', severity: 'critical', label: 'Захардкоженный токен GitLab PAT', labelEn: 'Hardcoded GitLab PAT token', rx: /\bglpat-[A-Za-z0-9_-]{20,}\b/g },
+  { id: 'huggingface_token', severity: 'critical', label: 'Захардкоженный токен HuggingFace hf_*', labelEn: 'Hardcoded HuggingFace token hf_*', rx: /\bhf_[A-Za-z0-9]{24,}\b/g },
+  { id: 'perplexity_key', severity: 'critical', label: 'Захардкоженный ключ Perplexity pplx-*', labelEn: 'Hardcoded Perplexity key pplx-*', rx: /\bpplx-[A-Za-z0-9]{24,}\b/g },
+  { id: 'firecrawl_key', severity: 'critical', label: 'Захардкоженный ключ Firecrawl fc-*', labelEn: 'Hardcoded Firecrawl key fc-*', rx: /\bfc-[a-f0-9]{24,}\b/gi },
+  { id: 'google_api_key', severity: 'critical', label: 'Захардкоженный Google API ключ AIza*', labelEn: 'Hardcoded Google API key AIza*', rx: /\bAIza[0-9A-Za-z_-]{25,}\b/g },
+  { id: 'aws_access_key', severity: 'critical', label: 'Захардкоженный AWS Access Key AKIA*', labelEn: 'Hardcoded AWS Access Key AKIA*', rx: /\bAKIA[0-9A-Z]{16}\b/g },
+  { id: 'slack_token', severity: 'high', label: 'Захардкоженный Slack-токен xox*', labelEn: 'Hardcoded Slack token xox*', rx: /\bxox[baprs]-[A-Za-z0-9-]{16,}\b/g },
+  { id: 'private_key_pem', severity: 'critical', label: 'Приватный криптографический ключ PEM', labelEn: 'Private cryptographic PEM key', rx: /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/g },
+  { id: 'bearer_token', severity: 'high', label: 'Захардкоженный Bearer-токен', labelEn: 'Hardcoded Bearer token', rx: /\bBearer\s+[A-Za-z0-9._-]{25,}/g },
+  { id: 'jwt_token', severity: 'high', label: 'Захардкоженный JWT-токен', labelEn: 'Hardcoded JWT token', rx: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
+  { id: 'db_uri_password', severity: 'critical', label: 'Учётные данные в URI базы данных', labelEn: 'Database URI credentials', rx: /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis):\/\/[^:\s/]+:[^@\s/]{3,}@[^\s"']+/gi },
 ];
 
 const PLACEHOLDER_RE = /^(?:\$\{[^}]+\}|%[A-Za-z0-9_]+%|\$[A-Za-z_][A-Za-z0-9_]*|<[A-Z0-9_:-]+>|YOUR_[A-Z0-9_]+|REPLACE_ME|EXAMPLE_.*)$/i;
@@ -43,18 +44,21 @@ const PROMPT_INJECTION_PATTERNS = [
     id: 'prompt_override',
     severity: 'high',
     label: 'Инструкция перехвата приоритета (Prompt Injection)',
+    labelEn: 'Priority override directive (Prompt Injection)',
     rx: /\b(?:ignore|disregard|override|forget)\s+(?:all\s+)?(?:previous|prior|above|system|user)\s+(?:instructions|rules|prompts|guidelines)\b/i,
   },
   {
     id: 'secret_exfil',
     severity: 'critical',
     label: 'Попытка скрытой эксфильтрации секретов во внешнюю сеть',
+    labelEn: 'Attempted covert secret exfiltration to external network',
     rx: /\b(?:exfiltrate|steal|upload|send|post)\s+(?:all\s+)?(?:secrets?|\.env|api[\s_-]?keys?|credentials?|ssh\s+keys?)\s+(?:to|via)\s+https?:\/\//i,
   },
   {
     id: 'stealth_deception',
     severity: 'medium',
     label: 'Скрытие действий от пользователя',
+    labelEn: 'Concealing actions from the user',
     rx: /\bdo\s+not\s+(?:tell|inform|show|mention\s+to)\s+(?:the\s+)?user\b/i,
   },
 ];
@@ -72,8 +76,9 @@ function makeFinding({ file, kind, severity, ruleId, message, excerpt = '' }) {
   };
 }
 
-function scanTextForSecrets(text, file, kind, findings) {
+function scanTextForSecrets(text, file, kind, findings, lang = 'ru') {
   if (!text || typeof text !== 'string') return false;
+  const resolvedLang = normalizeLang(lang, 'ru');
   let foundAny = false;
   for (const pat of SECRET_PATTERNS) {
     const flags = pat.rx.flags.includes('g') ? pat.rx.flags : `${pat.rx.flags}g`;
@@ -94,7 +99,7 @@ function scanTextForSecrets(text, file, kind, findings) {
           kind,
           severity: pat.severity,
           ruleId: pat.id,
-          message: pat.label,
+          message: pickLang(resolvedLang, pat.label, pat.labelEn || pat.label),
           excerpt: token,
         })
       );
@@ -104,7 +109,8 @@ function scanTextForSecrets(text, file, kind, findings) {
   return foundAny;
 }
 
-function readShieldTargetFile(filePath, kind, findings) {
+function readShieldTargetFile(filePath, kind, findings, lang = 'ru') {
+  const isEn = normalizeLang(lang, 'ru') === 'en';
   let raw = '';
   try {
     const st = statSync(filePath);
@@ -116,7 +122,9 @@ function readShieldTargetFile(filePath, kind, findings) {
           kind,
           severity: 'high',
           ruleId: `${kind}_file_oversized`,
-          message: `Файл (${kind}) превышает безопасный лимит ${Math.round(MAX_FILE_BYTES / 1024)} КБ (${st.size} байт)`,
+          message: isEn
+            ? `File (${kind}) exceeds safe limit ${Math.round(MAX_FILE_BYTES / 1024)} KB (${st.size} bytes)`
+            : `Файл (${kind}) превышает безопасный лимит ${Math.round(MAX_FILE_BYTES / 1024)} КБ (${st.size} байт)`,
         })
       );
       return null;
@@ -131,12 +139,15 @@ function readShieldTargetFile(filePath, kind, findings) {
 /**
  * Audits an MCP config JSON file (`mcp_config.json` / `.mcp.json`).
  * @param {string} filePath
+ * @param {{ lang?: 'en'|'ru' }} [opts={}]
  * @returns {Array<object>}
  */
-export function scanMcpConfigFile(filePath) {
+export function scanMcpConfigFile(filePath, opts = {}) {
+  const resolvedLang = normalizeLang(opts?.lang, 'ru');
+  const isEn = resolvedLang === 'en';
   const findings = [];
   if (!filePath || !existsSync(filePath)) return findings;
-  const raw = readShieldTargetFile(filePath, 'mcp', findings);
+  const raw = readShieldTargetFile(filePath, 'mcp', findings, resolvedLang);
   if (raw === null) return findings;
 
   let parsed = null;
@@ -149,7 +160,7 @@ export function scanMcpConfigFile(filePath) {
         kind: 'mcp',
         severity: 'low',
         ruleId: 'invalid_mcp_json',
-        message: 'Некорректный JSON в конфигурации MCP',
+        message: isEn ? 'Invalid JSON in MCP configuration' : 'Некорректный JSON в конфигурации MCP',
       })
     );
     return findings;
@@ -163,7 +174,7 @@ export function scanMcpConfigFile(filePath) {
     const joinedCmd = [cmd, ...argsList].filter(Boolean).join(' ');
 
     if (joinedCmd) {
-      scanTextForSecrets(joinedCmd, filePath, 'mcp', findings);
+      scanTextForSecrets(joinedCmd, filePath, 'mcp', findings, resolvedLang);
       const secCmd = checkCommandSecurity({ commandLine: joinedCmd });
       if (secCmd && secCmd.allow === false && secCmd.category !== 'rtk_noisy_cmd') {
         findings.push(
@@ -172,7 +183,9 @@ export function scanMcpConfigFile(filePath) {
             kind: 'mcp',
             severity: 'critical',
             ruleId: `mcp_unsafe_cmd_${secCmd.category || 'exec'}`,
-            message: `MCP-сервер "${serverName}": опасная команда запуска (${secCmd.category})`,
+            message: isEn
+              ? `MCP server "${serverName}": dangerous startup command (${secCmd.category})`
+              : `MCP-сервер "${serverName}": опасная команда запуска (${secCmd.category})`,
             excerpt: joinedCmd,
           })
         );
@@ -187,7 +200,9 @@ export function scanMcpConfigFile(filePath) {
             kind: 'mcp',
             severity: 'high',
             ruleId: 'mcp_shell_metachar',
-            message: `MCP-сервер "${serverName}": цепочка shell-метасимволов в аргументах`,
+            message: isEn
+              ? `MCP server "${serverName}": chained shell metacharacters in arguments`
+              : `MCP-сервер "${serverName}": цепочка shell-метасимволов в аргументах`,
             excerpt: joinedCmd,
           })
         );
@@ -197,7 +212,7 @@ export function scanMcpConfigFile(filePath) {
     if (typeof cfg.url === 'string' && cfg.url.trim()) {
       const urlStr = cfg.url.trim();
       if (!PLACEHOLDER_RE.test(urlStr)) {
-        scanTextForSecrets(urlStr, filePath, 'mcp', findings);
+        scanTextForSecrets(urlStr, filePath, 'mcp', findings, resolvedLang);
       }
     }
 
@@ -205,7 +220,7 @@ export function scanMcpConfigFile(filePath) {
       for (const [hdrKey, hdrVal] of Object.entries(cfg.headers)) {
         const valStr = typeof hdrVal === 'string' ? hdrVal.trim() : '';
         if (!valStr || PLACEHOLDER_RE.test(valStr)) continue;
-        scanTextForSecrets(`${hdrKey}: ${valStr}`, filePath, 'mcp', findings);
+        scanTextForSecrets(`${hdrKey}: ${valStr}`, filePath, 'mcp', findings, resolvedLang);
       }
     }
 
@@ -213,7 +228,7 @@ export function scanMcpConfigFile(filePath) {
       for (const [envKey, envVal] of Object.entries(cfg.env)) {
         const valStr = typeof envVal === 'string' ? envVal.trim() : '';
         if (!valStr || PLACEHOLDER_RE.test(valStr)) continue;
-        const hitPattern = scanTextForSecrets(`${envKey}=${valStr}`, filePath, 'mcp', findings);
+        const hitPattern = scanTextForSecrets(`${envKey}=${valStr}`, filePath, 'mcp', findings, resolvedLang);
         if (
           !hitPattern &&
           /(?:API_KEY|SECRET|PASSWORD|PASSWD|PRIVATE_KEY|ACCESS_TOKEN|AUTH_TOKEN)$/i.test(envKey) &&
@@ -226,7 +241,9 @@ export function scanMcpConfigFile(filePath) {
               kind: 'mcp',
               severity: 'high',
               ruleId: 'mcp_hardcoded_env_secret',
-              message: `MCP-сервер "${serverName}": захардкоженный секрет в env.${envKey} (используйте \${${envKey}})`,
+              message: isEn
+                ? `MCP server "${serverName}": hardcoded secret in env.${envKey} (use \${${envKey}})`
+                : `MCP-сервер "${serverName}": захардкоженный секрет в env.${envKey} (используйте \${${envKey}})`,
               excerpt: `${envKey}=${valStr}`,
             })
           );
@@ -243,10 +260,12 @@ export function scanMcpConfigFile(filePath) {
  * @param {string} filePath
  * @returns {Array<object>}
  */
-export function scanHooksConfigFile(filePath) {
+export function scanHooksConfigFile(filePath, opts = {}) {
+  const resolvedLang = normalizeLang(opts?.lang, 'ru');
+  const isEn = resolvedLang === 'en';
   const findings = [];
   if (!filePath || !existsSync(filePath)) return findings;
-  const raw = readShieldTargetFile(filePath, 'hooks', findings);
+  const raw = readShieldTargetFile(filePath, 'hooks', findings, resolvedLang);
   if (raw === null) return findings;
 
   let parsed = null;
@@ -259,7 +278,7 @@ export function scanHooksConfigFile(filePath) {
         kind: 'hooks',
         severity: 'low',
         ruleId: 'invalid_hooks_json',
-        message: 'Некорректный JSON в конфигурации хуков',
+        message: isEn ? 'Invalid JSON in hooks configuration' : 'Некорректный JSON в конфигурации хуков',
       })
     );
     return findings;
@@ -273,7 +292,7 @@ export function scanHooksConfigFile(filePath) {
     }
     if (typeof node.command === 'string' && node.command.trim()) {
       const cmd = node.command.trim();
-      scanTextForSecrets(cmd, filePath, 'hooks', findings);
+      scanTextForSecrets(cmd, filePath, 'hooks', findings, resolvedLang);
       const sec = checkCommandSecurity({ commandLine: cmd });
       if (sec && sec.allow === false && sec.category !== 'rtk_noisy_cmd') {
         findings.push(
@@ -282,7 +301,7 @@ export function scanHooksConfigFile(filePath) {
             kind: 'hooks',
             severity: sec.category === 'destructive_cmd' || sec.category === 'encoded_cmd' ? 'critical' : 'high',
             ruleId: `hook_unsafe_${sec.category || 'cmd'}`,
-            message: `Опасная команда в хуке (${sec.category})`,
+            message: isEn ? `Dangerous hook command (${sec.category})` : `Опасная команда в хуке (${sec.category})`,
             excerpt: cmd,
           })
         );
@@ -300,12 +319,15 @@ export function scanHooksConfigFile(filePath) {
 /**
  * Audits a SKILL.md instruction file for Trojan Source BiDi chars, secrets, and prompt-injection directives.
  * @param {string} filePath
+ * @param {{ lang?: 'en'|'ru' }} [opts={}]
  * @returns {Array<object>}
  */
-export function scanSkillFile(filePath) {
+export function scanSkillFile(filePath, opts = {}) {
+  const resolvedLang = normalizeLang(opts?.lang, 'ru');
+  const isEn = resolvedLang === 'en';
   const findings = [];
   if (!filePath || !existsSync(filePath)) return findings;
-  const raw = readShieldTargetFile(filePath, 'skill', findings);
+  const raw = readShieldTargetFile(filePath, 'skill', findings, resolvedLang);
   if (raw === null) return findings;
 
   if (BIDI_TROJAN_RE.test(raw)) {
@@ -315,7 +337,9 @@ export function scanSkillFile(filePath) {
         kind: 'skill',
         severity: 'critical',
         ruleId: 'skill_bidi_trojan',
-        message: 'Обнаружены скрытые Unicode BiDi-символы (риск Trojan Source)',
+        message: isEn
+          ? 'Hidden Unicode BiDi characters detected (Trojan Source risk)'
+          : 'Обнаружены скрытые Unicode BiDi-символы (риск Trojan Source)',
       })
     );
   }
@@ -326,12 +350,14 @@ export function scanSkillFile(filePath) {
         kind: 'skill',
         severity: 'high',
         ruleId: 'skill_zero_width_obfuscation',
-        message: 'Обнаружены кластеры невидимых zero-width символов в инструкции навыка',
+        message: isEn
+          ? 'Zero-width character obfuscation clusters found in skill instructions'
+          : 'Обнаружены кластеры невидимых zero-width символов в инструкции навыка',
       })
     );
   }
 
-  scanTextForSecrets(raw, filePath, 'skill', findings);
+  scanTextForSecrets(raw, filePath, 'skill', findings, resolvedLang);
 
   for (const pat of PROMPT_INJECTION_PATTERNS) {
     const m = pat.rx.exec(raw);
@@ -342,7 +368,7 @@ export function scanSkillFile(filePath) {
           kind: 'skill',
           severity: pat.severity,
           ruleId: `skill_${pat.id}`,
-          message: pat.label,
+          message: pickLang(resolvedLang, pat.label, pat.labelEn || pat.label),
           excerpt: m[0],
         })
       );
@@ -362,7 +388,9 @@ export function scanSkillFile(filePath) {
             kind: 'skill',
             severity: 'high',
             ruleId: 'skill_remote_pipe_exec',
-            message: 'Небезопасный пример/команда удалённого запуска через pipe (curl|sh / iwr|iex)',
+            message: isEn
+              ? 'Unsafe remote pipe execution command (curl|sh / iwr|iex)'
+              : 'Небезопасный пример/команда удалённого запуска через pipe (curl|sh / iwr|iex)',
             excerpt: line,
           })
         );
@@ -444,17 +472,19 @@ export function auditAgentEnvironment(opts = {}) {
     workspaceRoot = process.cwd(),
     geminiRoot = join(homedir(), '.gemini'),
     includeGlobal = true,
+    lang = 'ru',
   } = opts && typeof opts === 'object' && !Array.isArray(opts) ? opts : {};
+  const resolvedLang = normalizeLang(lang, 'ru');
   const candidates = collectCandidateFiles({ workspaceRoot, geminiRoot, includeGlobal });
   const findings = [];
 
   for (const item of candidates) {
     if (item.kind === 'mcp') {
-      findings.push(...scanMcpConfigFile(item.path));
+      findings.push(...scanMcpConfigFile(item.path, { lang: resolvedLang }));
     } else if (item.kind === 'hooks') {
-      findings.push(...scanHooksConfigFile(item.path));
+      findings.push(...scanHooksConfigFile(item.path, { lang: resolvedLang }));
     } else if (item.kind === 'skill') {
-      findings.push(...scanSkillFile(item.path));
+      findings.push(...scanSkillFile(item.path, { lang: resolvedLang }));
     }
   }
 
@@ -472,6 +502,10 @@ export function auditAgentEnvironment(opts = {}) {
     findings.length === 0
       ? `Оценка ${score}/100 (${grade}): проверено файлов ${candidates.length}, угроз не обнаружено`
       : `Оценка ${score}/100 (${grade}): файлов ${candidates.length}, находок ${findings.length} (крит: ${counts.critical}, выс: ${counts.high}, сред: ${counts.medium})`;
+  const summaryEn =
+    findings.length === 0
+      ? `Score ${score}/100 (${grade}): scanned ${candidates.length} files, no threats found`
+      : `Score ${score}/100 (${grade}): ${candidates.length} files, ${findings.length} findings (critical: ${counts.critical}, high: ${counts.high}, medium: ${counts.medium})`;
 
   return {
     ok: true,
@@ -481,5 +515,6 @@ export function auditAgentEnvironment(opts = {}) {
     counts,
     findings,
     summaryRu,
+    summaryEn,
   };
 }

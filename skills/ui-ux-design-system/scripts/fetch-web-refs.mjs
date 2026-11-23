@@ -15,6 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { normalizeLang, readActiveUiLanguage } from '../../../core/i18n.mjs';
 import {
   findHeadlessBrowserExecutable,
   generateShowroomHtml,
@@ -461,7 +462,9 @@ export function extractDesignTokensFromHtmlAndCss(html = '', extraCss = '') {
  * @param {object} [tokens={}]
  * @returns {string}
  */
-export function formatTokensNotesRu(tokens = {}) {
+export function formatTokensNotesRu(tokens = {}, opts = {}) {
+  const langArg = typeof opts === 'string' ? opts : opts?.lang;
+  const isEn = normalizeLang(langArg || readActiveUiLanguage(), 'en') === 'en';
   const parts = [];
   const palette = Array.isArray(tokens.palette) ? tokens.palette : [];
   const accents = Array.isArray(tokens.accents) ? tokens.accents : [];
@@ -472,13 +475,13 @@ export function formatTokensNotesRu(tokens = {}) {
   const colorList = (surfaces.length > 0 ? surfaces.slice(0, 2) : palette.slice(0, 2));
   if (colorList.length > 0 || accents.length > 0) {
     const baseStr = colorList.join(', ');
-    const accStr = accents[0] ? (baseStr ? `, акцент ${accents[0]}` : accents[0]) : '';
-    parts.push(`Палитра: ${baseStr}${accStr}`);
+    const accStr = accents[0] ? (baseStr ? (isEn ? `, accent ${accents[0]}` : `, акцент ${accents[0]}`) : accents[0]) : '';
+    parts.push(`${isEn ? 'Palette' : 'Палитра'}: ${baseStr}${accStr}`);
   }
-  if (fonts.length > 0) parts.push(`Шрифты: ${fonts.slice(0, 2).join(', ')}`);
-  if (radii.length > 0) parts.push(`Скругления: ${radii.slice(0, 2).join(', ')}`);
-  if (tokens.glassBlur) parts.push(`Стекло: ${tokens.glassBlur}`);
-  if (Array.isArray(tokens.motion) && tokens.motion[0]) parts.push(`Анимация: ${tokens.motion[0]}`);
+  if (fonts.length > 0) parts.push(`${isEn ? 'Fonts' : 'Шрифты'}: ${fonts.slice(0, 2).join(', ')}`);
+  if (radii.length > 0) parts.push(`${isEn ? 'Radius' : 'Скругления'}: ${radii.slice(0, 2).join(', ')}`);
+  if (tokens.glassBlur) parts.push(`${isEn ? 'Glass' : 'Стекло'}: ${tokens.glassBlur}`);
+  if (Array.isArray(tokens.motion) && tokens.motion[0]) parts.push(`${isEn ? 'Motion' : 'Анимация'}: ${tokens.motion[0]}`);
 
   const full = parts.join(' • ');
   if (full.length <= 220) return full;
@@ -656,8 +659,9 @@ function saveCachedReference(cacheDir, url, card, localImagePath) {
   } catch {}
 }
 
-function buildCompactMarkdownPreview(cards = []) {
+function buildCompactMarkdownPreview(cards = [], { lang = '' } = {}) {
   if (!Array.isArray(cards) || cards.length === 0) return '';
+  const isEn = normalizeLang(lang || readActiveUiLanguage(), 'en') === 'en';
   return cards
     .map((card, i) => {
       const normImg = String(card.imagePath || '').replace(/\\/g, '/');
@@ -665,10 +669,10 @@ function buildCompactMarkdownPreview(cards = []) {
       const lines = [
         `### ${i + 1}. ${card.title || card.host} (\`${card.host}\`)`,
         `![${card.title || card.host}](${imgMdPath})`,
-        `- **Источник:** [${card.host}](${card.sourceUrl})`,
+        `- **${isEn ? 'Source' : 'Источник'}:** [${card.host}](${card.sourceUrl})`,
       ];
       if (card.notesSummary) {
-        lines.push(`- **CSS-токены и приёмы:** ${card.notesSummary}`);
+        lines.push(`- **${isEn ? 'CSS tokens & patterns' : 'CSS-токены и приёмы'}:** ${card.notesSummary}`);
       }
       return lines.join('\n');
     })
@@ -681,6 +685,8 @@ function buildCompactMarkdownPreview(cards = []) {
  * @param {object} [options={}]
  */
 export async function fetchWebReferencesBatch(urls = [], options = {}) {
+  const batchLang = normalizeLang(options.lang || readActiveUiLanguage(), 'en');
+  const isEnBatch = batchLang === 'en';
   const artifactDir = path.resolve(options.artifactDir || path.join(process.cwd(), '.cache', 'web-refs-out'));
   const cacheDir = path.resolve(options.cacheDir || DEFAULT_CACHE_DIR);
   const cacheTtlMs = Number(options.cacheTtlMs || DEFAULT_CACHE_TTL_MS);
@@ -842,7 +848,7 @@ export async function fetchWebReferencesBatch(urls = [], options = {}) {
             subtitle: valid.host,
             stageBg: extracted.tokens.surfaces[0] || '#12141a',
             accentColor: extracted.tokens.accents[0] || extracted.tokens.palette[0] || '#3b82f6',
-            notes: formatTokensNotesRu(extracted.tokens),
+            notes: formatTokensNotesRu(extracted.tokens, { lang: batchLang }),
           },
           idx - 1,
           600,
@@ -853,7 +859,7 @@ export async function fetchWebReferencesBatch(urls = [], options = {}) {
       }
     }
 
-    let notesSummary = formatTokensNotesRu(extracted.tokens);
+    let notesSummary = formatTokensNotesRu(extracted.tokens, { lang: batchLang });
     if (gpuDistill && !notesSummary) {
       try {
         const gpuMod = await import('../../../core/local-gpu-engine.mjs');
@@ -899,7 +905,8 @@ export async function fetchWebReferencesBatch(urls = [], options = {}) {
   }));
 
   const spec = {
-    title: options.title || 'Подборка открытых веб-референсов',
+    lang: batchLang,
+    title: options.title || (isEnBatch ? 'Open web design references' : 'Подборка открытых веб-референсов'),
     variants,
   };
   let specPath = '';
@@ -915,7 +922,7 @@ export async function fetchWebReferencesBatch(urls = [], options = {}) {
     if (htmlRes.ok) {
       showroomPath = path.join(artifactDir, 'preview-showroom.html');
       fs.writeFileSync(showroomPath, htmlRes.html, 'utf8');
-      const previews = generateShowroomVisualPreviews(spec, artifactDir, { fastPng });
+      const previews = generateShowroomVisualPreviews(spec, artifactDir, { fastPng, lang: batchLang });
       overviewScreenshot = previews.overviewScreenshot || '';
       if (openShowroom) {
         openFileInDefaultBrowser(showroomPath);
@@ -932,7 +939,7 @@ export async function fetchWebReferencesBatch(urls = [], options = {}) {
     specPath,
     showroomPath,
     overviewScreenshot,
-    markdownPreview: buildCompactMarkdownPreview(cards),
+    markdownPreview: buildCompactMarkdownPreview(cards, { lang: batchLang }),
   };
 }
 
@@ -953,7 +960,7 @@ if (isMain) {
     const a = args[i];
     if (a === '--help' || a === '-h') {
       console.log(
-        'Usage: node fetch-web-refs.mjs <url...> [--artifact-dir <dir>] [--limit N] [--timeout ms] [--title str] [--no-cache] [--fast-png] [--no-headless] [--build-showroom] [--open] [--gpu-distill]'
+        'Usage: node fetch-web-refs.mjs <url...> [--artifact-dir <dir>] [--limit N] [--timeout ms] [--title str] [--lang en|ru] [--no-cache] [--fast-png] [--no-headless] [--build-showroom] [--open] [--gpu-distill]'
       );
       process.exit(0);
     } else if (a === '--artifact-dir' && args[i + 1]) opts.artifactDir = args[++i];
@@ -962,6 +969,8 @@ if (isMain) {
     else if (a === '--limit' && args[i + 1]) opts.limit = Number(args[++i]);
     else if (a === '--timeout' && args[i + 1]) opts.timeoutMs = Number(args[++i]);
     else if (a === '--title' && args[i + 1]) opts.title = args[++i];
+    else if (a === '--lang' && args[i + 1]) opts.lang = args[++i];
+    else if (a.startsWith('--lang=')) opts.lang = a.slice('--lang='.length);
     else if (a === '--no-cache') opts.noCache = true;
     else if (a === '--fast-png') opts.fastPng = true;
     else if (a === '--no-headless') opts.allowHeadlessFallback = false;

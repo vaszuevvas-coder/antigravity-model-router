@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { maskTerminalOutputSmart } from './obs-masker.mjs';
 import { atomicWriteJsonSync, safeReadJsonSync, withFileLockSync } from './safe-json.mjs';
 import { checkCommandSecurity, redactSecretsInText } from './security-guard.mjs';
+import { normalizeLang, pickLang } from './i18n.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
@@ -143,13 +144,14 @@ function extractTopLocalFrame(wsRoot = '', cleanError = '') {
   return { file: top.relPath, line: top.line, codeFrame };
 }
 
-function extractHeadlineError(maskedText = '') {
+function extractHeadlineError(maskedText = '', lang = 'ru') {
   const lines = asStr(maskedText, 6000)
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean);
   const errLine = lines.find((l) => /(?:Error|Exception|AssertionError|TypeError|ReferenceError|SyntaxError|FAIL|panic:)/i.test(l));
-  return (errLine || lines[0] || 'Неизвестная ошибка выполнения').slice(0, 220);
+  const fallback = normalizeLang(lang, 'ru') === 'en' ? 'Unknown runtime error' : 'Неизвестная ошибка выполнения';
+  return (errLine || lines[0] || fallback).slice(0, 220);
 }
 
 /**
@@ -160,19 +162,28 @@ function extractHeadlineError(maskedText = '') {
  */
 export function ingestRuntimeFault(opts = {}) {
   const safeOpts = asObj(opts);
+  const resolvedLang = normalizeLang(safeOpts.lang || safeOpts.state?.uiLanguage, 'ru');
+  const isEn = resolvedLang === 'en';
   if (safeOpts.state?.runtimeWiretapEnabled === false) {
-    return { ok: false, disabled: true, error: 'Runtime Wiretap отключён в настройках' };
+    return {
+      ok: false,
+      disabled: true,
+      error: isEn ? 'Runtime Wiretap is disabled in settings' : 'Runtime Wiretap отключён в настройках',
+    };
   }
   const rawError = asStr(safeOpts.rawError, 24_000).trim();
   const wsKey = normWsKey(safeOpts.workspaceRoot || process.cwd());
   if (!rawError || !wsKey) {
-    return { ok: false, error: 'Не передан текст ошибки или workspaceRoot' };
+    return {
+      ok: false,
+      error: isEn ? 'Missing error text or workspaceRoot' : 'Не передан текст ошибки или workspaceRoot',
+    };
   }
 
   const wsRoot = resolve(asStr(safeOpts.workspaceRoot, 1024).trim() || process.cwd());
   const masked = maskTerminalOutputSmart(rawError, 3200);
   const cleanText = redactSecretsInText(typeof masked === 'string' ? masked : (masked?.output || rawError));
-  const summary = extractHeadlineError(cleanText);
+  const summary = extractHeadlineError(cleanText, resolvedLang);
   const frame = extractTopLocalFrame(wsRoot, cleanText);
   const sim = computeSimHash32Pair(`${summary}\n${frame?.file || ''}`);
   const normHash = createHash('sha1').update(`${summary.toLowerCase()}|${frame?.file || ''}:${frame?.line || 0}`).digest('hex').slice(0, 14);
@@ -288,15 +299,20 @@ export function clearWiretapFaults(workspaceRoot = '', opts = {}) {
  * @param {object} [fault={}]
  * @returns {string}
  */
-export function formatFaultForComposer(fault = {}) {
+export function formatFaultForComposer(fault = {}, { lang = 'ru' } = {}) {
   const f = asObj(fault);
   if (!f.summary && !f.excerpt) return '';
-  const loc = f.file ? `${f.file}${f.line ? `:${f.line}` : ''}` : 'проекте';
-  const parts = [`Исправь ошибку выполнения в ${loc}: ${asStr(f.summary, 220)}`];
+  const isEn = normalizeLang(lang, 'ru') === 'en';
+  const loc = f.file ? `${f.file}${f.line ? `:${f.line}` : ''}` : (isEn ? 'the project' : 'проекте');
+  const parts = [
+    isEn
+      ? `Fix the runtime error in ${loc}: ${asStr(f.summary, 220)}`
+      : `Исправь ошибку выполнения в ${loc}: ${asStr(f.summary, 220)}`,
+  ];
   if (f.codeFrame) {
-    parts.push(`Фрагмент кода:\n${asStr(f.codeFrame, 900)}`);
+    parts.push(`${isEn ? 'Code frame' : 'Фрагмент кода'}:\n${asStr(f.codeFrame, 900)}`);
   } else if (f.excerpt) {
-    parts.push(`Лог сбоя:\n${asStr(f.excerpt, 600)}`);
+    parts.push(`${isEn ? 'Failure log' : 'Лог сбоя'}:\n${asStr(f.excerpt, 600)}`);
   }
   return parts.join('\n\n');
 }
@@ -341,19 +357,21 @@ function validateSafeGitRef(ref = '') {
  */
 export function runAutomatedGitBisect(opts = {}) {
   const safeOpts = asObj(opts);
+  const resolvedLang = normalizeLang(safeOpts.lang || safeOpts.state?.uiLanguage, 'ru');
+  const isEn = resolvedLang === 'en';
   const rawWs = asStr(safeOpts.workspaceRoot, 1024).trim();
   const goodRef = validateSafeGitRef(safeOpts.goodRef);
   const badRef = validateSafeGitRef(safeOpts.badRef || 'HEAD');
   const testCommand = asStr(safeOpts.testCommand, 512).trim();
 
   if (!rawWs || rawWs.startsWith('-') || !existsSync(rawWs)) {
-    return { ok: false, error: 'Рабочая папка не найдена' };
+    return { ok: false, error: isEn ? 'Workspace directory not found' : 'Рабочая папка не найдена' };
   }
   if (!goodRef || !badRef) {
-    return { ok: false, error: 'Некорректные Git-ссылки goodRef/badRef' };
+    return { ok: false, error: isEn ? 'Invalid Git refs goodRef/badRef' : 'Некорректные Git-ссылки goodRef/badRef' };
   }
   if (!testCommand) {
-    return { ok: false, error: 'Не указана тестовая команда testCommand' };
+    return { ok: false, error: isEn ? 'Missing testCommand' : 'Не указана тестовая команда testCommand' };
   }
 
   let repoRoot = '';
@@ -365,17 +383,17 @@ export function runAutomatedGitBisect(opts = {}) {
       windowsHide: true,
     }) || '').trim());
   } catch {
-    return { ok: false, error: 'Указанная директория не является Git-репозиторием' };
+    return { ok: false, error: isEn ? 'Specified directory is not a Git repository' : 'Указанная директория не является Git-репозиторием' };
   }
 
   const sec = checkCommandSecurity(testCommand, repoRoot);
   if (sec && (sec.allowed === false || sec.allow === false)) {
-    return { ok: false, error: sec.reason || 'Команда заблокирована Security Guard' };
+    return { ok: false, error: sec.reason || (isEn ? 'Command blocked by Security Guard' : 'Команда заблокирована Security Guard') };
   }
 
   const tokens = parseCommandTokens(testCommand);
   if (tokens.length === 0 || !tokens[0]) {
-    return { ok: false, error: 'Не удалось разобрать команду тестирования' };
+    return { ok: false, error: isEn ? 'Failed to parse test command' : 'Не удалось разобрать команду тестирования' };
   }
   const bin = /^node(?:\.exe)?$/i.test(tokens[0]) ? process.execPath : tokens[0];
   const cmdArgs = tokens.slice(1);
@@ -399,7 +417,7 @@ export function runAutomatedGitBisect(opts = {}) {
       windowsHide: true,
     }) || '').trim();
   } catch (err) {
-    return { ok: false, error: `Не удалось разрешить ревизии Git: ${err?.message || err}` };
+    return { ok: false, error: isEn ? `Failed to resolve Git revisions: ${err?.message || err}` : `Не удалось разрешить ревизии Git: ${err?.message || err}` };
   }
 
   const baseCache = asStr(safeOpts.cacheDir, 1024).trim() ? resolve(asStr(safeOpts.cacheDir, 1024).trim()) : DEFAULT_CACHE_DIR;
@@ -463,7 +481,12 @@ export function runAutomatedGitBisect(opts = {}) {
     }
 
     if (!culpritCommit) {
-      return { ok: false, error: `Bisect не смог изолировать проблемный коммит (${lastBisectMsg.slice(0, 140)})` };
+      return {
+        ok: false,
+        error: isEn
+          ? `Bisect could not isolate the offending commit (${lastBisectMsg.slice(0, 140)})`
+          : `Bisect не смог изолировать проблемный коммит (${lastBisectMsg.slice(0, 140)})`,
+      };
     }
 
     const metaRaw = String(execFileSync('git', ['show', '--no-patch', '--format=%H%n%s%n%an', culpritCommit], {
@@ -488,7 +511,9 @@ export function runAutomatedGitBisect(opts = {}) {
       author,
       changedFiles,
       stepsRun,
-      logSummary: `Найден коммит ${fullSha.slice(0, 8)} (${subject}) за ${stepsRun} шагов`,
+      logSummary: isEn
+        ? `Found commit ${fullSha.slice(0, 8)} (${subject}) in ${stepsRun} steps`
+        : `Найден коммит ${fullSha.slice(0, 8)} (${subject}) за ${stepsRun} шагов`,
     };
   } catch (err) {
     return { ok: false, error: String(err?.stderr || err?.message || err) };
