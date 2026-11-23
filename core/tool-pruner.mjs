@@ -1,6 +1,6 @@
 /**
  * @file tool-pruner.mjs
- * @description Когнитивный 3D-маршрутизатор The Tunnel (3D Cognitive Router v3.32.1):
+ * @description Когнитивный 3D-маршрутизатор The Tunnel (3D Cognitive Router v3.32.2):
  * Оценивает реальный охват графа кода (Scope-Scout + PageRank), строит 3D-тензор
  * Ширина × Глубина × Неопределённость/Риск, генерирует адаптивные варианты плана и проверяет селектор модели Gemini 4.
  */
@@ -670,15 +670,17 @@ export function classifyTaskAndPruneTools(userPrompt = '', state = {}, context =
  * @param {boolean} isMultiFileScope Признак мульти-файлового охвата
  * @returns {{ grade: 'S'|'M'|'L'|'XL', phase: 'editor'|'architect'|'standard', structuralScore: number }}
  */
-export function computeStructuralComplexity({
-  scope,
-  subsystemHits = 0,
-  signals = {},
-  isEditor = false,
-  hasExplicitArchitectKeyword = false,
-  isMultiFileScope = false
-} = {}) {
-  if (signals.isReadOnlyQuestion && !signals.isModalAnalyticalQuestion && !hasExplicitArchitectKeyword) {
+export function computeStructuralComplexity(opts = {}) {
+  const {
+    scope,
+    subsystemHits = 0,
+    signals = {},
+    isEditor = false,
+    hasExplicitArchitectKeyword = false,
+    isMultiFileScope = false
+  } = opts && typeof opts === 'object' ? opts : {};
+  const safeSignals = signals && typeof signals === 'object' ? signals : {};
+  if (safeSignals.isReadOnlyQuestion && !safeSignals.isModalAnalyticalQuestion && !hasExplicitArchitectKeyword) {
     return {
       grade: subsystemHits >= 2 ? 'M' : 'S',
       phase: 'standard',
@@ -761,17 +763,18 @@ export function stripUiTitlesForIntentClassification(promptText = '') {
  * Вычисляет 3D-матрицу задачи (Ширина охвата Breadth × Когнитивная глубина Depth × Неопределённость/Риск RiskMode),
  * чтобы разделять прозрачную рутину, исследовательский поиск причины и критические узлы ядра (High-Blast).
  */
-export function computeTask3DMatrix({
-  promptText = '',
-  scope = {},
-  subsystemHits = 0,
-  signals = {},
-  isEditor = false,
-  hasExplicitArchitectKeyword = false,
-  isMultiFileScope = false,
-  fragilityDepthBoost = 0,
-} = {}) {
-  if (signals.isReadOnlyQuestion && !signals.isModalAnalyticalQuestion && !hasExplicitArchitectKeyword) {
+export function computeTask3DMatrix(rawOpts = {}) {
+  const {
+    promptText = '',
+    scope = {},
+    subsystemHits = 0,
+    signals = {},
+    isEditor = false,
+    hasExplicitArchitectKeyword = false,
+    isMultiFileScope = false,
+    fragilityDepthBoost = 0,
+  } = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
+  if (signals?.isReadOnlyQuestion && !signals?.isModalAnalyticalQuestion && !hasExplicitArchitectKeyword) {
     return {
       breadth: 'narrow',
       depth: 'routine',

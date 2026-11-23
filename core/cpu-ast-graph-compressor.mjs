@@ -2247,13 +2247,15 @@ export function selectDiverseSlicesMMR(candidates = [], { topK = 6, lambda = 0.7
  * (inspired by Graphify `_topology_hash`).
  */
 export function computeGraphTopologyHash(nodeIds = [], edgeKeys = [], params = {}) {
+  const safeNodes = nodeIds && typeof nodeIds[Symbol.iterator] === 'function' ? nodeIds : [];
+  const safeEdges = edgeKeys && typeof edgeKeys[Symbol.iterator] === 'function' ? edgeKeys : [];
   const accNodes = Buffer.alloc(32, 0);
-  for (const n of nodeIds || []) {
+  for (const n of safeNodes) {
     const d = createHash('sha256').update(`n\0${String(n)}`).digest();
     for (let i = 0; i < 32; i++) accNodes[i] ^= d[i];
   }
   const accEdges = Buffer.alloc(32, 0);
-  for (const e of edgeKeys || []) {
+  for (const e of safeEdges) {
     const d = createHash('sha256').update(`e\0${String(e)}`).digest();
     for (let i = 0; i < 32; i++) accEdges[i] ^= d[i];
   }
@@ -2399,8 +2401,31 @@ export function suggestArchitectureQuestions(archClusters, surprisingBridges = [
 
 function resolveRelativeModuleCandidate(fromFile, spec, codeLowerMap) {
   const rawSpec = String(spec || '').trim();
+  if (!rawSpec) return '';
+  const normFrom = normalizePosixRel(fromFile);
+  if (normFrom.endsWith('.py') && !rawSpec.startsWith('./') && !rawSpec.startsWith('../')) {
+    const baseDir = path.posix.dirname(normFrom);
+    if (rawSpec.startsWith('.')) {
+      const dots = rawSpec.match(/^\.+/)?.[0].length || 1;
+      let pyBase = baseDir;
+      for (let i = 1; i < dots; i++) pyBase = path.posix.dirname(pyBase);
+      const modRel = rawSpec.slice(dots).replace(/\./g, '/');
+      const pyCands = modRel ? [`${pyBase}/${modRel}.py`, `${pyBase}/${modRel}/__init__.py`] : [`${pyBase}/__init__.py`];
+      for (const c of pyCands) {
+        const hit = codeLowerMap.get(normalizePosixRel(c).toLowerCase());
+        if (hit) return hit;
+      }
+    } else if (/^[A-Za-z_][A-Za-z0-9_.]*$/.test(rawSpec)) {
+      const modPath = rawSpec.replace(/\./g, '/');
+      for (const c of [`${modPath}.py`, `${modPath}/__init__.py`, `src/${modPath}.py`, `src/${modPath}/__init__.py`]) {
+        const hit = codeLowerMap.get(c.toLowerCase());
+        if (hit) return hit;
+      }
+    }
+    return '';
+  }
   if (!rawSpec.startsWith('.')) return '';
-  const baseDir = path.posix.dirname(normalizePosixRel(fromFile));
+  const baseDir = path.posix.dirname(normFrom);
   const joined = normalizePosixRel(path.posix.join(baseDir, rawSpec));
   const candidates = [
     joined,

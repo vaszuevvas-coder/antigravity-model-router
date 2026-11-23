@@ -153,16 +153,17 @@ function peekTranscriptCompactionTailTs(transcriptPath = '') {
  * @param {string} [params.transcriptPath=''] Active transcript.jsonl path for compaction reset check
  * @returns {{ allow: boolean, duplicate: boolean, savedBytes: number, sha1?: string, reason: string }}
  */
-export function checkAndRecordRead({
-  filePath = '',
-  startLine = 1,
-  endLine = 999999,
-  byteOffset = 0,
-  conversationId = 'default',
-  stepIdx = 0,
-  modelProfile = null,
-  transcriptPath = ''
-} = {}) {
+export function checkAndRecordRead(opts = {}) {
+  const {
+    filePath = '',
+    startLine = 1,
+    endLine = 999999,
+    byteOffset = 0,
+    conversationId = 'default',
+    stepIdx = 0,
+    modelProfile = null,
+    transcriptPath = ''
+  } = opts && typeof opts === 'object' ? opts : {};
   if (!filePath || typeof filePath !== 'string') {
     return { allow: true, duplicate: false, savedBytes: 0, reason: '' };
   }

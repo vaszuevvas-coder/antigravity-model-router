@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * @file router-cli.mjs
- * @description Единый интерфейс командной строки (CLI) для The Tunnel v3.32.1.
+ * @description Единый интерфейс командной строки (CLI) для The Tunnel v3.32.2.
  * Предоставляет команды диагностики, анализа символов, слайсинга, кодомода и резервного копирования профиля.
  */
 
@@ -196,7 +196,7 @@ export function backupRouterProfile(backupPath = '', options = {}) {
 
     const pluginMeta = safeReadJsonSync(join(PLUGIN_ROOT, 'plugin.json'), {});
     const snapshot = {
-      version: String(pluginMeta?.version || '3.32.1'),
+      version: String(pluginMeta?.version || '3.32.2'),
       createdAt: new Date().toISOString(),
       state,
       cacheFiles
@@ -381,7 +381,7 @@ export function getRouterStatusSummary(workspaceRoot = process.cwd()) {
   } catch {}
 
   const pluginMeta = safeReadJsonSync(join(PLUGIN_ROOT, 'plugin.json'), {});
-  const version = String(pluginMeta?.version || '3.32.1');
+  const version = String(pluginMeta?.version || '3.32.2');
   const formatted = `🛡️ [Router Status] v${version} | Strategy: ${strategy} | Profile: ${hookProfile} | Guardrails: ${activeGuardrails}/${totalGuardrails} active | Skills: ${skillsCount} ready`;
 
   return {
@@ -450,7 +450,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       else if (a === '--include-tests') includeTests = true;
       else if (!a.startsWith('-')) dir = a;
     }
-    const res = scanShortcutDebt(dir, { marker, includeTests });
+    const res = scanShortcutDebt(dir, { marker, includeTests, lang: cliLang });
     console.log(asJson ? JSON.stringify(res, null, 2) : res.formatted);
   } else if (cmd === 'slice') {
     const file = args[1];
@@ -927,7 +927,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     }
   } else {
     console.error(`Unknown command: ${cmd}`);
-    console.error('Available commands: status, usages, chronos, dead-exports, slice, codemod, skills, learn, audit-skill, distill-pitfalls, instincts, evolve, shield, memory, ccr, gates, doctor, find-skills, import-skill, combo, audit-ui, backup, restore');
+    console.error('Available commands: status, usages, chronos, dead-exports, debt, slice, patch-symbol, codemod, skills, learn, audit-skill, eval-skill, spec, blocks, distill-pitfalls, instincts, evolve, shield, memory, ccr, gates, doctor, find-skills, import-skill, combo, audit-ui, backup, restore');
     process.exit(1);
   }
 }

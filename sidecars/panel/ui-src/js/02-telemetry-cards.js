@@ -1595,6 +1595,16 @@
     let _pendingUpdatePatch = null;
     let _updateFlushInFlight = false;
     let _updateBatchWaiters = [];
+    let _batchRollbackSnap = null;
+
+    function cloneRollbackSnap(st) {
+      const s = (st && typeof st === 'object') ? st : {};
+      return Object.assign({}, s, {
+        skillModes: Object.assign({}, s.skillModes || {}),
+        panelCollapsedCards: Object.assign({}, s.panelCollapsedCards || {}),
+        panelOpenSpoilers: Object.assign({}, s.panelOpenSpoilers || {}),
+      });
+    }
 
     function mergeStatePatches(target, src) {
       const out = Object.assign({}, target || {});
@@ -1606,6 +1616,9 @@
           } else {
             out.skillModes = Object.assign({}, out.skillModes || {}, src.skillModes);
           }
+        } else if ((k === 'panelCollapsedCards' || k === 'panelOpenSpoilers') && src[k] && typeof src[k] === 'object' && !Array.isArray(src[k])) {
+          // Complete DOM boolean maps: clone latest snapshot so omitting a key expands/closes cleanly without resurrecting stale entries.
+          out[k] = Object.assign({}, src[k]);
         } else {
           out[k] = src[k];
         }
@@ -1625,11 +1638,7 @@
           const waiters = _updateBatchWaiters;
           _pendingUpdatePatch = null;
           _updateBatchWaiters = [];
-          const rollbackSnap = Object.assign({}, currentState, {
-            skillModes: Object.assign({}, currentState.skillModes || {}),
-            panelCollapsedCards: Object.assign({}, currentState.panelCollapsedCards || {}),
-            panelOpenSpoilers: Object.assign({}, currentState.panelOpenSpoilers || {}),
-          });
+          const rollbackSnap = _batchRollbackSnap || cloneRollbackSnap(currentState);
           let ok = false;
           try {
             const res = await panelFetch('/api/update', {
@@ -1643,11 +1652,13 @@
             if (!updated || updated.ok === false || !updated.state) {
               throw new Error((updated && updated.error) ? updated.error : L('Ответ сервера без state', 'Server response missing state'));
             }
+            // Refresh rollback baseline to confirmed server state for any trailing queued batch.
+            _batchRollbackSnap = cloneRollbackSnap(updated.state);
             if (!_pendingUpdatePatch) {
               renderPayload(updated);
               flashStatus(L('Сохранено в router-state.json ✓', 'Saved to router-state.json ✓'));
             } else if (updated.state) {
-              currentState = Object.assign({}, updated.state, _pendingUpdatePatch);
+              currentState = mergeStatePatches(updated.state, _pendingUpdatePatch);
             }
             ok = true;
           } catch (err) {
@@ -1663,13 +1674,17 @@
           }
         }
       } finally {
+        _batchRollbackSnap = null;
         _updateFlushInFlight = false;
       }
     }
 
     function updateState(patch, opts) {
       const skipOptimistic = Boolean(opts && opts.skipOptimistic);
-      const optimistic = Object.assign({}, currentState, patch);
+      if (!_batchRollbackSnap) {
+        _batchRollbackSnap = cloneRollbackSnap(currentState);
+      }
+      const optimistic = mergeStatePatches(currentState, patch);
       if (patch && patch.skillModes) {
         const mergedModes = patch.replaceSkillModes ? {} : Object.assign({}, currentState.skillModes || {});
         for (const k of Object.keys(patch.skillModes)) {
@@ -2250,8 +2265,16 @@
         const el = document.getElementById('chk-' + key);
         if (!el) continue;
         const row = el.closest ? el.closest('label') : null;
-        if (row && !row.hasAttribute('data-orig-title')) {
-          row.setAttribute('data-orig-title', row.getAttribute('title') || '');
+        if (row && !row.hasAttribute('data-orig-title-saved')) {
+          const i18nOrig = (typeof I18N_ORIG_ATTRS !== 'undefined' && I18N_ORIG_ATTRS.get(row)) ? I18N_ORIG_ATTRS.get(row).title : '';
+          const rawTitle = i18nOrig || row.getAttribute('title') || '';
+          const ruTitle = rawTitle;
+          const enTitle = (typeof translateUiString === 'function' && typeof UI_RU_TO_EN_ATTR !== 'undefined' && /[А-Яа-яЁё]/.test(ruTitle))
+            ? translateUiString(ruTitle, UI_RU_TO_EN_ATTR)
+            : ruTitle;
+          row.setAttribute('data-orig-title-ru', ruTitle);
+          row.setAttribute('data-orig-title-en', enTitle);
+          row.setAttribute('data-orig-title-saved', '1');
         }
         if (Object.prototype.hasOwnProperty.call(overrides, key)) {
           el.checked = Boolean(overrides[key]);
@@ -2263,7 +2286,10 @@
           el.disabled = false;
           el.checked = HOOK_PROFILE_DEFAULT_FALSE_KEYS.has(key) ? Boolean(st[key]) : st[key] !== false;
           if (row) {
-            const origTitle = row.getAttribute('data-orig-title') || '';
+            const origTitle = L(
+              row.getAttribute('data-orig-title-ru') || '',
+              row.getAttribute('data-orig-title-en') || row.getAttribute('data-orig-title-ru') || ''
+            );
             if (origTitle) row.setAttribute('title', origTitle);
             else row.removeAttribute('title');
           }

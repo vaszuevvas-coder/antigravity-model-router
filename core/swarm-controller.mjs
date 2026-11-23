@@ -64,7 +64,8 @@ const SUPPORT_NAME_RE = /^(?:narrator|monitor)(?:-\d+)?$/i;
  * @param {string} [params.workspaceRoot='']
  * @returns {string}
  */
-export function resolveSwarmIsolationKey({ conversationId = 'default', workspaceRoot = '' } = {}) {
+export function resolveSwarmIsolationKey(opts = {}) {
+  const { conversationId = 'default', workspaceRoot = '' } = opts && typeof opts === 'object' ? opts : {};
   const rawConvo = String(conversationId || 'default').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 48) || 'default';
   if (!workspaceRoot || typeof workspaceRoot !== 'string') {
     return rawConvo;
@@ -195,7 +196,8 @@ function peekSwarmSignalsFromTranscript(transcriptPath = '') {
  *   isolationKey: string
  * }}
  */
-export function detectSwarmExecutionRole(payload = {}) {
+export function detectSwarmExecutionRole(rawPayload = {}) {
+  const payload = rawPayload && typeof rawPayload === 'object' ? rawPayload : {};
   const wsPath = payload.workspacePaths?.[0] || payload.workspacePath || payload.workspaceRoot || payload.cwd || '';
   const userInput = String(payload.lastUserInput || payload.prompt || payload.userInput || '');
   const systemText = String(payload.systemPrompt || payload.systemMessage || '');

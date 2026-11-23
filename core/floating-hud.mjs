@@ -50,13 +50,14 @@ function isRunningUnderAutomatedTest() {
 /**
  * Generates the Windows PowerShell WPF script with UTF-8 BOM for proper Cyrillic rendering.
  */
-export function buildWpfFloatingHudScript({
-  progressFile = TASK_PROGRESS_FILE,
-  runtimeFile = HUD_RUNTIME_FILE,
-  positionFile = HUD_POSITION_FILE,
-  panelTheme = '',
-  lang = '',
-} = {}) {
+export function buildWpfFloatingHudScript(opts = {}) {
+  const {
+    progressFile = TASK_PROGRESS_FILE,
+    runtimeFile = HUD_RUNTIME_FILE,
+    positionFile = HUD_POSITION_FILE,
+    panelTheme = '',
+    lang = '',
+  } = opts && typeof opts === 'object' ? opts : {};
   const esc = (p) => String(p).replace(/'/g, "''");
   let resolvedTheme = String(panelTheme || '').trim().toLowerCase();
   let resolvedLangRaw = String(lang || '').trim().toLowerCase();

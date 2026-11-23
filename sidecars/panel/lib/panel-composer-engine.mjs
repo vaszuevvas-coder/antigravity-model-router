@@ -117,7 +117,9 @@ const STANDALONE_TECH_TOKEN_STOPWORDS = new Set([
  * Формирует 3 контекстных чипа «Следующий шаг» для виджета Smart Composer (с приоритетом активного cascadeAlert).
  * @param {{ workspaceName?: string, touchedFiles?: string[], recentGoals?: string[], cascadeAlert?: { file?: string, checker?: string, error?: string }|null }} [params={}]
  */
-export function buildSmartContinuationChips({ workspaceName = '', touchedFiles = [], recentGoals = [], cascadeAlert = null } = {}) {
+export function buildSmartContinuationChips(opts = {}) {
+  const { workspaceName = '', touchedFiles = [], recentGoals = [], cascadeAlert = null } =
+    opts && typeof opts === 'object' ? opts : {};
   const cleanFiles = Array.isArray(touchedFiles)
     ? touchedFiles.map((f) => String(f || '').trim()).filter(Boolean)
     : [];

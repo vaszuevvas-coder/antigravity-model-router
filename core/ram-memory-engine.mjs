@@ -296,6 +296,49 @@ export class RamMemoryEngine {
     ws.forwardDeps.delete(importerRel);
   }
 
+  _ensureGoDepMeta(ws) {
+    if (!ws) return { goModulePrefix: '', goPkgMainFile: null };
+    if (ws.goModulePrefix === undefined || ws.goModulePrefix === null) {
+      let modPrefix = '';
+      try {
+        const goModPath = path.join(ws.absRoot, 'go.mod');
+        if (fs.existsSync(goModPath)) {
+          const rawMod = fs.readFileSync(goModPath, 'utf8').slice(0, 8192);
+          const m = /^\s*module\s+([^\s#]+)/m.exec(rawMod);
+          if (m && m[1]) modPrefix = m[1].trim();
+        }
+      } catch {}
+      ws.goModulePrefix = modPrefix;
+    }
+    if (!ws.goModulePrefix) {
+      return { goModulePrefix: '', goPkgMainFile: null };
+    }
+    if (!(ws.goPkgMainFile instanceof Map)) {
+      const pkgMap = new Map();
+      const scoreGoEntry = (dir, rel) => {
+        const base = path.posix.basename(rel).toLowerCase();
+        if (base === 'app.go' || base === 'main.go') return 1;
+        if (dir && base === `${path.posix.basename(dir).toLowerCase()}.go`) return 2;
+        if (base === 'doc.go') return 4;
+        return 3;
+      };
+      const bestScores = new Map();
+      for (const rel of ws.files.keys()) {
+        if (!rel.endsWith('.go') || rel.endsWith('_test.go')) continue;
+        const dirRaw = path.posix.dirname(rel);
+        const dir = dirRaw === '.' ? '' : dirRaw;
+        const sc = scoreGoEntry(dir, rel);
+        const prevSc = bestScores.get(dir) ?? 99;
+        if (sc < prevSc || (sc === prevSc && rel < (pkgMap.get(dir) || '~'))) {
+          bestScores.set(dir, sc);
+          pkgMap.set(dir, rel);
+        }
+      }
+      ws.goPkgMainFile = pkgMap;
+    }
+    return { goModulePrefix: ws.goModulePrefix, goPkgMainFile: ws.goPkgMainFile };
+  }
+
   /**
    * Links outgoing dependency edges for a single file entry in O(imports).
    * @param {object} ws
@@ -303,10 +346,12 @@ export class RamMemoryEngine {
    */
   linkFileDeps(ws, entry) {
     this.unlinkFileDeps(ws, entry.relPath);
-    if (!entry.imports || entry.imports.length === 0) return;
+    const isGoTest = entry.relPath.endsWith('_test.go');
+    if ((!entry.imports || entry.imports.length === 0) && !isGoTest) return;
+    const goMeta = entry.relPath.endsWith('.go') ? this._ensureGoDepMeta(ws) : null;
     const targets = new Set();
-    for (const spec of entry.imports) {
-      const targetRel = resolveImportRel(entry.relPath, spec, ws.files);
+    for (const spec of entry.imports || []) {
+      const targetRel = resolveImportRel(entry.relPath, spec, ws.files, goMeta || undefined);
       if (!targetRel || targetRel === entry.relPath) continue;
       targets.add(targetRel);
       let depSet = ws.reverseDeps.get(targetRel);
@@ -315,6 +360,19 @@ export class RamMemoryEngine {
         ws.reverseDeps.set(targetRel, depSet);
       }
       depSet.add(entry.relPath);
+    }
+    // Pair Go *_test.go with sibling *.go implementation file
+    if (isGoTest) {
+      const implCand = `${entry.relPath.slice(0, -8)}.go`;
+      if (ws.files.has(implCand)) {
+        targets.add(implCand);
+        let depSet = ws.reverseDeps.get(implCand);
+        if (!depSet) {
+          depSet = new Set();
+          ws.reverseDeps.set(implCand, depSet);
+        }
+        depSet.add(entry.relPath);
+      }
     }
     if (targets.size > 0) {
       ws.forwardDeps.set(entry.relPath, targets);
@@ -660,6 +718,7 @@ export class RamMemoryEngine {
     ws.symbolGraph = null;
     ws.docRefGraph = null;
     ws.archClusters = null;
+    ws.goPkgMainFile = null;
     for (const entry of ws.files.values()) {
       this.linkFileDeps(ws, entry);
     }
@@ -779,7 +838,8 @@ export class RamMemoryEngine {
             if (CODE_EXTENSIONS.has(ext)) {
               const sha1 = computeBufSha1(buf);
               const cached = cachedAstMap.get(relPath);
-              if (cached && cached.sha1 === sha1 && cached.meta) {
+              const isStaleGoCache = ext === '.go' && cached && (!Array.isArray(cached.meta?.imports) || cached.meta.imports.length === 0) && buf.includes('import');
+              if (cached && cached.sha1 === sha1 && cached.meta && !isStaleGoCache) {
                 precomputedMeta = cached.meta;
               } else {
                 try {
@@ -951,7 +1011,8 @@ export class RamMemoryEngine {
       const sha1 = fRec?.buf ? computeBufSha1(fRec.buf) : '';
       if (fRec) fRec.sha1 = sha1;
       const cached = sha1 ? cachedAstMap.get(item.relPath) : null;
-      if (cached && cached.sha1 === sha1 && cached.meta) {
+      const isStaleGoCache = item.ext === '.go' && cached && (!Array.isArray(cached.meta?.imports) || cached.meta.imports.length === 0) && fRec?.buf?.includes('import');
+      if (cached && cached.sha1 === sha1 && cached.meta && !isStaleGoCache) {
         metaByRel.set(item.relPath, cached.meta);
       } else {
         filteredBatch.push(item);
@@ -1196,12 +1257,27 @@ export class RamMemoryEngine {
       }
     }
 
+    const isDocsQuery = /\b(?:docs?|readme|tutorial|guide|changelog|markdown|перевод|документац)\b/i.test(query);
+    const hasNonAsciiQuery = /[^\x00-\x7f]/.test(query);
     const ranked = Array.from(scoreMap.entries())
       .map(([rel, bmScore]) => {
         const entry = ws.files.get(rel);
         const symBoost = (entry?.symbols || []).some((s) => s.signature?.toLowerCase().includes(needleLower)) ? 2.5 : 0;
         const revCount = ws.reverseDeps.get(rel)?.size || 0;
-        return { rel, entry, bm25fScore: bmScore, score: bmScore + symBoost + Math.min(2, revCount * 0.2) };
+        let rawScore = bmScore + symBoost + Math.min(2, revCount * 0.2);
+        if (!isDocsQuery && entry) {
+          const lowRel = rel.toLowerCase();
+          if ((entry.ext === '.md' || entry.ext === '.mdx' || entry.ext === '.rst') && /(?:^|\/)(?:docs|i18n|locales)\/([a-z]{2}(?:-[a-z]{2})?)\//i.test(lowRel)) {
+            const locMatch = /(?:^|\/)(?:docs|i18n|locales)\/([a-z]{2}(?:-[a-z]{2})?)\//i.exec(lowRel);
+            const loc = locMatch ? locMatch[1] : '';
+            rawScore *= (!hasNonAsciiQuery && loc && loc !== 'en') ? 0.25 : 0.4;
+          } else if ((entry.ext === '.md' || entry.ext === '.rst' || entry.ext === '.txt') && /(?:^|\/)docs\//i.test(lowRel)) {
+            rawScore *= 0.65;
+          } else if (CODE_EXTENSIONS.has(entry.ext) && !/(?:^|\/)(?:tests?|__tests__|docs_src)\//i.test(lowRel)) {
+            rawScore *= 1.12;
+          }
+        }
+        return { rel, entry, bm25fScore: bmScore, score: rawScore };
       })
       .filter((r) => r.entry)
       .sort((a, b) => b.score - a.score || a.rel.localeCompare(b.rel))
@@ -1914,9 +1990,10 @@ export class RamMemoryEngine {
       direction = 'both',
       maxClusters = 8,
       maxGodNodes = 5,
+      startWatcher = true,
     } = {}
   ) {
-    const ws = this.ensureWarm(rootDir);
+    const ws = this.ensureWarm(rootDir, { startWatcher });
     const qMode = String(mode || 'summary').trim().toLowerCase();
     if (!ws || ws.files.size === 0) {
       return { ok: false, mode: qMode, formatted: 'RAM Knowledge Graph error: workspace is empty or invalid.' };
@@ -4228,27 +4305,53 @@ export class RamMemoryEngine {
   }
 
   /**
+   * Releases timers, watchers, derived graphs, and large map buffers for a workspace
+   * so pending libuv/watcher callbacks cannot retain file data in V8 heap.
+   * @param {object} ws
+   */
+  _releaseWorkspaceResources(ws) {
+    if (!ws) return;
+    try { ws.watcher?.close(); } catch {}
+    ws.watcher = null;
+    if (ws.prefetchTimer) {
+      clearTimeout(ws.prefetchTimer);
+      ws.prefetchTimer = null;
+    }
+    if (ws.watchTimers) {
+      for (const t of ws.watchTimers.values()) clearTimeout(t);
+      ws.watchTimers.clear();
+    }
+    ws.symbolGraph = null;
+    ws.symbolGraphDirty = null;
+    ws.docRefGraph = null;
+    ws.archClusters = null;
+    ws.simHashIndex = null;
+    ws.csrIndex = null;
+    ws.goModulePrefix = null;
+    ws.goPkgMainFile = null;
+    ws.files?.clear();
+    ws.tokenIndex?.clear();
+    ws.trigramIndex?.clear();
+    ws.fieldPostings?.clear();
+    ws.forwardDeps?.clear();
+    ws.reverseDeps?.clear();
+    ws.repoMapCache?.clear();
+    ws.speculativeSkeletonCache?.clear();
+    ws.arena?.clear();
+    ws.totalBytes = 0;
+  }
+
+  /**
    * Evicts one workspace or all cached workspaces and stops watchers.
    * @param {string} [target='all']
    */
   evict(target = 'all') {
     if (!target || target === 'all') {
       for (const ws of this.workspaces.values()) {
-        ws.symbolGraph = null;
-        ws.docRefGraph = null;
-        ws.archClusters = null;
-        ws.simHashIndex = null;
-        ws.csrIndex = null;
-        ws.speculativeSkeletonCache?.clear();
-        ws.arena?.clear();
-        if (ws.prefetchTimer) {
-          clearTimeout(ws.prefetchTimer);
-          ws.prefetchTimer = null;
-        }
-        try { ws.watcher?.close(); } catch {}
-        for (const t of ws.watchTimers.values()) clearTimeout(t);
+        this._releaseWorkspaceResources(ws);
       }
       this.workspaces.clear();
+      this.memoizer?.entries?.clear();
       this.totalCacheBytes = 0;
       return { ok: true, evicted: 'all' };
     }
@@ -4256,20 +4359,9 @@ export class RamMemoryEngine {
     const wsKey = process.platform === 'win32' ? abs.toLowerCase() : abs;
     const ws = this.workspaces.get(wsKey);
     if (!ws) return { ok: false, evicted: abs, message: 'Workspace not in RAM' };
-    ws.symbolGraph = null;
-    ws.docRefGraph = null;
-    ws.archClusters = null;
-    ws.simHashIndex = null;
-    ws.csrIndex = null;
-    ws.speculativeSkeletonCache?.clear();
-    ws.arena?.clear();
-    if (ws.prefetchTimer) {
-      clearTimeout(ws.prefetchTimer);
-      ws.prefetchTimer = null;
-    }
-    try { ws.watcher?.close(); } catch {}
-    for (const t of ws.watchTimers.values()) clearTimeout(t);
-    this.totalCacheBytes = Math.max(0, this.totalCacheBytes - ws.totalBytes);
+    const prevBytes = ws.totalBytes || 0;
+    this._releaseWorkspaceResources(ws);
+    this.totalCacheBytes = Math.max(0, this.totalCacheBytes - prevBytes);
     this.workspaces.delete(wsKey);
     return { ok: true, evicted: abs };
   }

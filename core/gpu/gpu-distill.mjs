@@ -157,7 +157,8 @@ export function setDistillCacheEntry(key, entry) {
  * Вычисляет стабильный дискретный размер контекста num_ctx (4096 / 8192 / 12288),
  * чтобы уложиться в 12 ГБ VRAM и избежать лишних перезапусков KV-кэша между запросами.
  */
-export function computeSafeNumCtx(cfg, hw, loadedModels = [], estimatedPromptChars = 4000, tagMap = null) {
+export function computeSafeNumCtx(cfg = {}, hw = null, loadedModels = [], estimatedPromptChars = 4000, tagMap = null) {
+  const safeCfg = cfg && typeof cfg === 'object' ? cfg : {};
   const { loadedVramMb: ollamaLoadedMb } = reconcileLoadedModelsVram(loadedModels, tagMap, hw);
   let hwAvailCapMb = 4096;
   if (hw?.available) {
@@ -166,10 +167,10 @@ export function computeSafeNumCtx(cfg, hw, loadedModels = [], estimatedPromptCha
     } else if (Number(hw.totalMb) > 0) {
       hwAvailCapMb = Math.max(2048, hw.totalMb - 1024);
     } else {
-      hwAvailCapMb = cfg.gpuMaxVramMb;
+      hwAvailCapMb = Number(safeCfg.gpuMaxVramMb) || 4096;
     }
   }
-  const effectiveBudgetMb = Math.min(cfg.gpuMaxVramMb, Math.max(2048, hwAvailCapMb));
+  const effectiveBudgetMb = Math.min(Number(safeCfg.gpuMaxVramMb) || 8192, Math.max(2048, hwAvailCapMb));
 
   let vramCap = 4096;
   if (effectiveBudgetMb >= 20000) {
@@ -181,7 +182,7 @@ export function computeSafeNumCtx(cfg, hw, loadedModels = [], estimatedPromptCha
   } else if (effectiveBudgetMb >= 9600) {
     vramCap = 8192;
   }
-  const capCtx = Math.min(cfg.gpuContextTokens, vramCap);
+  const capCtx = Math.min(Number(safeCfg.gpuContextTokens) || vramCap, vramCap);
 
   // Фиксированный стандартный бакет 8192 избавляет Ollama от пересоздания KV-кэша между вызовами разной длины
   const stdBucket = Math.min(capCtx, 8192);

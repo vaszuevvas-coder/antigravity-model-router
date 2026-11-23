@@ -1836,8 +1836,11 @@ test('15. Release Packaging & Auto-Installer Lifecycle (install, backup, uninsta
     assert.equal(JSON.parse(fs.readFileSync(statePath, 'utf8')).strategy, 'pro_architect');
 
     // 4. Полная сборка релиза (ZIP + SHA256SUMS.txt + Setup.exe на Windows)
-    const tmpDist = path.join(tmpRoot, 'dist');
-    const packRes = buildReleasePackages({ repoRoot: ROOT_DIR, outDir: tmpDist, silent: true });
+    const isMutationSandbox = process.env.AMR_MUTATION_SANDBOX === '1';
+    fs.mkdirSync(path.join(ROOT_DIR, '.cache'), { recursive: true });
+    const tmpDist = fs.mkdtempSync(path.join(ROOT_DIR, '.cache', 'amr-release-dist-'));
+    try {
+    const packRes = buildReleasePackages({ repoRoot: ROOT_DIR, outDir: tmpDist, silent: true, zipOnly: isMutationSandbox });
     assert.equal(packRes.ok, true);
     assert.equal(fs.existsSync(packRes.zipPath), true);
     assert.equal(fs.existsSync(packRes.sumsPath), true);
@@ -1863,7 +1866,7 @@ test('15. Release Packaging & Auto-Installer Lifecycle (install, backup, uninsta
       './core/ram-memory-mcp.mjs',
     ]);
 
-    if (process.platform === 'win32') {
+    if (process.platform === 'win32' && !isMutationSandbox) {
       assert.ok(packRes.exePath && fs.existsSync(packRes.exePath), 'Setup.exe must be compiled on Windows');
       const tmpExeTarget = path.join(tmpRoot, 'exe-install', 'antigravity-model-router');
 
@@ -1889,6 +1892,9 @@ test('15. Release Packaging & Auto-Installer Lifecycle (install, backup, uninsta
       assert.equal(fs.existsSync(exeBackupPath), true);
       runUninstall({ targetDir: tmpExeTarget, purge: true, silent: true });
       assert.equal(fs.existsSync(exeBackupPath), false);
+    }
+    } finally {
+      try { fs.rmSync(tmpDist, { recursive: true, force: true }); } catch {}
     }
   } finally {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
@@ -2381,6 +2387,10 @@ test('21. Migrated Stress Contracts: v3.7 P0/P1 Sidecar/GPU/Security & v3.8 CPU 
   assert.equal(sanitizeStatePatch({ floatingHudEnabled: true }).floatingHudEnabled, true);
 
   const { resetTaskProgress } = await import('../core/task-progress.mjs');
+  const prevTaskCacheEnv = process.env.TUNNEL_CACHE_DIR;
+  const tmpTaskCache = makeTempDir('amr-t21-task-cache-');
+  process.env.TUNNEL_CACHE_DIR = tmpTaskCache;
+  try {
   resetTaskProgress();
   const tmpHudBrain = makeTempDir('amr-hud-brain-');
   try {
@@ -2556,6 +2566,7 @@ test('21. Migrated Stress Contracts: v3.7 P0/P1 Sidecar/GPU/Security & v3.8 CPU 
     fs.rmSync(tmpHudBrain, { recursive: true, force: true });
   }
 
+  resetTaskProgress();
   const pExplicit = setExplicitTaskProgress({
     conversationId: 'demo',
     currentStep: 2,
@@ -2567,6 +2578,11 @@ test('21. Migrated Stress Contracts: v3.7 P0/P1 Sidecar/GPU/Security & v3.8 CPU 
   assert.equal(pExplicit.formattedText, 'Этап 2 из 4 · Правка server.mjs');
   assert.equal(getTaskProgressSnapshot().percent, 50);
   resetTaskProgress();
+  } finally {
+    if (prevTaskCacheEnv === undefined) delete process.env.TUNNEL_CACHE_DIR;
+    else process.env.TUNNEL_CACHE_DIR = prevTaskCacheEnv;
+    fs.rmSync(tmpTaskCache, { recursive: true, force: true });
+  }
 
   const wpfScript = buildWpfFloatingHudScript();
   assert.ok(wpfScript.startsWith('\uFEFF'));

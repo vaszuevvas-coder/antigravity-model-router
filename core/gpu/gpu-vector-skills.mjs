@@ -363,7 +363,8 @@ export function chunkFileForVectors(relPath, content, { maxLines = 55, overlapLi
 }
 
 export function getVectorStorePaths(wsAbsRoot, embedModel = '') {
-  const norm = process.platform === 'win32' ? wsAbsRoot.toLowerCase() : wsAbsRoot;
+  const safeRoot = typeof wsAbsRoot === 'string' && wsAbsRoot ? wsAbsRoot : process.cwd();
+  const norm = process.platform === 'win32' ? safeRoot.toLowerCase() : safeRoot;
   const normEmbed = normalizeOllamaTag(embedModel || DEFAULT_GPU_CONFIG.gpuEmbedModel);
   const keyStr = (!normEmbed || normEmbed === DEFAULT_GPU_CONFIG.gpuEmbedModel)
     ? norm

@@ -93,14 +93,15 @@ function pickTop(items = [], tokens = [], queryLower = '', limit = 3) {
  * Queries curated UI/UX design matrix for reasoning rules, palettes, typography, charts, and Taste dials.
  * @param {object} [params={}]
  */
-export function queryUxMatrix({
-  domain = '',
-  mode = '',
-  stack = '',
-  includeCharts = false,
-  limit = 3,
-  matrixPath = MATRIX_PATH,
-} = {}) {
+export function queryUxMatrix(opts = {}) {
+  const {
+    domain = '',
+    mode = '',
+    stack = '',
+    includeCharts = false,
+    limit = 3,
+    matrixPath = MATRIX_PATH,
+  } = opts && typeof opts === 'object' ? opts : {};
   const matrix = loadUxMatrix(matrixPath);
   const queryText = [domain, stack].filter(Boolean).join(' ').trim();
   const { expandedText, extraTokens } = expandBilingualUxQuery(queryText);

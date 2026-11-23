@@ -508,7 +508,8 @@ export function updateTaskBlackboard({
  * @param {string} [options.conversationId='default']
  * @returns {string} Compact blackboard markdown string (<=450 chars) or empty string
  */
-export function formatBlackboardForSubagent({ workspaceRoot = '', conversationId = 'default' } = {}) {
+export function formatBlackboardForSubagent(opts = {}) {
+  const { workspaceRoot = '', conversationId = 'default' } = opts && typeof opts === 'object' ? opts : {};
   const trackerFile = getTrackerFile();
   if (!existsSync(trackerFile)) return '';
   const scopeKey = sanitizeKey(conversationId || workspaceRoot || 'default');
@@ -647,7 +648,9 @@ export function getTaskCrystallizationSignals({
  * @param {{ conversationId?: string, workspaceRoot?: string }} [options={}]
  * @returns {string[]}
  */
-export function getEditedFilesForConversation({ conversationId = 'default', workspaceRoot = '' } = {}) {
+export function getEditedFilesForConversation(rawOpts = {}) {
+  const { conversationId = 'default', workspaceRoot = '' } =
+    rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   const trackerFile = getTrackerFile();
   if (!existsSync(trackerFile)) return [];
   const state = safeReadJsonSync(trackerFile, createInitialState, { selfHeal: false });

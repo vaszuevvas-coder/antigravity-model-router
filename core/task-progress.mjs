@@ -47,7 +47,7 @@ function clampInt(val, min, max, fallback) {
 export function createDefaultProgressState() {
   const now = Date.now();
   return {
-    version: '3.32.1',
+    version: '3.32.2',
     activeConversationId: 'default',
     projectName: 'antigravity-model-router',
     workspaceRoot: '',
@@ -1091,12 +1091,13 @@ function hydrateStateWithPrimary(state, activeChats = [], defaultProject = 'anti
  * Reads and reconciles the current multi-chat task progress snapshot safely.
  * @returns {object}
  */
-export function getTaskProgressSnapshot({
-  workspaceRoot = '',
-  completedHoldMs = DEFAULT_COMPLETED_HOLD_MS,
-  brainDirs = null,
-  now = Date.now(),
-} = {}) {
+export function getTaskProgressSnapshot(opts = {}) {
+  const {
+    workspaceRoot = '',
+    completedHoldMs = DEFAULT_COMPLETED_HOLD_MS,
+    brainDirs = null,
+    now = Date.now(),
+  } = opts && typeof opts === 'object' ? opts : {};
   ensureCacheDir();
   const raw = safeReadJsonSync(getTaskProgressFile(), createDefaultProgressState);
   const state = raw && typeof raw === 'object' ? { ...createDefaultProgressState(), ...raw } : createDefaultProgressState();

@@ -13,20 +13,21 @@ function getBlockingSeverities(failOn = 'high') {
   return new Set(['CRITICAL', 'HIGH']);
 }
 
-export function buildAuditReport({
-  targetDir,
-  profile,
-  elapsedMs,
-  scannedFiles,
-  truncated = false,
-  maxFiles = 5000,
-  stack,
-  blastRadiusHubs,
-  nativeTools,
-  rawFindings,
-  failOn = 'high',
-  maxOutputFindings = 80,
-}) {
+export function buildAuditReport(opts = {}) {
+  const {
+    targetDir = '.',
+    profile = 'fast',
+    elapsedMs = 0,
+    scannedFiles = 0,
+    truncated = false,
+    maxFiles = 5000,
+    stack = {},
+    blastRadiusHubs = [],
+    nativeTools = [],
+    rawFindings = [],
+    failOn = 'high',
+    maxOutputFindings = 80,
+  } = opts && typeof opts === 'object' ? opts : {};
   const dedup = new Map();
   for (const f of rawFindings || []) {
     if (!f || !f.ruleId) continue;

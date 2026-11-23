@@ -182,6 +182,7 @@ export function scanShortcutDebt(workspaceRoot = process.cwd(), options = {}) {
     marker = '',
     maxFiles = DEFAULT_MAX_FILES,
     includeTests = false,
+    lang = 'ru',
   } = options && typeof options === 'object' ? options : {};
 
   if (!workspaceRoot || typeof workspaceRoot !== 'string' || !existsSync(workspaceRoot)) {
@@ -241,7 +242,7 @@ export function scanShortcutDebt(workspaceRoot = process.cwd(), options = {}) {
     elapsedMs,
     formatted: '',
   };
-  report.formatted = formatShortcutDebtReport(report);
+  report.formatted = formatShortcutDebtReport(report, { lang });
   return report;
 }
 

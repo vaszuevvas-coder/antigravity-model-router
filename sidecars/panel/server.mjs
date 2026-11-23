@@ -192,7 +192,7 @@ function getPluginVersion() {
     const ver = typeof meta?.version === 'string' ? meta.version.trim() : '';
     if (ver) return ver;
   } catch {}
-  return '3.32.1';
+  return '3.32.2';
 }
 
 function getUiBuildVersion() {
@@ -934,8 +934,13 @@ export async function startSidecarPanel(options = {}) {
         detail = pickLang(lang, `Применён профиль хуков ${patch.hookProfile}`, `Applied hook profile ${patch.hookProfile}`);
       } else if (kind === 'agentignore') {
         const outPath = join(activeWs, '.agentignore');
-        if (!existsSync(outPath) || data?.overwrite) {
-          writeFileSync(outPath, '.env*\nsecrets/\n*.pem\n*.key\n', 'utf8');
+        try {
+          writeFileSync(outPath, '.env*\nsecrets/\n*.pem\n*.key\n', {
+            encoding: 'utf8',
+            flag: data?.overwrite ? 'w' : 'wx',
+          });
+        } catch (wErr) {
+          if (wErr?.code !== 'EEXIST') throw wErr;
         }
         applied = true;
         detail = pickLang(lang, 'Создан файл .agentignore (UTF-8)', 'Created .agentignore (UTF-8)');
@@ -1169,14 +1174,20 @@ export async function startSidecarPanel(options = {}) {
       const { computeCacheWarmthStatus } = await import('../../core/quota-pacer.mjs');
       const { getSessionReuseSummary, getSessionVerificationFreshness } = await import('../../core/completion-gates.mjs');
       const tmpEngine = new RamMemoryEngine({ budgetMb: 256 });
-      const graphReport = tmpEngine.queryKnowledgeGraph(activeWs, {
-        mode: 'report',
-        maxClusters: 8,
-        maxGodNodes: 6,
-      });
+      let graphReport = null;
+      try {
+        graphReport = tmpEngine.queryKnowledgeGraph(activeWs, {
+          mode: 'report',
+          maxClusters: 8,
+          maxGodNodes: 6,
+          startWatcher: false,
+        });
+      } finally {
+        tmpEngine.evict('all');
+      }
       const warmth = computeCacheWarmthStatus();
-      const reuse = getSessionReuseSummary();
-      const verification = getSessionVerificationFreshness();
+      const reuse = getSessionReuseSummary({ workspaceRoot: activeWs });
+      const verification = getSessionVerificationFreshness({ workspaceRoot: activeWs });
       return {
         ok: Boolean(graphReport?.ok),
         workspaceRoot: activeWs,
@@ -1204,6 +1215,7 @@ export async function startSidecarPanel(options = {}) {
       const { scanShortcutDebt } = await import('../../core/shortcut-debt-ledger.mjs');
       const res = scanShortcutDebt(activeWs, {
         marker: typeof data?.marker === 'string' ? data.marker : '',
+        lang,
       });
       return res;
     } catch (err) {

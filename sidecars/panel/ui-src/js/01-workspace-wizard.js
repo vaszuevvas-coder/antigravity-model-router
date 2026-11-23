@@ -202,10 +202,13 @@
       }
       const instinctsEl = document.getElementById('projectInstinctsList');
       if (instinctsEl) {
-        instinctsEl.innerHTML = '<div>' + L(
+        instinctsEl.textContent = '';
+        const hintDiv = document.createElement('div');
+        hintDiv.textContent = L(
           'Нажмите «Инстинкты проекта» для просмотра накопленных паттернов.',
           'Click "Project Instincts" to view learned workspace patterns.'
-        ) + '</div>';
+        );
+        instinctsEl.appendChild(hintDiv);
       }
       const doctorBoxEl = document.getElementById('setupDoctorBox');
       if (doctorBoxEl) {

@@ -465,16 +465,17 @@ function extractEnclosingFunctionHeader(newText = '', firstAddedLineIdx = -1) {
  * runs a compact local Ollama (gemma4:12b) bug check on the diff hunk when GPU is enabled.
  * @param {object} [params={}]
  */
-export async function critiqueEditedDiffLocally({
-  filePath = '',
-  oldText = '',
-  newText = '',
-  timeoutMs = 1500,
-  httpJsonFn = null,
-  cfgOverride = null,
-  useDistillCache = false,
-  _bypassCache = false,
-} = {}) {
+export async function critiqueEditedDiffLocally(opts = {}) {
+  const {
+    filePath = '',
+    oldText = '',
+    newText = '',
+    timeoutMs = 1500,
+    httpJsonFn = null,
+    cfgOverride = null,
+    useDistillCache = false,
+    _bypassCache = false,
+  } = opts && typeof opts === 'object' ? opts : {};
   const ext = path.extname(String(filePath || '.mjs')).toLowerCase() || '.mjs';
   const refCheck = scanAddedIdentifiersForRefBugs(oldText, newText, ext);
   if (!refCheck.ok && refCheck.issues.length > 0) {
@@ -1059,15 +1060,16 @@ export function auditLocalChatAnswerGrounding(answer = '', groundingIndex = {}) 
  * Verifies factual claims in a local RAG answer against the retrieved code slices using Ollama JSON Schema.
  * @param {object} [options={}]
  */
-export async function verifyChatClaimsLocally({
-  answer = '',
-  ragContext = '',
-  model = 'gemma4:12b',
-  timeoutMs = 10000,
-  cfgOverride = null,
-  httpJsonFn = null,
-  signal = null,
-} = {}) {
+export async function verifyChatClaimsLocally(rawOpts = {}) {
+  const {
+    answer = '',
+    ragContext = '',
+    model = 'gemma4:12b',
+    timeoutMs = 10000,
+    cfgOverride = null,
+    httpJsonFn = null,
+    signal = null,
+  } = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   const cleanAnswer = String(answer || '').trim();
   const cleanCtx = String(ragContext || '').trim();
   if (!cleanAnswer || !cleanCtx) {

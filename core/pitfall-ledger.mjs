@@ -279,11 +279,12 @@ export function clearPitfalls(workspaceRoot = '') {
  * @param {string[]} [params.types=['syntax_abort', 'syntax_error', 'test_failure', 'test_fail']] Типы записей к очистке
  * @returns {{ removed: number }}
  */
-export function resolvePitfallsForFile({
-  fileName = '',
-  workspaceRoot = '',
-  types = ['syntax_abort', 'syntax_error', 'test_failure', 'test_fail'],
-} = {}) {
+export function resolvePitfallsForFile(opts = {}) {
+  const {
+    fileName = '',
+    workspaceRoot = '',
+    types = ['syntax_abort', 'syntax_error', 'test_failure', 'test_fail'],
+  } = opts && typeof opts === 'object' ? opts : {};
   const cleanBase = fileName ? basename(fileName).toLowerCase() : '';
   if (!cleanBase) return { removed: 0 };
 

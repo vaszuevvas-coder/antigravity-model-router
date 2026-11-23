@@ -21,6 +21,8 @@ const REPO_SLUG_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype', 'toString', 'valueOf', 'hasOwnProperty']);
 const MAX_QUARANTINE_FILE_BYTES = 512 * 1024;
 const FORBIDDEN_BINARY_EXT_RE = /\.(?:exe|dll|so|dylib|bat|cmd|ps1|bin|wasm|node|zip|tar|gz)$/i;
+const LOCAL_SKILL_MD_CACHE = new Map();
+const MAX_SKILL_MD_CACHE = 64;
 
 export function validateSkillSlug(raw = '') {
   const s = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
@@ -60,17 +62,30 @@ function collectLocalSkills(skillsRoots = []) {
       const mdPath = join(root, d.name, 'SKILL.md');
       if (!existsSync(mdPath)) continue;
       try {
-        const raw = readFileSync(mdPath, 'utf8');
-        const fm = parseYamlFrontmatter(raw);
+        const st = statSync(mdPath);
+        const cached = LOCAL_SKILL_MD_CACHE.get(mdPath);
+        let entry = null;
+        if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) {
+          entry = cached.entry;
+        } else {
+          const raw = readFileSync(mdPath, 'utf8');
+          const fm = parseYamlFrontmatter(raw);
+          entry = {
+            slug,
+            name: fm.name || slug,
+            description: fm.description || '',
+            skillDir: join(root, d.name),
+            source: 'local',
+            alreadyInstalled: true,
+          };
+          if (LOCAL_SKILL_MD_CACHE.size >= MAX_SKILL_MD_CACHE) {
+            const oldestKey = LOCAL_SKILL_MD_CACHE.keys().next().value;
+            if (oldestKey !== undefined) LOCAL_SKILL_MD_CACHE.delete(oldestKey);
+          }
+          LOCAL_SKILL_MD_CACHE.set(mdPath, { mtimeMs: st.mtimeMs, size: st.size, entry });
+        }
         seen.add(slug);
-        entries.push({
-          slug,
-          name: fm.name || slug,
-          description: fm.description || '',
-          skillDir: join(root, d.name),
-          source: 'local',
-          alreadyInstalled: true,
-        });
+        entries.push({ ...entry });
       } catch {}
     }
   }
@@ -136,7 +151,7 @@ export async function searchSkillsCatalog(opts = {}) {
     const url = `https://skills.sh/api/search?q=${encodeURIComponent(cleanQuery)}&limit=${Math.min(20, Math.max(4, limit))}`;
     try {
       const resp = await fetchImpl(url, {
-        headers: { Accept: 'application/json', 'User-Agent': 'antigravity-model-router/3.28' },
+        headers: { Accept: 'application/json', 'User-Agent': 'antigravity-model-router/3.32.2' },
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (!resp.ok) {

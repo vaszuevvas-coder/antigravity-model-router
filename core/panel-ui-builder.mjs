@@ -21,7 +21,8 @@ const INLINE_HANDLER_RE = /\bon(?:click|change|input|keydown|keyup)\s*=/i;
  * Safely skips when `ui-src/head-body.html` is absent (e.g. installed plugin or release archive).
  * @param {{ repoRoot?: string, checkOnly?: boolean }} [options={}]
  */
-export function buildPanelUi({ repoRoot = DEFAULT_REPO_ROOT, checkOnly = false } = {}) {
+export function buildPanelUi(opts = {}) {
+  const { repoRoot = DEFAULT_REPO_ROOT, checkOnly = false } = opts && typeof opts === 'object' ? opts : {};
   const root = path.resolve(repoRoot || DEFAULT_REPO_ROOT);
   const panelDir = path.join(root, 'sidecars', 'panel');
   const srcDir = path.join(panelDir, 'ui-src');

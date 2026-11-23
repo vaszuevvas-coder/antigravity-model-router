@@ -839,7 +839,7 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
     // -----------------------------------------------------------------------
     // 4. Real Theme CSS Application (glass_teal, studio_titanium, conductor_paper)
     // -----------------------------------------------------------------------
-    const applyThemeAndReadStyles = async (themeId, mode) => cdp.evaluate(async (id, applyMode) => {
+    const applyThemeAndReadStyles = async (themeId, mode, expectedAttr = themeId) => cdp.evaluate(async (id, applyMode, targetAttr) => {
       if (applyMode === 'click') {
         const btn = document.querySelector(`#panelThemeGroup button[data-theme="${id}"]`);
         if (!btn) throw new Error(`Theme button not found for ${id}`);
@@ -854,11 +854,23 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
         }
       }
 
-      const deadline = Date.now() + 4000;
+      const deadline = Date.now() + 5000;
       while (Date.now() < deadline) {
         const attr = document.body.getAttribute('data-panel-theme');
-        if (applyMode === 'click' ? attr === id : Boolean(attr)) break;
+        if (attr === targetAttr) break;
         await new Promise((r) => setTimeout(r, 25));
+      }
+      // Wait for queued POST /api/update writes to settle before issuing the next API theme mutation.
+      if (applyMode === 'click') {
+        const settleDeadline = Date.now() + 4000;
+        while (Date.now() < settleDeadline) {
+          try {
+            const stRes = await panelFetch('/api/state', { method: 'GET' });
+            const stJson = await stRes.json();
+            if (stJson?.state?.panelTheme === targetAttr) break;
+          } catch {}
+          await new Promise((r) => setTimeout(r, 40));
+        }
       }
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       const cs = getComputedStyle(document.body);
@@ -867,13 +879,13 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
         backgroundColor: cs.backgroundColor,
         color: cs.color,
       };
-    }, themeId, mode);
+    }, themeId, mode, expectedAttr);
 
-    const glassStyle = await applyThemeAndReadStyles('glass_teal', 'click');
-    const studioStyle = await applyThemeAndReadStyles('studio_titanium', 'click');
+    const glassStyle = await applyThemeAndReadStyles('glass_teal', 'click', 'glass_teal');
+    const studioStyle = await applyThemeAndReadStyles('studio_titanium', 'click', 'studio_titanium');
     // Reset back to dark glass_teal before testing legacy conductor_paper API normalization
-    await applyThemeAndReadStyles('glass_teal', 'click');
-    const conductorStyle = await applyThemeAndReadStyles('conductor_paper', 'api');
+    await applyThemeAndReadStyles('glass_teal', 'click', 'glass_teal');
+    const conductorStyle = await applyThemeAndReadStyles('conductor_paper', 'api', 'studio_titanium');
 
     assert.equal(glassStyle.attr, 'glass_teal');
     assert.equal(studioStyle.attr, 'studio_titanium');

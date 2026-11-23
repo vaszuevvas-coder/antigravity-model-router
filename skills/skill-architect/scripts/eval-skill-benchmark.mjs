@@ -126,10 +126,15 @@ export function gradeOutputsAgainstAssertions(outputsDir, assertions = []) {
       passed = files.length > 0 && !combinedText.includes(needle);
       evidence = files.length === 0 ? 'No output files generated' : passed ? `Verified "${needle}" absent` : `Forbidden "${needle}" present`;
     } else if (rule.startsWith('regex:')) {
-      const rx = new RegExp(rule.slice('regex:'.length), 'im');
-      const m = rx.exec(combinedText);
-      passed = Boolean(m);
-      evidence = m ? `Matched /${rx.source}/: "${String(m[0]).slice(0, 60)}"` : `Regex /${rx.source}/ did not match`;
+      try {
+        const rx = new RegExp(rule.slice('regex:'.length), 'im');
+        const m = rx.exec(combinedText);
+        passed = Boolean(m);
+        evidence = m ? `Matched /${rx.source}/: "${String(m[0]).slice(0, 60)}"` : `Regex /${rx.source}/ did not match`;
+      } catch (rxErr) {
+        passed = false;
+        evidence = `Invalid regex pattern: ${rxErr.message}`;
+      }
     } else {
       if (/valid\s+json/i.test(rule)) {
         const jf = files.find((f) => f.name.endsWith('.json'));

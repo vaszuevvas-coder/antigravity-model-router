@@ -22,6 +22,8 @@ const STANDARD_RUNTIME_ENV_IGNORE = new Set([
   'PROGRAMFILES', 'PROGRAMFILES(X86)', 'NVM_SYMLINK', 'VOLTA_HOME', 'NPM_CONFIG_PREFIX', 'npm_lifecycle_event',
 ]);
 
+const FIXTURE_OR_SAMPLE_PATH_RE = /(?:^|\/)(?:__tests__|fixtures?|playground|examples?|docs_src)\//i;
+
 function toPosixRel(rootDir, absPath) {
   return relative(rootDir, absPath).replace(/\\/g, '/');
 }
@@ -334,12 +336,13 @@ export function analyzeCrossFileAndContracts({ rootDir, dirEntriesCache, manifes
           /^\.?\/?(?:dist|build|out|lib|esm|cjs|types|umd|\.next)(?:\/|$)/i.test(ref.path) &&
           (hasSourceEntry || hasBuildScript);
         if (isUnbuiltBuildOutputTarget) continue;
+        const isSampleManifest = FIXTURE_OR_SAMPLE_PATH_RE.test(pkgRel);
         findings.push({
           tier: 'T1',
           ruleId: 'BROKEN_MANIFEST_TARGET',
-          severity: 'HIGH',
+          severity: isSampleManifest ? 'INFO' : 'HIGH',
           cwe: 'CWE-426',
-          confidence: 0.96,
+          confidence: isSampleManifest ? 0.6 : 0.96,
           file: pkgRel,
           line: 1,
           message: `package.json '${ref.field}' points to missing path '${ref.path}'`,
@@ -538,12 +541,13 @@ export function analyzeCrossFileAndContracts({ rootDir, dirEntriesCache, manifes
   // Circular dependencies
   const cycles = findCircularDependencies(adjMap);
   for (const chain of cycles) {
+    const isFixtureCycle = chain.every((node) => FIXTURE_OR_SAMPLE_PATH_RE.test(node));
     findings.push({
       tier: 'T2',
       ruleId: 'CIRCULAR_DEPENDENCY',
-      severity: chain.length <= 3 ? 'HIGH' : 'MEDIUM',
+      severity: isFixtureCycle ? 'INFO' : (chain.length <= 3 ? 'HIGH' : 'MEDIUM'),
       cwe: 'CWE-1047',
-      confidence: 0.95,
+      confidence: isFixtureCycle ? 0.65 : 0.95,
       file: chain[0],
       line: 1,
       message: `Circular module dependency cycle detected (${chain.length - 1} hops)`,

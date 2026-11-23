@@ -426,7 +426,8 @@ function isDaemonPidAlive(pid) {
  * @param {object} [params]
  * @returns {Promise<boolean>}
  */
-export function postCompactionArchiveBestEffort({ convoId = 'default', wsPath = '', rawText = '', timeoutMs = 45 } = {}) {
+export function postCompactionArchiveBestEffort(opts = {}) {
+  const { convoId = 'default', wsPath = '', rawText = '', timeoutMs = 45 } = opts && typeof opts === 'object' ? opts : {};
   try {
     if (!rawText || typeof rawText !== 'string') return Promise.resolve(false);
     const daemonFile = join(getCacheDir(), 'ram-daemon.json');

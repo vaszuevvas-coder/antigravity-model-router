@@ -77,7 +77,10 @@ export function recommendProjectSetup(opts = {}) {
     currentState = null,
     maxFiles = 1200,
     env = process.env,
+    lang: explicitLang = '',
   } = opts && typeof opts === 'object' && !Array.isArray(opts) ? opts : {};
+  const resolvedLang = normalizeLang(explicitLang || currentState?.uiLanguage, 'ru');
+  const isEnSetup = resolvedLang === 'en';
   const absRoot = resolve(workspaceRoot || process.cwd());
   if (!existsSync(absRoot)) {
     return { ok: false, error: 'workspace_not_found', workspaceRoot: absRoot };
@@ -279,7 +282,7 @@ export function recommendProjectSetup(opts = {}) {
     externalIntegrations.push({
       id: 'context7',
       kind: 'installed_mcp',
-      name: 'Context7 MCP (уже установлен)',
+      name: isEnSetup ? 'Context7 MCP (already installed)' : 'Context7 MCP (уже установлен)',
       nameEn: 'Context7 MCP (already installed)',
       reasonRu: 'Найдены внешние фреймворки/ORM — проверяйте свежие API через Context7 перед написанием кода.',
       reasonEn: 'External frameworks/ORMs detected — verify up-to-date APIs via Context7 before coding.',
@@ -290,7 +293,7 @@ export function recommendProjectSetup(opts = {}) {
     externalIntegrations.push({
       id: 'sonarqube',
       kind: 'installed_skill',
-      name: 'SonarQube Skills (уже установлен)',
+      name: isEnSetup ? 'SonarQube Skills (already installed)' : 'SonarQube Skills (уже установлен)',
       nameEn: 'SonarQube Skills (already installed)',
       reasonRu: 'Найден sonar-project.properties — доступен авто-анализ Quality Gate и уязвимостей.',
       reasonEn: 'sonar-project.properties detected — Quality Gate and vulnerability analysis ready.',
@@ -301,7 +304,7 @@ export function recommendProjectSetup(opts = {}) {
     externalIntegrations.push({
       id: 'gemini-api',
       kind: 'installed_skill',
-      name: 'Gemini API Dev Skill (уже установлен)',
+      name: isEnSetup ? 'Gemini API Dev Skill (already installed)' : 'Gemini API Dev Skill (уже установлен)',
       nameEn: 'Gemini API Dev Skill (already installed)',
       reasonRu: 'Найден @google/genai — используйте актуальный Interactions API вместо устаревшего SDK.',
       reasonEn: '@google/genai detected — use the current Interactions API rather than legacy SDK patterns.',
@@ -312,7 +315,7 @@ export function recommendProjectSetup(opts = {}) {
     externalIntegrations.push({
       id: 'firecrawl',
       kind: 'env_detected',
-      name: 'Firecrawl API (ключ обнаружен)',
+      name: isEnSetup ? 'Firecrawl API (key detected)' : 'Firecrawl API (ключ обнаружен)',
       nameEn: 'Firecrawl API (key detected)',
       reasonRu: 'Обнаружен FIRECRAWL_API_KEY — доступен импорт документации в чистый Markdown.',
       reasonEn: 'FIRECRAWL_API_KEY detected — documentation import to clean Markdown is available.',
@@ -323,7 +326,7 @@ export function recommendProjectSetup(opts = {}) {
     externalIntegrations.push({
       id: 'perplexity',
       kind: 'env_detected',
-      name: 'Perplexity MCP (ключ обнаружен)',
+      name: isEnSetup ? 'Perplexity MCP (key detected)' : 'Perplexity MCP (ключ обнаружен)',
       nameEn: 'Perplexity MCP (key detected)',
       reasonRu: 'Обнаружен PERPLEXITY_API_KEY — доступен глубокий поиск с источниками через внешний MCP.',
       reasonEn: 'PERPLEXITY_API_KEY detected — grounded deep search is available via external MCP.',

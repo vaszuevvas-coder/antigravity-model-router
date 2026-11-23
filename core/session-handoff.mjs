@@ -282,12 +282,13 @@ function syncWorkspaceToMirror(normWs = '', updatedState = {}) {
  * @param {string} [params.domain='general'] Target domain
  * @returns {object|undefined}
  */
-export function recordHandoffGoal({
-  workspaceRoot = '',
-  conversationId = '',
-  userPrompt = '',
-  domain = 'general'
-} = {}) {
+export function recordHandoffGoal(opts = {}) {
+  const {
+    workspaceRoot = '',
+    conversationId = '',
+    userPrompt = '',
+    domain = 'general'
+  } = opts && typeof opts === 'object' ? opts : {};
   if (!userPrompt || typeof userPrompt !== 'string' || userPrompt.trim().length < 10) {
     return;
   }
@@ -365,16 +366,17 @@ export function recordHandoffGoal({
  * @param {boolean} [params.verifyOk=true] Verification status
  * @returns {object|undefined}
  */
-export function recordHandoffAction({
-  workspaceRoot = '',
-  conversationId = '',
-  toolName = 'edit_file',
-  filePath = '',
-  verifyOk = true,
-  rationale = '',
-  rejectedApproach = '',
-  rationaleOnly = false
-} = {}) {
+export function recordHandoffAction(rawOpts = {}) {
+  const {
+    workspaceRoot = '',
+    conversationId = '',
+    toolName = 'edit_file',
+    filePath = '',
+    verifyOk = true,
+    rationale = '',
+    rejectedApproach = '',
+    rationaleOnly = false
+  } = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   if (!filePath || typeof filePath !== 'string') return;
   if (
     !isEphemeralTestWorkspace(workspaceRoot) &&

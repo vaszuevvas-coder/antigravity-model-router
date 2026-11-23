@@ -410,9 +410,38 @@ export function extractFileSymbols(ext, content) {
       }
     }
   } else if (ext === '.go') {
+    let inGoImportBlock = false;
     for (const rawLine of lines) {
       const line = rawLine.trim();
       if (!line || line.startsWith('//')) continue;
+
+      if (inGoImportBlock) {
+        if (line.startsWith(')')) {
+          inGoImportBlock = false;
+          continue;
+        }
+        const blkImp = line.match(/(?:^(?:[A-Za-z0-9_.]+\s+)?)"([^"]+)"/);
+        if (blkImp && blkImp[1]) imports.add(blkImp[1].trim());
+        continue;
+      }
+
+      if (/^import\s*\(/.test(line)) {
+        const inlineMatch = line.match(/^import\s*\(([^)]+)\)/);
+        if (inlineMatch) {
+          for (const m of inlineMatch[1].matchAll(/"([^"]+)"/g)) {
+            if (m[1]) imports.add(m[1].trim());
+          }
+        } else {
+          inGoImportBlock = true;
+        }
+        continue;
+      }
+
+      const singleImp = line.match(/^import\s+(?:[A-Za-z0-9_.]+\s+)?"([^"]+)"/);
+      if (singleImp && singleImp[1]) {
+        imports.add(singleImp[1].trim());
+        continue;
+      }
 
       const typeMatch = line.match(/^type\s+([A-Za-z0-9_]+)\s+(struct|interface)/);
       if (typeMatch) {

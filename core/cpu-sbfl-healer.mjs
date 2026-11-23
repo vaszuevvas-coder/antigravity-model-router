@@ -189,13 +189,14 @@ function parseV8CoverageDir(covDir, absRoot, lineLookupCache) {
  * Re-runs the failing test + up to 2 passing tests with NODE_V8_COVERAGE in parallel
  * to rank root-cause production functions via Ochiai SBFL (<45ms warm).
  */
-export async function localizeFaultWithV8Sbfl({
-  rootDir = process.cwd(),
-  failingTestPath = '',
-  passingTestPaths = [],
-  editedFile = '',
-  timeoutMs = 2400,
-} = {}) {
+export async function localizeFaultWithV8Sbfl(opts = {}) {
+  const {
+    rootDir = process.cwd(),
+    failingTestPath = '',
+    passingTestPaths = [],
+    editedFile = '',
+    timeoutMs = 2400,
+  } = opts && typeof opts === 'object' ? opts : {};
   if (!failingTestPath || !existsSync(failingTestPath)) {
     return { ok: false, suspects: [], formattedPin: '' };
   }

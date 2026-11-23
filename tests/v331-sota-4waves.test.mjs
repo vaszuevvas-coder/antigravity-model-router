@@ -383,6 +383,34 @@ test('Wave 4: agentskills.io Spec Validator, A/B Eval Benchmark Harness, Caveman
     });
     assert.equal(specTooBig.ok, false);
     assert.match(specTooBig.error, /spec_exceeds_50kb_cap/);
+
+    // Audit v3.32.1 regression checks: workspace fallback for default convo, EN debt, regex error, failure wording, null topology
+    const gateFile = path.join(tmpDir, 'gates-fallback.json');
+    recordSessionCodeEdit({ conversationId: 'chat-real-42', workspaceRoot: tmpDir, filePath: path.join(tmpDir, 'app.mjs'), stateFile: gateFile, nowMs: 1000 });
+    recordSessionTestExecution({ conversationId: 'chat-real-42', workspaceRoot: tmpDir, commandLine: 'npm test', exitCode: 0, output: 'pass 5\nfail 0', stateFile: gateFile, nowMs: 2000 });
+    recordSessionReuseMetrics({ conversationId: 'chat-real-42', workspaceRoot: tmpDir, reusedSymbols: ['helperA'], newSymbols: ['helperB'], stateFile: gateFile, nowMs: 2000 });
+    const fbVer = getSessionVerificationFreshness({ conversationId: 'default', workspaceRoot: tmpDir, stateFile: gateFile, nowMs: 3000 });
+    const fbReuse = getSessionReuseSummary({ conversationId: 'default', workspaceRoot: tmpDir, stateFile: gateFile, nowMs: 3000 });
+    assert.equal(fbVer.state, 'pass');
+    assert.equal(fbReuse.reusePct, 50);
+
+    fs.writeFileSync(path.join(tmpDir, 'debt-sample.mjs'), '// shortcut: temp cap 10\n', 'utf8');
+    const enDebt = scanShortcutDebt(tmpDir, { lang: 'en' });
+    assert.match(enDebt.formatted, /Shortcut Debt Ledger/);
+
+    const badRegexGrade = gradeOutputsAgainstAssertions([{ name: 'out.txt', text: 'hello', size: 5 }], ['regex:[unclosed']);
+    assert.equal(badRegexGrade.pass_rate, 0);
+    assert.match(badRegexGrade.assertion_results[0].evidence, /Invalid regex pattern/);
+
+    const cbCache = path.join(tmpDir, 'cb-fail');
+    fs.mkdirSync(cbCache, { recursive: true });
+    recordAndCheckStalledToolRound({ toolName: 'run_command', args: { cmd: 'x' }, resultText: 'err1', isError: true, conversationId: 'c1', cacheDir: cbCache, lang: 'en' });
+    const stallFail = recordAndCheckStalledToolRound({ toolName: 'run_command', args: { cmd: 'x' }, resultText: 'err2', isError: true, conversationId: 'c1', cacheDir: cbCache, lang: 'en' });
+    assert.equal(stallFail.stalled, true);
+    assert.match(stallFail.formattedAlert, /failed 2 times in a row/);
+
+    const nullTopo = computeGraphTopologyHash(null, null);
+    assert.match(nullTopo, /^v1:[0-9a-f]{24}$/);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }

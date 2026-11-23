@@ -224,3 +224,59 @@ test('4. Setup Doctor avoids Python express false positive & detects monorepo pa
     fs.rmSync(tmpMono, { recursive: true, force: true });
   }
 });
+
+test('5. Audit v3.32.1 fixes: RamMemoryEngine.evict() clears maps/watchers, Python/Go import edges, and translated docs ranking', () => {
+  const tmpPy = makeTempDir('tunnel-mega-py-imp-');
+  const tmpGo = makeTempDir('tunnel-mega-go-imp-');
+  const engine = new RamMemoryEngine({ budgetMb: 128 });
+  try {
+    // Python workspace: absolute import `from myapp.routing import Router` + localized docs noise
+    fs.mkdirSync(path.join(tmpPy, 'myapp'), { recursive: true });
+    fs.mkdirSync(path.join(tmpPy, 'docs', 'ja', 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(tmpPy, 'myapp', '__init__.py'), '', 'utf8');
+    fs.writeFileSync(path.join(tmpPy, 'myapp', 'routing.py'), 'class APIRouter:\n    def route_depends(self):\n        return True\n', 'utf8');
+    fs.writeFileSync(path.join(tmpPy, 'myapp', 'app.py'), 'from myapp.routing import APIRouter\n\ndef create_app():\n    return APIRouter()\n', 'utf8');
+    fs.writeFileSync(
+      path.join(tmpPy, 'docs', 'ja', 'docs', 'routing.md'),
+      '# APIRouter Depends\nAPIRouter APIRouter APIRouter route_depends route_depends\n',
+      'utf8'
+    );
+
+    engine.warmWorkspace(tmpPy, { startWatcher: true });
+    const pyWs = engine.getOrCreateWorkspace(tmpPy);
+    assert.ok(pyWs.forwardDeps.get('myapp/app.py')?.has('myapp/routing.py'), 'Python absolute workspace import must resolve');
+    assert.ok(pyWs.reverseDeps.get('myapp/routing.py')?.has('myapp/app.py'), 'Python reverseDeps must track importer');
+    const pySearch = engine.search(tmpPy, 'APIRouter route_depends', { maxResults: 3 });
+    assert.equal(pySearch.results[0].file, 'myapp/routing.py', 'Source .py must outrank docs/ja/ translated docs');
+
+    engine.evict(tmpPy);
+    assert.equal(pyWs.watcher, null, 'evict() must null fs.watch handle');
+    assert.equal(pyWs.files.size, 0, 'evict() must clear files Map to prevent watcher closure retention');
+    assert.equal(pyWs.tokenIndex.size, 0, 'evict() must clear tokenIndex');
+    assert.equal(engine.totalCacheBytes, 0);
+
+    // Go workspace: go.mod module prefix + multi-line import (...) + _test.go pairing
+    fs.mkdirSync(path.join(tmpGo, 'middleware', 'cors'), { recursive: true });
+    fs.writeFileSync(path.join(tmpGo, 'go.mod'), 'module example.com/fiber\n\ngo 1.22\n', 'utf8');
+    fs.writeFileSync(path.join(tmpGo, 'app.go'), 'package fiber\n\ntype App struct{}\nfunc New() *App { return &App{} }\n', 'utf8');
+    fs.writeFileSync(
+      path.join(tmpGo, 'middleware', 'cors', 'cors.go'),
+      'package cors\n\nimport (\n\t"strings"\n\t"example.com/fiber"\n)\n\nfunc NewCors(a *fiber.App) string { return strings.TrimSpace("ok") }\n',
+      'utf8'
+    );
+    fs.writeFileSync(
+      path.join(tmpGo, 'middleware', 'cors', 'cors_test.go'),
+      'package cors\n\nimport "testing"\n\nfunc TestCors(t *testing.T) {}\n',
+      'utf8'
+    );
+
+    engine.warmWorkspace(tmpGo, { startWatcher: false });
+    const goWs = engine.getOrCreateWorkspace(tmpGo);
+    assert.ok(goWs.forwardDeps.get('middleware/cors/cors.go')?.has('app.go'), 'Go multi-line go.mod import must resolve to app.go');
+    assert.ok(goWs.forwardDeps.get('middleware/cors/cors_test.go')?.has('middleware/cors/cors.go'), 'Go _test.go must link to sibling .go');
+  } finally {
+    engine.evict('all');
+    fs.rmSync(tmpPy, { recursive: true, force: true });
+    fs.rmSync(tmpGo, { recursive: true, force: true });
+  }
+});

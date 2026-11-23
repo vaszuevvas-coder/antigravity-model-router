@@ -203,6 +203,10 @@ const COMPANION_VERSION_RULES = [
     patterns: [[/(\breturn\s+')\d+\.\d+(?:\.\d+)?(';)/, (v) => `$1${v}$2`]],
   },
   {
+    rel: 'core/skill-registry-bridge.mjs',
+    patterns: [[/('User-Agent':\s*'antigravity-model-router\/)\d+\.\d+(?:\.\d+)?(')/, (v) => `$1${v}$2`]],
+  },
+  {
     rel: '.github/ISSUE_TEMPLATE/bug_report.md',
     patterns: [[/(\[e\.g\.,\s*v)\d+\.\d+(?:\.\d+)?(\])/, (v) => `$1${v}$2`]],
   },
@@ -233,7 +237,9 @@ function syncCompanionVersionFiles(root, nextVersion, dryRun = false) {
  * Checks or synchronously updates `version` across package.json, plugin.json, and existing companion files.
  * @param {{ repoRoot?: string, target?: string, dryRun?: boolean }} [options]
  */
-export function syncVersionFiles({ repoRoot = DEFAULT_REPO_ROOT, target = 'check', dryRun = false } = {}) {
+export function syncVersionFiles(options = {}) {
+  const { repoRoot = DEFAULT_REPO_ROOT, target = 'check', dryRun = false } =
+    options && typeof options === 'object' && !Array.isArray(options) ? options : {};
   const root = path.resolve(repoRoot);
   const pkgPath = path.join(root, 'package.json');
   const pluginPath = path.join(root, 'plugin.json');

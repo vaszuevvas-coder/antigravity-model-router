@@ -466,12 +466,31 @@ export function recordSessionTestExecution(opts = {}) {
   return { ok: true, lastTestExitOk, passed, failed };
 }
 
+function pickSessionEntry(mapObj, cid, wsKey = '', nowMs = Date.now()) {
+  const obj = mapObj && typeof mapObj === 'object' ? mapObj : {};
+  const direct = Object.hasOwn(obj, cid) ? obj[cid] : null;
+  if (direct && (nowMs - Number(direct.updatedAt || 0)) < STUB_STATE_TTL_MS) {
+    return direct;
+  }
+  if (cid !== 'default') return null;
+  const fresh = Object.values(obj)
+    .filter((v) => v && typeof v === 'object' && (nowMs - Number(v.updatedAt || 0)) < STUB_STATE_TTL_MS)
+    .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+  if (fresh.length === 0) return null;
+  if (wsKey) {
+    const wsMatch = fresh.find((v) => v.wsKey === wsKey);
+    if (wsMatch) return wsMatch;
+  }
+  return fresh[0];
+}
+
 export function getSessionVerificationFreshness(opts = {}) {
-  const { conversationId = 'default', stateFile = '', nowMs = Date.now() } = opts && typeof opts === 'object' && !Array.isArray(opts) ? opts : {};
+  const { conversationId = 'default', workspaceRoot = '', stateFile = '', nowMs = Date.now() } = opts && typeof opts === 'object' && !Array.isArray(opts) ? opts : {};
   const cid = normConvoKey(conversationId);
+  const wsKey = normWsKey(workspaceRoot);
   const st = safeReadJsonSync(getStateFilePath(stateFile), defaultState, { selfHeal: true });
-  const entry = st?.verification && Object.hasOwn(st.verification, cid) ? st.verification[cid] : null;
-  if (!entry || (nowMs - Number(entry.updatedAt || 0)) >= STUB_STATE_TTL_MS) {
+  const entry = pickSessionEntry(st?.verification, cid, wsKey, nowMs);
+  if (!entry) {
     return { state: 'not_run', lastCodeEditAt: 0, lastTestRunAt: 0, passed: 0, failed: 0, lastEditedFile: '' };
   }
   const lastCodeEditAt = Number(entry.lastCodeEditAt || 0);
@@ -903,6 +922,7 @@ export function computeDiffReuseMetrics(oldText = '', newText = '', filePath = '
 export function recordSessionReuseMetrics(opts = {}) {
   const {
     conversationId = 'default',
+    workspaceRoot = '',
     reusedSymbols = [],
     newSymbols = [],
     stateFile = '',
@@ -912,6 +932,7 @@ export function recordSessionReuseMetrics(opts = {}) {
     return { ok: true, skipped: true };
   }
   const cid = normConvoKey(conversationId);
+  const wsKey = normWsKey(workspaceRoot);
   const targetPath = getStateFilePath(stateFile);
   let snapshot = null;
 
@@ -922,7 +943,7 @@ export function recordSessionReuseMetrics(opts = {}) {
     const created = Array.from(new Set([...(Array.isArray(prev.created) ? prev.created : []), ...newSymbols])).slice(0, 120);
     const denom = reused.length + created.length;
     const reusePct = denom > 0 ? Math.round((reused.length / denom) * 100) : null;
-    snapshot = { reused, created, reusedCount: reused.length, newCount: created.length, reusePct, updatedAt: nowMs };
+    snapshot = { wsKey: wsKey || prev.wsKey || '', reused, created, reusedCount: reused.length, newCount: created.length, reusePct, updatedAt: nowMs };
     reuseMap[cid] = snapshot;
     return {
       conversations: pruneMapByTs(cur?.conversations, nowMs),
@@ -936,11 +957,12 @@ export function recordSessionReuseMetrics(opts = {}) {
 }
 
 export function getSessionReuseSummary(opts = {}) {
-  const { conversationId = 'default', stateFile = '', nowMs = Date.now() } = opts && typeof opts === 'object' && !Array.isArray(opts) ? opts : {};
+  const { conversationId = 'default', workspaceRoot = '', stateFile = '', nowMs = Date.now() } = opts && typeof opts === 'object' && !Array.isArray(opts) ? opts : {};
   const cid = normConvoKey(conversationId);
+  const wsKey = normWsKey(workspaceRoot);
   const st = safeReadJsonSync(getStateFilePath(stateFile), defaultState, { selfHeal: true });
-  const entry = st?.reuse && Object.hasOwn(st.reuse, cid) ? st.reuse[cid] : null;
-  if (!entry || (nowMs - Number(entry.updatedAt || 0)) >= STUB_STATE_TTL_MS) {
+  const entry = pickSessionEntry(st?.reuse, cid, wsKey, nowMs);
+  if (!entry) {
     return { reusedCount: 0, newCount: 0, reusePct: null, reused: [], created: [] };
   }
   return {

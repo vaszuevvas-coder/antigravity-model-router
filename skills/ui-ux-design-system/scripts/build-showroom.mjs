@@ -1221,15 +1221,17 @@ function buildSnapshotStandaloneHtml(variant = {}, idx = 0, lang = '') {
  * Uses headless Edge/Chrome when available and falls back to the built-in pure-Node PNG renderer.
  */
 export function generateShowroomVisualPreviews(spec = {}, outputDir, options = {}) {
-  const prevLang = normalizeLang(options.lang || spec.lang || readActiveUiLanguage(), 'en');
+  const safeOpts = options && typeof options === 'object' ? options : {};
+  const safeSpec = spec && typeof spec === 'object' ? spec : {};
+  const prevLang = normalizeLang(safeOpts.lang || safeSpec.lang || readActiveUiLanguage(), 'en');
   const isEnPrev = prevLang === 'en';
-  const res = generateShowroomHtml(spec, { lang: prevLang });
+  const res = generateShowroomHtml(safeSpec, { lang: prevLang });
   if (!res.ok) return { ok: false, screenshots: [], overviewScreenshot: '', carouselMarkdown: '' };
 
   fs.mkdirSync(outputDir, { recursive: true });
   const variants = res.variants || [];
   const screenshots = [];
-  const browserExe = options.fastPng ? null : findHeadlessBrowserExecutable();
+  const browserExe = safeOpts.fastPng ? null : findHeadlessBrowserExecutable();
   let tmpProfileDir = null;
 
   if (browserExe) {

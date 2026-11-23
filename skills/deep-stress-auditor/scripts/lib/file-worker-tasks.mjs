@@ -1524,6 +1524,7 @@ function scanSecretsAndEnv(item, cleanCode, findings) {
 
     SENSITIVE_ASSIGN_RE.lastIndex = 0;
     let am;
+    const isSampleOrDocPath = /(?:^|\/)(?:docs_src|examples?|tutorials?|fixtures?|__tests__)\//i.test(String(relPath || '').replace(/\\/g, '/'));
     while ((am = SENSITIVE_ASSIGN_RE.exec(line)) !== null) {
       const val = am[3];
       if (!val || PLACEHOLDER_SECRET_RE.test(val) || /^https?:\/\//i.test(val) || val.includes('/') || val.includes(' ')) continue;
@@ -1531,9 +1532,9 @@ function scanSecretsAndEnv(item, cleanCode, findings) {
         findings.push({
           tier: 'T3',
           ruleId: 'HIGH_ENTROPY_SECRET',
-          severity: 'HIGH',
+          severity: isSampleOrDocPath ? 'INFO' : 'HIGH',
           cwe: 'CWE-798',
-          confidence: 0.85,
+          confidence: isSampleOrDocPath ? 0.55 : 0.85,
           file: relPath,
           line: i + 1,
           message: `High-entropy secret literal assigned to '${am[1]}'`,
@@ -1867,17 +1868,23 @@ function scanTaintAndSecurity(item, cleanCode, findings) {
           evidence: trimmed.slice(0, 120),
         });
       } else if (rhsPart && /(?:\$\{|\+)/.test(rhsPart) && !/(?:escapeHtml|escHtml|sanitize|DOMPurify|escape\s*\()/i.test(rhsPart)) {
-        findings.push({
-          tier: 'T3',
-          ruleId: 'UNESCAPED_INNER_HTML',
-          severity: 'MEDIUM',
-          cwe: 'CWE-79',
-          confidence: 0.72,
-          file: item.relPath,
-          line: i + 1,
-          message: 'Dynamic HTML assigned to innerHTML/DOM sink without visible escaping',
-          evidence: trimmed.slice(0, 120),
-        });
+        // Ignore pure static HTML + static L('ru', 'en') string literal concatenations.
+        const dynCheck = rhsPart
+          .replace(/\bL\s*\(\s*(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*")\s*,\s*(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*")\s*\)/g, '')
+          .replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g, '');
+        if (/[A-Za-z0-9_$]|\$\{/.test(dynCheck)) {
+          findings.push({
+            tier: 'T3',
+            ruleId: 'UNESCAPED_INNER_HTML',
+            severity: 'MEDIUM',
+            cwe: 'CWE-79',
+            confidence: 0.72,
+            file: item.relPath,
+            line: i + 1,
+            message: 'Dynamic HTML assigned to innerHTML/DOM sink without visible escaping',
+            evidence: trimmed.slice(0, 120),
+          });
+        }
       }
     }
 

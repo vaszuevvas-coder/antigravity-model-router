@@ -43,7 +43,8 @@ function normRel(rootDir, filePath) {
 /**
  * Runs detected Contour B native tools matching repository stack.
  */
-export async function runNativeCheckers({ rootDir, stack, manifests, files }) {
+export async function runNativeCheckers(opts = {}) {
+  const { rootDir = process.cwd(), stack, manifests, files } = opts && typeof opts === 'object' ? opts : {};
   const findings = [];
   const tools = [];
   const langs = new Set(stack?.languages || []);

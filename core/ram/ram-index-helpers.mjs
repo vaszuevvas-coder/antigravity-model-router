@@ -76,6 +76,7 @@ export const CODE_EXTENSIONS = new Set([
  * @returns {Int32Array}
  */
 export function buildLineOffsets(buf) {
+  if (!buf || typeof buf.length !== 'number') return Int32Array.from([0]);
   const offsets = [0];
   for (let i = 0; i < buf.length; i++) {
     if (buf[i] === 10) { // '\n'
@@ -275,31 +276,72 @@ export function toRelPath(rootDir, targetPath) {
  * @param {Map<string, object>} filesMap
  * @returns {string|null}
  */
-export function resolveImportRel(fromRel, spec, filesMap) {
+export function resolveImportRel(fromRel, spec, filesMap, options = {}) {
   if (!spec || typeof spec !== 'string') return null;
   const cleanSpec = spec.split('?')[0].split('#')[0].trim();
   if (!cleanSpec) return null;
 
   const baseDir = path.posix.dirname(fromRel);
 
-  // Python relative imports: `from .helpers import x` or `from ..utils import y`
-  if (fromRel.endsWith('.py') && cleanSpec.startsWith('.') && !cleanSpec.startsWith('./') && !cleanSpec.startsWith('../')) {
-    const dots = cleanSpec.match(/^\.+/)?.[0].length || 1;
-    let pyBase = baseDir;
-    for (let i = 1; i < dots; i++) {
-      pyBase = path.posix.dirname(pyBase);
-    }
-    const modRel = cleanSpec.slice(dots).replace(/\./g, '/');
-    const pyRaw = modRel
-      ? [path.posix.join(pyBase, `${modRel}.py`), path.posix.join(pyBase, modRel, '__init__.py')]
-      : [path.posix.join(pyBase, '__init__.py')];
-    for (const rawCand of pyRaw) {
-      const normCand = path.posix.normalize(rawCand);
-      if (!normCand.startsWith('../') && filesMap.has(normCand)) {
-        return normCand;
+  // Python relative and workspace-absolute imports
+  if (fromRel.endsWith('.py')) {
+    if (cleanSpec.startsWith('.') && !cleanSpec.startsWith('./') && !cleanSpec.startsWith('../')) {
+      const dots = cleanSpec.match(/^\.+/)?.[0].length || 1;
+      let pyBase = baseDir;
+      for (let i = 1; i < dots; i++) {
+        pyBase = path.posix.dirname(pyBase);
       }
+      const modRel = cleanSpec.slice(dots).replace(/\./g, '/');
+      const pyRaw = modRel
+        ? [path.posix.join(pyBase, `${modRel}.py`), path.posix.join(pyBase, modRel, '__init__.py')]
+        : [path.posix.join(pyBase, '__init__.py')];
+      for (const rawCand of pyRaw) {
+        const normCand = path.posix.normalize(rawCand);
+        if (!normCand.startsWith('../') && filesMap.has(normCand)) {
+          return normCand;
+        }
+      }
+      return null;
     }
-    return null;
+    if (!cleanSpec.startsWith('./') && !cleanSpec.startsWith('../') && /^[A-Za-z_][A-Za-z0-9_.]*$/.test(cleanSpec)) {
+      const modPath = cleanSpec.replace(/\./g, '/');
+      const pyAbsCands = [
+        `${modPath}.py`,
+        `${modPath}/__init__.py`,
+        `src/${modPath}.py`,
+        `src/${modPath}/__init__.py`,
+      ];
+      const slashIdx = modPath.lastIndexOf('/');
+      if (slashIdx > 0) {
+        const parentMod = modPath.slice(0, slashIdx);
+        pyAbsCands.push(`${parentMod}.py`, `src/${parentMod}.py`);
+      }
+      for (const cand of pyAbsCands) {
+        if (filesMap.has(cand)) return cand;
+      }
+      return null;
+    }
+  }
+
+  // Go module-local package imports via go.mod module prefix
+  if (fromRel.endsWith('.go')) {
+    const goPrefix = options?.goModulePrefix || '';
+    const goPkgMainFile = options?.goPkgMainFile;
+    if (goPrefix && (cleanSpec === goPrefix || cleanSpec.startsWith(`${goPrefix}/`))) {
+      const subDir = cleanSpec === goPrefix ? '' : cleanSpec.slice(goPrefix.length + 1);
+      if (goPkgMainFile instanceof Map) {
+        const mainHit = goPkgMainFile.get(subDir);
+        if (mainHit && filesMap.has(mainHit)) return mainHit;
+      }
+      const prefixDot = subDir ? `${subDir}/` : '';
+      for (const rel of filesMap.keys()) {
+        if (!rel.endsWith('.go') || rel.endsWith('_test.go')) continue;
+        if (subDir ? (rel.startsWith(prefixDot) && !rel.slice(prefixDot.length).includes('/')) : !rel.includes('/')) {
+          return rel;
+        }
+      }
+      return null;
+    }
   }
 
   if (!cleanSpec.startsWith('./') && !cleanSpec.startsWith('../')) return null;

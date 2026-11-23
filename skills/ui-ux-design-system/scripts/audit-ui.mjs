@@ -281,14 +281,15 @@ export function auditUiPath(targetPath = process.cwd()) {
 }
 
 export function formatUiAuditReport(report = {}) {
-  if (report.error) return `❌ [UI Audit] ${report.error}: ${report.target || ''}`;
+  const safeRep = report && typeof report === 'object' ? report : {};
+  if (safeRep.error) return `❌ [UI Audit] ${safeRep.error}: ${safeRep.target || ''}`;
   const lines = [
-    `🎨 [UI/UX Craft Audit] Files: ${report.filesScanned ?? 1} | Score: ${report.averageScore ?? report.score}/20 | Status: ${report.ok ? 'PASS' : 'NEEDS POLISH'}`,
+    `🎨 [UI/UX Craft Audit] Files: ${safeRep.filesScanned ?? 1} | Score: ${safeRep.averageScore ?? safeRep.score}/20 | Status: ${safeRep.ok ? 'PASS' : 'NEEDS POLISH'}`,
   ];
-  for (const f of (report.findings || []).slice(0, 18)) {
+  for (const f of (safeRep.findings || []).slice(0, 18)) {
     lines.push(`  - [${String(f.severity).toUpperCase()} · ${f.dimension}/${f.ruleId}] ${f.file}:L${f.line} — ${f.message}`);
   }
-  if ((report.findings || []).length === 0) {
+  if ((safeRep.findings || []).length === 0) {
     lines.push('  ✅ Zero anti-slop, a11y, performance, responsive, or token issues found.');
   }
   return lines.join('\n');

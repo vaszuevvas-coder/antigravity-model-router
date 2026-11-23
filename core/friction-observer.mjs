@@ -90,15 +90,16 @@ export function detectUserCorrectionFriction(userPrompt = '', context = {}) {
  * @param {object} [params={}]
  * @returns {{ detected: boolean, signalType: 'revert_churn'|'none', candidatePattern: string, filePath: string }}
  */
-export function detectEditChurnFriction({
-  conversationId = 'default',
-  filePath = '',
-  targetText = '',
-  replacementText = '',
-  workspaceRoot = '',
-  stateFile = '',
-  nowMs = Date.now(),
-} = {}) {
+export function detectEditChurnFriction(opts = {}) {
+  const {
+    conversationId = 'default',
+    filePath = '',
+    targetText = '',
+    replacementText = '',
+    workspaceRoot = '',
+    stateFile = '',
+    nowMs = Date.now(),
+  } = opts && typeof opts === 'object' ? opts : {};
   const cleanFile = String(filePath || '').replace(/\\/g, '/').trim();
   const empty = { detected: false, signalType: 'none', candidatePattern: '', filePath: cleanFile };
   if (!cleanFile) return empty;
@@ -166,15 +167,16 @@ export function detectEditChurnFriction({
  * Records a friction observation into SqliteKnowledgeHub project_instincts without modifying SKILL.md directly.
  * @param {object} [params={}]
  */
-export function recordFrictionObservation({
-  workspaceRoot = '',
-  signalType = 'user_correction',
-  pattern = '',
-  targetSkill = '',
-  hub = knowledgeHub,
-  nowMs = Date.now(),
-  lang = 'ru',
-} = {}) {
+export function recordFrictionObservation(rawOpts = {}) {
+  const {
+    workspaceRoot = '',
+    signalType = 'user_correction',
+    pattern = '',
+    targetSkill = '',
+    hub = knowledgeHub,
+    nowMs = Date.now(),
+    lang = 'ru',
+  } = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   const cleanPattern = cleanSnippet(pattern, 220);
   if (!cleanPattern || !workspaceRoot || !hub || typeof hub.recordInstinct !== 'function') {
     return { ok: false, recorded: false, readyForPromotion: false, instinctId: '', confidence: 0, promotionHint: '' };

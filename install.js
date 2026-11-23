@@ -624,6 +624,7 @@ function copyRecursive(src, dest, destRoot = dest, options = {}, depth = 0) {
 }
 
 export function parseInstallCliArgs(argv = process.argv.slice(2)) {
+  const safeArgv = Array.isArray(argv) ? argv : [];
   const opts = {
     action: 'install',
     targetDir: '',
@@ -634,8 +635,8 @@ export function parseInstallCliArgs(argv = process.argv.slice(2)) {
     json: false,
     help: false,
   };
-  for (let i = 0; i < argv.length; i++) {
-    const arg = String(argv[i] || '').trim();
+  for (let i = 0; i < safeArgv.length; i++) {
+    const arg = String(safeArgv[i] || '').trim();
     if (!arg) continue;
     if (arg === '--help' || arg === '-h' || arg === '/?') {
       opts.help = true;
@@ -651,12 +652,12 @@ export function parseInstallCliArgs(argv = process.argv.slice(2)) {
       opts.silent = true;
     } else if (arg === '--json') {
       opts.json = true;
-    } else if (arg === '--lang' && i + 1 < argv.length) {
-      opts.lang = String(argv[++i] || '').trim();
+    } else if (arg === '--lang' && i + 1 < safeArgv.length) {
+      opts.lang = String(safeArgv[++i] || '').trim();
     } else if (arg.startsWith('--lang=')) {
       opts.lang = arg.slice('--lang='.length).trim();
-    } else if (arg === '--target' && i + 1 < argv.length) {
-      opts.targetDir = String(argv[++i] || '').trim();
+    } else if (arg === '--target' && i + 1 < safeArgv.length) {
+      opts.targetDir = String(safeArgv[++i] || '').trim();
     } else if (arg.startsWith('--target=')) {
       opts.targetDir = arg.slice('--target='.length).trim();
     }
@@ -741,7 +742,7 @@ export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun =
   const log = silent ? () => {} : (...args) => console.log(...args);
 
   const srcManifest = safeParseJsonObject(path.join(resolvedSrc, 'plugin.json'));
-  const version = srcManifest?.version ? String(srcManifest.version) : '3.32.1';
+  const version = srcManifest?.version ? String(srcManifest.version) : '3.32.2';
   const srcStatePath = path.join(resolvedSrc, 'router-state.json');
   const destStatePath = path.join(destRoot, 'router-state.json');
   const externalBackupPath = getExternalBackupPath(destRoot);
@@ -831,7 +832,7 @@ export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun =
 
   const globalDupesRemoved = isDefaultTarget ? purgeDuplicateGlobalSkills(destRoot) : 0;
 
-  // Чистка и обновление кэшей (.cache) The Tunnel v3.32.1: legacy priors/ledgers, старый f32bin-v1, нулевые repomap/digest
+  // Чистка и обновление кэшей (.cache) The Tunnel v3.32.2: legacy priors/ledgers, старый f32bin-v1, нулевые repomap/digest
   const targetCacheStats = maintainCacheDir(path.join(destRoot, '.cache'));
   const localCacheStats = inPlace || !isDefaultTarget
     ? { repomapsRemoved: 0, vectorsPurged: 0, digestsPruned: 0, legacyRemoved: 0 }
@@ -843,8 +844,8 @@ export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun =
 
   log(
     isRu
-      ? `[✓] Обслуживание The Tunnel v3.32.1: удалено сирот=${orphansRemoved}, дублей скиллов v3.0=${globalDupesRemoved}, legacy-кэшей=${totalLegacyRemoved}, устаревших f32bin/json векторов=${totalVectorsPurged}, устаревших repomap=${totalRepomapsRemoved}, старых дайджестов=${totalDigestsPruned}`
-      : `[OK] The Tunnel v3.32.1 maintenance: orphansRemoved=${orphansRemoved}, dupSkills=${globalDupesRemoved}, legacyCaches=${totalLegacyRemoved}, staleVectors=${totalVectorsPurged}, staleRepomaps=${totalRepomapsRemoved}, prunedDigests=${totalDigestsPruned}`
+      ? `[✓] Обслуживание The Tunnel v3.32.2: удалено сирот=${orphansRemoved}, дублей скиллов v3.0=${globalDupesRemoved}, legacy-кэшей=${totalLegacyRemoved}, устаревших f32bin/json векторов=${totalVectorsPurged}, устаревших repomap=${totalRepomapsRemoved}, старых дайджестов=${totalDigestsPruned}`
+      : `[OK] The Tunnel v3.32.2 maintenance: orphansRemoved=${orphansRemoved}, dupSkills=${globalDupesRemoved}, legacyCaches=${totalLegacyRemoved}, staleVectors=${totalVectorsPurged}, staleRepomaps=${totalRepomapsRemoved}, prunedDigests=${totalDigestsPruned}`
   );
   if (fallbackBackupState) {
     log(isRu ? `[✓] Пользовательские настройки восстановлены из резервной копии: ${externalBackupPath}` : `[OK] User settings restored from backup: ${externalBackupPath}`);

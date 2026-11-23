@@ -24,7 +24,7 @@ function readPackageVersion() {
       return pkg.version.trim();
     }
   } catch {}
-  return '3.32.1';
+  return '3.32.2';
 }
 
 function readLiveGpuTelemetry() {
@@ -128,7 +128,8 @@ function collectTranscriptMetrics(maxSessions = 12, brainDirsOverride = null) {
  * Runs deterministic SOTA token-compression fixtures + real local transcript ROI analysis.
  * @param {{ maxSessions?: number, brainDirs?: string[]|null }} [options={}]
  */
-export function runTokenRoiBenchmark({ maxSessions = 12, brainDirs = null } = {}) {
+export function runTokenRoiBenchmark(opts = {}) {
+  const { maxSessions = 12, brainDirs = null } = opts && typeof opts === 'object' ? opts : {};
   // 1. Terminal test flood + spinners + internal frames
   const tapLines = [
     'Downloading weights... 20%\rDownloading weights... 65%\rDownloading weights... 100%',

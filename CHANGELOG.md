@@ -2,7 +2,24 @@
 
 Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
 
-> Хронология с `v3.8.0` по `v3.32.1` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`54` основных / `62` всего ESM-модуля ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `12` навыков и `36` наборов автотестов).
+> Хронология с `v3.8.0` по `v3.32.2` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`54` основных / `62` всего ESM-модуля ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `12` навыков и `36` наборов автотестов).
+
+---
+
+## [3.32.2] — 2026-11-23
+
+### Исправлено и улучшено (Аудит ядра, RAM/Graphify, Панели и Стресс-аудитора)
+- **Память In-RAM и жизненный цикл `RamMemoryEngine`**:
+  - Устранена утечка кучи V8 при `RamMemoryEngine.evict()`: закрываются и обнуляются `fs.watch` (`ws.watcher`), таймеры, индексы (`files`, `tokenIndex`, `trigramIndex`, `fieldPostings`, `forwardDeps`, `reverseDeps`, `repoMapCache`, `speculativeSkeletonCache`, `arena`) и `memoizer.entries` (`~227–371 МБ -> 12 МБ` на мега-репозиториях `fastapi`/`fiber`/`vite`) ([core/ram-memory-engine.mjs](core/ram-memory-engine.mjs)).
+  - Для одноразового маршрута `/api/graph` отключён запуск вотчера (`startWatcher: false`) и добавлено гарантированное освобождение `finally { tmpEngine.evict('all'); }` ([sidecars/panel/server.mjs](sidecars/panel/server.mjs)).
+- **Полиглотный граф импортов (Python + Go) и поиск по документации**:
+  - Реализовано разрешение абсолютных Python-импортов (`pkg.sub.mod`), чтение `go.mod`, парсинг многострочных `import (...)` в Go, сопоставление `*_test.go`, обход устаревшего кэша Go AST в SQLite и понижение веса переводов `docs/<locale>/` в ранжировании `RamMemoryEngine.search()` ([core/ram/ram-index-helpers.mjs](core/ram/ram-index-helpers.mjs), [core/repo-mapper.mjs](core/repo-mapper.mjs), [core/cpu-ast-graph-compressor.mjs](core/cpu-ast-graph-compressor.mjs), [core/ram-memory-engine.mjs](core/ram-memory-engine.mjs)).
+- **Панель управления, E2E и сборка релизов**:
+  - Зафиксирован до-оптимистичный `_batchRollbackSnap` для отката `updateState()` при HTTP 500, аддитивное слияние `skillModes` без воскрешения закрытых DOM-карточек `panelCollapsedCards`/`panelOpenSpoilers`, безопасный DOM-рендер подсказки без `innerHTML` и двуязычные tooltips в `applyHookProfileOverridesToUi()` ([sidecars/panel/ui-src/js/02-telemetry-cards.js](sidecars/panel/ui-src/js/02-telemetry-cards.js), [sidecars/panel/ui-src/js/01-workspace-wizard.js](sidecars/panel/ui-src/js/01-workspace-wizard.js)).
+  - Устранён TOCTOU при создании файлов в `/api/setup-recommendations/apply` (флаг `wx`), добавлен retry Windows Defender `EPERM` (`retryWinFsOp` до `30` попыток) при упаковке `Setup.exe` ([scripts/pack-release.mjs](scripts/pack-release.mjs)), исправлена гонка тем в CDP-тесте ([tests/panel-browser-layout-cdp.test.mjs](tests/panel-browser-layout-cdp.test.mjs)) и изолирован `TUNNEL_CACHE_DIR` для Теста 21 ([tests/router-core.test.mjs](tests/router-core.test.mjs)).
+- **Хуки, сессионные метрики, локализация и `deep-stress-auditor`**:
+  - Добавлен workspace-fallback `pickSessionEntry` для `conversationId === 'default'` ([core/completion-gates.mjs](core/completion-gates.mjs)), сохранение `PRE_EDIT_SNAPSHOT_FILE` между `gpuPostEditCritic` и `completionGates`, подключение `leanMode`/`terseMode` и авто-сканера `shortcut:` в `PostToolUse` ([core/hook-runner.mjs](core/hook-runner.mjs)).
+  - Устранены `EN/RU` утечки в [core/shortcut-debt-ledger.mjs](core/shortcut-debt-ledger.mjs), [core/router-cli.mjs](core/router-cli.mjs), [core/project-setup-recommender.mjs](core/project-setup-recommender.mjs); добавлены защита от `null`-аргументов (`T6`), кэширование `LOCAL_SKILL_MD_CACHE` и синхронизированный `User-Agent` ([core/skill-registry-bridge.mjs](core/skill-registry-bridge.mjs)), перехват невалидного RegExp в [skills/skill-architect/scripts/eval-skill-benchmark.mjs](skills/skill-architect/scripts/eval-skill-benchmark.mjs) и фильтрация ложных срабатываний в [skills/deep-stress-auditor/](skills/deep-stress-auditor/scripts/lib/file-worker-tasks.mjs).
 
 ---
 

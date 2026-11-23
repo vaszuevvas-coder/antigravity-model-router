@@ -174,13 +174,14 @@ function parseSkillSections(content) {
   return { frontmatter, triggers, invariants, recipeSteps, verifyCmd };
 }
 
-export function synthesizeTriggerDescription({
-  slug,
-  description = '',
-  triggers = [],
-  invariants = [],
-  recipeSteps = []
-} = {}) {
+export function synthesizeTriggerDescription(opts = {}) {
+  const {
+    slug,
+    description = '',
+    triggers = [],
+    invariants = [],
+    recipeSteps = []
+  } = opts && typeof opts === 'object' ? opts : {};
   const cleanDesc = String(description || '').replace(/\s+/g, ' ').trim();
   if (cleanDesc && !/^skill capsule for\b/i.test(cleanDesc)) {
     return cleanDesc;

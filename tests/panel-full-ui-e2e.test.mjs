@@ -1702,3 +1702,79 @@ test('3. Multi-Chat Stats Aggregation: collectTelemetry sums multiple chat trans
   assert.equal(tel.savingsBreakdown.cache, tel.cacheSavedTokens);
   assert.equal(tel.savingsBreakdown.ram, tel.ramSavedTokens);
 });
+
+// ---------------------------------------------------------------------------
+// E2E Test 4: Audit v3.32.1 Regression — updateState() Map Merge & HTTP 500 Rollback
+// ---------------------------------------------------------------------------
+
+test('4. Audit v3.32.1 regression: updateState merges panelCollapsedCards patches and rolls back to pre-optimistic snapshot on HTTP 500', async () => {
+  const tmpRepo = makeTempGitRepo('amr-e2e-rollback-');
+  const TestSidecarApp = createTestSidecarAppClass();
+  const app = await startSidecarPanel({ SidecarAppClass: TestSidecarApp });
+  assert.ok(app && app.port > 0);
+  const originUrl = `http://127.0.0.1:${app.port}`;
+  const htmlRes = await globalThis.fetch(`${originUrl}/`);
+  assert.equal(htmlRes.status, 200);
+  const html = await htmlRes.text();
+
+  const dom = createPanelDomHarness(html, originUrl, 'e2e-token-4', {
+    workspaceUris: [tmpRepo],
+  });
+
+  try {
+    await waitFor(() => dom.doc.getElementById('footerPluginVersion').textContent.includes(PKG_VERSION));
+    await dom.waitIdle();
+
+    // (a) Queued patches while a flush is in-flight must deep-merge skillModes while letting latest full panelCollapsedCards snapshot win
+    const mergedRes = await vm.runInContext(`(async () => {
+      const p0 = updateState({ heavyThreshold: 'M' });
+      const p1 = updateState({
+        skillModes: { 'deep-stress-auditor': 'off' },
+        panelCollapsedCards: { skillsSectionCard: true, gpuRamCard: true },
+      });
+      const p2 = updateState({
+        skillModes: { 'skill-architect': 'off' },
+        panelCollapsedCards: { gpuRamCard: true },
+      });
+      return Promise.all([p0, p1, p2]);
+    })()`, dom.ctx);
+    assert.deepEqual(Array.from(mergedRes), [true, true, true]);
+    const stAfterMerge = loadState();
+    assert.equal(stAfterMerge.skillModes?.['deep-stress-auditor'], 'off');
+    assert.equal(stAfterMerge.skillModes?.['skill-architect'], 'off');
+    assert.equal(stAfterMerge.panelCollapsedCards?.gpuRamCard, true);
+    assert.equal(stAfterMerge.panelCollapsedCards?.skillsSectionCard, undefined);
+
+    // (b) Failed /api/update (HTTP 500) must roll back to pre-optimistic snapshot (not the failed optimistic value)
+    const themeSeedOk = await vm.runInContext(`updateState({ panelTheme: 'glass_teal' })`, dom.ctx);
+    assert.equal(themeSeedOk, true);
+    await dom.waitIdle();
+    assert.equal(dom.doc.body.getAttribute('data-panel-theme'), 'glass_teal');
+
+    const failOk = await vm.runInContext(`(async () => {
+      const origPanelFetch = panelFetch;
+      panelFetch = async (url, opts) => {
+        if (String(url || '').startsWith('/api/update')) {
+          return {
+            ok: false,
+            status: 500,
+            json: async () => ({ ok: false, error: 'Injected 500' }),
+          };
+        }
+        return origPanelFetch(url, opts);
+      };
+      try {
+        return await updateState({ panelTheme: 'studio_titanium' });
+      } finally {
+        panelFetch = origPanelFetch;
+      }
+    })()`, dom.ctx);
+
+    assert.equal(failOk, false);
+    assert.equal(dom.doc.body.getAttribute('data-panel-theme'), 'glass_teal');
+    assert.equal(vm.runInContext('currentState.panelTheme', dom.ctx), 'glass_teal');
+  } finally {
+    dom.destroy();
+    await app.close();
+  }
+});

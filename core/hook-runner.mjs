@@ -45,8 +45,8 @@ function buildStaticSessionStartHeader(state = {}) {
   const isEn = resolveUserLanguage(state) === 'en';
   const lines = [
     isEn
-      ? '# The Tunnel v3.32.1 (EN-Internal / EN-Chat)'
-      : '# The Tunnel v3.32.1 (EN-Internal / RU-Chat)',
+      ? '# The Tunnel v3.32.2 (EN-Internal / EN-Chat)'
+      : '# The Tunnel v3.32.2 (EN-Internal / RU-Chat)',
     isEn
       ? '- User replies/UI/Role/toolSummary: 100% English.'
       : '- User replies/UI/Role/toolSummary: 100% Russian.',
@@ -507,23 +507,24 @@ export async function readStdin() {
  * @param {object} [params.state] Текущее состояние роутера.
  * @returns {object} Структура { injectSteps: [...] } или {}.
  */
-export function buildCacheAlignedInjection({
-  isSessionStart = false,
-  repoMapMarkdown = '',
-  repoMapMaxChars = 4000,
-  pitfallsMarkdown = '',
-  handoffMarkdown = '',
-  pruningResult = null,
-  cascadeAlert = null,
-  blastRadiusHint = '',
-  circuitAlert = '',
-  compactionNotice = '',
-  thinkingBudgetHint = '',
-  goldContextHint = '',
-  bayesianHint = '',
-  modelProfile = null,
-  state = {},
-} = {}) {
+export function buildCacheAlignedInjection(opts = {}) {
+  const {
+    isSessionStart = false,
+    repoMapMarkdown = '',
+    repoMapMaxChars = 4000,
+    pitfallsMarkdown = '',
+    handoffMarkdown = '',
+    pruningResult = null,
+    cascadeAlert = null,
+    blastRadiusHint = '',
+    circuitAlert = '',
+    compactionNotice = '',
+    thinkingBudgetHint = '',
+    goldContextHint = '',
+    bayesianHint = '',
+    modelProfile = null,
+    state = {},
+  } = opts && typeof opts === 'object' ? opts : {};
   // 1. Статический блок начала сессии: фиксируется один раз, формируя префикс KV-кэша модели (>4096 tok для Gemini 4 Implicit Cache -95%)
   if (isSessionStart) {
     const staticBlocks = buildStaticSessionStartHeader(state);
@@ -664,13 +665,14 @@ const DOMAIN_LABELS_EN = {
  * @param {object} [params]
  * @returns {object|null}
  */
-export function buildZeroTokenUserBadgeStep({
-  grade = 'M',
-  modelProfile = null,
-  pruningResult = null,
-  state = {},
-  isPreReadEstimate = false,
-} = {}) {
+export function buildZeroTokenUserBadgeStep(rawOpts = {}) {
+  const {
+    grade = 'M',
+    modelProfile = null,
+    pruningResult = null,
+    state = {},
+    isPreReadEstimate = false,
+  } = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   if (state?.showBadge === false) return null;
   const isEn = resolveUserLanguage(state) === 'en';
   const cleanGrade = String(grade || 'M').toUpperCase();
@@ -681,12 +683,12 @@ export function buildZeroTokenUserBadgeStep({
         ? `Pro Architect${subSuffix}`
         : strat === 'flash_dispatcher' || strat === 'economy'
           ? `Flash Dispatcher${subSuffix}`
-          : `Autopilot v3.32.1${subSuffix}`)
+          : `Autopilot v3.32.2${subSuffix}`)
     : (strat === 'pro_architect' || strat === 'performance'
         ? `Pro-Архитектор${subSuffix}`
         : strat === 'flash_dispatcher' || strat === 'economy'
           ? `Flash-Диспетчер${subSuffix}`
-          : `Автопилот v3.32.1${subSuffix}`);
+          : `Автопилот v3.32.2${subSuffix}`);
   const executor = isEn
     ? (modelProfile?.displayEn || modelProfile?.shortLabel || modelProfile?.displayRu || modelProfile?.displayNameRu || 'Current executor')
     : (modelProfile?.displayRu || modelProfile?.displayNameRu || modelProfile?.shortLabel || 'Текущий исполнитель');
@@ -1227,7 +1229,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
       }
     }
 
-    // 2. Когнитивный ИИ-Автопилот v3.32.1 (3D-матрица Breadth × Depth × Risk + безлимитное EN-мышление на Gemini 4)
+    // 2. Когнитивный ИИ-Автопилот v3.32.2 (3D-матрица Breadth × Depth × Risk + безлимитное EN-мышление на Gemini 4)
     if (baseState.thinkingLimiter !== false && toolPruner && typeof toolPruner.estimateTaskGradeAndThinkingBudget === 'function') {
       try {
         const budgetRes = toolPruner.estimateTaskGradeAndThinkingBudget(userInput, effectiveState, {
@@ -1315,6 +1317,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
             boilerplateWarned: isContinuationMetaTurn ? Boolean(cachedPrev?.boilerplateWarned) : false,
             selectorMatch: selEval?.match || 'optimal',
             selectorCurrent: selEval?.currentDisplayRu || '',
+            selectorCurrentEn: selEval?.currentDisplayEn || '',
             selectorRecommended: selEval?.recommendedRu || '',
             selectorTip: selEval?.tipRu || '',
           };
@@ -1322,6 +1325,31 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
       } catch (err) {
         console.error('[hook] estimateTaskGradeAndThinkingBudget failed in PreInvocation:', err);
       }
+    }
+
+    if (toolPruner?.resolveLeanMode && toolPruner?.resolveTerseMode) {
+      try {
+        const effLean = toolPruner.resolveLeanMode(userInput, effectiveState);
+        const curLean = typeof effectiveState?.leanMode === 'string' ? effectiveState.leanMode.trim().toLowerCase() : 'full';
+        if (effLean !== curLean) {
+          const leanDir = effLean === 'off'
+            ? '- Lean Senior (off): prompt override deactivated minimal-diff ladder for this turn.'
+            : toolPruner.buildLeanModeDirective?.(effLean);
+          if (leanDir) {
+            thinkingBudgetHint = thinkingBudgetHint ? `${thinkingBudgetHint}\n${leanDir}` : leanDir;
+          }
+        }
+        const effTerse = toolPruner.resolveTerseMode(userInput, effectiveState);
+        const curTerse = typeof effectiveState?.terseMode === 'string' ? effectiveState.terseMode.trim().toLowerCase() : 'off';
+        if (effTerse !== curTerse) {
+          const terseDir = effTerse === 'off'
+            ? '- Controlled Brevity (off): prompt override restored standard prose style.'
+            : toolPruner.buildTerseModeDirective?.(effTerse);
+          if (terseDir) {
+            thinkingBudgetHint = thinkingBudgetHint ? `${thinkingBudgetHint}\n${terseDir}` : terseDir;
+          }
+        }
+      } catch {}
     }
 
     if (!isReadOnlyQuestion && !isContinuationMetaTurn && toolPruner?.compileVoiceOrLongRuPromptPivot) {
@@ -1488,7 +1516,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
     ) {
       const isEnLang = resolveUserLanguage(state) === 'en';
       const activeDisp = isEnLang
-        ? (activeModelProfile?.displayEn || activeModelProfile?.displayRu || prevTurnSnapshot.selectorCurrent || 'auto')
+        ? (activeModelProfile?.displayEn || activeModelProfile?.displayRu || prevTurnSnapshot.selectorCurrentEn || prevTurnSnapshot.selectorCurrent || 'auto')
         : (activeModelProfile?.displayRu || prevTurnSnapshot.selectorCurrent || 'auto');
       const orchReminder = !activeModelProfile?.isOrchestrator
         ? (isEnLang
@@ -3140,27 +3168,23 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
       }
     }
 
+    let oldTextBeforeEdit = '';
+    const snapKey = resolve(filePath).toLowerCase();
+    try {
+      const snapStore = safeReadJsonSync(PRE_EDIT_SNAPSHOT_FILE, () => ({ entries: {} }), { selfHeal: false });
+      if (snapStore?.entries && Object.hasOwn(snapStore.entries, snapKey)) {
+        const entry = snapStore.entries[snapKey];
+        if (entry && typeof entry.text === 'string' && (Date.now() - (entry.ts || 0)) < 10 * 60 * 1000) {
+          oldTextBeforeEdit = entry.text;
+        }
+      }
+    } catch {}
+
     if (isSyntaxValid && state.selfVerify !== false && state.gpuPostEditCritic !== false && /\.[cm]?js$/i.test(filePath)) {
       try {
         const [gpuMod] = await loadDepsByNames(['localGpuMod']);
         if (gpuMod?.scanAddedIdentifiersForRefBugs && existsSync(filePath)) {
           const newCode = readFileSync(filePath, 'utf8');
-          let oldTextBeforeEdit = '';
-          try {
-            const snapKey = resolve(filePath).toLowerCase();
-            const snapStore = safeReadJsonSync(PRE_EDIT_SNAPSHOT_FILE, () => ({ entries: {} }), { selfHeal: false });
-            if (snapStore?.entries && Object.hasOwn(snapStore.entries, snapKey)) {
-              const entry = snapStore.entries[snapKey];
-              if (entry && typeof entry.text === 'string' && (Date.now() - (entry.ts || 0)) < 10 * 60 * 1000) {
-                oldTextBeforeEdit = entry.text;
-              }
-              updateJsonAtomicSync(PRE_EDIT_SNAPSHOT_FILE, () => ({ entries: {} }), (st) => {
-                const entries = st?.entries && typeof st.entries === 'object' ? { ...st.entries } : {};
-                delete entries[snapKey];
-                return { entries };
-              });
-            }
-          } catch {}
           const oldReconstructed = oldTextBeforeEdit || (
             toolName === 'edit_file' && args.Target !== undefined && args.Replacement !== undefined && newCode.includes(String(args.Replacement))
               ? newCode.replace(String(args.Replacement), String(args.Target))
@@ -3181,8 +3205,8 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
     if (existsSync(filePath)) {
       try {
         const newCodeForGate = readFileSync(filePath, 'utf8');
-        let prevEditText = '';
-        if (toolName === 'edit_file' && args.Target !== undefined && args.Replacement !== undefined && newCodeForGate.includes(String(args.Replacement))) {
+        let prevEditText = oldTextBeforeEdit;
+        if (!prevEditText && toolName === 'edit_file' && args.Target !== undefined && args.Replacement !== undefined && newCodeForGate.includes(String(args.Replacement))) {
           prevEditText = newCodeForGate.replace(String(args.Replacement), String(args.Target));
         }
 
@@ -3209,11 +3233,29 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
             if (!reuseRes?.skipped) {
               completionGates.recordSessionReuseMetrics?.({
                 conversationId: postConvoKey,
+                workspaceRoot: effectiveFileWs,
                 reusedSymbols: reuseRes.reusedSymbols,
                 newSymbols: reuseRes.newSymbols,
               });
             }
           }
+        }
+
+        if (state.leanMode !== 'off' && (newCodeForGate.includes('shortcut:') || newCodeForGate.includes('ponytail:'))) {
+          try {
+            const [debtMod] = await loadDepsByNames(['shortcutDebt']);
+            const debtHits = debtMod?.extractFileShortcutMarkers?.(basename(filePath), newCodeForGate) || [];
+            const rotHits = debtHits.filter((h) => h.rotRisk);
+            if (rotHits.length > 0) {
+              const isEnDebt = resolveUserLanguage(state) === 'en';
+              enqueuePostCommandHint(
+                postConvoKey,
+                isEnDebt
+                  ? `📌 [Shortcut Debt (${basename(filePath)})] ${rotHits.length} marker(s) missing upgrade trigger (L${rotHits[0].line}). Use \`// shortcut: <ceiling>, <when to upgrade>\`.`
+                  : `📌 [Техдолг shortcut: (${basename(filePath)})] ${rotHits.length} мет. без триггера апгрейда (L${rotHits[0].line}). Укажите \`// shortcut: <лимит>, <когда обновить>\`.`
+              );
+            }
+          } catch {}
         }
 
         if (state.completionGates !== false && (completionGates?.scanAddedStubsInDiff || completionGates?.scanAddedSkippedTestsInDiff)) {
@@ -3289,6 +3331,15 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
             });
           }
         }
+      } catch {}
+    }
+    if (oldTextBeforeEdit) {
+      try {
+        updateJsonAtomicSync(PRE_EDIT_SNAPSHOT_FILE, () => ({ entries: {} }), (st) => {
+          const entries = st?.entries && typeof st.entries === 'object' ? { ...st.entries } : {};
+          delete entries[snapKey];
+          return { entries };
+        });
       } catch {}
     }
 

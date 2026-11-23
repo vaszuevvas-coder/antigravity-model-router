@@ -463,14 +463,15 @@ export function extractDesignTokensFromHtmlAndCss(html = '', extraCss = '') {
  * @returns {string}
  */
 export function formatTokensNotesRu(tokens = {}, opts = {}) {
+  const safeTokens = tokens && typeof tokens === 'object' ? tokens : {};
   const langArg = typeof opts === 'string' ? opts : opts?.lang;
   const isEn = normalizeLang(langArg || readActiveUiLanguage(), 'en') === 'en';
   const parts = [];
-  const palette = Array.isArray(tokens.palette) ? tokens.palette : [];
-  const accents = Array.isArray(tokens.accents) ? tokens.accents : [];
-  const surfaces = Array.isArray(tokens.surfaces) ? tokens.surfaces : [];
-  const fonts = Array.isArray(tokens.fontFamilies) ? tokens.fontFamilies : [];
-  const radii = Array.isArray(tokens.radii) ? tokens.radii : [];
+  const palette = Array.isArray(safeTokens.palette) ? safeTokens.palette : [];
+  const accents = Array.isArray(safeTokens.accents) ? safeTokens.accents : [];
+  const surfaces = Array.isArray(safeTokens.surfaces) ? safeTokens.surfaces : [];
+  const fonts = Array.isArray(safeTokens.fontFamilies) ? safeTokens.fontFamilies : [];
+  const radii = Array.isArray(safeTokens.radii) ? safeTokens.radii : [];
 
   const colorList = (surfaces.length > 0 ? surfaces.slice(0, 2) : palette.slice(0, 2));
   if (colorList.length > 0 || accents.length > 0) {
@@ -480,8 +481,8 @@ export function formatTokensNotesRu(tokens = {}, opts = {}) {
   }
   if (fonts.length > 0) parts.push(`${isEn ? 'Fonts' : 'Шрифты'}: ${fonts.slice(0, 2).join(', ')}`);
   if (radii.length > 0) parts.push(`${isEn ? 'Radius' : 'Скругления'}: ${radii.slice(0, 2).join(', ')}`);
-  if (tokens.glassBlur) parts.push(`${isEn ? 'Glass' : 'Стекло'}: ${tokens.glassBlur}`);
-  if (Array.isArray(tokens.motion) && tokens.motion[0]) parts.push(`${isEn ? 'Motion' : 'Анимация'}: ${tokens.motion[0]}`);
+  if (safeTokens.glassBlur) parts.push(`${isEn ? 'Glass' : 'Стекло'}: ${safeTokens.glassBlur}`);
+  if (Array.isArray(safeTokens.motion) && safeTokens.motion[0]) parts.push(`${isEn ? 'Motion' : 'Анимация'}: ${safeTokens.motion[0]}`);
 
   const full = parts.join(' • ');
   if (full.length <= 220) return full;

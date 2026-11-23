@@ -258,6 +258,7 @@ function toDosDateTime(date = new Date()) {
  * @returns {Buffer}
  */
 export function buildZipBuffer(entries = []) {
+  if (!entries || typeof entries[Symbol.iterator] !== 'function') return Buffer.alloc(0);
   const localParts = [];
   const centralParts = [];
   let offset = 0;
@@ -563,7 +564,7 @@ function findCscCompiler() {
 }
 
 function buildInstallerCSharpSource(version) {
-  const safeVersion = String(version || '3.32.1').replace(/[^0-9A-Za-z._-]/g, '');
+  const safeVersion = String(version || '3.32.2').replace(/[^0-9A-Za-z._-]/g, '');
   // Строго C# 5.0 (без $"" интерполяции, ?., ??=, nameof, auto-property initializers)
   return `using System;
 using System.Collections.Generic;
@@ -1382,7 +1383,7 @@ export function buildReleasePackages(options = {}) {
   }
   const pluginJson = JSON.parse(fs.readFileSync(pluginJsonPath, 'utf8'));
   const pkgJson = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
-  const version = String(pluginJson.version || pkgJson.version || '3.32.1');
+  const version = String(pluginJson.version || pkgJson.version || '3.32.2');
   if (pluginJson.version && pkgJson.version && pluginJson.version !== pkgJson.version) {
     throw new Error(isRuPack ? `Несовпадение версий: plugin.json=${pluginJson.version}, package.json=${pkgJson.version}` : `Version mismatch: plugin.json=${pluginJson.version}, package.json=${pkgJson.version}`);
   }
@@ -1458,6 +1459,20 @@ export function buildReleasePackages(options = {}) {
     fs.writeFileSync(zipOutPath, zipBuffer);
     log(isRuPack ? `[✓] Собран портативный архив: ${zipOutPath} (${(zipBuffer.length / 1024).toFixed(1)} КБ)` : `[OK] Built portable archive: ${zipOutPath} (${(zipBuffer.length / 1024).toFixed(1)} KB)`);
 
+    const retryWinFsOp = (fn) => {
+      const retryCodes = new Set(['EPERM', 'EBUSY', 'EACCES']);
+      const sleepArr = new Int32Array(new SharedArrayBuffer(4));
+      for (let attempt = 0; attempt < 60; attempt++) {
+        try {
+          return fn();
+        } catch (err) {
+          if (!retryCodes.has(err?.code) || attempt === 59) throw err;
+          Atomics.wait(sleepArr, 0, 0, Math.min(750, 150 + attempt * 50));
+        }
+      }
+      return fn();
+    };
+
     let exeOutPath = '';
     const cscPath = !zipOnly ? findCscCompiler() : '';
     if (!zipOnly && cscPath) {
@@ -1499,29 +1514,15 @@ export function buildReleasePackages(options = {}) {
         ],
         { encoding: 'utf8', timeout: 30000 }
       );
-      const exeStat = fs.statSync(exeOutPath);
+      const exeStat = retryWinFsOp(() => fs.statSync(exeOutPath));
       log(isRuPack ? `[✓] Собран автономный установщик: ${exeOutPath} (${(exeStat.size / 1024).toFixed(1)} КБ)` : `[OK] Built standalone installer: ${exeOutPath} (${(exeStat.size / 1024).toFixed(1)} KB)`);
     } else if (!zipOnly && process.platform === 'win32') {
       log(isRuPack ? '[WARN] csc.exe (.NET Framework 4.x) не найден — сборка .exe пропущена, создан только ZIP.' : '[WARN] csc.exe (.NET Framework 4.x) not found — skipped .exe build, created ZIP only.');
     }
 
-    const readFileWithWinRetrySync = (targetPath) => {
-      const retryCodes = new Set(['EPERM', 'EBUSY', 'EACCES']);
-      const sleepArr = new Int32Array(new SharedArrayBuffer(4));
-      for (let attempt = 0; attempt < 15; attempt++) {
-        try {
-          return fs.readFileSync(targetPath);
-        } catch (err) {
-          if (!retryCodes.has(err?.code) || attempt === 14) throw err;
-          Atomics.wait(sleepArr, 0, 0, 250);
-        }
-      }
-      return fs.readFileSync(targetPath);
-    };
-
     const artifacts = [];
     for (const filePath of [exeOutPath, zipOutPath].filter(Boolean)) {
-      const buf = readFileWithWinRetrySync(filePath);
+      const buf = retryWinFsOp(() => fs.readFileSync(filePath));
       const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
       artifacts.push({
         fileName: path.basename(filePath),

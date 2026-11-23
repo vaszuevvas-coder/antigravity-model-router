@@ -694,43 +694,52 @@ export function recordAndCheckStalledToolRound(opts = {}) {
   let reason = '';
   let repeatRounds = 1;
 
-  updateJsonAtomicSync(filePath, () => ({ convos: {} }), (doc) => {
-    const rawConvos = doc?.convos && typeof doc.convos === 'object' ? doc.convos : {};
-    const convos = pruneObjectMapByTimestamp(rawConvos, {
-      maxEntries: 40,
-      maxAgeMs: 30 * 60 * 1000,
-      nowMs,
-      getTs: (v) => Number(v?.updatedAt || 0),
-    });
-    const prevEntry = Object.hasOwn(convos, convoKey) ? convos[convoKey] : { history: [], updatedAt: nowMs };
-    const history = Array.isArray(prevEntry.history) ? [...prevEntry.history].slice(-7) : [];
-    const last = history.length > 0 ? history[history.length - 1] : null;
-    const current = { tool: cleanTool, callSig, resHash, isError: Boolean(isError), ts: nowMs };
+  try {
+    updateJsonAtomicSync(filePath, () => ({ convos: {} }), (doc) => {
+      const rawConvos = doc?.convos && typeof doc.convos === 'object' ? doc.convos : {};
+      const convos = pruneObjectMapByTimestamp(rawConvos, {
+        maxEntries: 40,
+        maxAgeMs: 30 * 60 * 1000,
+        nowMs,
+        getTs: (v) => Number(v?.updatedAt || 0),
+      });
+      const prevEntry = Object.hasOwn(convos, convoKey) ? convos[convoKey] : { history: [], updatedAt: nowMs };
+      const history = Array.isArray(prevEntry.history) ? [...prevEntry.history].slice(-7) : [];
+      const last = history.length > 0 ? history[history.length - 1] : null;
+      const current = { tool: cleanTool, callSig, resHash, isError: Boolean(isError), ts: nowMs };
 
-    if (last && last.callSig === current.callSig && last.resHash === current.resHash) {
-      stalled = true;
-      repeatRounds = Number(last.streak || 1) + 1;
-      current.streak = repeatRounds;
-      reason = 'identical_tool_evidence_consecutive_rounds';
-    } else if (last && last.isError && current.isError && last.tool === current.tool && last.callSig === current.callSig) {
-      stalled = true;
-      repeatRounds = Number(last.streak || 1) + 1;
-      current.streak = repeatRounds;
-      reason = 'consecutive_identical_tool_failures';
+      if (last && last.callSig === current.callSig && last.resHash === current.resHash) {
+        stalled = true;
+        repeatRounds = Number(last.streak || 1) + 1;
+        current.streak = repeatRounds;
+        reason = 'identical_tool_evidence_consecutive_rounds';
+      } else if (last && last.isError && current.isError && last.tool === current.tool && last.callSig === current.callSig) {
+        stalled = true;
+        repeatRounds = Number(last.streak || 1) + 1;
+        current.streak = repeatRounds;
+        reason = 'consecutive_identical_tool_failures';
+      } else {
+        current.streak = 1;
+      }
+
+      history.push(current);
+      convos[convoKey] = { history, updatedAt: nowMs };
+      return { convos };
+    }, { spaces: 0 });
+  } catch {}
+
+  let formattedAlert = '';
+  if (stalled) {
+    if (reason === 'consecutive_identical_tool_failures') {
+      formattedAlert = isEn
+        ? `🛑 [Stalled Tool-Loop Guard] Calling \`${cleanTool}\` with identical arguments failed ${repeatRounds} times in a row (${reason}). Do not repeat the same failing call — fix the inputs or switch approach.`
+        : `🛑 [Stalled Tool-Loop Guard] Вызов \`${cleanTool}\` с теми же аргументами упал с ошибкой ${repeatRounds} раза подряд (${reason}). Не повторяй тот же падающий вызов — исправь входные данные или смени подход.`;
     } else {
-      current.streak = 1;
-    }
-
-    history.push(current);
-    convos[convoKey] = { history, updatedAt: nowMs };
-    return { convos };
-  }, { spaces: 0 });
-
-  const formattedAlert = stalled
-    ? (isEn
+      formattedAlert = isEn
         ? `🛑 [Stalled Tool-Loop Guard] Calling \`${cleanTool}\` with identical arguments returned the same result ${repeatRounds} times in a row (${reason}). Do not repeat the same call — change approach or read a different slice.`
-        : `🛑 [Stalled Tool-Loop Guard] Вызов \`${cleanTool}\` с теми же аргументами вернул идентичный результат ${repeatRounds} раза подряд (${reason}). Не повторяй тот же вызов — смени подход или прочитай другой срез.`)
-    : '';
+        : `🛑 [Stalled Tool-Loop Guard] Вызов \`${cleanTool}\` с теми же аргументами вернул идентичный результат ${repeatRounds} раза подряд (${reason}). Не повторяй тот же вызов — смени подход или прочитай другой срез.`;
+    }
+  }
 
   return {
     stalled,

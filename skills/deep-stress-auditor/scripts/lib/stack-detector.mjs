@@ -180,7 +180,8 @@ function matchesGitignore(relPosix, baseName, isDir, rules) {
   return false;
 }
 
-export function isTestFilePath(relPosix) {
+export function isTestFilePath(relPosix = '') {
+  if (typeof relPosix !== 'string' || !relPosix) return false;
   const norm = relPosix.replace(/\\/g, '/').toLowerCase();
   if (/(?:^|\/)(?:tests?|__tests__|specs?|fixtures?|testdata)\//.test(norm)) return true;
   if (/\.(?:test|spec)\.[^./]+$/.test(norm)) return true;

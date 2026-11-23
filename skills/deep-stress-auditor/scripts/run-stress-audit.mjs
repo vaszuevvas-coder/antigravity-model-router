@@ -25,6 +25,7 @@ process.on('warning', (w) => {
 });
 
 export function parseAuditCliArgs(argv = []) {
+  const safeArgv = Array.isArray(argv) ? argv : [];
   let targetDir = process.cwd();
   let dirSet = false;
   let fuzz = false;
@@ -36,8 +37,8 @@ export function parseAuditCliArgs(argv = []) {
   let output = '';
   let maxFiles = 0;
 
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
+  for (let i = 0; i < safeArgv.length; i++) {
+    const arg = safeArgv[i];
     if (!arg) continue;
     if (arg === '--help' || arg === '-h') help = true;
     else if (arg === '--fuzz') fuzz = true;
@@ -50,7 +51,7 @@ export function parseAuditCliArgs(argv = []) {
     else if (arg.startsWith('--fail-on=')) failOn = arg.slice('--fail-on='.length);
     else if (arg.startsWith('--max-files=')) maxFiles = Math.max(100, Math.min(50000, Number(arg.slice('--max-files='.length)) || 0));
     else if (arg.startsWith('--output=')) output = resolve(arg.slice('--output='.length));
-    else if ((arg === '--output' || arg === '-o') && i + 1 < argv.length) output = resolve(argv[++i]);
+    else if ((arg === '--output' || arg === '-o') && i + 1 < safeArgv.length) output = resolve(safeArgv[++i]);
     else if (!arg.startsWith('-') && !dirSet) {
       targetDir = resolve(arg);
       dirSet = true;
