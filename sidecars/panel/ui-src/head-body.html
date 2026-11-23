@@ -1,0 +1,1235 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%230a84ff'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%23ffffff'/%3E%3C/svg%3E" />
+  <title>The Tunnel v3.30.0</title>
+  <script src="/preload.js"></script>
+  <style>
+/*__PANEL_STYLES__*/
+  </style>
+</head>
+<body data-subscription-tier="pro">
+  <!-- Живой фоновый шёлк (Liquid Glass Canvas) -->
+  <div class="lg-wallpaper" aria-hidden="true">
+    <div class="lg-orb a"></div>
+    <div class="lg-orb b"></div>
+    <div class="lg-orb c"></div>
+  </div>
+
+  <!-- SVG-фильтр преломления для капсульной навигации iOS 26 -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <filter id="ios-liquid-refract">
+      <feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="2" result="n" />
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="5" />
+    </filter>
+  </svg>
+
+  <div class="lg-shell">
+    <header class="lg-header">
+      <div class="lg-brand">
+        <span class="lg-brand-orb"></span>
+        <span class="lg-brand-title">The Tunnel</span>
+        <span class="lg-session-pill" id="convoShortId">Все чаты · Автопилот</span>
+      </div>
+      <div class="lg-header-actions">
+        <div class="lang-pills" id="uiLanguageGroup" title="Language / Язык интерфейса">
+          <button type="button" class="lang-pill-btn active" data-lang="en" data-action="setUiLanguage" data-arg="en" title="English">EN</button>
+          <button type="button" class="lang-pill-btn" data-lang="ru" data-action="setUiLanguage" data-arg="ru" title="Русский">RU</button>
+        </div>
+        <div class="theme-pills" id="panelThemeGroup" title="Тема пульта: Жидкое стекло iOS (Тёмная) / Персиковый фарфор (Светлая)">
+          <button type="button" class="theme-dot-btn active" data-theme="glass_teal" style="background: #0a84ff;" data-action="setPanelTheme" data-arg="glass_teal" title="Жидкое стекло iOS (Тёмная)"></button>
+          <button type="button" class="theme-dot-btn" data-theme="studio_titanium" style="background: linear-gradient(135deg, #ffe4d1 0%, #ea580c 100%);" data-action="setPanelTheme" data-arg="studio_titanium" title="Персиковый фарфор (Светлая)"></button>
+        </div>
+        <button class="lg-icon-btn" type="button" id="resetBlockOrderBtn" data-action="resetPanelBlockOrder" title="Вернуть исходный порядок всех блоков по умолчанию" style="display: none;">↺ Сброс</button>
+        <button class="lg-icon-btn round" type="button" data-action="refreshAll" title="Обновить всё (телеметрия обновляется автоматически раз в ~3 сек)">↻</button>
+      </div>
+    </header>
+
+    <div class="window-body">
+      <!-- Статус-баннер разговорного ИИ-пилота -->
+      <div class="smart-banner" id="smartProjectBanner">
+        <div>
+          <span id="smartBannerText"><strong>ИИ-Пилот активен</strong> · Сам анализирует контекст и подключает навыки под задачу</span>
+        </div>
+        <div style="display: flex; gap: 6px; flex-shrink: 0;">
+          <button type="button" class="win-btn" id="smartBannerDoctorBtn" data-action="toggleSetupDoctor" title="Автодиагностика стека проекта, .agentignore, DESIGN.md и GATES.md">🩺 Стек</button>
+          <button type="button" class="win-btn" id="smartBannerSetupBtn" data-action="openOnboardingWizard" data-arg="1" title="Открыть стартовую и быструю настройку ИИ-Пилота в 4 шага">Настройка</button>
+        </div>
+      </div>
+      <div class="sunken-box" id="setupDoctorBox" style="display: none; margin-bottom: 8px; font-size: 11px;"></div>
+
+      <!-- Компактный мульти-чатовый статус-бар задач по проектам (Antigravity Violet Bloom + Windows Shimmer) -->
+      <div class="ag-progress-wrap" id="agLiveProgressWrap">
+        <div class="ag-progress-top-row">
+          <div class="ag-progress-header-left">
+            <span class="ag-progress-heading" id="agProgressHeadingText">Прогресс задач</span>
+            <div class="lg-select-wrap ws-switcher-wrap" id="panelWorkspaceSelectWrap">
+              <select id="sel-panelWorkspace" class="lg-select-native" tabindex="-1" aria-hidden="true" data-change-action="selectPanelWorkspace"></select>
+              <button type="button" id="btn-panelWorkspace" class="lg-input lg-select lg-select-trigger ws-switcher-trigger" data-action="toggleCustomSelect" data-arg="sel-panelWorkspace" role="combobox" aria-haspopup="listbox" aria-expanded="false" title="Переключатель проекта: управляет снимками отката, Git-песочницами, Композером, Дозором, граблями и памятью">
+                <span class="lg-select-trigger-text" id="agProgressProjectBadge">🔄 Авто · Проект</span>
+                <svg class="lg-select-chevron" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <button type="button" id="btnResetWorkspaceAuto" class="win-btn ws-reset-auto-btn" data-action="resetWorkspaceToAuto" style="display: none;" title="Вернуться к автоопределению активного чата">Авто</button>
+              <button type="button" id="btnResetStaleProgress" class="win-btn ws-reset-auto-btn" data-action="resetStaleProgressChats" style="display: none;" title="Сбросить зависшие или завершённые карточки чатов">✕ Сброс</button>
+            </div>
+          </div>
+          <div id="agRecentProjectsBar" style="display: flex; gap: 4px; flex-wrap: wrap;"></div>
+        </div>
+        <div class="hw-header-live-bar" id="hwLiveHeaderPills">
+          <button type="button" class="hw-live-pill is-off" id="topRamLivePill" data-action="scrollToGpuRamCard" title="Статус буфера проекта в оперативной памяти (клик — открыть блок ресурсов)">
+            <span class="hw-live-dot"></span>
+            <span class="hw-live-text" id="topRamLiveText">RAM · Ожидание</span>
+          </button>
+          <button type="button" class="hw-live-pill is-off" id="topGpuLivePill" data-action="scrollToGpuRamCard" title="Статус локальной видеомодели Ollama (клик — открыть блок ресурсов)">
+            <span class="hw-live-dot"></span>
+            <span class="hw-live-text" id="topGpuLiveText">GPU · Ожидание</span>
+          </button>
+          <button type="button" class="hw-live-pill is-off" id="topCpuLivePill" data-action="scrollToGpuRamCard" title="Статус пула потоков процессора на внутренних задачах (клик — открыть блок ресурсов)">
+            <span class="hw-live-dot"></span>
+            <span class="hw-live-text" id="topCpuLiveText">CPU · Ожидание</span>
+          </button>
+        </div>
+
+        <div class="ag-chats-stack" id="agActiveChatsStack">
+          <div class="ag-chat-task-item" data-cid="__primary_slot__">
+            <div class="ag-progress-capsule">
+              <button type="button" class="ag-subagent-toggle-btn" data-action="toggleSubagentsList" data-arg="__primary_slot__" aria-expanded="false" style="display: none;" title="Раскрыть список субагентов">
+                <svg class="ag-subagent-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M6 3.75L10.25 8L6 12.25" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span class="ag-subagent-count">0</span>
+              </button>
+              <span class="ag-bloom-dot idle"></span>
+              <span class="ag-chat-num-badge" style="display: none;"></span>
+              <span class="ag-progress-title is-idle">Ожидание задачи</span>
+              <div class="ag-bloom-track">
+                <div class="ag-bloom-fill idle" style="width: 0%;"><div class="ag-bloom-shimmer"></div></div>
+              </div>
+              <span class="ag-progress-pct is-idle"><span class="ag-pct-num">0</span>%</span>
+            </div>
+            <div class="ag-steps-mini-list" style="display: none;"></div>
+            <div class="ag-subagents-drawer" aria-hidden="true">
+              <div class="ag-subagents-drawer-inner">
+                <div class="ag-subagents-list"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 0.5. УМНЫЙ ВВОД В ЧАТ (GHOST TEXT: RAM <10мс + OLLAMA GPU, 0 ТОКЕНОВ GEMINI) -->
+      <section class="lg-card reorderable-block" id="smartComposerCard">
+        <div class="lg-card-head">
+          <span class="lg-card-title">✦ Умный ввод в чат</span>
+          <div class="lg-card-head-actions">
+            <button type="button" class="win-btn" id="btnToggleComposerGrill" data-action="toggleComposerGrillMe" aria-pressed="false" title="Включить детальный опрос по дереву решений (Grill-Me) перед выполнением следующего запроса" style="padding: 1px 7px; font-size: 10px;">🔥 Опрос</button>
+            <span class="composer-engine-badge" id="composerEngineBadge" title="Двухступенчатое локальное автодополнение (RAM + Ollama GPU) без затрат облачных токенов">RAM + GPU · 0 тк</span>
+          </div>
+        </div>
+        <div id="wiretapAlertBar" class="sunken-box" style="display: none; margin-bottom: 6px; padding: 6px 8px; border-color: rgba(255, 69, 58, 0.45); background: rgba(255, 69, 58, 0.08);">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px;">
+            <span id="wiretapAlertText" style="font-size: 10.5px; color: var(--text-main); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">🐞 Сбой выполнения</span>
+            <div style="display: flex; gap: 4px; flex-shrink: 0;">
+              <button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px;" data-action="sendWiretapFaultToComposer" title="Вставить ошибку и фрагмент кода в Умный Композер">В Композер</button>
+              <button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px;" data-action="clearWiretapFaults" title="Очистить журнал сбоев">✕</button>
+            </div>
+          </div>
+        </div>
+        <div class="composer-chips-row" id="composerChipsRow">
+          <button type="button" class="composer-chip-btn" data-action="applyComposerChip" data-prompt="Проведи краткое ревью архитектуры проекта и выдели слабые места" title="Ревью архитектуры проекта">🧭 Ревью архитектуры</button>
+          <button type="button" class="composer-chip-btn" data-action="applyComposerChip" data-prompt="Найди потенциальные баги, гонки или необработанные ошибки в ключевых модулях" title="Поиск потенциальных багов">🐞 Найти риски и баги</button>
+          <button type="button" class="composer-chip-btn" data-action="applyComposerChip" data-prompt="Составь пошаговый инженерный план реализации следующей задачи: " title="Шаблон пошагового плана">📋 План доработки</button>
+        </div>
+        <div class="composer-well" style="position: relative;">
+          <div class="composer-editor-stack">
+            <div class="composer-mirror" id="composerMirror" aria-hidden="true"><span class="composer-mirror-typed" id="composerMirrorTyped"></span><span class="composer-mirror-ghost" id="composerMirrorGhost"></span><kbd class="composer-ghost-kbd" id="composerGhostTabPill" data-action="acceptSmartComposerGhost" style="display: none;" title="Нажмите Tab или кликните, чтобы подставить подсказку">Tab</kbd></div>
+            <textarea id="smartComposerInput" class="composer-textarea" rows="2" maxlength="2000" data-input-action="onSmartComposerInput" placeholder="Начните писать мысль или @файл — серый текст подскажет продолжение, Ctrl+V вставит скриншот..."></textarea>
+          </div>
+          <div id="composerAtMenu" style="display: none; margin-top: 6px; max-height: 150px; overflow-y: auto; border: 1px solid var(--border-hairline); border-radius: 10px; background: var(--glass-surface, rgba(16, 20, 30, 0.92)); padding: 4px;"></div>
+        </div>
+        <div id="composerImagePreviewBar" class="sunken-box" style="display: none; margin-top: 6px; padding: 6px 8px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+              <img id="composerImageThumb" alt="Превью UI" style="width: 34px; height: 26px; object-fit: cover; border-radius: 5px; border: 1px solid var(--border-hairline);" />
+              <span id="composerImageMeta" style="font-size: 10.5px; color: var(--text-sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Скриншот UI</span>
+            </div>
+            <div style="display: flex; gap: 4px; flex-shrink: 0;">
+              <button type="button" class="win-btn" id="btnAnalyzeVision" style="padding: 2px 7px; font-size: 10px;" data-action="analyzeComposerScreenshot" title="Локальный визуальный аудит скриншота (Gemma 4, 0 тк облака)">🔍 Разобрать UI · 0 тк</button>
+              <button type="button" class="win-btn" style="padding: 2px 6px; font-size: 10px;" data-action="clearComposerScreenshot" title="Удалить прикреплённый скриншот">✕</button>
+            </div>
+          </div>
+        </div>
+        <div class="composer-footer">
+          <div class="composer-shortcuts" id="composerHintText">
+            <span><kbd class="composer-kbd-hint">Tab</kbd> принять</span>
+            <span><kbd class="composer-kbd-hint">@</kbd> контекст</span>
+            <span><kbd class="composer-kbd-hint">Ctrl+↵</kbd> локально</span>
+            <span><kbd class="composer-kbd-hint">Enter</kbd> в чат</span>
+          </div>
+          <div class="composer-actions">
+            <button type="button" class="win-btn" id="btnClearComposer" data-action="clearSmartComposer" style="display: none;" title="Очистить поле ввода">Очистить</button>
+            <button type="button" class="win-btn" id="btnVoiceComposer" data-action="toggleComposerVoice" style="display: none; padding: 4px 8px;" title="Голосовой ввод и структурирование промпта (Web Speech + локальная очистка)">🎙️</button>
+            <button type="button" class="win-btn" id="btnPrepareCommit" data-action="prepareLocalCommit" title="Локальный Pre-Commit: Shadow Guard, секреты и текст коммита (0% облачной квоты)">✓ Коммит · 0 тк</button>
+            <button type="button" class="win-btn composer-local-btn" id="btnAskLocalRag" data-action="askLocalRagChat" title="Спросить локальную модель по индексу CPU+GPU+RAM без затрат облачной квоты (Ctrl+Enter)">💬 Локально · 0 тк</button>
+            <button type="button" class="win-btn active composer-send-btn" id="btnSendSmartComposer" data-action="sendSmartComposer" title="Отправить запрос в активный чат Antigravity (Enter)">В чат ↑</button>
+          </div>
+        </div>
+        <div class="local-rag-box" id="localRagChatBox" style="display: none;">
+          <div class="local-rag-head">
+            <span class="local-rag-title" id="localRagMetaLabel">🧠 Локальный RAG-диалог · 0 тк</span>
+            <button type="button" class="win-btn" id="btnClearLocalRag" data-action="clearLocalRagChat" title="Очистить историю локального диалога">Очистить чат</button>
+          </div>
+          <div class="local-rag-messages" id="localRagMessages" role="log" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <!-- 1. НАВЫКИ АГЕНТА (СКИЛЛЫ) — ГЛАВНЫЙ АКЦЕНТ ЕДИНОЙ СТРАНИЦЫ -->
+      <section class="lg-card reorderable-block" id="skillsSectionCard">
+        <div class="lg-card-head">
+          <span class="lg-card-title">Навыки ИИ-Пилота</span>
+          <div class="lg-card-head-actions">
+            <span class="lg-card-sub" id="skillsSummaryLabel">Умный Авто-режим</span>
+            <button type="button" class="lg-card-collapse-btn" data-action="togglePanelCardCollapse" data-arg="skillsSectionCard" aria-expanded="true" aria-label="Скрыть содержимое блока" title="Скрыть содержимое блока"></button>
+            <div class="block-move-controls" data-block-controls="skillsSectionCard">
+              <span class="block-drag-handle" data-role="drag-handle" data-block-id="skillsSectionCard" title="Перетащите, чтобы изменить порядок блока"><svg viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><circle cx="3.75" cy="3.75" r="1.25"/><circle cx="8.25" cy="3.75" r="1.25"/><circle cx="3.75" cy="8.25" r="1.25"/><circle cx="8.25" cy="8.25" r="1.25"/></svg></span>
+            </div>
+          </div>
+        </div>
+        <div style="padding: 8px 11px; margin-bottom: 8px; background: rgba(48, 209, 88, 0.1); border: 1px solid rgba(48, 209, 88, 0.28); border-radius: 12px; font-size: 10.5px; color: var(--text-main); line-height: 1.4;">
+          Все навыки по умолчанию работают в режиме <strong>«Авто»</strong> — они не загружаются заранее и активируются только под профильный запрос.
+        </div>
+        <div class="skill-search-bar">
+          <input type="text" id="skillSearchInput" class="skill-search-input" placeholder="🔍 Найти навык (дизайн, видео, баги, игра)..." data-input-action="filterSkillsView" />
+          <button type="button" class="win-btn" data-action="resetAllSkillsToAuto" title="Вернуть все навыки под управление ИИ-автопилота">🔄 Все в Авто</button>
+          <button type="button" class="win-btn" id="btnToggleSkillRegistry" data-action="toggleSkillRegistryDrawer" title="Поиск по каталогу и безопасный карантинный импорт внешних навыков">🌐 Импорт</button>
+        </div>
+        <div class="sunken-box" id="skillRegistryDrawer" style="display: none; margin-bottom: 8px; padding: 8px;">
+          <div style="display: flex; gap: 4px; flex-wrap: wrap; align-items: center; margin-bottom: 6px;">
+            <span style="font-size: 10px; color: var(--text-sub);">Пресеты:</span>
+            <button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px;" data-action="selectCuratedSkillPreset" data-repo="mattpocock/skills" data-slug="grilling" title="Дерево вопросов перед задачей (Matt Pocock)">🔥 mattpocock/grilling</button>
+            <button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px;" data-action="selectCuratedSkillPreset" data-repo="vercel-labs/agent-skills" data-slug="react-best-practices" title="Правила React 19 и Next.js от Vercel">⚛️ vercel/react</button>
+            <button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px;" data-action="selectCuratedSkillPreset" data-repo="Clipwing/skills" data-slug="real-sfx" title="Авто-звукорежиссура видео и таймлайна">🎬 clipwing/real-sfx</button>
+            <button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px;" data-action="selectCuratedSkillPreset" data-repo="addyosmani/agent-skills" data-slug="api-and-interface-design" title="Инженерный стандарт API от Addy Osmani">🧭 addyosmani/api</button>
+            <button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px;" data-action="selectCuratedSkillPreset" data-repo="forrestchang/andrej-karpathy-skills" data-slug="karpathy-guidelines" title="Хирургические правки без раздувания кода">✂️ karpathy</button>
+          </div>
+          <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px;">
+            <input type="text" id="extSkillSourceInput" class="win-input" placeholder="Поиск или owner/repo (GitHub / ClawHub)" style="flex: 1 1 140px; min-width: 0; font-size: 11px; padding: 4px 6px;" />
+            <input type="text" id="extSkillSlugInput" class="win-input" placeholder="slug (опц.)" style="flex: 0 1 88px; min-width: 0; font-size: 11px; padding: 4px 6px;" />
+          </div>
+          <div style="display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; margin-bottom: 4px;">
+            <button type="button" class="win-btn" data-action="searchExternalSkills">🔍 Найти в каталоге</button>
+            <button type="button" class="win-btn active" data-action="importExternalSkill">🛡️ Проверить и импортировать</button>
+          </div>
+          <div id="skillRegistryResults" class="pitfalls-scroll" style="font-size: 10.5px; color: var(--text-sub);">
+            Введите запрос для поиска навыков или адрес репозитория для карантинной проверки AgentShield.
+          </div>
+        </div>
+        <div class="sunken-box skills-scroll" id="skillsContainer">
+          <div style="color: var(--text-sub); font-size: 11px; padding: 4px;">Загрузка возможностей ИИ-пилота...</div>
+        </div>
+      </section>
+
+      <!-- 2. РЕЖИМ РАБОТЫ -->
+      <section class="lg-card reorderable-block" id="agentModeCard">
+        <div class="lg-card-head">
+          <span class="lg-card-title">Режим работы агента</span>
+          <div class="lg-card-head-actions">
+            <button type="button" class="lg-card-collapse-btn" data-action="togglePanelCardCollapse" data-arg="agentModeCard" aria-expanded="true" aria-label="Скрыть содержимое блока" title="Скрыть содержимое блока"></button>
+            <div class="block-move-controls" data-block-controls="agentModeCard">
+              <span class="block-drag-handle" data-role="drag-handle" data-block-id="agentModeCard" title="Перетащите, чтобы изменить порядок блока"><svg viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><circle cx="3.75" cy="3.75" r="1.25"/><circle cx="8.25" cy="3.75" r="1.25"/><circle cx="3.75" cy="8.25" r="1.25"/><circle cx="8.25" cy="8.25" r="1.25"/></svg></span>
+            </div>
+          </div>
+        </div>
+        <div class="sunken-box" style="margin-bottom: 8px; padding: 8px 10px;">
+          <div class="control-row" style="margin: 0;">
+            <span>Тариф подписки:</span>
+            <div class="win-btn-group" id="subscriptionTierGroup">
+              <button type="button" class="win-btn" data-val="pro" data-action="setSubscriptionTier" data-arg="pro" title="Тариф Pro: экономия квоты — Hydrogen для S/M и типовых задач, Orchestrator (Neon) / Neon для сложных L/XL">💎 Pro</button>
+              <button type="button" class="win-btn" data-val="ultra" data-action="setSubscriptionTier" data-arg="ultra" title="Тариф Ultra: повышенный лимит — раннее подключение Orchestrator (Carbon) и Carbon на сложных задачах">🚀 Ultra</button>
+            </div>
+          </div>
+          <div id="subscriptionTierHint" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px; line-height: 1.35;">
+            Подписка Pro: бережёт квоту — Hydrogen на S/M и Orchestrator (Neon) на сложных задачах.
+          </div>
+          <div id="subscriptionTierGateNote" style="font-size: 10px; color: var(--accent-cyan); margin-top: 3px; line-height: 1.35;">
+            Режим Pro: скрыты настройки моделей Ultra (Carbon).
+          </div>
+        </div>
+        <div class="mode-list">
+          <!-- Режим 1: Интерактивный советник -->
+          <div id="mode-advisor" class="mode-card" data-action="setAdvisorMode" data-arg="true">
+            <div class="card-head">
+              <div class="card-name">
+                <span class="win-radio"></span>
+                <span>Интерактивный советник</span>
+              </div>
+              <span class="badge">Рекомендуется</span>
+            </div>
+            <div class="sunken-box">
+              <div class="card-desc">
+                Агент оценивает задачу и предлагает оптимальную связку моделей и навыков перед стартом.
+              </div>
+
+              <div id="advisorBox" class="sub-settings">
+                <div class="control-row">
+                  <span>Спрашивать в чате:</span>
+                  <div class="win-btn-group" id="confirmThresholdGroup">
+                    <button type="button" class="win-btn" data-val="ALL" data-action="setConfirmThreshold" data-arg="ALL" title="Перед любой задачей (S, M, L, XL)">Всегда</button>
+                    <button type="button" class="win-btn" data-val="M" data-action="setConfirmThreshold" data-arg="M" title="Мелкие задачи S делать сразу, спрашивать начиная со средних M">От M+</button>
+                    <button type="button" class="win-btn" data-val="L" data-action="setConfirmThreshold" data-arg="L" title="Задачи S и M делать сразу, спрашивать только на крупных L/XL">Только L/XL</button>
+                  </div>
+                </div>
+                <label class="toggle-row" id="orchestratorSmartSynergyLabel" style="margin-top: 6px;" title="Когда выбран Orchestrator (Neon / Argon), штатный движок сам передаёт правки на Hydrogen (-24% квоты), поэтому на S/M лишние опросы не показываются">
+                  <input type="checkbox" id="chk-orchestratorSmartSynergy" data-action="toggleOption" data-key="orchestratorSmartSynergy" />
+                  <span><strong>Умная связка Orchestrator</strong> — без лишних опросов на <code>S/M</code></span>
+                </label>
+                <div class="control-row" style="margin-top: 8px;">
+                  <span>Детальный опрос (Grill-Me):</span>
+                  <div class="win-btn-group" id="grillModeGroup">
+                    <button type="button" class="win-btn" data-val="off" data-action="setGrillMode" data-arg="off" title="Не предлагать углублённый опрос по дереву решений">Выкл</button>
+                    <button type="button" class="win-btn active" data-val="auto" data-action="setGrillMode" data-arg="auto" title="Предлагать выбор детального опроса в окне Pre-Task Gate для сложных и размытых задач">Авто M+</button>
+                    <button type="button" class="win-btn" data-val="always" data-action="setGrillMode" data-arg="always" title="Всегда проводить детальный опрос по развилкам перед реализацией">Всегда</button>
+                  </div>
+                </div>
+                <div id="grillModeHint" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px; line-height: 1.35;">
+                  Режим «Авто M+»: предлагает детальный опрос по развилкам в стартовом окне на крупных или новых задачах.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Режим 2: Тихий автопилот -->
+          <div id="mode-autopilot" class="mode-card" data-action="setAdvisorMode" data-arg="false">
+            <div class="card-head">
+              <div class="card-name">
+                <span class="win-radio"></span>
+                <span>Тихий автопилот</span>
+              </div>
+              <span class="badge badge-autopilot">Без вопросов</span>
+            </div>
+            <div class="sunken-box">
+              <div class="card-desc">
+                Агент сразу выполняет задачу по выбранному шаблону без промежуточных подтверждений.
+              </div>
+
+              <div id="autopilotBox" class="sub-settings">
+                <div class="control-row">
+                  <span>Шаблон:</span>
+                  <div class="win-btn-group" id="strategyGroup">
+                    <button type="button" class="win-btn" data-val="flash_dispatcher" data-action="selectStrategy" data-arg="flash_dispatcher">Hydrogen</button>
+                    <button type="button" class="win-btn" data-val="auto_balance" data-action="selectStrategy" data-arg="auto_balance">Авто-баланс</button>
+                    <button type="button" class="win-btn" id="btnStrategyProArchitect" data-val="pro_architect" data-action="selectStrategy" data-arg="pro_architect" title="Максимальная точность и архитектурный контроль через Orchestrator (Neon) / Neon">Neon</button>
+                  </div>
+                </div>
+                <div class="control-row">
+                  <span id="heavyThresholdLabel">Порог Neon:</span>
+                  <div class="win-btn-group" id="thresholdGroup">
+                    <button type="button" class="win-btn" data-val="M" data-action="setThreshold" data-arg="M">M+</button>
+                    <button type="button" class="win-btn" data-val="L" data-action="setThreshold" data-arg="L">L+</button>
+                    <button type="button" class="win-btn" data-val="XL" data-action="setThreshold" data-arg="XL">XL</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. ДИЗАЙН-ВИТРИНА (A/B/C) -->
+      <section class="lg-card reorderable-block" id="skillProfilesFieldset">
+        <div class="lg-card-head">
+          <span class="lg-card-title">Дизайн-витрина и превью UI</span>
+          <div class="lg-card-head-actions">
+            <button type="button" class="lg-card-collapse-btn" data-action="togglePanelCardCollapse" data-arg="skillProfilesFieldset" aria-expanded="true" aria-label="Скрыть содержимое блока" title="Скрыть содержимое блока"></button>
+          </div>
+        </div>
+        <div class="sunken-box">
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <div style="font-weight: 600; font-size: 11.5px; color: var(--text-main);">
+              🎨 Превью дизайна и анимаций (A/B/C)
+            </div>
+            <div class="win-btn-group" id="uiDesignGateGroup">
+              <button type="button" class="win-btn active" data-val="on" data-action="setUiDesignGate" data-arg="true" title="Перед изменением внешнего вида ИИ спросит желаемый стиль и покажет 3 примера на выбор">Показывать</button>
+              <button type="button" class="win-btn" data-val="off" data-action="setUiDesignGate" data-arg="false" title="Делать дизайн и анимации сразу в коде без предварительной витрины вариантов">Сразу в код</button>
+            </div>
+          </div>
+          <div style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px; line-height: 1.4;">
+            Перед обновлением UI агент уточняет визуальное направление и готовит 3 интерактивных примера.
+          </div>
+
+          <div id="uiInspirationModeRow" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-hairline);">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <div style="font-weight: 600; font-size: 11px; color: var(--text-main);">
+                🌐 Источник вдохновения
+              </div>
+              <div class="win-btn-group" id="uiInspirationModeGroup">
+                <button type="button" class="win-btn active" data-val="ask" data-action="setUiInspirationMode" data-arg="ask" title="При старте UI-задачи спрашивать: сгенерировать 3 варианта A/B/C, поискать референсы в интернете или сделать гибрид">Спрашивать</button>
+                <button type="button" class="win-btn" data-val="showroom" data-action="setUiInspirationMode" data-arg="showroom" title="Всегда сразу собирать 3 авторских варианта A/B/C в локальной интерактивной витрине">Витрина A/B/C</button>
+                <button type="button" class="win-btn" data-val="web_refs" data-action="setUiInspirationMode" data-arg="web_refs" title="Всегда сначала собирать живые референсы и CSS-токены через локальный Zero-LLM экстрактор (fetch-web-refs) с кэшем — без расхода токенов на браузерного субагента">Веб-рефы</button>
+              </div>
+            </div>
+            <div id="uiInspirationModeHint" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px; line-height: 1.35;">
+              Режим «Спрашивать»: выбор между 3 прототипами A/B/C, поиском примеров в сети и гибридом.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. СТАТИСТИКА ЧАТОВ И КОМАНДНЫЙ РОЙ -->
+      <section class="lg-card reorderable-block is-collapsed" id="swarmTelemetryCard">
+        <div class="lg-card-head">
+          <span class="lg-card-title">📊 Статистика чатов и Командный Рой</span>
+          <div class="lg-card-head-actions">
+            <span class="swarm-pill idle" id="metricCacheHitBadge" title="Попадания в префиксный Implicit Cache (-95% стоимости входных токенов)">Кэш: 0%</span>
+            <span class="swarm-pill idle" id="swarmStatusBadge">Авто XL</span>
+            <button type="button" class="lg-card-collapse-btn" data-action="togglePanelCardCollapse" data-arg="swarmTelemetryCard" aria-expanded="false" aria-label="Показать содержимое блока" title="Показать содержимое блока"></button>
+          </div>
+        </div>
+
+            <div class="telemetry-grid single-cell">
+              <div class="metric-cell">
+                <div class="metric-label">Сэкономлено всего</div>
+                <div class="metric-val highlight" id="metricTotalSaved">~0 ток.</div>
+              </div>
+            </div>
+
+            <div class="saved-breakdown-grid" id="metricSavedBreakdownGrid">
+              <div class="saved-breakdown-pill" title="Экономия за счёт попаданий в Implicit Cache">
+                <div class="saved-breakdown-lbl">⚡ Кэш</div>
+                <div class="saved-breakdown-num" id="metricSavedCacheVal">0</div>
+              </div>
+              <div class="saved-breakdown-pill" title="Экономия за счёт срезов и поиска в In-RAM">
+                <div class="saved-breakdown-lbl">🧠 RAM</div>
+                <div class="saved-breakdown-num" id="metricSavedRamVal">0</div>
+              </div>
+              <div class="saved-breakdown-pill" title="Экономия за счёт сжатия логов Drain3, TOON и дельт на CPU">
+                <div class="saved-breakdown-lbl">⚙️ CPU</div>
+                <div class="saved-breakdown-num" id="metricSavedCpuVal">0</div>
+              </div>
+              <div class="saved-breakdown-pill" title="Экономия за счёт локальной GPU-дистилляции Ollama">
+                <div class="saved-breakdown-lbl">🎮 GPU</div>
+                <div class="saved-breakdown-num" id="metricSavedGpuVal">0</div>
+              </div>
+            </div>
+
+            <div class="swarm-status-banner" style="margin-top: 8px;">
+              <div class="swarm-status-head">
+                <div class="swarm-status-title">
+                  <span class="swarm-dot" id="swarmStatusDot"></span>
+                  <span id="swarmStatusHeadline">Рой в дежурном режиме</span>
+                </div>
+                <button type="button" class="win-btn" data-action="refreshAll" title="Обновить статус Роя">↻</button>
+              </div>
+              <div class="swarm-meta-row">
+                <span id="swarmStatusDetails">На S/M/L работает Hydrogen · На XL (4+ модулей) включается параллельный Рой</span>
+              </div>
+              <div class="swarm-member-chips" id="swarmMembersBar" style="display: none;"></div>
+            </div>
+
+            <div class="sub-settings visible" style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-hairline);">
+              <div class="control-row">
+                <span>Когда включать Рой:</span>
+                <div class="win-btn-group" id="swarmModeGroup">
+                  <button type="button" class="win-btn" data-val="auto_xl" data-action="setSwarmMode" data-arg="auto_xl" title="Бережёт квоту на мелких и средних задачах; предлагает Рой только на масштабных XL-задачах (4+ независимых модулей)">Авто XL</button>
+                  <button type="button" class="win-btn" data-val="aggressive_l" data-action="setSwarmMode" data-arg="aggressive_l" title="Разрешить командный Рой начиная со средних многофайловых задач L (3+ независимых файлов)">L+</button>
+                  <button type="button" class="win-btn" data-val="auto_all" data-action="setSwarmMode" data-arg="auto_all" title="Разрешить адаптивный Рой на любой многомодульной задаче (кроме простых вопросов)">Авто все</button>
+                  <button type="button" class="win-btn" data-val="always_ask" data-action="setSwarmMode" data-arg="always_ask" title="На крупных задачах L/XL предлагает Рой и ждёт подтверждения перед запуском воркеров">Спрашивать</button>
+                  <button type="button" class="win-btn" data-val="manual_only" data-action="setSwarmMode" data-arg="manual_only" title="Сам не предлагает Рой, но включает защиту воркеров и квот, когда вы сами пишете /swarm">По /swarm</button>
+                  <button type="button" class="win-btn" data-val="off" data-action="setSwarmMode" data-arg="off" title="Работать только одиночным агентом или штатным Оркестратором">Выкл</button>
+                </div>
+              </div>
+              <div class="control-row" style="margin-top: 6px;">
+                <span>Модель воркеров:</span>
+                <div class="win-btn-group" id="swarmWorkerTierGroup">
+                  <button type="button" class="win-btn" id="btnSwarmTierHydrogen" data-val="hydrogen_auto" data-action="setSwarmWorkerTier" data-arg="hydrogen_auto" title="Координатор планирует на вашей основной модели (Neon), а рабочие авторы пишут код на быстром Gemini 4 Hydrogen в изолированных ветках share">⚡ Hydrogen</button>
+                  <button type="button" class="win-btn" data-val="neon_auto" data-action="setSwarmWorkerTier" data-arg="neon_auto" title="Авторы правок работают на кодинг-модели Gemini 4 Neon (Medium/High, Индекс 61) в изолированных ветках share">✨ Neon</button>
+                  <button type="button" class="win-btn" data-min-tier="ultra" data-val="argon_auto" data-action="setSwarmWorkerTier" data-arg="argon_auto" title="Авторы правок работают на сбалансированной модели Gemini 4 Argon (Medium) в изолированных ветках share">🔹 Argon</button>
+                  <button type="button" class="win-btn" data-min-tier="ultra" data-val="carbon_auto" data-action="setSwarmWorkerTier" data-arg="carbon_auto" title="Авторы правок работают на старшей модели Gemini 4 Carbon (Medium) в изолированных ветках share">💎 Carbon</button>
+                  <button type="button" class="win-btn" data-val="inherit" data-action="setSwarmWorkerTier" data-arg="inherit" title="Все воркеры запускаются на той же модели, что выбрана у вас в чате">Как в чате</button>
+                </div>
+              </div>
+              <div style="margin-top: 6px; padding-top: 4px; border-top: 1px solid var(--border-hairline);">
+                <label class="toggle-row" title="Добавлять независимого проверочного агента @verifier на каждые 2–4 автора для проверки кода и тестов перед сдачей">
+                  <input type="checkbox" id="chk-swarmAutoVerifier" data-action="toggleOption" data-key="swarmAutoVerifier" />
+                  <span><strong>Авто-Ревизор (<code>@verifier</code>)</strong> — проверка диффов и тестов</span>
+                </label>
+                <label class="toggle-row" title="Если у воркера Роя закончилась квота модели, автоматически переключать его на доступную модель без потери памяти диалога">
+                  <input type="checkbox" id="chk-swarmQuotaFailover" data-action="toggleOption" data-key="swarmQuotaFailover" />
+                  <span><strong>Страховка квоты</strong> — авто-пересадка воркера без сброса памяти</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="sunken-box" style="margin-top: 8px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11px; gap: 8px; flex-wrap: wrap;">
+                <span id="allChatsSummaryLabel" style="color: var(--text-main);">Текущий чат: ожидание первого хода · Авто-перенос контекста в новый чат активен</span>
+                <span class="swarm-pill idle" id="quotaPacerBadge" title="Скорость расхода квоты за 30/60 мин (Quota Burn-Rate Pacer)">Квота: спокойно</span>
+              </div>
+              <div id="comboFailoverRow" style="display: flex; align-items: center; justify-content: space-between; font-size: 10.5px; gap: 6px; flex-wrap: wrap; margin-top: 5px; color: var(--text-sub);">
+                <span id="comboFailoverText">Маршрут страховки (Combo): готов</span>
+                <button type="button" class="win-btn" id="btnResetComboCooldowns" style="padding: 1px 6px; font-size: 10px; display: none;" data-action="resetComboCooldowns" title="Сбросить временные паузы (cooldown) моделей после ошибок 429">Сбросить паузы</button>
+              </div>
+            </div>
+      </section>
+
+      <!-- 4.5. РЕСУРСЫ ПК: GPU, CPU И ПАМЯТЬ IN-RAM -->
+      <section class="lg-card reorderable-block is-collapsed" id="gpuRamCard">
+        <div class="lg-card-head">
+          <span class="lg-card-title" id="gpuRamSectionLegend">🎮 Ресурсы ПК: GPU, CPU и память In-RAM</span>
+          <div class="lg-card-head-actions">
+            <span class="swarm-pill idle" id="hwCardHeaderSummaryBadge" title="Сводный статус буфера In-RAM и локальной видеомодели">RAM · GPU</span>
+            <button type="button" class="lg-card-collapse-btn" data-action="togglePanelCardCollapse" data-arg="gpuRamCard" aria-expanded="false" aria-label="Показать содержимое блока" title="Показать содержимое блока"></button>
+          </div>
+        </div>
+
+            <div class="hw-optical-grid" id="hwLiveOpticalGrid">
+              <div class="hw-optical-unit ram-unit" id="ramLiveUnitCard">
+                <div class="hw-rim-sweep" aria-hidden="true"></div>
+                <div class="hw-unit-mask" aria-hidden="true"></div>
+                <div class="hw-unit-inner">
+                  <div class="hw-unit-head">
+                    <span class="hw-unit-title">🧠 Память In-RAM</span>
+                    <span class="hw-unit-badge" id="ramUnitStateBadge">⚪ Ожидание</span>
+                  </div>
+                  <div class="hw-unit-metric-row">
+                    <div class="hw-unit-metric" id="ramUnitMetricVal">0 / 4096 МБ</div>
+                    <span class="hw-unit-saved-pill ram-saved" id="ramUnitSavedPill" title="Сэкономлено токенов за счёт быстрых срезов и поиска в ОЗУ">~0 ток.</span>
+                  </div>
+                  <div class="hw-unit-op" id="ramUnitOpText">Готов к прогреву проекта</div>
+                  <div class="hw-afterglow-track hw-liquid-tank">
+                    <div class="hw-afterglow-fill" id="ramUnitAfterglowFill">
+                      <span class="hw-liquid-wave" aria-hidden="true"></span>
+                    </div>
+                    <span class="hw-tank-pct" id="ramUnitCapPct">0%</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="hw-optical-unit gpu-unit" id="gpuLiveUnitCard">
+                <div class="hw-rim-sweep" aria-hidden="true"></div>
+                <div class="hw-unit-mask" aria-hidden="true"></div>
+                <div class="hw-unit-inner">
+                  <div class="hw-unit-head">
+                    <span class="hw-unit-title">🎮 Видеомодель GPU</span>
+                    <span class="hw-unit-badge" id="gpuUnitStateBadge">⚪ Проверка</span>
+                  </div>
+                  <div class="hw-unit-metric-row">
+                    <div class="hw-unit-metric" id="gpuUnitMetricVal">0.0 / 4 ГБ</div>
+                    <span class="hw-unit-saved-pill gpu-saved" id="gpuUnitSavedPill" title="Сэкономлено токенов локальной видеомоделью GPU">~0 ток.</span>
+                  </div>
+                  <div class="hw-unit-op" id="gpuUnitOpText">Ожидание данных Ollama</div>
+                  <div class="hw-afterglow-track hw-liquid-tank">
+                    <div class="hw-afterglow-fill" id="gpuUnitAfterglowFill">
+                      <span class="hw-liquid-wave" aria-hidden="true"></span>
+                    </div>
+                    <span class="hw-tank-pct" id="gpuUnitCapPct">0%</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="hw-optical-unit cpu-unit" id="cpuLiveUnitCard">
+                <div class="hw-rim-sweep" aria-hidden="true"></div>
+                <div class="hw-unit-mask" aria-hidden="true"></div>
+                <div class="hw-unit-inner">
+                  <div class="hw-unit-head">
+                    <span class="hw-unit-title">⚙️ Потоки CPU</span>
+                    <span class="hw-unit-badge" id="cpuUnitStateBadge">⚪ Ожидание</span>
+                  </div>
+                  <div class="hw-unit-metric-row">
+                    <div class="hw-unit-metric" id="cpuUnitMetricVal">0 / 12 потоков</div>
+                    <span class="hw-unit-saved-pill cpu-saved" id="cpuUnitSavedPill" title="Индекс триграмм BM25F, батчи воркеров и скорость CPU Cross-Reranker">0 тригр.</span>
+                  </div>
+                  <div class="hw-unit-op" id="cpuUnitOpText">Дежурит в пуле · внутренних задач сейчас нет</div>
+                  <div class="hw-afterglow-track hw-liquid-tank" id="cpuUnitThreadBar">
+                    <div class="hw-afterglow-fill" id="cpuUnitAfterglowFill">
+                      <span class="hw-liquid-wave" aria-hidden="true"></span>
+                    </div>
+                    <span class="hw-tank-pct" id="cpuUnitCapPct">0%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div id="hwQuickActionsBar" class="hw-quick-actions-bar">
+              <button type="button" class="win-btn" data-action="autoCalibrateHardware" title="Автоматически определить CPU, ОЗУ и видеокарту и выставить безопасные лимиты">🔍 Калибровка</button>
+              <button type="button" class="win-btn" data-action="sendHardwareTunePrompt" title="Сформировать паспорт вашего ПК и отправить в чат ИИ для подбора моделей">✨ Подбор в чате</button>
+              <button type="button" class="win-btn" data-action="runGpuPanelAction" data-arg="warm" title="Проиндексировать текущий проект для поиска по смыслу">🚀 Индекс</button>
+              <button type="button" class="win-btn" data-action="runGpuPanelAction" data-arg="test_distill" title="Проверить сжатие тестового лога на видеокарте">🔌 Тест GPU</button>
+              <button type="button" class="win-btn" data-action="runGpuPanelAction" data-arg="unload" title="Мгновенно выгрузить нейросети из видеопамяти">🧹 Сброс VRAM</button>
+            </div>
+
+            <div class="sunken-box" style="margin-top: 0;">
+              <div class="gpu-models-picker" id="gpuModelsPicker">
+                <div class="gpu-model-field">
+                  <span class="gpu-model-label" id="lbl-gpuChatModel">💬 Чат / сжатие</span>
+                  <div class="lg-select-wrap">
+                    <select id="sel-gpuChatModel" class="lg-select-native" tabindex="-1" aria-hidden="true" data-change-action="selectGpuModel" data-key="gpuChatModel"></select>
+                    <button type="button" id="btn-gpuChatModel" class="lg-input lg-select lg-select-trigger" data-action="toggleCustomSelect" data-arg="sel-gpuChatModel" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="lbl-gpuChatModel btn-gpuChatModel-val" title="Локальная модель Ollama для сжатия логов и анализа">
+                      <span class="lg-select-trigger-text" id="btn-gpuChatModel-val">gemma4:12b</span>
+                      <svg class="lg-select-chevron" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="gpu-model-field">
+                  <span class="gpu-model-label" id="lbl-gpuEmbedModel">🧭 Поиск (Embed)</span>
+                  <div class="lg-select-wrap">
+                    <select id="sel-gpuEmbedModel" class="lg-select-native" tabindex="-1" aria-hidden="true" data-change-action="selectGpuModel" data-key="gpuEmbedModel"></select>
+                    <button type="button" id="btn-gpuEmbedModel" class="lg-input lg-select lg-select-trigger" data-action="toggleCustomSelect" data-arg="sel-gpuEmbedModel" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="lbl-gpuEmbedModel btn-gpuEmbedModel-val" title="Локальная модель эмбеддингов для семантического поиска">
+                      <span class="lg-select-trigger-text" id="btn-gpuEmbedModel-val">qwen3-embedding:0.6b</span>
+                      <svg class="lg-select-chevron" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </button>
+                  </div>
+                </div>
+                <button type="button" class="win-btn gpu-model-search-btn" data-action="prepareModelSearchPrompt" title="Собрать список установленных моделей и сразу отправить запрос в чат для поиска актуальных версий">🔎 Поиск моделей</button>
+              </div>
+              <div style="font-size: 10.5px; color: var(--text-sub); margin-top: 2px;" id="ramCacheSubLine">
+                Векторный индекс: ожидание прогрева
+              </div>
+              <div id="gpuCascadeToolbarRow" style="display: none; align-items: center; gap: 8px; margin-top: 4px;">
+                <button type="button" class="win-btn" id="btnPullCascadeToolbar" data-action="startGpuCascadePull" data-arg="cascade" title="Скачать дедуплицированный каскад моделей под все лимиты вашей видеокарты (с автофоллбэком на Hugging Face)">⬇️ Каскад моделей</button>
+              </div>
+
+              <div id="gpuCascadePullBox" class="gpu-pull-progress-box" role="status" style="display: none;">
+                <div class="gpu-pull-head">
+                  <span id="gpuCascadePullTitle">⬇️ Загрузка каскада моделей...</span>
+                  <button type="button" class="win-btn" data-action="cancelGpuCascadePull" style="padding:1px 7px;font-size:10px;">✕ Отмена</button>
+                </div>
+                <div class="gpu-pull-bar-track">
+                  <div class="gpu-pull-bar-fill" id="gpuCascadePullFill" style="width: 0%;"></div>
+                </div>
+                <div class="gpu-pull-sub" id="gpuCascadePullSub">Подготовка загрузки...</div>
+              </div>
+
+              <div id="gpuVramFitAlert" class="gpu-vram-fit-alert" role="alert" style="display: none;">
+                <div class="gpu-vram-fit-title" id="gpuVramFitTitle">⚠️ Нет подходящей модели для выбранного лимита VRAM</div>
+                <div class="gpu-vram-fit-desc" id="gpuVramFitDesc"></div>
+                <div class="gpu-vram-fit-actions">
+                  <button type="button" class="win-btn gpu-vram-fit-btn" id="btnVramFitCascadePull" data-action="startGpuCascadePull" data-arg="cascade">⬇️ Скачать каскад под все лимиты</button>
+                  <button type="button" class="win-btn" id="btnVramFitPrompt" data-action="sendVramFitModelPrompt">💬 Подобрать в чате</button>
+                  <button type="button" class="win-btn" id="btnApplyFallbackGpuModel" data-action="applySuggestedVramModel" data-arg="" style="display: none;"></button>
+                </div>
+              </div>
+
+              <div class="control-row" style="margin-top: 8px;">
+                <span>Лимит VRAM:<span class="hw-cap-hint" id="gpuVramCapHint"></span></span>
+                <div class="win-btn-group" id="gpuVramCapGroup">
+                  <button type="button" class="win-btn" data-val="4096" data-action="setGpuVramCap" data-arg="4096">4 ГБ</button>
+                  <button type="button" class="win-btn" data-val="6144" data-action="setGpuVramCap" data-arg="6144">6 ГБ</button>
+                  <button type="button" class="win-btn" data-val="8192" data-action="setGpuVramCap" data-arg="8192">8 ГБ</button>
+                  <button type="button" class="win-btn" data-val="12288" data-action="setGpuVramCap" data-arg="12288">12 ГБ</button>
+                  <button type="button" class="win-btn" data-val="14336" data-action="setGpuVramCap" data-arg="14336">14 ГБ</button>
+                  <button type="button" class="win-btn" data-val="16384" data-action="setGpuVramCap" data-arg="16384">16 ГБ</button>
+                  <button type="button" class="win-btn" data-val="24576" data-action="setGpuVramCap" data-arg="24576">24 ГБ</button>
+                  <button type="button" class="win-btn" data-val="32768" data-action="setGpuVramCap" data-arg="32768">32 ГБ</button>
+                </div>
+              </div>
+              <div class="control-row" style="margin-top: 6px;">
+                <span title="Сколько оперативной памяти выделить под быстрый кэш файлов и индекс проекта (ramMaxBudgetMb)">Лимит In-RAM:<span class="hw-cap-hint" id="ramBudgetCapHint"></span></span>
+                <div class="win-btn-group" id="ramBudgetMainGroup">
+                  <button type="button" class="win-btn" data-val="1024" data-action="setRamBudget" data-arg="1024">1 ГБ</button>
+                  <button type="button" class="win-btn" data-val="2048" data-action="setRamBudget" data-arg="2048">2 ГБ</button>
+                  <button type="button" class="win-btn" data-val="4096" data-action="setRamBudget" data-arg="4096">4 ГБ</button>
+                  <button type="button" class="win-btn" data-val="6144" data-action="setRamBudget" data-arg="6144">6 ГБ</button>
+                  <button type="button" class="win-btn" data-val="8192" data-action="setRamBudget" data-arg="8192">8 ГБ</button>
+                  <button type="button" class="win-btn" data-val="12288" data-action="setRamBudget" data-arg="12288">12 ГБ</button>
+                  <button type="button" class="win-btn" data-val="16384" data-action="setRamBudget" data-arg="16384">16 ГБ</button>
+                  <button type="button" class="win-btn" data-val="24576" data-action="setRamBudget" data-arg="24576">24 ГБ</button>
+                  <button type="button" class="win-btn" data-val="32768" data-action="setRamBudget" data-arg="32768">32 ГБ</button>
+                </div>
+              </div>
+              <div class="control-row" style="margin-top: 6px;">
+                <span title="Сколько рабочих потоков выделить пулу процессора для параллельного разбора AST, чанков и проверок (cpuMaxThreads)">Потоки CPU-пула:<span class="hw-cap-hint" id="cpuThreadsCapHint"></span></span>
+                <div class="win-btn-group" id="cpuThreadsCapGroup">
+                  <button type="button" class="win-btn" data-val="2" data-action="setCpuMaxThreads" data-arg="2">2</button>
+                  <button type="button" class="win-btn" data-val="4" data-action="setCpuMaxThreads" data-arg="4">4</button>
+                  <button type="button" class="win-btn" data-val="6" data-action="setCpuMaxThreads" data-arg="6">6</button>
+                  <button type="button" class="win-btn" data-val="10" data-action="setCpuMaxThreads" data-arg="10">10</button>
+                  <button type="button" class="win-btn" data-val="12" data-action="setCpuMaxThreads" data-arg="12">12</button>
+                  <button type="button" class="win-btn" data-val="16" data-action="setCpuMaxThreads" data-arg="16">16</button>
+                  <button type="button" class="win-btn" data-val="24" data-action="setCpuMaxThreads" data-arg="24">24</button>
+                  <button type="button" class="win-btn" data-val="32" data-action="setCpuMaxThreads" data-arg="32">32</button>
+                  <button type="button" class="win-btn" data-val="48" data-action="setCpuMaxThreads" data-arg="48">48</button>
+                  <button type="button" class="win-btn" data-val="64" data-action="setCpuMaxThreads" data-arg="64">64</button>
+                </div>
+              </div>
+
+              <div style="margin-top: 6px; padding-top: 4px; border-top: 1px solid var(--border-hairline);">
+                <label class="toggle-row">
+                  <input type="checkbox" id="chk-gpuEnabled" data-action="toggleOption" data-key="gpuEnabled" />
+                  <span><strong>Включить GPU</strong> — локальный помощник на видеокарте</span>
+                </label>
+                <label class="toggle-row">
+                  <input type="checkbox" id="chk-gpuSemanticSearch" data-action="toggleOption" data-key="gpuSemanticSearch" />
+                  <span><strong>Поиск по смыслу</strong> — находит код по описанию</span>
+                </label>
+                <label class="toggle-row">
+                  <input type="checkbox" id="chk-gpuAutoDistillLogs" data-action="toggleOption" data-key="gpuAutoDistillLogs" />
+                  <span><strong>Сжатие логов</strong> — локальная выжимка длинных ошибок</span>
+                </label>
+                <label class="toggle-row" title="Сверхбыстрая проверка добавленных строк на необъявленные переменные и опциональный разбор диффа на локальной GPU">
+                  <input type="checkbox" id="chk-gpuPostEditCritic" data-action="toggleOption" data-key="gpuPostEditCritic" />
+                  <span><strong>Ревизор правок</strong> — ловит забытые переменные и баги в диффах</span>
+                </label>
+              </div>
+
+              <div class="divider"></div>
+              <div style="margin-top: 4px;">
+                <label class="toggle-row">
+                  <input type="checkbox" id="chk-cpuMulticoreEnabled" data-action="toggleOption" data-key="cpuMulticoreEnabled" />
+                  <span><strong>Пул потоков CPU</strong> — параллельный разбор AST и чанков</span>
+                </label>
+                <label class="toggle-row">
+                  <input type="checkbox" id="chk-cpuTrigramIndex" data-action="toggleOption" data-key="cpuTrigramIndex" />
+                  <span><strong>Триграммы + BM25F</strong> — мгновенный индекс поиска в RAM</span>
+                </label>
+                <label class="toggle-row">
+                  <input type="checkbox" id="chk-cpuCrossRerank" data-action="toggleOption" data-key="cpuCrossRerank" />
+                  <span><strong>CPU Cross-Reranker</strong> — умный локальный отбор совпадений (&lt;15 мс)</span>
+                </label>
+                <label class="toggle-row">
+                  <input type="checkbox" id="chk-cpuParallelVerify" data-action="toggleOption" data-key="cpuParallelVerify" />
+                  <span><strong>Параллельная проверка</strong> — быстрые микро-тесты и ddmin</span>
+                </label>
+                <label class="toggle-row">
+                  <input type="checkbox" id="chk-cpuSotaEngines" data-action="toggleOption" data-key="cpuSotaEngines" />
+                  <span><strong>Граф PPR, SBFL и Bitap-исцеление</strong> — скрытые пары Git, локализация багов Ochiai и проверка арности</span>
+                </label>
+                <label class="toggle-row">
+                  <input type="checkbox" id="chk-ramSotaEngines" data-action="toggleOption" data-key="ramSotaEngines" />
+                  <span><strong>SOTA-ускорители ОЗУ (Zero-Copy + RepairKV)</strong> — общая память SharedArrayBuffer, мемоизация ACON и префетч</span>
+                </label>
+                <label class="toggle-row">
+                  <input type="checkbox" id="chk-gpuWarmHostRamCache" data-action="toggleOption" data-key="gpuWarmHostRamCache" />
+                  <span><strong>Прогрев моделей в DDR5 ОЗУ</strong> — держит веса GGUF в свободной RAM для мгновенного старта GPU</span>
+                </label>
+              </div>
+            </div>
+      </section>
+
+      <!-- 4.6. ФОНОВЫЙ ДОЗОР (IDLE SENTINEL · P0 AUTO-YIELD) -->
+      <section class="lg-card reorderable-block is-collapsed" id="sentinelSectionCard">
+        <div class="lg-card-head">
+          <span class="lg-card-title">🛡️ Фоновый Дозор · P0 Auto-Yield</span>
+          <div class="lg-card-head-actions">
+            <span class="sentinel-live-badge is-idle" id="sentinelLiveBadge">Ожидание простоя</span>
+            <button type="button" class="lg-card-collapse-btn" data-action="togglePanelCardCollapse" data-arg="sentinelSectionCard" aria-expanded="false" aria-label="Показать содержимое блока" title="Показать содержимое блока"></button>
+          </div>
+        </div>
+
+        <div class="sentinel-status-box sentinel-card-body" id="sentinelStatusBox">
+          <div class="sentinel-head-row">
+            <span class="lg-card-sub">Тихая проверка контрактов, паспортов и git diff в паузах</span>
+            <div class="sentinel-actions">
+              <button type="button" class="win-btn sentinel-action-btn" id="btnRunSentinelNow" data-action="runSentinelNow" title="Запустить мгновенную фоновую проверку контрактов и индексацию">Проверить сейчас</button>
+              <button type="button" class="win-btn sentinel-action-btn" id="btnClearSentinelFindings" data-action="clearSentinelFindings" style="display: none;" disabled title="Сбросить накопленные предупреждения и находки Фонового Дозора">Сброс</button>
+            </div>
+          </div>
+
+                <div class="sentinel-metrics-grid">
+                  <div class="sentinel-metric-cell">
+                    <div class="sentinel-metric-lbl">Контракты (CPU)</div>
+                    <div class="sentinel-metric-val is-ok" id="sentinelHealthVal">Чисто</div>
+                  </div>
+                  <div class="sentinel-metric-cell">
+                    <div class="sentinel-metric-lbl">Паспорта (GPU)</div>
+                    <div class="sentinel-metric-val" id="sentinelCardsVal">0 / 0 (0%)</div>
+                  </div>
+                  <div class="sentinel-metric-cell">
+                    <div class="sentinel-metric-lbl">Локальный BugBot</div>
+                    <div class="sentinel-metric-val is-ok" id="sentinelBugBotVal">Чисто</div>
+                  </div>
+                  <div class="sentinel-metric-cell">
+                    <div class="sentinel-metric-lbl">Упреждение / P0</div>
+                    <div class="sentinel-metric-val" id="sentinelSpecVal">Префетч: 0 · Уступок: 0</div>
+                  </div>
+                </div>
+
+                <div class="sentinel-findings-list" id="sentinelFindingsList" style="display: none;"></div>
+
+                <div class="sentinel-toggles-wrap">
+                  <label class="toggle-row">
+                    <input type="checkbox" id="chk-sentinelEnabled" data-action="toggleOption" data-key="sentinelEnabled" />
+                    <span><strong>Фоновый Дозор (Idle Sentinel)</strong> — индексация и проверка в паузах с мгновенным P0-вытеснением</span>
+                  </label>
+                  <label class="toggle-row">
+                    <input type="checkbox" id="chk-sentinelShadowGuard" data-action="toggleOption" data-key="sentinelShadowGuard" />
+                    <span><strong>Теневой Дозор (CPU + RAM)</strong> — контракты аргументов, импорты, пары Git Co-Change и клоны SimHash</span>
+                  </label>
+                  <label class="toggle-row">
+                    <input type="checkbox" id="chk-sentinelLocalBugBot" data-action="toggleOption" data-key="sentinelLocalBugBot" />
+                    <span><strong>Локальный BugBot (GPU)</strong> — тихое ИИ-ревью <code>git diff</code> в глубоком простое</span>
+                  </label>
+                  <label class="toggle-row">
+                    <input type="checkbox" id="chk-sentinelSymbolCards" data-action="toggleOption" data-key="sentinelSymbolCards" />
+                    <span><strong>Семантические паспорта модулей</strong> — карточки смысла по SHA-256 для точного поиска</span>
+                  </label>
+                  <label class="toggle-row">
+                    <input type="checkbox" id="chk-sentinelSpeculativeWarm" data-action="toggleOption" data-key="sentinelSpeculativeWarm" />
+                    <span><strong>Упреждающий прогрев контекста</strong> — сборка срезов пока вы печатаете в Композере</span>
+                  </label>
+                  <label class="toggle-row">
+                    <input type="checkbox" id="chk-sentinelShadowTests" data-action="toggleOption" data-key="sentinelShadowTests" />
+                    <span><strong>Фоновые микро-тесты (песочница)</strong> — автопрогон только в длинной паузе (по умолч. выкл)</span>
+                  </label>
+                  <label class="toggle-row">
+                    <input type="checkbox" id="chk-lspBridgeEnabled" data-action="toggleOption" data-key="lspBridgeEnabled" />
+                    <span><strong>Живой LSP-мост (Типы &lt;50 мс)</strong> — мгновенная диагностика TS/Python/Go/Rust и поиск ссылок</span>
+                  </label>
+                </div>
+              </div>
+      </section>
+
+      <!-- 5. СНИМКИ ОТКАТА, САМООБУЧЕНИЕ И BAYESIAN V2 (КОМПАКТНЫЙ СПОЙЛЕР) -->
+      <details class="expert-spoiler" id="snapshotsBayesianSpoiler">
+        <summary>🛡️ Снимки отката, Самообучение и Bayesian v2</summary>
+        <div class="spoiler-stack" id="snapshotsInnerStack">
+          <section class="lg-card" id="checkpointsCard">
+            <div class="lg-card-head">
+              <div style="display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap;">
+                <span class="lg-card-title">Снимки и откат правок</span>
+                <span id="checkpointsScopeBadge" class="ag-project-pill" style="font-size: 10px; padding: 1px 7px;" title="Текущий проект в ленте снимков"></span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">
+                <div class="win-btn-group" id="checkpointsViewGroup">
+                  <button type="button" class="win-btn active" data-view="turns" data-action="setCheckpointsViewMode" data-arg="turns" title="Группировать правки по ходам агента">По ходам</button>
+                  <button type="button" class="win-btn" data-view="files" data-action="setCheckpointsViewMode" data-arg="files" title="Отдельные снимки каждого файла">По файлам</button>
+                </div>
+                <button type="button" class="win-btn" data-action="rollbackLatestTurn" title="Откатить все файлы последнего хода к состоянию до начала ответа">
+                  ↶ Откатить ход
+                </button>
+                <button type="button" class="win-btn" data-action="rollbackLastCheckpoint" title="Откатить последнюю правку файла">
+                  ↶ Файл
+                </button>
+              </div>
+            </div>
+            <div class="sunken-box checkpoints-scroll" id="checkpointsContainer">
+              <div style="color: var(--text-sub); font-size: 11px; padding: 4px;">Снимки файлов создаются автоматически перед правками</div>
+            </div>
+            <div class="sunken-box" id="shadowWorktreeBar" style="margin-top: 6px; padding: 6px 8px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px; flex-wrap: wrap;">
+                <span style="font-size: 10.5px; font-weight: 600; color: var(--accent-cyan);">🌿 Git-песочница (Worktree)</span>
+                <button type="button" class="win-btn" style="padding: 1px 7px; font-size: 10px;" data-action="worktreeAction" data-mode="create" title="Создать изолированную копию репозитория git worktree">+ Песочница</button>
+              </div>
+              <div id="shadowWorktreeList" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px;">Изолированных песочниц не создано</div>
+            </div>
+          </section>
+
+          <section class="lg-card" id="intelligenceBayesianCard">
+            <div class="lg-card-head">
+              <span class="lg-card-title">Интеллект и самообучение</span>
+              <span class="lg-card-sub" style="color: var(--status-ok); font-weight: 600;">Активно ✓</span>
+            </div>
+            <div class="sunken-box">
+              <div style="display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 11.5px; color: var(--status-ok);">
+                <span>🧠</span>
+                <span id="autopilotHealthTitle">Глубокое мышление без урезания и разведка файлов активны</span>
+              </div>
+              <div id="autopilotLiveTelemetry" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px; line-height: 1.4;">
+                Память диалога: в норме · Зацикливаний: нет
+              </div>
+            </div>
+            <div class="sunken-box" id="bayesianWidget" style="margin-top: 8px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px;">
+                <div style="font-weight: 600; font-size: 11px; color: var(--accent-cyan);">
+                  🎯 Bayesian v2 · Хрупкость файлов
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                  <span id="bayesianSummaryMeta" style="font-size: 10.5px; color: var(--text-sub);">Доверие: —</span>
+                  <button type="button" class="win-btn" data-action="resetWorkspaceFragility" title="Сбросить список хрупких файлов только для выбранного проекта">↺ Хрупкость</button>
+                  <button type="button" class="win-btn" data-action="resetBayesianPriors" title="Полный сброс глобальных весов и хрупкости">↺ Сбросить</button>
+                </div>
+              </div>
+              <div id="bayesianDomainsLine" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px;">Домены: нет накопленных запусков</div>
+              <div id="bayesianFragileList" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px; line-height: 1.4;"></div>
+            </div>
+          </section>
+        </div>
+      </details>
+
+      <!-- 6. ТОНКАЯ НАСТРОЙКА ДЛЯ ЭКСПЕРТОВ -->
+      <details class="expert-spoiler" id="expertDetailsBox">
+        <summary>⚙️ Экспертные параметры (25+ контуров защиты и диагностика)</summary>
+
+        <div class="spoiler-stack" id="expertInnerStack" style="margin-top: 10px;">
+          <!-- 1. Индикатор автомата Thrashing Circuit Breaker -->
+          <div class="sunken-box" id="expertCircuitBox" style="margin-bottom: 8px;">
+            <div id="expertCircuitHeadRow" style="display: flex; justify-content: space-between; align-items: center; gap: 6px;">
+              <div style="display: flex; align-items: center; gap: 7px; margin-right: auto;">
+                <span id="circuitDot" class="circuit-dot closed"></span>
+                <span style="font-weight: 600; font-size: 11.5px;">Circuit Breaker:</span>
+                <span id="circuitBadgeText" style="font-size: 11px; font-weight: 700; color: var(--status-ok);">НОРМА (0/3)</span>
+              </div>
+              <button type="button" class="win-btn" data-action="resetCircuitBreaker">
+                Сбросить
+              </button>
+            </div>
+            <div id="circuitReason" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px;">
+              Автомат замкнут. Защита от зацикливания правок активна.
+            </div>
+          </div>
+
+          <!-- 2. Реестр граблей проекта (Episodic Pitfall Ledger) -->
+          <div class="sunken-box" id="expertPitfallsBox" style="margin-bottom: 8px;">
+            <div id="expertPitfallsHeadRow" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; gap: 6px;">
+              <span style="font-weight: 600; font-size: 11px; color: var(--accent-cyan); margin-right: auto;">Реестр граблей (Pitfall Ledger)</span>
+              <button type="button" class="win-btn" data-action="clearPitfalls">
+                Очистить
+              </button>
+            </div>
+            <div class="pitfalls-scroll" id="pitfallsContainer">
+              <div style="color: var(--text-sub); font-size: 10.5px; padding: 2px;">Пока нет зафиксированных сбоев/откатов</div>
+            </div>
+          </div>
+
+          <!-- 2.5. Хаб знаний SQLite WAL: Рецепты побед, Эпизоды и Связанные репозитории -->
+          <div class="sunken-box" id="expertKnowledgeBox" style="margin-bottom: 8px;">
+            <div id="expertKnowledgeHeadRow" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; gap: 6px; flex-wrap: wrap;">
+              <span style="font-weight: 600; font-size: 11px; color: var(--accent-cyan); margin-right: auto;">Рецепты побед и Кросс-репо (SQLite)</span>
+              <span id="knowledgeStatsBadge" style="font-size: 10px; color: var(--text-sub);">0 рец.</span>
+              <button type="button" class="win-btn" data-action="loadSessionEpisodes" title="Показать сохранённые эпизоды прошлых сессий (SQLite FTS5)">Эпизоды</button>
+              <button type="button" class="win-btn" data-action="clearVictoryRecipes" title="Очистить сохранённые рецепты успешных починок">Очистить</button>
+            </div>
+            <label class="toggle-row" style="margin-bottom: 4px;">
+              <input type="checkbox" id="chk-sqliteKnowledgeEnabled" data-action="toggleOption" data-key="sqliteKnowledgeEnabled" />
+              <span><strong>NVMe-память (<code>node:sqlite</code>)</strong> — персистентный RepairKV, рецепты побед и кросс-репо поиск</span>
+            </label>
+            <div id="knowledgeExtendedStats" style="font-size: 10px; color: var(--text-sub); margin-bottom: 4px;">Эпизоды: 0 · CCR-блобы: 0 · RepairKV: 0 · Инстинкты: 0</div>
+            <div class="pitfalls-scroll" id="victoryRecipesContainer" style="margin-bottom: 6px;">
+              <div style="color: var(--text-sub); font-size: 10.5px; padding: 2px;">Пока нет сохранённых рецептов побед</div>
+            </div>
+            <div class="pitfalls-scroll" id="sessionEpisodesContainer" style="display: none; margin-bottom: 6px; font-size: 10.5px;"></div>
+            <div style="display: flex; gap: 4px; align-items: center; margin-bottom: 4px;">
+              <input type="text" id="federatedPeerInput" class="win-input" placeholder="Путь к связанному репозиторию (напр. ../api)" style="flex: 1; font-size: 11px; padding: 3px 6px;" />
+              <button type="button" class="win-btn" data-action="addFederatedPeer" title="Привязать смежный репозиторий для кросс-проектного поиска">Связать</button>
+            </div>
+            <div id="federatedPeersContainer" style="font-size: 10.5px; color: var(--text-sub);"></div>
+          </div>
+
+          <!-- 25+ систем разведки, мышления и защиты -->
+          <section class="lg-card" id="expertGuardrailsCard" style="margin-top: 8px;">
+            <div class="lg-card-head">
+              <span class="lg-card-title">25+ контуров разведки и защиты</span>
+            </div>
+            <div class="control-row" style="margin: 2px 0 4px;">
+              <span style="font-weight: 600; font-size: 10.5px; color: var(--text-main);">Профиль хуков (<code>Hook Profile</code>):</span>
+              <div class="win-btn-group" id="hookProfileGroup">
+                <button type="button" class="win-btn" data-val="minimal" data-action="setHookProfile" data-arg="minimal" title="Минимальные задержки для прототипов: отключает тяжёлые каскадные и мутационные проверки">Лёгкий</button>
+                <button type="button" class="win-btn active" data-val="standard" data-action="setHookProfile" data-arg="standard" title="Стандартный баланс: использует индивидуальные переключатели ниже">Стандарт</button>
+                <button type="button" class="win-btn" data-val="strict" data-action="setHookProfile" data-arg="strict" title="Строгий аудит: принудительно включает все ключевые щиты, LSP и защиту конфигов">Строгий</button>
+              </div>
+            </div>
+            <div id="hookProfileHint" style="font-size: 10px; color: var(--text-sub); margin-bottom: 6px;">
+              Профиль «Стандарт»: действуют ваши индивидуальные переключатели контуров.
+            </div>
+            <div style="font-weight: 600; color: var(--accent-cyan); margin: 2px 0 4px; font-size: 10.5px;">🧭 Разведка и память проекта</div>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-repoMap" data-action="toggleOption" data-key="repoMap" />
+              <span><strong>Умная карта проекта</strong> (<code>RepoGraph</code>) — граф символов и связей</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-pageRankGraph" data-action="toggleOption" data-key="pageRankGraph" />
+              <span><strong>Граф PageRank</strong> (<code>PageRank Graph</code>) — приоритет ключевых модулей</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-zeroTurnSlices" data-action="toggleOption" data-key="zeroTurnSlices" />
+              <span><strong>Точечная нарезка кода</strong> (<code>Zero-Turn · SWE-Pruner</code>) — AST-срезы, Call-Graph и 2-Hop контракты</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-sessionHandoff" data-action="toggleOption" data-key="sessionHandoff" />
+              <span><strong>Память между чатами</strong> (<code>Session Handoff</code>) — перенос цели и контекста</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-pitfallLedger" data-action="toggleOption" data-key="pitfallLedger" />
+              <span><strong>Память граблей</strong> (<code>Pitfall Ledger</code>) — фиксация откатов и сбоев</span>
+            </label>
+
+            <div class="divider"></div>
+            <div style="font-weight: 600; color: var(--accent-cyan); margin: 4px 0; font-size: 10.5px;">🧠 3D-Триаж, обучение и бюджет токенов</div>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-thinkingLimiter" data-action="toggleOption" data-key="thinkingLimiter" />
+              <span><strong>3D-Триаж и мышление</strong> (<code>Ширина × Глубина × Риск</code>) — шкала <code>S/M/L/XL</code></span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-bayesianRouter" data-action="toggleOption" data-key="bayesianRouter" />
+              <span><strong>Самообучение CoDyn Bayesian v2</strong> (<code>File Fragility</code>) — оценка хрупкости и 1-го прохода</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-toolPruning" data-action="toggleOption" data-key="toolPruning" />
+              <span><strong>Фильтр инструментов</strong> (<code>Tool Pruning</code>) — только нужные под задачу</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-readDedup" data-action="toggleOption" data-key="readDedup" />
+              <span><strong>Дедупликатор чтения</strong> (<code>Read-Once Guard</code>) — защита от повторного чтения</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-obsMasking" data-action="toggleOption" data-key="obsMasking" />
+              <span><strong>Сжатие шумных логов</strong> (<code>RTK v2 · Fault Pinning</code>) — компактный вывод тестов и диффов</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-historyCompaction" data-action="toggleOption" data-key="historyCompaction" />
+              <span><strong>Автозащита от перегруза чата</strong> (<code>Frozen Prefix · AgentDiet</code>) — дайджест эпох и перенос в свежий чат</span>
+            </label>
+            <div style="margin: 3px 2px 6px 2px;">
+              <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-sub); margin-bottom: 2px;">
+                <span>Заполнение контекста эпохи:</span>
+                <span id="compactionLabel">Эпоха #0 · 0% от 120k</span>
+              </div>
+              <div class="compaction-meter">
+                <div class="compaction-bar" id="compactionBar" style="width: 0%;"></div>
+              </div>
+              <div style="display: flex; justify-content: space-between; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; font-size: 10px; color: var(--text-sub);">
+                <label for="sel-compactionThreshold">Порог сжатия эпохи:</label>
+                <select id="sel-compactionThreshold" class="win-input" style="padding: 1px 6px; font-size: 10.5px; width: auto;" data-change-action="setCompactionThreshold">
+                  <option value="80000">80k токенов</option>
+                  <option value="120000" selected>120k токенов (рек.)</option>
+                  <option value="180000">180k токенов</option>
+                  <option value="250000">250k токенов</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+            <div style="font-weight: 600; color: var(--accent-cyan); margin: 4px 0; font-size: 10.5px;">🛡️ Безопасность и верификация правок</div>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-diffOnly" data-action="toggleOption" data-key="diffOnly" />
+              <span><strong>Безопасные Diff-патчи</strong> (<code>Diff-Only · Fuzzy-AST</code>) — точечные правки с выравниванием отступов</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-transactionalPatch" data-action="toggleOption" data-key="transactionalPatch" />
+              <span><strong>Проверка до записи</strong> (<code>Transactional Patch</code>) — тест синтаксиса в RAM</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-shadowCheckpoints" data-action="toggleOption" data-key="shadowCheckpoints" />
+              <span><strong>Резервные снимки</strong> (<code>Shadow Checkpoints</code>) — бэкапы для мгновенного отката</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-shadowWorktreeEnabled" data-action="toggleOption" data-key="shadowWorktreeEnabled" />
+              <span><strong>Изолированная Git-песочница</strong> (<code>Shadow Worktree</code>) — безопасный прогон патчей в отдельной директории</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-blastRadius" data-action="toggleOption" data-key="blastRadius" />
+              <span><strong>Контроль связей</strong> (<code>Blast Radius</code>) — анализ обратных импортов</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-selfVerify" data-action="toggleOption" data-key="selfVerify" />
+              <span><strong>Авто-проверка синтаксиса</strong> (<code>Self-Verify</code>) — мгновенный разбор AST/TS</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-cascadeVerify" data-action="toggleOption" data-key="cascadeVerify" />
+              <span><strong>Каскадная проверка</strong> (<code>Cascade Verify</code>) — сигнал при повторных сбоях</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-testImpactVerify" data-action="toggleOption" data-key="testImpactVerify" />
+              <span><strong>Прогон затронутых тестов</strong> (<code>Test-Impact Verify</code>) — микро-тесты по связям</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-circuitBreaker" data-action="toggleOption" data-key="circuitBreaker" />
+              <span><strong>Стоп-кран зацикливания</strong> (<code>Circuit Breaker</code>) — пауза на 3 ошибках и осцилляциях</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-securityGuard" data-action="toggleOption" data-key="securityGuard" />
+              <span><strong>Фаервол команд и секретов</strong> (<code>Security Guard</code>) — защита <code>.env</code></span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-configProtection" data-action="toggleOption" data-key="configProtection" />
+              <span><strong>Защита конфигов линтеров</strong> (<code>Config Protection</code>) — запрет ослабления правил и <code>--no-verify</code></span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-runtimeWiretapEnabled" data-action="toggleOption" data-key="runtimeWiretapEnabled" />
+              <span><strong>Перехватчик сбоев рантайма</strong> (<code>ag watch · Wiretap</code>) — захват ошибок процесса в Композер</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-quotaPacerEnabled" data-action="toggleOption" data-key="quotaPacerEnabled" />
+              <span><strong>Предиктор квоты и префикса</strong> (<code>Quota Pacer</code>) — контроль темпа расхода за 30/60 мин</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-composerVoiceEnabled" data-action="toggleOption" data-key="composerVoiceEnabled" />
+              <span><strong>Микрофон в Умном Композере</strong> (<code>Voice Structuring</code>, по умолч. выкл) — Web Speech + локальная очистка промпта</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-mutationGuardEnabled" data-action="toggleOption" data-key="mutationGuardEnabled" />
+              <span><strong>Семантический Mutation Guard</strong> (<code>CPU Sandbox</code>, по умолч. выкл) — проверка стойкости тестов на мутантах</span>
+            </label>
+
+            <div class="divider"></div>
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap;">
+              <span style="font-weight: 600; font-size: 10.5px; color: var(--accent-cyan);">🛡️ AgentShield и инстинкты проекта</span>
+              <div style="display: flex; gap: 4px; align-items: center; flex-wrap: wrap;">
+                <span class="swarm-pill idle" id="agentShieldBadge">Не проверено</span>
+                <button type="button" class="win-btn" style="padding: 2px 8px; font-size: 10.5px;" data-action="runAgentShield">Проверить AgentShield</button>
+                <button type="button" class="win-btn" style="padding: 2px 8px; font-size: 10.5px;" data-action="loadProjectInstincts">Инстинкты проекта</button>
+              </div>
+            </div>
+            <div id="agentShieldSummary" style="font-size: 10.5px; color: var(--text-sub); margin-bottom: 4px;">
+              Аудит конфигов MCP, хуков и <code>SKILL.md</code> на секреты и prompt-injection.
+            </div>
+            <div id="projectInstinctsList" class="pitfalls-scroll" style="font-size: 10.5px; color: var(--text-sub);">
+              <div>Нажмите «Инстинкты проекта» для просмотра накопленных паттернов.</div>
+            </div>
+          </section>
+
+          <!-- Оформление ответов и профиль -->
+          <section class="lg-card" id="expertProfileCard" style="margin-top: 8px;">
+            <div class="lg-card-head">
+              <span class="lg-card-title">Ответы и профиль</span>
+            </div>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-showBadge" data-action="toggleOption" data-key="showBadge" />
+              <span>Показывать плашку <code>[Режим | Сложность | Исполнитель | Скиллы]</code> в ответе</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-skillCrystallizer" data-action="toggleOption" data-key="skillCrystallizer" />
+              <span>Авто-сохранение успешных паттернов (<code>Skill Crystallizer</code>)</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-completionGates" data-action="toggleOption" data-key="completionGates" />
+              <span>Контроль доведения задач и заглушек (<code>Unlazy Gate</code>)</span>
+            </label>
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 6px; flex-wrap: wrap; margin: 4px 0 2px; font-size: 10.5px;">
+              <span id="gatesStatusBadge" style="color: var(--text-sub);">GATES.md: не проверен</span>
+              <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+                <button type="button" class="win-btn" style="padding: 1px 7px; font-size: 10px;" data-action="refreshGatesStatus">Проверить</button>
+                <button type="button" class="win-btn" style="padding: 1px 7px; font-size: 10px;" data-action="initGatesMd">Создать GATES.md</button>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+            <div class="control-row">
+              <span>Резервная копия профиля:</span>
+              <div class="win-btn-group">
+                <button type="button" class="win-btn" data-action="backupProfile">💾 Сохранить</button>
+                <button type="button" class="win-btn" data-action="restoreProfile">📂 Восстановить</button>
+              </div>
+            </div>
+            <div class="control-row" style="margin-top: 6px;">
+              <span>Контекст и карта кода:</span>
+              <div class="win-btn-group">
+                <button type="button" class="win-btn" data-action="compactDigest" title="Принудительно собрать компактный дайджест истории диалога">🗜️ Сжать дайджест</button>
+                <button type="button" class="win-btn" data-action="refreshRepoMap" title="Пересобрать AST-карту символов текущего проекта">🗺️ Обновить карту</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- Экспертный блок In-RAM кэша и локального Ollama/GPU -->
+          <section class="lg-card" style="margin-top: 8px;" id="expertRamGpuFieldset">
+            <div class="lg-card-head">
+              <span class="lg-card-title">In-RAM кэш и локальный Ollama / GPU</span>
+            </div>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-ramCacheEnabled" data-action="toggleOption" data-key="ramCacheEnabled" />
+              <span><strong>In-RAM кэш проекта</strong> (<code>ramCacheEnabled</code>) — мгновенные срезы из памяти</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-ramAutoWarmOnSessionStart" data-action="toggleOption" data-key="ramAutoWarmOnSessionStart" />
+              <span><strong>Авто-прогрев при старте</strong> (<code>ramAutoWarmOnSessionStart</code>)</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-gpuAutoStart" data-action="toggleOption" data-key="gpuAutoStart" />
+              <span><strong>Автозапуск Ollama</strong> (<code>gpuAutoStart</code>) — локальный сервер при обращении</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-gpuShowPreTaskAdvice" data-action="toggleOption" data-key="gpuShowPreTaskAdvice" />
+              <span><strong>GPU-подсказки до старта</strong> (<code>gpuShowPreTaskAdvice</code>)</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="chk-gpuUnloadOnExit" data-action="toggleOption" data-key="gpuUnloadOnExit" />
+              <span><strong>Выгружать VRAM при выходе</strong> (<code>gpuUnloadOnExit</code>) — очищать модели при закрытии Antigravity</span>
+            </label>
+
+            <div class="divider"></div>
+            <div class="control-row">
+              <span>Лимит In-RAM (<code>ramMaxBudgetMb</code>):</span>
+              <div class="win-btn-group" id="ramBudgetGroup">
+                <button type="button" class="win-btn" data-val="1024" data-action="setRamBudget" data-arg="1024">1 ГБ</button>
+                <button type="button" class="win-btn" data-val="2048" data-action="setRamBudget" data-arg="2048">2 ГБ</button>
+                <button type="button" class="win-btn" data-val="4096" data-action="setRamBudget" data-arg="4096">4 ГБ</button>
+                <button type="button" class="win-btn" data-val="6144" data-action="setRamBudget" data-arg="6144">6 ГБ</button>
+                <button type="button" class="win-btn" data-val="8192" data-action="setRamBudget" data-arg="8192">8 ГБ</button>
+                <button type="button" class="win-btn" data-val="12288" data-action="setRamBudget" data-arg="12288">12 ГБ</button>
+                <button type="button" class="win-btn" data-val="16384" data-action="setRamBudget" data-arg="16384">16 ГБ</button>
+                <button type="button" class="win-btn" data-val="24576" data-action="setRamBudget" data-arg="24576">24 ГБ</button>
+                <button type="button" class="win-btn" data-val="32768" data-action="setRamBudget" data-arg="32768">32 ГБ</button>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+            <div class="expert-gpu-grid">
+              <label style="display:flex; flex-direction:column; gap:3px;">
+                <span>Ollama Endpoint (loopback):</span>
+                <input type="text" id="inp-gpuEndpoint" class="lg-input" placeholder="http://127.0.0.1:11434" />
+              </label>
+              <label style="display:flex; flex-direction:column; gap:3px;">
+                <span>Chat-модель (<code>gpuChatModel</code>):</span>
+                <input type="text" id="inp-gpuChatModel" class="lg-input" placeholder="gemma4:12b" />
+              </label>
+              <label style="display:flex; flex-direction:column; gap:3px;">
+                <span>Embed-модель (<code>gpuEmbedModel</code>):</span>
+                <input type="text" id="inp-gpuEmbedModel" class="lg-input" placeholder="qwen3-embedding:0.6b" />
+              </label>
+              <label style="display:flex; flex-direction:column; gap:3px;">
+                <span>Keep-Alive (Chat / Embed) и Контекст:</span>
+                <div style="display:flex; gap:5px;">
+                  <input type="text" id="inp-gpuKeepAlive" class="lg-input" placeholder="15m" title="Keep-Alive для Chat-модели" style="width:27%;" />
+                  <input type="text" id="inp-gpuEmbedKeepAlive" class="lg-input" placeholder="90m" title="Keep-Alive для Embed-модели (gpuEmbedKeepAlive)" style="width:27%;" />
+                  <input type="number" id="inp-gpuContextTokens" class="lg-input" min="2048" max="32768" step="1024" placeholder="4096" title="Окно контекста Ollama (gpuContextTokens)" style="width:46%;" />
+                </div>
+              </label>
+              <label style="grid-column: 1 / -1; display:flex; flex-direction:column; gap:3px;">
+                <span>Папка моделей Ollama (<code>gpuModelsDir</code>):</span>
+                <input type="text" id="inp-gpuModelsDir" class="lg-input" placeholder="Авто (OLLAMA_MODELS / ~/.ollama/models)" />
+              </label>
+            </div>
+            <div class="expert-gpu-actions">
+              <button type="button" class="win-btn" data-action="saveExpertGpuConfig">💾 Применить параметры Ollama / RAM</button>
+            </div>
+          </section>
+        </div>
+      </details>
+    </div>
+
+    <div class="status-bar">
+      <div id="statusPill" class="status-pane">Готово · Синхронизировано</div>
+      <div class="status-pane" id="footerPluginVersion">The Tunnel v3.30.0</div>
+    </div>
+    <div style="text-align:center;font-size:10.5px;color:var(--text-sub);opacity:0.7;padding:4px 0 2px;letter-spacing:0.02em;">Created by Vasili Zuev</div>
+  </div>
+
+  <!-- МАСТЕР ПЕРВОЙ И БЫСТРОЙ НАСТРОЙКИ -->
+  <div class="wiz-overlay" id="onboardingWizardModal" role="dialog" aria-modal="true" aria-labelledby="wizModalBrandTitle">
+    <div>
+      <div class="wiz-head">
+        <div class="lg-brand">
+          <span class="lg-brand-orb"></span>
+          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v3.30.0</span>
+          <span class="lg-session-pill" id="wizLaunchBadge">Первый запуск</span>
+        </div>
+        <button class="lg-icon-btn round" type="button" data-action="closeOnboardingWizard" title="Отложить или закрыть окно настройки (Esc)">×</button>
+      </div>
+      <div class="wiz-steps-grid">
+        <button type="button" class="wiz-step-pill active" id="wizPill1" data-action="wizGoStep" data-arg="1">1. Железо и Тариф</button>
+        <button type="button" class="wiz-step-pill" id="wizPill2" data-action="wizGoStep" data-arg="2">2. Общение</button>
+        <button type="button" class="wiz-step-pill" id="wizPill3" data-action="wizGoStep" data-arg="3">3. Стиль и UI</button>
+        <button type="button" class="wiz-step-pill" id="wizPill4" data-action="wizGoStep" data-arg="4">4. Защита и Старт</button>
+      </div>
+    </div>
+
+    <div class="wiz-body-well" id="wizBodyContent"></div>
+
+    <div class="wiz-footer">
+      <span id="wizStepHint" class="wiz-step-hint">Шаг 1 из 4 · Калибровка ПК</span>
+      <div class="wiz-footer-actions">
+        <button type="button" class="win-btn" id="wizBackBtn" data-action="wizPrevStep">← Назад</button>
+        <button type="button" class="win-btn active" id="wizNextBtn" data-action="wizNextStep">Далее →</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="lgCustomSelectMenu" class="lg-select-menu" role="listbox" aria-hidden="true" hidden></div>
+
+  <script>
+/*__PANEL_SCRIPT__*/
+  </script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "name": "antigravity-model-router",
+  "displayName": "The Tunnel · Диспетчер моделей ИИ",
+  "version": "3.30.0",
+  "description": "The Tunnel v3.30.0 — интеллектуальный 3D-автопилот и диспетчер моделей ИИ: многопоточный CPU-сопроцессор (node:worker_threads до 64 потоков, триграммный+BM25F индекс, Zero-VRAM CPU Cross-Reranker <15 мс, параллельная верификация/ddmin), 3D-матрица задач (Ширина × Глубина × Риск), Bayesian v2 (14d + risk), In-RAM кэш (до 32 ГБ) + GPU (gemma4:12b + qwen3-embedding:0.6b, MRL-512 i8bin-v2) и интерактивный пульт управления.",
+  "author": {
+    "name": "Vasili Zuev",
+    "url": "https://github.com/vaszuevvas-coder"
+  },
+  "homepage": "https://github.com/vaszuevvas-coder/antigravity-model-router",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vaszuevvas-coder/antigravity-model-router.git"
+  },
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Открой панель управления The Tunnel",
+    "Какая стратегия маршрутизации моделей сейчас активна?",
+    "Оцени сложность задачи по 3D-матрице и распредели работу между Hydrogen, Neon и Carbon"
+  ]
+}

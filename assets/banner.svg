@@ -1,0 +1,211 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" width="100%" height="100%">
+  <defs>
+    <linearGradient id="hudBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#070b12"/>
+      <stop offset="52%" stop-color="#0c1524"/>
+      <stop offset="100%" stop-color="#071019"/>
+    </linearGradient>
+
+    <radialGradient id="glowCyan" cx="18%" cy="24%" r="48%">
+      <stop offset="0%" stop-color="#0ea5e9" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#0ea5e9" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="glowEmerald" cx="84%" cy="74%" r="46%">
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#10b981" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="panelFill" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#111c2d" stop-opacity="0.92"/>
+      <stop offset="100%" stop-color="#0a121f" stop-opacity="0.94"/>
+    </linearGradient>
+
+    <linearGradient id="cardFill" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#162438" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#0e1827" stop-opacity="0.92"/>
+    </linearGradient>
+
+    <linearGradient id="routeCyan" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#34d399"/>
+    </linearGradient>
+
+    <linearGradient id="routeViolet" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#a78bfa"/>
+    </linearGradient>
+
+    <linearGradient id="routeAmber" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#fbbf24"/>
+    </linearGradient>
+
+    <filter id="hudShadow" x="-4%" y="-4%" width="108%" height="112%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+
+  <!-- Base HUD Canvas -->
+  <rect width="1200" height="400" rx="12" fill="url(#hudBg)"/>
+  <rect width="1200" height="400" rx="12" fill="url(#glowCyan)"/>
+  <rect width="1200" height="400" rx="12" fill="url(#glowEmerald)"/>
+
+  <!-- Engineering Blueprint Grid -->
+  <g stroke="#94a3b8" stroke-opacity="0.06" stroke-width="1">
+    <line x1="0" y1="50" x2="1200" y2="50"/>
+    <line x1="0" y1="100" x2="1200" y2="100"/>
+    <line x1="0" y1="150" x2="1200" y2="150"/>
+    <line x1="0" y1="200" x2="1200" y2="200"/>
+    <line x1="0" y1="250" x2="1200" y2="250"/>
+    <line x1="0" y1="300" x2="1200" y2="300"/>
+    <line x1="0" y1="350" x2="1200" y2="350"/>
+    <line x1="150" y1="0" x2="150" y2="400"/>
+    <line x1="300" y1="0" x2="300" y2="400"/>
+    <line x1="450" y1="0" x2="450" y2="400"/>
+    <line x1="600" y1="0" x2="600" y2="400"/>
+    <line x1="750" y1="0" x2="750" y2="400"/>
+    <line x1="900" y1="0" x2="900" y2="400"/>
+    <line x1="1050" y1="0" x2="1050" y2="400"/>
+  </g>
+
+  <!-- Outer Frame -->
+  <g filter="url(#hudShadow)">
+    <rect x="18" y="16" width="1164" height="368" rx="10" fill="url(#panelFill)" stroke="#38bdf8" stroke-opacity="0.28" stroke-width="1.2"/>
+  </g>
+
+  <!-- Corner Brackets -->
+  <g stroke="#38bdf8" stroke-opacity="0.75" stroke-width="2" fill="none">
+    <path d="M 18 36 L 18 16 L 38 16"/>
+    <path d="M 1162 16 L 1182 16 L 1182 36"/>
+    <path d="M 18 364 L 18 384 L 38 384"/>
+    <path d="M 1162 384 L 1182 384 L 1182 364"/>
+  </g>
+
+  <!-- Top Engineering Header Bar -->
+  <rect x="19" y="17" width="1162" height="36" rx="9" fill="#0f1b2e"/>
+  <line x1="19" y1="53" x2="1181" y2="53" stroke="#38bdf8" stroke-opacity="0.24" stroke-width="1"/>
+
+  <rect x="34" y="25" width="20" height="20" rx="4" fill="#0ea5e9" fill-opacity="0.22" stroke="#38bdf8" stroke-opacity="0.85" stroke-width="1"/>
+  <text x="44" y="39" font-family="Consolas, 'Courier New', monospace" font-size="12" font-weight="700" fill="#e0f2fe" text-anchor="middle">T</text>
+
+  <text x="64" y="39" font-family="Consolas, 'Courier New', monospace" font-size="12.5" font-weight="700" fill="#f8fafc" letter-spacing="0.8">
+    THE TUNNEL · v3.30.0
+  </text>
+  <text x="235" y="39" font-family="Segoe UI, Inter, Arial, sans-serif" font-size="11.5" fill="#94a3b8" letter-spacing="0.4">
+    3D AI AUTOPILOT &amp; COPROCESSOR FOR GOOGLE ANTIGRAVITY
+  </text>
+
+  <!-- Top Right Status Pills -->
+  <rect x="854" y="24" width="146" height="22" rx="11" fill="#10b981" fill-opacity="0.16" stroke="#34d399" stroke-opacity="0.55" stroke-width="1"/>
+  <circle cx="868" cy="35" r="3.5" fill="#34d399"/>
+  <text x="932" y="39" font-family="Consolas, monospace" font-size="10.5" font-weight="700" fill="#a7f3d0" text-anchor="middle">59 GUARDRAILS ON</text>
+
+  <rect x="1010" y="24" width="154" height="22" rx="11" fill="#0ea5e9" fill-opacity="0.16" stroke="#38bdf8" stroke-opacity="0.55" stroke-width="1"/>
+  <text x="1087" y="39" font-family="Consolas, monospace" font-size="10.5" font-weight="700" fill="#bae6fd" text-anchor="middle">0-DEP NODE 22 ESM</text>
+
+  <!-- LEFT COLUMN: Title + 3D Gemini 4 Routing Schematic -->
+  <g transform="translate(36, 70)">
+    <text x="0" y="26" font-family="Segoe UI, Inter, Arial, sans-serif" font-size="27" font-weight="700" fill="#f8fafc" letter-spacing="-0.3">
+      The Tunnel <tspan fill="#38bdf8">v3.30.0</tspan>
+    </text>
+    <text x="0" y="48" font-family="Segoe UI, Inter, Arial, sans-serif" font-size="12.5" fill="#cbd5e1">
+      Breadth × Depth × Risk triage across Gemini 4, In-RAM MCP, CPU Pool &amp; Ollama GPU
+    </text>
+
+    <!-- 3D Routing Flow Panel -->
+    <rect x="0" y="64" width="496" height="202" rx="8" fill="#08101c" stroke="#334155" stroke-width="1.1"/>
+    <text x="14" y="84" font-family="Consolas, monospace" font-size="10.5" font-weight="700" fill="#38bdf8" letter-spacing="0.8">
+      3D ROUTING TOPOLOGY · GEMINI 4 + SWARM
+    </text>
+
+    <!-- Source Node: Prompt + 3D Tensor -->
+    <rect x="14" y="106" width="144" height="114" rx="6" fill="url(#cardFill)" stroke="#38bdf8" stroke-opacity="0.6" stroke-width="1.2"/>
+    <text x="86" y="129" font-family="Consolas, monospace" font-size="11" font-weight="700" fill="#7dd3fc" text-anchor="middle">3D TASK TENSOR</text>
+    <line x1="26" y1="138" x2="146" y2="138" stroke="#38bdf8" stroke-opacity="0.22"/>
+    <text x="26" y="158" font-family="Consolas, monospace" font-size="10.5" fill="#e2e8f0">X: Breadth (1..4+F)</text>
+    <text x="26" y="176" font-family="Consolas, monospace" font-size="10.5" fill="#e2e8f0">Y: Depth (AST/Arch)</text>
+    <text x="26" y="194" font-family="Consolas, monospace" font-size="10.5" fill="#e2e8f0">Z: Blast Risk</text>
+    <text x="86" y="212" font-family="Consolas, monospace" font-size="10" font-weight="700" fill="#34d399" text-anchor="middle">→ S / M / L / XL</text>
+
+    <!-- Routing Curves -->
+    <path d="M 158 134 C 194 134, 196 116, 232 116" fill="none" stroke="url(#routeCyan)" stroke-width="2.2"/>
+    <path d="M 158 163 C 194 163, 196 168, 232 168" fill="none" stroke="url(#routeViolet)" stroke-width="2.2"/>
+    <path d="M 158 192 C 194 192, 196 220, 232 220" fill="none" stroke="url(#routeAmber)" stroke-width="2.2"/>
+
+    <!-- Target Lane 1: Hydrogen -->
+    <rect x="232" y="94" width="250" height="44" rx="6" fill="#0f232e" stroke="#34d399" stroke-opacity="0.65" stroke-width="1.1"/>
+    <circle cx="248" cy="116" r="4.5" fill="#34d399"/>
+    <text x="260" y="112" font-family="Segoe UI, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#ecfdf5">Hydrogen · Medium</text>
+    <text x="260" y="128" font-family="Consolas, monospace" font-size="10" fill="#a7f3d0">S/M Routine · Fast Direct Edits</text>
+
+    <!-- Target Lane 2: Orchestrator Neon -->
+    <rect x="232" y="146" width="250" height="44" rx="6" fill="#171933" stroke="#a78bfa" stroke-opacity="0.7" stroke-width="1.1"/>
+    <circle cx="248" cy="168" r="4.5" fill="#a78bfa"/>
+    <text x="260" y="164" font-family="Segoe UI, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#f5f3ff">Orchestrator (Neon · High)</text>
+    <text x="260" y="180" font-family="Consolas, monospace" font-size="10" fill="#ddd6fe">L Multi-File · Smart-Synergy -24%</text>
+
+    <!-- Target Lane 3: Carbon + Swarm -->
+    <rect x="232" y="198" width="250" height="44" rx="6" fill="#271c10" stroke="#fbbf24" stroke-opacity="0.7" stroke-width="1.1"/>
+    <circle cx="248" cy="220" r="4.5" fill="#fbbf24"/>
+    <text x="260" y="216" font-family="Segoe UI, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#fffbeb">Carbon · High + Swarm</text>
+    <text x="260" y="232" font-family="Consolas, monospace" font-size="10" fill="#fde68a">XL / Critical · @verifier + Failover</text>
+
+    <!-- Telemetry Strip under Diagram -->
+    <text x="14" y="256" font-family="Consolas, monospace" font-size="10" fill="#94a3b8">
+      BAYESIAN v2 (14d) · IMPLICIT CACHE ≥4096t · QUOTA BURN-RATE PACER
+    </text>
+  </g>
+
+  <!-- RIGHT COLUMN: Best Features 2x3 HUD Grid -->
+  <g transform="translate(552, 70)">
+    <text x="0" y="15" font-family="Consolas, monospace" font-size="11" font-weight="700" fill="#38bdf8" letter-spacing="0.9">
+      FLAGSHIP CAPABILITIES
+    </text>
+
+    <!-- Row 1, Col 1 -->
+    <rect x="0" y="26" width="300" height="74" rx="7" fill="url(#cardFill)" stroke="#38bdf8" stroke-opacity="0.38" stroke-width="1"/>
+    <text x="14" y="47" font-family="Segoe UI, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#38bdf8">⚡ In-RAM Memory MCP (4–32 GB)</text>
+    <text x="14" y="65" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#e2e8f0">Tri-Gram + BM25F, RepoGraph call chains</text>
+    <text x="14" y="82" font-family="Consolas, monospace" font-size="10" fill="#94a3b8">LongCodeZip AST · Zero-Turn Slices · PageRank</text>
+
+    <!-- Row 1, Col 2 -->
+    <rect x="312" y="26" width="300" height="74" rx="7" fill="url(#cardFill)" stroke="#34d399" stroke-opacity="0.38" stroke-width="1"/>
+    <text x="326" y="47" font-family="Segoe UI, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#34d399">🔥 Multi-Core CPU Coprocessor</text>
+    <text x="326" y="65" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#e2e8f0">Zero-VRAM Cross-Reranker (&lt;15 ms)</text>
+    <text x="326" y="82" font-family="Consolas, monospace" font-size="10" fill="#94a3b8">Drain3 + TOON · Myers Delta · Mutation Guard</text>
+
+    <!-- Row 2, Col 1 -->
+    <rect x="0" y="110" width="300" height="74" rx="7" fill="url(#cardFill)" stroke="#a78bfa" stroke-opacity="0.38" stroke-width="1"/>
+    <text x="14" y="131" font-family="Segoe UI, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#c4b5fd">🎮 Local Ollama GPU (i8bin-v2)</text>
+    <text x="14" y="149" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#e2e8f0">Int8 MRL-512 embeddings + Gemma 4 12B</text>
+    <text x="14" y="166" font-family="Consolas, monospace" font-size="10" fill="#94a3b8">0-token log distill · Vision UI · Post-edit critic</text>
+
+    <!-- Row 2, Col 2 -->
+    <rect x="312" y="110" width="300" height="74" rx="7" fill="url(#cardFill)" stroke="#fbbf24" stroke-opacity="0.38" stroke-width="1"/>
+    <text x="326" y="131" font-family="Segoe UI, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#fcd34d">🐝 Adaptive Swarm &amp; Quota Pacer</text>
+    <text x="326" y="149" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#e2e8f0">Worktree isolation, @verifier &amp; failover</text>
+    <text x="326" y="166" font-family="Consolas, monospace" font-size="10" fill="#94a3b8">Rolling burn-rate · Prefix stability audit</text>
+
+    <!-- Row 3, Col 1 -->
+    <rect x="0" y="194" width="300" height="74" rx="7" fill="url(#cardFill)" stroke="#f472b6" stroke-opacity="0.38" stroke-width="1"/>
+    <text x="14" y="215" font-family="Segoe UI, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#f9a8d4">⏪ Time-Machine &amp; Worktrees</text>
+    <text x="14" y="233" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#e2e8f0">Turn-level atomic rollback + git sandboxes</text>
+    <text x="14" y="250" font-family="Consolas, monospace" font-size="10" fill="#94a3b8">LSP Bridge · Runtime Wiretap · git_bisect_auto</text>
+
+    <!-- Row 3, Col 2 -->
+    <rect x="312" y="194" width="300" height="74" rx="7" fill="url(#cardFill)" stroke="#22d3ee" stroke-opacity="0.38" stroke-width="1"/>
+    <text x="326" y="215" font-family="Segoe UI, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#67e8f9">🎛️ Sidecar Control Panel (EN/RU)</text>
+    <text x="326" y="233" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#e2e8f0">Smart Composer 2.0 (@chips, Vision, Voice)</text>
+    <text x="326" y="250" font-family="Consolas, monospace" font-size="10" fill="#94a3b8">Token ROI HUD · 12 Skills · AgentShield · CCR</text>
+  </g>
+
+  <!-- Bottom Metrics & Attribution Strip -->
+  <line x1="19" y1="348" x2="1181" y2="348" stroke="#38bdf8" stroke-opacity="0.2" stroke-width="1"/>
+  <text x="36" y="370" font-family="Consolas, monospace" font-size="11" fill="#94a3b8">
+    <tspan fill="#34d399" font-weight="700">51</tspan> Core Modules · <tspan fill="#38bdf8" font-weight="700">12</tspan> Built-in Skills · <tspan fill="#a78bfa" font-weight="700">35</tspan> Test Suites · SQLite Episodic Memory &amp; CCR · Local-Only Loopback Security
+  </text>
+  <text x="1164" y="370" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#cbd5e1" text-anchor="end">
+    Created by Vasili Zuev
+  </text>
+</svg>

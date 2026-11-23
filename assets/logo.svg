@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#282A36"/>
+      <stop offset="100%" stop-color="#1E1F29"/>
+    </linearGradient>
+    <linearGradient id="proGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#BD93F9"/>
+      <stop offset="100%" stop-color="#FF79C6"/>
+    </linearGradient>
+    <linearGradient id="flashGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#50FA7B"/>
+      <stop offset="100%" stop-color="#8BE9FD"/>
+    </linearGradient>
+  </defs>
+  <rect x="14" y="14" width="100" height="100" rx="22" fill="url(#bg)" stroke="#BD93F9" stroke-width="3"/>
+  <!-- Узел диспетчера -->
+  <circle cx="38" cy="64" r="10" fill="#F8F8F2"/>
+  <!-- Линии маршрутизации -->
+  <path d="M48 60 C64 60, 64 42, 82 42" fill="none" stroke="url(#proGrad)" stroke-width="4" stroke-linecap="round"/>
+  <path d="M48 68 C64 68, 64 86, 82 86" fill="none" stroke="url(#flashGrad)" stroke-width="4" stroke-linecap="round"/>
+  <!-- Узел Pro -->
+  <circle cx="90" cy="42" r="12" fill="url(#proGrad)"/>
+  <text x="90" y="46" font-family="Segoe UI, Arial, sans-serif" font-size="11" font-weight="bold" fill="#1E1F29" text-anchor="middle">P</text>
+  <!-- Узел Flash -->
+  <circle cx="90" cy="86" r="12" fill="url(#flashGrad)"/>
+  <text x="90" y="90" font-family="Segoe UI, Arial, sans-serif" font-size="11" font-weight="bold" fill="#1E1F29" text-anchor="middle">F</text>
+</svg>

@@ -1,0 +1,14 @@
+node_modules/
+dist/
+logs/
+events/
+data/
+.cache/
+checkpoints/
+.agents/
+scratch/
+backups/
+.shadow/
+*.log
+.DS_Store
+Thumbs.db

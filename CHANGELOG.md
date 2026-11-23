@@ -1,0 +1,342 @@
+# История изменений (Changelog) — **The Tunnel**
+
+Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
+
+> Хронология с `v3.8.0` по `v3.30.0` восстановлена по журналам разработки и проверена по состоянию кодовой базы (ядро, пульт управления, агенты, навыки и автотесты).
+
+---
+
+## [3.30.0] — 2026-11-23
+
+### Добавлено
+- **Полноценная двуязычность интерфейса, хуков и правил (`EN` / `RU`)**:
+  - Настройка `uiLanguage` (`en` / `ru`, по умолчанию `en` для чистой установки и релиза с сохранением пользовательского выбора в [install.js](install.js) и [scripts/pack-release.mjs](scripts/pack-release.mjs), валидация в [sidecars/panel/lib/panel-state-skills.mjs](sidecars/panel/lib/panel-state-skills.mjs)).
+  - Нуль-зависимый движок живого перевода панели [sidecars/panel/ui-src/js/00-i18n.js](sidecars/panel/ui-src/js/00-i18n.js) и синхронная сборка [sidecars/panel/ui.html](sidecars/panel/ui.html).
+  - Динамическая адаптация заголовков `SessionStart` (`EN-Chat` / `RU-Chat`) в [core/hook-runner.mjs](core/hook-runner.mjs), подсказок `Pre-Task Gate` в [core/tool-pruner.mjs](core/tool-pruner.mjs) и инструкций в [rules/AGENTS.md](rules/AGENTS.md).
+  - Автотесты локализации [tests/i18n-language.test.mjs](tests/i18n-language.test.mjs); расширенная синхронизация обеих языковых веток и fallback-версий в [scripts/bump-version.mjs](scripts/bump-version.mjs).
+
+---
+
+## [3.29.0] — 2026-11-22
+
+### Добавлено
+- **Диагностика стека проекта и мост внешних навыков**:
+  - Анализатор стека и рекомендатор автоматизации [core/project-setup-recommender.mjs](core/project-setup-recommender.mjs) (на базе `stack-detector.mjs`) с маршрутом `/api/setup-recommendations` в [sidecars/panel/server.mjs](sidecars/panel/server.mjs).
+  - Безопасный мост поиска и карантинного импорта внешних навыков [core/skill-registry-bridge.mjs](core/skill-registry-bridge.mjs) с проверкой через `AgentShield`, линтером `audit-skill.mjs`, блокировкой бинарных файлов и сохранением пользовательских навыков `.user-skill.json` при обновлении в [install.js](install.js).
+- **Отказоустойчивость провайдеров, дизайн-экстрактор и dogfooding**:
+  - Цепочки failover и TTL-кулдауны в [core/quota-pacer.mjs](core/quota-pacer.mjs) и интеграция с директивами [core/swarm-controller.mjs](core/swarm-controller.mjs).
+  - Извлечение токенов дизайна в `DESIGN.md` ([skills/ui-ux-design-system/scripts/extract-design-md.mjs](skills/ui-ux-design-system/scripts/extract-design-md.mjs)), проверка WCAG-контраста и i18n-переполнения в [skills/ui-ux-design-system/scripts/audit-ui.mjs](skills/ui-ux-design-system/scripts/audit-ui.mjs), а также интерактивный веб-аудитор [skills/deep-stress-auditor/scripts/run-webapp-dogfood.mjs](skills/deep-stress-auditor/scripts/run-webapp-dogfood.mjs).
+- **Оптимизации под мега-репозитории и безопасность**:
+  - Ускорение `buildDocConfigReferenceGraph` и `RamMemoryEngine.getContextPack` ([tests/mega-repo-bottlenecks.test.mjs](tests/mega-repo-bottlenecks.test.mjs)), снижение ложных срабатываний полиглот-аудитора, поддержка UTF-16LE BOM `.agentignore` в [core/security-guard.mjs](core/security-guard.mjs) и расширенный детект утечек в [core/agent-shield.mjs](core/agent-shield.mjs).
+
+---
+
+## [3.28.0] — 2026-11-21
+
+### Добавлено
+- **Headroom CCR, 3-уровневая эпизодическая память и защита конфигов**:
+  - Обратимая компрессия терминальных логов и 3-слойная эпизодическая память в [core/sqlite-knowledge-hub.mjs](core/sqlite-knowledge-hub.mjs) с инструментами `ram_ccr_retrieve` и `ram_memory_recall` в [core/ram-memory-mcp.mjs](core/ram-memory-mcp.mjs) и [mcp_config.json](mcp_config.json).
+  - Оффлайн-аудитор безопасности MCP/хуков/навыков [core/agent-shield.mjs](core/agent-shield.mjs), детектор трения пользователя и накопления инстинктов [core/friction-observer.mjs](core/friction-observer.mjs) с эволюцией в [core/skill-crystallizer.mjs](core/skill-crystallizer.mjs).
+  - Гейты приёмки `GATES.md`, сканер добавленных заглушек и анти-луп Stop-хука в [core/completion-gates.mjs](core/completion-gates.mjs).
+- **Экосистемные интеграции, UX-матрица и видеостудия**:
+  - UX-матрица `ux-matrix.json`, запрос дизайн-паттернов [skills/ui-ux-design-system/scripts/query-ux-matrix.mjs](skills/ui-ux-design-system/scripts/query-ux-matrix.mjs), правила `react-vercel-rules.md` и поиск открытых медиа [skills/ui-ux-design-system/scripts/fetch-open-media.mjs](skills/ui-ux-design-system/scripts/fetch-open-media.mjs).
+  - Директивы `Grill-Me` и 3D-опции в [core/tool-pruner.mjs](core/tool-pruner.mjs), принудительная глубина мышления (`explicit thinking depth`) в [core/model-profile.mjs](core/model-profile.mjs) и [rules/AGENTS.md](rules/AGENTS.md).
+  - Навык программируемой видеостудии [skills/programmatic-video-studio/SKILL.md](skills/programmatic-video-studio/SKILL.md) (HyperFrames / Remotion линтер и процедурный синтез WAV/SFX).
+  - Браузерные CDP E2E-тесты раскладки панели ([tests/panel-browser-layout-cdp.test.mjs](tests/panel-browser-layout-cdp.test.mjs)) и контрактные тесты субпроцессов/установки ([tests/v328-wave1-wave2.test.mjs](tests/v328-wave1-wave2.test.mjs), [tests/v328-ecosystem-integrations.test.mjs](tests/v328-ecosystem-integrations.test.mjs)).
+
+---
+
+## [3.27.0] — 2026-11-20
+
+### Добавлено
+- **Умный Композер 2.0 (`@`-чипы, локальный Vision и голос) в [sidecars/panel/server.mjs](sidecars/panel/server.mjs), [sidecars/panel/ui.html](sidecars/panel/ui.html) и [core/local-gpu-engine.mjs](core/local-gpu-engine.mjs)**:
+  - Меню быстрого контекста по символу `@` (`/api/composer/at-suggest`, `<10 мс`): `@file:`, `@symbol:`, `@git:diff`, `@git:staged`, `@error:last`, `@repo:`.
+  - Вставка UI-скриншотов (`Ctrl+V` / drag-and-drop, лимит `<=4 МБ`) и локальный визуальный аудит через `analyzeUiScreenshotLocally` (Gemma 4 `/api/chat` с `images`, `/api/composer/vision`, **0% облачных токенов**).
+  - Опциональная диктовка через Web Speech API (`#chk-composerVoiceEnabled`, `structureVoiceTranscriptLocally`, `/api/composer/voice-structure`).
+- **Pre-Commit без облака (`✓ Коммит · 0 тк`) в [core/background-sentinel.mjs](core/background-sentinel.mjs)**:
+  - Действие `prepare_commit` объединяет Shadow Guard (AST/импорты/LSP), проверку диффа на утечку секретов, кэш/аудит Local BugBot и генерацию Conventional Commit сообщения (`generateLocalCommitSummary` с оффлайн-фолбэком).
+- **Изолированный CPU Semantic Mutation Guard (`core/cpu-mutation-guard.mjs`)**:
+  - Проверка стойкости автотестов на 1-точечных граничных мутантах во временной копии каталога ОС без изменения исходников проекта (`runSemanticMutationGuard`, опциональный тумблер `#chk-mutationGuardEnabled` и ленивый MCP-инструмент `mutation_guard_check` в [mcp_config.json](mcp_config.json)).
+
+---
+
+## [3.26.0] — 2026-11-20
+
+### Добавлено
+- **Живой перехватчик ошибок и автоматический `git bisect` (`core/runtime-wiretap.mjs`)**:
+  - Подкоманда `node core/ag-cli.mjs watch <cmd...>` транслирует вывод запускаемого процесса и мгновенно фиксирует падения в `.cache/runtime-wiretap.json` (SimHash64-дедупликация, маскировка логов и секретов, извлечение локального кадра стека `±6` строк).
+  - Ленивый MCP-инструмент `git_bisect_auto` (`"eager": false` в [mcp_config.json](mcp_config.json)) для автоматического бинарного поиска коммита-регрессии во временном `git worktree` без изменения рабочей копии.
+  - Интерактивный баннер сбоев `#wiretapAlertBar` в Умном Композере + маршруты `/api/wiretap/fault`, `/api/wiretap/faults`, `/api/wiretap/clear`.
+- **Предиктор квоты и аудит стабильности префикса (`core/quota-pacer.mjs`)**:
+  - Скользящее окно расхода квоты за 30/60 минут (`Hydrogen / Orchestrator / Neon / Carbon`, лимиты `Pro` / `Ultra`) + бейдж `#quotaPacerBadge` и аудит неизменности статического префикса Gemini 4 (`>=4096` токенов).
+
+---
+
+## [3.25.0] — 2026-11-20
+
+### Добавлено
+- **Походовая машина времени (`Turn-Level Time-Machine`) в [core/shadow-guard.mjs](core/shadow-guard.mjs) и [core/hook-runner.mjs](core/hook-runner.mjs)**:
+  - Привязка всех снимков `edit_file` / `write_file` к `turnId` и названию пользовательского хода.
+  - Реализованы `listTurnCheckpoints`, `getTurnDiffSummary` и атомарный откат целого хода `rollbackTurn` с восстановлением самого раннего пред-ходового состояния каждого файла и удалением созданных за ход новых файлов.
+- **Изолированная Git-песочница (`core/shadow-worktree.mjs`)**:
+  - Работа в одном detached `git worktree` (`.cache/worktrees/wt_*`) без вмешательства в основную рабочую копию: `createShadowWorktree`, `runInShadowWorktree`, `getShadowWorktreeDiff`, `promoteShadowWorktree` (с обязательным теневым чекпоинтом) и `discardShadowWorktree`.
+  - В пульте добавлены переключатель `По ходам / По файлам`, кнопка `↶ Откатить ход`, панель управления песочницами `/api/checkpoints/turns`, `/api/checkpoints/rollback-turn`, `/api/worktree/action` и тумблер `#chk-shadowWorktreeEnabled`.
+
+---
+
+## [3.24.0] — 2026-11-20
+
+### Добавлено
+- **NVMe-хаб знаний на `node:sqlite` (`core/sqlite-knowledge-hub.mjs`)**:
+  - Персистентное хранение бакетов `RepairKV` и SHA-1 AST-метаданных в WAL-базе `.cache/tunnel-knowledge.sqlite` для мгновенного холодного старта после перезагрузки ПК (не дублирует бинарный индекс `i8bin-v2`).
+  - **База «Рецептов побед» (`victory_recipes`)**: автоматическая фиксация успешных починок тестов в [core/hook-runner.mjs](core/hook-runner.mjs) и инжекция подсказки `🏆 [Victory Recipe]` в `PreInvocation`.
+  - **Кросс-проектная федерация (`repo_federation`)**: связывание смежных репозиториев (`includeFederated` в `ram_search`) и интерфейс управления в пульте ([sidecars/panel/ui.html](sidecars/panel/ui.html), `/api/knowledge/recipes`, `/api/knowledge/federation`).
+
+---
+
+## [3.23.0] — 2026-11-20
+
+### Добавлено
+- **Живой LSP-мост (`core/lsp-bridge.mjs`)**:
+  - Реализован JSON-RPC 2.0 мультиплексор `Content-Length` поверх `stdio` без внешних зависимостей для языковых серверов `typescript-language-server`, `pyright-langserver`/`pylsp`, `gopls` и `rust-analyzer` с авто-выгрузкой по простою.
+  - Интегрированы мгновенная проверка типов в `/hook/post-edit` и `PostToolUse` (`🧬 [LSP Type Check]`), фоновый сбор диагностик в [core/background-sentinel.mjs](core/background-sentinel.mjs), три ленивых MCP-инструмента (`lsp_diagnostics`, `lsp_references`, `lsp_code_actions` в [core/ram-memory-mcp.mjs](core/ram-memory-mcp.mjs) и [mcp_config.json](mcp_config.json)), а также тумблер `#chk-lspBridgeEnabled` в пульте управления.
+
+---
+
+## [3.22.0] — 2026-11-18
+
+### Добавлено
+- **CPU SOTA Suite (без расхода VRAM)**:
+  - В [core/cpu-graph-contracts.mjs](core/cpu-graph-contracts.mjs) и [core/cpu-sbfl-healer.mjs](core/cpu-sbfl-healer.mjs) реализованы 2..3-hop граф `Personalized PageRank` (`computeBipartiteSymbolPPR`), анализ эволюционной связности `Git Co-Change`, проверка арности и ключей экспортов, радар 64-битных AST-клонов `SimHash`, локализация дефектов `SBFL Ochiai` поверх `NODE_V8_COVERAGE`, нечёткое восстановление патчей `Bitap` и извлечение таблицы фактов; интеграция в [core/auto-verifier.mjs](core/auto-verifier.mjs), [core/diff-patcher.mjs](core/diff-patcher.mjs) и тумблер `chk-cpuSotaEngines` в пульте.
+- **Zero-Copy RAM-арена `SharedArrayBuffer`, `CSR`-индекс и `Prefetch`**:
+  - Создан [core/ram-sota-arena.mjs](core/ram-sota-arena.mjs) (`SharedRamArena`, `CsrInvertedIndex` на плоских `Uint32Array`, `orderSlicesPrefixStable` для стабильности префиксного кэша).
+  - В [core/cpu-worker-pool.mjs](core/cpu-worker-pool.mjs) и [core/ram-memory-engine.mjs](core/ram-memory-engine.mjs) внедрена передача буферов в пул воркеров без копирования строк (`zeroCopyTasks`), спекулятивный префетч 1-hop зависимых AST-скелетов после правок (`scheduleSpeculativePrefetch`) и ленивый `CSR`-индекс.
+- **Межшаговая мемоизация *ACON* и память после компакции *RepairKV***:
+  - В [core/ram-sota-arena.mjs](core/ram-sota-arena.mjs), [core/ram-memory-mcp.mjs](core/ram-memory-mcp.mjs), [core/hook-runner.mjs](core/hook-runner.mjs) и [core/history-compactor.mjs](core/history-compactor.mjs) добавлены маршруты `/hook/memo-check`, `/hook/memo-record`, `/hook/compaction-archive`, перехват неизменённых длинных выводов `run_command` с защитой от зацикливания и автоподъём забытых фактов в `PreInvocation`.
+- **Синергия GPU ↔ DDR5 RAM, `OLLAMA_NUM_PARALLEL=1` и аппаратные потолки**:
+  - В [core/local-gpu-engine.mjs](core/local-gpu-engine.mjs) добавлен флаг `OLLAMA_NUM_PARALLEL=1` (экономия 1.5–3 ГБ VRAM на слотах KV-кэша), постоянный LRU/SimHash-кэш `gpu_distill` и `Post-Edit Critic` (`.cache/gpu-distill-cache.json`) и фоновый прогрев весов GGUF в свободную системную DDR5 (`warmGgufModelsInHostRam`).
+  - В [core/hardware-profiler.mjs](core/hardware-profiler.mjs), [install.js](install.js), [sidecars/panel/server.mjs](sidecars/panel/server.mjs) и [sidecars/panel/ui.html](sidecars/panel/ui.html) добавлены динамические аппаратные потолки (`computeHardwareCeilings`), шкала до `16–24 ГБ RAM` и `24` потоков CPU для станций уровня 64 ГБ / 32 потока, тумблеры `#chk-ramSotaEngines` и `#chk-gpuWarmHostRamCache`, а также учёт SOTA-экономии RAM в счётчике пульта.
+
+---
+
+## [3.21.0] — 2026-11-17
+
+### Добавлено
+- **Щит `Frozen Prefix` и квантование префикса Gemini 4 (`4096-Token Floor Snap`)**:
+  - В [core/session-handoff.mjs](core/session-handoff.mjs) убрана волатильная метка времени `Updated:` из текста префикса `SessionStart`, внедрена аккуратная обрезка по границам слов (`truncateCleanly`) со сбалансированными скобками и нормализация POSIX-путей; в [core/hook-runner.mjs](core/hook-runner.mjs) (`buildCacheAlignedInjection`) добавлено дотягивание малых карт репозитория за порог 4096 токенов и буфер пред-редакторных снимков `.cache/pre-edit-last.json` для точного диффа в `Post-Edit Critic`.
+- **Каскадный `Post-Edit Critic` и поддержка `UTF-16LE/BE` в `gpu_distill`**:
+  - В [core/local-gpu-engine.mjs](core/local-gpu-engine.mjs) добавлен декодер `decodeTextBufferAutoUtf` (прозрачное чтение PowerShell-логов `UTF-16LE`/`UTF-16BE` с BOM и без BOM, с сохранением защиты от бинарников), исправлен каскадный фоллбэк на `qwen3:4b` при дефиците VRAM (`ollamaTagsCache`) и добавлена инъекция заголовка охватывающей функции (`Enclosing scope`).
+- **In-RAM `2-Hop Contracts`, скиммер `SWE-Pruner`, `Cross-Layer Seams` и `AST-Delta`**:
+  - В [core/ram-memory-engine.mjs](core/ram-memory-engine.mjs) реализованы `getTwoHopContractStrip` (встроен в `getContextPack`), `skimCodeBlocksByQuery`, `findCrossLayerSeams`, а также компактный формат срезов `120|` (`compactLines`) и сворачивание шапки импортов (`foldBoilerplateHead`); в [core/cpu-delta-reread.mjs](core/cpu-delta-reread.mjs) добавлен `astSymbolSummary`.
+- **Терминальный фильтр `RTK v2` + `Zero-Turn Fault Pinning`**:
+  - В [core/obs-masker.mjs](core/obs-masker.mjs) добавлены очистка `\r`-спиннеров прогресс-баров и `UTF-16` нулей, сворачивание цепочек системных кадров (`[... N internal frames folded]`) и линейный $O(N)$-поиск `extractTopFaultCodePin` (`📌 [Fault Pin ...]`).
+- **Сериализация `TOON v2`, `Fuzzy-AST` патчер и `AgentDiet`**:
+  - В [core/toon-formatter.mjs](core/toon-formatter.mjs) и [core/ram-memory-mcp.mjs](core/ram-memory-mcp.mjs) добавлены `canonicalizeJson`, `toPosixRelPath` и `flattenNestedConfigToDotPaths`.
+  - В [core/diff-patcher.mjs](core/diff-patcher.mjs) добавлен `Fuzzy Indentation & Trailing-Whitespace Snap` с адаптивным масштабированием шага отступов; в [core/history-compactor.mjs](core/history-compactor.mjs) добавлен анализатор устаревших наблюдений `analyzeAgentDietTrajectoryWaste`.
+- **Когнитивный автопилот: `Chain-of-Draft`, `FailFast-RestartSmart`, `ReasoningBank` и `CoDyn Bayesian Router`**:
+  - В [core/tool-pruner.mjs](core/tool-pruner.mjs) добавлены `buildAdaptiveReasoningDirective`, нативное распознавание одобрения артефакта (`The user has approved this document.`) и привязка русских фраз к DOM ID/ключам настроек (`anchoredEntities`).
+  - В [core/circuit-breaker.mjs](core/circuit-breaker.mjs) добавлены `detectSemanticOscillation` и 5-строчная карточка чистого перезапуска `buildCleanRestartOverlay`; в [core/bayesian-router.mjs](core/bayesian-router.mjs) добавлены метрики `firstPassRate` и `expectedTurnsEstimate`; в [core/pitfall-ledger.mjs](core/pitfall-ledger.mjs) добавлен `recordContrastiveLesson`.
+- **Бенчмарк экономии токенов и унификация CLI `--output`**:
+  - Создан [scripts/benchmark-token-roi.mjs](scripts/benchmark-token-roi.mjs) (`npm run benchmark:roi`) и набор тестов [tests/v321-sota.test.mjs](tests/v321-sota.test.mjs); добавлена поддержка `--output`/`-o` (чистый UTF-8) в CLI-скрипты 4 скиллов и подсчёт `mcpSchemaTaxTokens` в [sidecars/panel/server.mjs](sidecars/panel/server.mjs).
+
+### Исправлено
+- **Авто-очистка `Pitfall Ledger` для пакетов и редиректов**: в [core/hook-runner.mjs](core/hook-runner.mjs) (`resolveTestPitfallsFromCommand`) поддержаны диагностические редиректы (`2>&1`, `| obs-masker`) и частичная очистка зелёных тестовых файлов в запусках вида `tests/*.test.mjs`; удалены 3 призрачные записи о прошедших тестах.
+- **Авто-синхронизация `--max-old-space-size` в установленном `mcp_config.json`**: в [sidecars/panel/server.mjs](sidecars/panel/server.mjs) (`saveState`) добавлена синхронизация лимита памяти V8 сразу для рабочей копии и установленного плагина.
+
+---
+
+## [3.20.0] — 2026-11-17
+
+### Добавлено
+- **Прозрачный перехватчик CLI `RTK-Shield`**:
+  - В [core/obs-masker.mjs](core/obs-masker.mjs) добавлен специализированный компрессор `compressRtkCommandOutput` (схлопывает десятки зелёных строк TAP/тест-раннеров в `[✓ RTK-Test Summary: ...]` и сжимает крупные `git diff` с сохранением статистики по файлам), а в [core/security-guard.mjs](core/security-guard.mjs) добавлены барьеры против безлимитного `git log -p/--patch` и прямого чтения тяжёлых lock-файлов без фильтрации.
+- **Символьная навигация и хирургия `Serena-Lite AST Ops`**:
+  - В `ram_slice` ([core/ram-memory-engine.mjs](core/ram-memory-engine.mjs), [core/ram-memory-mcp.mjs](core/ram-memory-mcp.mjs)) добавлен параметр `callGraph: true` для извлечения полного тела целевой функции + 1-hop вызывающих и вызываемых символов из графа `RepoGraph`.
+  - В [core/diff-patcher.mjs](core/diff-patcher.mjs) реализованы `computeSymbolReplacement` и `applySymbolReplacement` с атомарной заменой тела символа по границам AST и проверкой синтаксиса в ОЗУ; команда `patch-symbol` подключена в [core/ag-cli.mjs](core/ag-cli.mjs) и [core/router-cli.mjs](core/router-cli.mjs).
+- **Фазовое бюджетирование контекста `SWE-Pruner`**:
+  - В [core/ram-memory-engine.mjs](core/ram-memory-engine.mjs) и [core/ram-memory-mcp.mjs](core/ram-memory-mcp.mjs) добавлен детектор фазы задачи (`inferContextPruningPhase`: `explore | edit | debug`) с адаптацией `ram_context_pack` (AST-скелет при исследовании и data-flow срез `Program Slicer` при отладке).
+- **Табличная сериализация `TOON` (`-35..60%` токенов)**:
+  - Создан модуль [core/toon-formatter.mjs](core/toon-formatter.mjs) (`encodeToonTable`, `crushJsonArrayToToon`, `formatRepoMapToon`) с поддержкой опции `format: 'toon'` в [core/cpu-log-json-compressor.mjs](core/cpu-log-json-compressor.mjs) и режима `toon: true` в `getFastRepoMap` / `ram_context_pack`.
+- **Двуязычный словарь `RU-EN` на 260+ IT-корней и `Voice/RU Prompt Pivot`**:
+  - Создан [core/ru-en-lexicon.mjs](core/ru-en-lexicon.mjs) (`O(1)` префиксный индекс без VRAM), интегрированный в [core/cpu-reranker.mjs](core/cpu-reranker.mjs) и [core/ram-memory-engine.mjs](core/ram-memory-engine.mjs) (`search`).
+  - В [core/tool-pruner.mjs](core/tool-pruner.mjs) и [core/hook-runner.mjs](core/hook-runner.mjs) добавлен `compileVoiceOrLongRuPromptPivot` для сжатия длинных разговорных/голосовых русских промптов в компактный английский бриф.
+- **Пост-редакторный ревизор диффов (`Post-Edit Critic`)**:
+  - В [core/local-gpu-engine.mjs](core/local-gpu-engine.mjs), [core/hook-runner.mjs](core/hook-runner.mjs) и настройках (`gpuPostEditCritic`) добавлены сверхбыстрый CPU-детектор необъявленных идентификаторов (`scanAddedIdentifiersForRefBugs`) и опциональная проверка добавленных строк на локальной GPU `gemma4:12b` (`critiqueEditedDiffLocally`).
+- **Щит префиксного кэша и 4-компонентный счётчик экономии токенов в пульте**:
+  - В [sidecars/panel/server.mjs](sidecars/panel/server.mjs) и [sidecars/panel/ui.html](sidecars/panel/ui.html) добавлена разбивка сэкономленных токенов (`⚡ Кэш`, `🧠 RAM`, `⚙️ CPU`, `🎮 GPU`), бейдж попаданий в Implicit Cache (`Кэш: X%`) и переключатель `chk-gpuPostEditCritic`; в [core/hook-runner.mjs](core/hook-runner.mjs) добавлена нормализация `\n` в `buildCacheAlignedInjection`.
+
+### Исправлено
+- **Авто-очистка `Pitfall Ledger` при прохождении тестов**: в [core/hook-runner.mjs](core/hook-runner.mjs) (`resolveTestPitfallsFromCommand`) исправлено ложное срабатывание `TEST_OUTPUT_FAIL_RE` на зелёных строках `✔` с текстом `AssertionError` или знаком `×`, а также снятие записей об ошибках тестов, привязанных к файлам реализации.
+
+---
+
+## [3.19.0] — 2026-11-17
+
+### Добавлено
+- **Оптическая live-телеметрия CPU-пула и единый блок лимитов ресурсов**:
+  - В [core/cpu-worker-pool.mjs](core/cpu-worker-pool.mjs) добавлен межпроцессный трекер `cpu-live-activity.json` (`beginCpuLiveWork`, `endCpuLiveWork`, `recordCpuInstantWork`, `getCpuLiveActivity`) с послесвечением `2.8 с` и интеграцией в параллельную верификацию ([core/auto-verifier.mjs](core/auto-verifier.mjs)), реранкер ([core/cpu-reranker.mjs](core/cpu-reranker.mjs)) и минимизатор `ddmin` ([skills/delta-bug-minimizer/scripts/ddmin-runner.mjs](skills/delta-bug-minimizer/scripts/ddmin-runner.mjs)).
+  - В [sidecars/panel/ui.html](sidecars/panel/ui.html) добавлены верхняя live-капсула `topCpuLivePill`, оптическая карточка `cpuLiveUnitCard` («Потоки CPU») с сегментной шкалой для обеих тем (`glass_teal` и `studio_titanium`), а переключатель `cpuMaxThreads` перенесён в единый блок с лимитами In-RAM и VRAM.
+- **Автовыгрузка VRAM при выходе из Antigravity (`gpuUnloadOnExit`)**:
+  - В [core/ram-memory-mcp.mjs](core/ram-memory-mcp.mjs) (`handleMcpDaemonExit`) и [sidecars/panel/server.mjs](sidecars/panel/server.mjs) (`handleSidecarExitCleanup`, `hasLiveRamDaemon`) реализована автоматическая выгрузка моделей Ollama при завершении последнего активного процесса Antigravity.
+- **Сохранение свёрнутых карточек и спойлеров пульта**:
+  - В [sidecars/panel/server.mjs](sidecars/panel/server.mjs) и [router-state.json](router-state.json) добавлены персистентные карты `panelCollapsedCards` и `panelOpenSpoilers` с валидацией `sanitizeBooleanIdMap`.
+- **Справка `--help` / `-h` для CLI-скриптов навыков**:
+  - Добавлен стандартный вывод `--help` в `run-codemod.mjs`, `run-stress-audit.mjs`, `slice-variable.mjs`, `build-showroom.mjs` и `fetch-web-refs.mjs`.
+
+### Изменено
+- **Жизненный цикл воркеров нативного Роя (`Swarm`) и `worktrees`**:
+  - В [core/model-profile.mjs](core/model-profile.mjs), [core/task-progress.mjs](core/task-progress.mjs), [core/swarm-controller.mjs](core/swarm-controller.mjs) и [core/hook-runner.mjs](core/hook-runner.mjs) добавлено автораспознавание воркеров по брифу доски (`recorded on the board as #N for @name`), ролям `narrator` / `stall monitor`, системным wakeup-сообщениям доски (`isBoardWakeup`) и путям `worktrees/<parentCid>/<branch>` (`parseAntigravityWorktreePath`), корректный переход уснувших на `swarm_wait` и остановленных воркеров в `completed (100%)`, защита от `[object Object]` в `matchedFiles`, а также режимы `auto_all` / `always_ask` и авто-тиринг (`hydrogen_auto` / `argon_auto` / `carbon_auto`).
+- **Адаптивные лимиты памяти до 32 ГБ и живая индексация**:
+  - В [core/ram-memory-engine.mjs](core/ram-memory-engine.mjs), [core/ram-memory-mcp.mjs](core/ram-memory-mcp.mjs) и [core/local-gpu-engine.mjs](core/local-gpu-engine.mjs) расширен потолок In-RAM и VRAM-контекста до `32 ГБ`, добавлены дедупликация прогрева векторов `warmWorkspaceVectorsOnce`, коллбэк `onFileUpsert` и файловая блокировка с retry при атомарной записи `i8bin-v2`.
+- **Аналитические модальные вопросы (`READ_ONLY_MODAL`) и защита воркеров/реранкера**:
+  - В [core/tool-pruner.mjs](core/tool-pruner.mjs) добавлено распознавание аналитических вопросов без лишнего `ask_question` (`isModalAnalyticalQuestion`), в [core/cpu-worker-pool.mjs](core/cpu-worker-pool.mjs) — очистка опасных V8/CLI-флагов (`getSafeWorkerExecArgv`), а в [core/cpu-reranker.mjs](core/cpu-reranker.mjs) — проверка границ слов для коротких токенов (`<=3` символов).
+
+---
+
+## [3.18.0] — 2026-11-15
+
+### Добавлено
+- **Семантический векторный индекс навыков (`qwen3-embedding:0.6b` + `gemma4:12b`)**:
+  - В [core/skill-crystallizer.mjs](core/skill-crystallizer.mjs), [core/local-gpu-engine.mjs](core/local-gpu-engine.mjs) и [core/tool-pruner.mjs](core/tool-pruner.mjs) реализован двухэтапный ИИ-подбор навыков `matchSkillsAi` с контрастивными якорями `__none__`, удалением жёсткого словаря `SKILL_DOMAIN_KEYWORDS` и семантической дистилляцией уроков.
+- **Оптическая live-телеметрия ОЗУ и GPU**:
+  - Разделены тихое дежурство в памяти и реальные вычисления (`classifyOllamaWorkRequest`, `RamMemoryEngine.liveActivity`), добавлены плавное 3-секундное послесвечение и интегрированные индикаторы экономии токенов для обеих тем оформления (`glass_teal` и `studio_titanium`).
+- **Селектор локальных моделей GPU и прямой поиск моделей в чате**:
+  - В пульт добавлены выпадающие списки `sel-gpuChatModel` / `sel-gpuEmbedModel` и прямая отправка диагностического запроса `model_search_prompt` (`buildAiModelSearchPrompt`) в чат без промежуточного модального окна ([core/hardware-profiler.mjs](core/hardware-profiler.mjs), [sidecars/panel/server.mjs](sidecars/panel/server.mjs), [sidecars/panel/ui.html](sidecars/panel/ui.html)).
+
+### Изменено
+- **Post-Scout ИИ-триаж и фильтрация заголовков UI**:
+  - Очистка названий карточек интерфейса в `stripUiTitlesForIntentClassification`, приоритет вердикта ИИ после чтения реального кода (`XL → M`), двусторонняя проверка соответствия селектора и пред-оценка в нулевой плашке ([core/tool-pruner.mjs](core/tool-pruner.mjs), [core/hook-runner.mjs](core/hook-runner.mjs), [rules/AGENTS.md](rules/AGENTS.md)).
+- **Авто-снятие исправленных сбоев тестов в `Pitfall Ledger`**:
+  - Функция `resolveTestPitfallsFromCommand` и хук `PostToolUse` автоматически очищают устаревшие записи `test_failure` после успешного прогона тестов.
+- **Укрепление конвейера релизов и версионирования**:
+  - Закрыт риск ReDoS в `SEMVER_RE` и расширен список синхронизируемых файлов (`README.md`, `assets/banner.svg`, `SKILL.md`) в [scripts/bump-version.mjs](scripts/bump-version.mjs), добавлена автоочистка старых сборок в [scripts/pack-release.mjs](scripts/pack-release.mjs) и расширен контроль дрейфа `DRIFT_CHECK_FILES`.
+
+---
+
+## [3.17.0] — 2026-11-15
+
+### Добавлено
+- **Независимый верификатор и жизненный цикл `Stop`**:
+  - Добавлен read-only субагент [router-verifier.md](agents/router-verifier.md) для независимой проверки правок, тестов и аудит-барьеров на этапах `L`/`XL` и внутри Роя (`Swarm`).
+  - Добавлена подписка на хук `Stop` в [hooks.json](hooks.json) для гарантированной финализации прогресса задач.
+- **Хук `PreInvocation` и защита от дрейфа установленного плагина**:
+  - Zero-token плашка статуса `buildZeroTokenUserBadgeStep` (`user_markdown`) и проверка синхронности исходников с установленной копией `checkInstalledPluginDrift` в [core/hook-runner.mjs](core/hook-runner.mjs).
+- **Сквозная система версионирования**:
+  - Скрипт синхронной проверки и обновления версий [scripts/bump-version.mjs](scripts/bump-version.mjs) (`npm run version:check`, `version:patch`, `version:minor`) и модульные тесты [tests/version-sync.test.mjs](tests/version-sync.test.mjs).
+- **Документация и переименование продукта**:
+  - Продукт переименован в **The Tunnel** (`The Tunnel · Диспетчер моделей ИИ`) с сохранением внутреннего технического ID пакета `antigravity-model-router` для полной совместимости кэшей, MCP и настроек.
+  - Создан полный [CHANGELOG.md](CHANGELOG.md), включённый в поставку релиза.
+
+### Изменено
+- **Стабильная шкала прогресса до 30 этапов**: расширен лимит шагов таймлайна до `30` в [core/task-progress.mjs](core/task-progress.mjs) и [sidecars/panel/ui.html](sidecars/panel/ui.html), устранены откаты процентов (`100% → 0% → 16%`) при передаче плана между планировщиком и исполнителем `Orchestrator (Carbon)` через `exit_plan_mode`.
+- **Точность диагностики и фильтрация ложных срабатываний**: `formatCompactProcessError` и `runImpactedMicroTests` в [core/auto-verifier.mjs](core/auto-verifier.mjs) отфильтровывают успешные строки TAP/`node:test` (`✔`, `✓`, `ok N`), а `recordPitfall` в [core/pitfall-ledger.mjs](core/pitfall-ledger.mjs) игнорирует ложноположительные сводки.
+- **Устойчивость к ReDoS**: устранены потенциальные ReDoS-паттерны в `extractPrimarySymbolFromSnippet` и `formatCommandStepLabel` ([core/task-progress.mjs](core/task-progress.mjs)).
+
+---
+
+## [3.16.0] — 2026-11-14
+
+### Добавлено
+- **Мета-скилл `skill-architect` и локальный линтер навыков**:
+  - Добавлен 11-й встроенный навык [skills/skill-architect/SKILL.md](skills/skill-architect/SKILL.md) (прогрессивное раскрытие *Progressive Disclosure 2.0*, защита от *Negative Transfer*, регламент *Merge-Over-Create*).
+  - Добавлен детерминированный аудитор и бенчмарк триггеров [skills/skill-architect/scripts/audit-skill.mjs](skills/skill-architect/scripts/audit-skill.mjs) (`npm run lint:skills`) — все 11 встроенных навыков доведены до оценки `100/100 (Grade A)`.
+  - Обновлён движок автокристаллизации [core/skill-crystallizer.mjs](core/skill-crystallizer.mjs) (v2, *EvoSkill* дистилляция ошибок).
+- **Zero-LLM конвейер веб-референсов**:
+  - Добавлен скрипт [skills/ui-ux-design-system/scripts/fetch-web-refs.mjs](skills/ui-ux-design-system/scripts/fetch-web-refs.mjs) для прямого извлечения CSS/дизайн-токенов, `og:image` и карточек превью без запуска тяжёлого браузерного субагента и траты облачных токенов.
+
+---
+
+## [3.15.0] — 2026-11-14
+
+### Добавлено
+- **Монотонная мульти-чатовая машина прогресса**:
+  - Новый модуль [core/task-progress.mjs](core/task-progress.mjs) с монотонной шкалой (`MAX_RUNNING_PERCENT = 92`), потолком `<= 35%` до начала правок кода (`hasCodeEdits`) и 3-уровневым синтезом компактных технических этапов из `exit_plan_mode` и AST/команд.
+  - Иерархическая вложенность субагентов и воркеров Роя (`inspectSubagentTranscriptMeta` до `64 КБ` в [core/model-profile.mjs](core/model-profile.mjs)) с дедупликацией `cid__wsHash` и группировкой чатов по реально активным проектам (`.ag-project-group`).
+- **Изоляция параллельных окон в RAM MCP**:
+  - В [core/ram-memory-mcp.mjs](core/ram-memory-mcp.mjs) добавлена привязка воркспейса окна при `initialize` (`extractClientRootFromInitialize`) и разрешение относительных путей по активным проектам.
+- **Точный учёт VRAM Ollama и опциональный Floating HUD**:
+  - В [core/local-gpu-engine.mjs](core/local-gpu-engine.mjs) реализована сверка `reconcileLoadedModelsVram` для корректного отображения реальной занятости VRAM мультимодальных сборок вроде `gemma4:12b`.
+  - Добавлен модуль [core/floating-hud.mjs](core/floating-hud.mjs) (отключён по умолчанию флагом `floatingHudEnabled: false`).
+
+### Изменено
+- **Две выверенные темы оформления**: в [sidecars/panel/ui.html](sidecars/panel/ui.html) и [sidecars/panel/server.mjs](sidecars/panel/server.mjs) оставлены тёмная тема **«Жидкое стекло iOS»** (`glass_teal`) и доработанная светлая тема **«Персиковый фарфор»** (`studio_titanium`); удалены лишние промежуточные темы.
+- **Экспертные параметры и русификация**: панель расширена с `12` до `20` контуров защиты (`22` контура + `14` аппаратных/роевых флагов = `36` ключей в `GUARDRAIL_KEYS`), переведены все 47 карточек встроенных навыков.
+
+---
+
+## [3.14.0] — 2026-11-14
+
+### Добавлено
+- **Универсальный полиглот-аудитор SOTA 2026 (`deep-stress-auditor`)**:
+  - Полная отвязка от внутренних символов плагина и переработка в `zero-config` полиглот-движок на 7 модулей (`stack-detector`, `file-worker-tasks`, `graph-and-contracts`, `sandbox-fuzzer`, `fuzz-worker`, `native-runners`, `report-formatter`) в [skills/deep-stress-auditor/scripts/](skills/deep-stress-auditor/scripts/).
+  - Двухконтурная матрица анализа `T1–T6` (JS/TS, Python, Go, Rust, C/C++, HTML, конфиги), CWE Source→Sink, ReDoS, гонки/утечки, контракты UI-API и песочный фаззинг с `ddmin`.
+  - Выделен отдельный набор тестов [tests/deep-stress-auditor.test.mjs](tests/deep-stress-auditor.test.mjs).
+
+---
+
+## [3.13.0] — 2026-11-14
+
+### Добавлено
+- **3D-матрица триажа (`Ширина × Глубина × Риск`)**:
+  - Функции `computeTask3DMatrix` и `buildAdaptive3DOptionsBlueprint` в [core/tool-pruner.mjs](core/tool-pruner.mjs) и [core/model-profile.mjs](core/model-profile.mjs) с эскалацией `Critical-Blast` для хрупких узлов и `reverseDeps >= 4`.
+  - Анти-шаблонный фильтр `evaluateAskQuestionSelectorGuard` в [core/hook-runner.mjs](core/hook-runner.mjs) и поддержка непрерывного `[plan review]` оркестратора.
+- **Live-обновление телеметрии**: лёгкий эндпоинт `GET /api/telemetry` и последовательный опрос каждые `2.8 с` с автопаузой при скрытой вкладке.
+
+---
+
+## [3.12.0] — 2026-11-14
+
+### Добавлено
+- **Конвейер релизной сборки ([scripts/pack-release.mjs](scripts/pack-release.mjs))**:
+  - Компиляция автономного Windows-установщика `*-Setup.exe` (C# WinForms GUI + тихий режим `--silent` / `/S` + `--uninstall` + встроенный `.ico` и payload).
+  - Генерация портативного UTF-8 `ZIP`, `SHA256SUMS.txt`, `release-manifest.json`, а также скриптов [install.bat](install.bat), [install.sh](install.sh), [Установить плагин.bat](Установить%20плагин.bat) и автогенерация `Удалить плагин.bat`.
+
+---
+
+## [3.11.0] — 2026-11-14
+
+### Изменено
+- **Редизайн пульта в эстетике iOS 26 Liquid Glass**:
+  - Полный отказ от визуального стиля Windows 95 (`MODEL_ROUTER.EXE`, `SETUP_WIZARD.EXE`, `.win95-glass-window`).
+  - Внедрены стеклянные карточки (`backdrop-filter: blur`), спекулярные контуры и парящая навигационная капсула со скользящим индикатором.
+  - Удалены устаревший переключатель и ключ `workerModel` (`Flash 3.8`), выполнена автомиграция в [install.js](install.js).
+  - Переход с телеметрии «одного активного чата» на инкрементальную сводную статистику экономии по всем диалогам.
+
+---
+
+## [3.10.0] — 2026-11-14
+
+### Добавлено
+- **Гибкий `UI/UX Preview Gate` (`uiInspirationMode`)**:
+  - Выбор стратегии вдохновения (`ask | showroom | web_refs`) через пульт и [rules/AGENTS.md](rules/AGENTS.md), генератор интерактивной витрины A/B/C [skills/ui-ux-design-system/scripts/build-showroom.mjs](skills/ui-ux-design-system/scripts/build-showroom.mjs).
+- **GPU Boost**:
+  - Раздельное удержание эмбеддера в VRAM (`gpuEmbedKeepAlive: "90m"`), фоновый прогрев и zero-token дистилляция локальных файлов `@file:<path>` в [core/local-gpu-engine.mjs](core/local-gpu-engine.mjs).
+
+---
+
+## [3.9.0] — 2026-11-14
+
+### Добавлено
+- **Кросс-платформенный автопрофайлер оборудования ([core/hardware-profiler.mjs](core/hardware-profiler.mjs))**:
+  - Автоматическое определение CPU (`Intel` / `AMD` / `Apple` / `ARM`), объёма ОЗУ (`1–12 ГБ` безопасного буфера), видеокарты (NVIDIA / AMD / Intel / Apple) и тарифа подписки при первом запуске и установке.
+- **Укрепление безопасности и изоляции (5 фаз)**:
+  - Защита CSP/Origin сайдкара и `window.sidecar.fetch`, межпроцессные файловые замки JSON ([core/safe-json.mjs](core/safe-json.mjs)), POSIX/ADS/Win32-фильтры путей ([core/security-guard.mjs](core/security-guard.mjs)), сессионная изоляция [core/circuit-breaker.mjs](core/circuit-breaker.mjs) и [core/shadow-guard.mjs](core/shadow-guard.mjs).
+
+---
+
+## [3.8.0] — 2026-11-14
+
+### Добавлено
+- **Многопоточный CPU-сопроцессор и Cross-Reranker**:
+  - Пул `node:worker_threads` с авто-масштабированием и idle `unref()` ([core/cpu-worker-pool.mjs](core/cpu-worker-pool.mjs)).
+  - Триграммный инвертированный индекс + `BM25F` и Zero-VRAM CPU Cross-Reranker (`< 15 мс`) в [core/cpu-reranker.mjs](core/cpu-reranker.mjs).
+  - Параллельный запуск микро-тестов и бинарного минимизатора багов `ddmin` ([skills/delta-bug-minimizer/scripts/ddmin-runner.mjs](skills/delta-bug-minimizer/scripts/ddmin-runner.mjs)).
+
+---
+
+## [1.0.0 – 3.7.0] — 2026-11-04 .. 2026-11-14
+
+### Основные вехи ранних поколений
+- **v3.0 – v3.7**: Personalized PageRank (`d=0.50`) и `[Zero-Turn Gold Context]`, адаптивная байесовская маршрутизация v2 с 14-дневным полураспадом и матрицей хрупкости `fragileFiles`, In-RAM MCP сервер (`ram-memory-mcp.mjs`, до 12 ГБ), квантованный локальный GPU-поиск `i8bin-v2` (Ollama `qwen3-embedding:0.6b` + `gemma4:12b`), поддержка линейки Gemini 4 (`Hydrogen`, `Carbon`, `Argon`, `Orchestrator`) и нативного командного Роя (`core/swarm-controller.mjs`).
+- **v2.0 – v2.5**: однопроходная AST-карта `RepoMap`, Function X-Ray, транзакционные патчи и теневые чекпоинты (`Shadow Guard`), `Circuit Breaker`, компакция истории и эпизодическая память ошибок (`Pitfall Ledger`).
+- **v1.0 – v1.2**: первоначальный релиз плагина, базовые хуки маршрутизации и пульт `Glass 95` (`sidecars/panel`).

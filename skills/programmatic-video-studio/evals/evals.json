@@ -1,0 +1,13 @@
+{
+  "positive": [
+    "Create an animated product promo MP4 video using HyperFrames HTML and paused GSAP timeline",
+    "Build a Remotion React composition with useCurrentFrame and spring kinetic typography",
+    "Render a 1080x1920 vertical reels promo composition to MP4 via Remotion or HyperFrames"
+  ],
+  "negative": [
+    "Write a C++ OpenFX 1.4 plugin bundle for DaVinci Resolve color grading",
+    "Fix a Resolume Arena GLSL fragment shader uniform dimension mismatch",
+    "Update SQLite WAL schema index in core/sqlite-knowledge-hub.mjs",
+    "Audit button focus-visible contrast tokens in sidecars/panel/ui-src"
+  ]
+}

@@ -1,0 +1,1237 @@
+/**
+ * @file progress-parsers.mjs
+ * @description Pure workspace/transcript/plan/step parsing & label formatting helpers for task-progress.
+ */
+
+import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
+
+const REGISTRY_TTL_MS = 2 * 60 * 60 * 1000;
+export const MAX_TIMELINE_STEPS = 30;
+
+function clampInt(val, min, max, fallback) {
+  const n = Number(val);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(n)));
+}
+
+export function sanitizeWorkspaceRoot(workspaceRoot = '') {
+  let clean = String(workspaceRoot || '').trim();
+  clean = clean.replace(/^["'\s]+|["'\s]+$/g, '');
+  clean = clean.replace(/\\\\/g, '\\').replace(/[\\/]+$/, '');
+  return clean.replace(/^["'\s]+|["'\s]+$/g, '');
+}
+
+const ANTIGRAVITY_WORKTREE_RE =
+  /[\\/]\.gemini[\\/]antigravity[\\/]worktrees[\\/]([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[a-zA-Z0-9_-]{6,64})[\\/]([^\\/]+)$/i;
+
+export function parseAntigravityWorktreePath(workspaceRoot = '') {
+  const clean = sanitizeWorkspaceRoot(workspaceRoot);
+  if (!clean) return null;
+  const m = ANTIGRAVITY_WORKTREE_RE.exec(clean);
+  if (!m) return null;
+  return {
+    parentCid: normalizeConversationId(m[1]),
+    worktreeDir: m[2] || '',
+  };
+}
+
+export function sanitizeFileBasename(filePath = '') {
+  let raw = '';
+  if (typeof filePath === 'string') {
+    raw = filePath;
+  } else if (filePath && typeof filePath === 'object') {
+    raw = String(filePath.filePath || filePath.relPath || filePath.path || filePath.file || filePath.name || '');
+  }
+  const clean = raw.trim().replace(/^["'\s]+|["'\s]+$/g, '');
+  if (!clean || clean.includes('[object ')) return '';
+  return basename(clean).replace(/["']+$/g, '');
+}
+
+export function normalizeConversationId(rawCid = 'default') {
+  const clean = String(rawCid || 'default').trim().replace(/^["'\s]+|["'\s]+$/g, '') || 'default';
+  return clean.replace(/__[0-9a-f]{8}$/i, '') || 'default';
+}
+
+export const UUID_PROJ_NAME_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isBrainOrTempWorkspacePath(wsPath = '') {
+  const norm = sanitizeWorkspaceRoot(wsPath).replace(/\\/g, '/').toLowerCase();
+  if (!norm) return true;
+  return (
+    norm.includes('/.gemini/antigravity/brain') ||
+    norm.includes('/.gemini/antigravity-ide/brain') ||
+    norm.includes('/.gemini/antigravity-cli/brain') ||
+    norm.includes('/.system_generated/')
+  );
+}
+
+export function extractProjectName(workspaceRoot = '', fallbackProjectName = '') {
+  const clean = sanitizeWorkspaceRoot(workspaceRoot);
+  if (!clean || isBrainOrTempWorkspacePath(clean)) return fallbackProjectName || 'antigravity-model-router';
+  if (ANTIGRAVITY_WORKTREE_RE.test(clean) && fallbackProjectName) {
+    return String(fallbackProjectName).trim().replace(/^["']+$/g, '') || 'antigravity-model-router';
+  }
+  const base = basename(clean).replace(/["']+$/g, '');
+  if (UUID_PROJ_NAME_RE.test(base) && fallbackProjectName) {
+    return fallbackProjectName;
+  }
+  return base || fallbackProjectName || 'antigravity-model-router';
+}
+
+export function buildActiveProjectsSummary(activeChats = []) {
+  if (!Array.isArray(activeChats) || activeChats.length === 0) return [];
+  const byProj = new Map();
+  for (const c of activeChats) {
+    if (!c || !c.projectName) continue;
+    if (c.status !== 'running' && c.status !== 'waiting_user') continue;
+    const proj = String(c.projectName).trim();
+    if (!proj) continue;
+    let bucket = byProj.get(proj);
+    if (!bucket) {
+      bucket = {
+        projectName: proj,
+        workspaceRoot: c.workspaceRoot || '',
+        status: c.status,
+        pctSum: 0,
+        activeChatsCount: 0,
+        stageLabel: c.stageLabel || 'Выполнение',
+        stepTitle: c.stepTitle || '',
+        updatedAt: Number(c.updatedAt || 0),
+      };
+      byProj.set(proj, bucket);
+    }
+    bucket.activeChatsCount += 1;
+    bucket.pctSum += clampInt(c.percent, 0, 100, 0);
+    if (c.status === 'running') {
+      bucket.status = 'running';
+    }
+    const ts = Number(c.updatedAt || 0);
+    if (ts >= bucket.updatedAt) {
+      bucket.updatedAt = ts;
+      if (c.workspaceRoot) bucket.workspaceRoot = c.workspaceRoot;
+      if (c.stageLabel) bucket.stageLabel = c.stageLabel;
+      if (c.stepTitle) bucket.stepTitle = c.stepTitle;
+    }
+  }
+  return Array.from(byProj.values())
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 6)
+    .map((b) => ({
+      projectName: b.projectName,
+      workspaceRoot: b.workspaceRoot,
+      status: b.status,
+      percent: Math.round(b.pctSum / Math.max(1, b.activeChatsCount)),
+      activeChatsCount: b.activeChatsCount,
+      stageLabel: b.stageLabel,
+      stepTitle: b.stepTitle,
+      updatedAt: b.updatedAt,
+    }));
+}
+
+export function buildFormattedProgressText({ status = 'idle', currentStep = 0, totalSteps = 0, stepTitle = '' } = {}) {
+  const cleanTitle = String(stepTitle || '').trim();
+  if (status === 'idle' || totalSteps <= 0 || currentStep <= 0) {
+    return cleanTitle && cleanTitle !== 'В ожидании задач'
+      ? `В ожидании задач · ${cleanTitle}`
+      : 'В ожидании задач';
+  }
+  const safeStep = clampInt(currentStep, 1, Math.max(1, totalSteps), 1);
+  const safeTotal = Math.max(safeStep, clampInt(totalSteps, 1, MAX_TIMELINE_STEPS, 3));
+  const fallbackOp = status === 'completed' ? 'Задача выполнена' : (status === 'waiting_user' ? 'Ожидание ответа' : 'Выполнение операции');
+  return `Этап ${safeStep} из ${safeTotal} · ${cleanTitle || fallbackOp}`;
+}
+
+export function extractTopicLabelFromPrompt(userPrompt = '') {
+  let text = String(userPrompt || '');
+  text = text
+    .replace(/<USER_SETTINGS_CHANGE>[\s\S]*?<\/USER_SETTINGS_CHANGE>/gi, ' ')
+    .replace(/<ADDITIONAL_METADATA>[\s\S]*?<\/ADDITIONAL_METADATA>/gi, ' ')
+    .replace(/<SYSTEM_MESSAGE>[\s\S]*?<\/SYSTEM_MESSAGE>/gi, ' ')
+    .replace(/<\/?(?:USER_REQUEST|CONTEXT_SUMMARY)>/gi, ' ')
+    .replace(/\[Plan Approved[^\]]*\]/gi, ' ')
+    .replace(/^A\d+\s*:\s*\(Recommended\)\s*/im, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return '';
+  const firstClause = text.split(/[.!?\n]/)[0].trim();
+  const words = firstClause.split(/\s+/).filter(Boolean).slice(0, 4);
+  let label = words.join(' ').replace(/^[,;:\-–—]+|[,;:\-–—]+$/g, '').trim();
+  if (label.length > 32) {
+    label = `${label.slice(0, 30).trim()}…`;
+  }
+  return label;
+}
+
+export function assignChatNumber(registryObj = {}, conversationId = 'default', projectName = 'antigravity-model-router', now = Date.now()) {
+  const cid = String(conversationId || 'default').trim() || 'default';
+  const proj = String(projectName || 'antigravity-model-router').trim();
+  const nextReg = {};
+  for (const [k, v] of Object.entries(registryObj || {})) {
+    if (v && typeof v === 'object' && now - Number(v.updatedAt || v.createdAt || 0) <= REGISTRY_TTL_MS) {
+      nextReg[k] = { ...v };
+    }
+  }
+  if (nextReg[cid] && nextReg[cid].projectName === proj && Number.isInteger(nextReg[cid].chatNumber) && nextReg[cid].chatNumber > 0) {
+    nextReg[cid].updatedAt = now;
+    return { chatNumber: nextReg[cid].chatNumber, registry: nextReg };
+  }
+  const used = new Set();
+  for (const [k, v] of Object.entries(nextReg)) {
+    if (k !== cid && v.projectName === proj && Number.isInteger(v.chatNumber)) {
+      used.add(v.chatNumber);
+    }
+  }
+  let num = 1;
+  while (used.has(num)) num += 1;
+  nextReg[cid] = {
+    chatNumber: num,
+    projectName: proj,
+    createdAt: nextReg[cid]?.createdAt || now,
+    updatedAt: now,
+  };
+  return { chatNumber: num, registry: nextReg };
+}
+
+export function resolveTranscriptPathForChat(conversationId = '', explicitPath = '', customBrainDirs = null) {
+  if (explicitPath && typeof explicitPath === 'string' && existsSync(explicitPath)) {
+    if (explicitPath.endsWith('transcript_full.jsonl')) {
+      const compactSibling = join(dirname(explicitPath), 'transcript.jsonl');
+      if (existsSync(compactSibling)) return compactSibling;
+    }
+    return explicitPath;
+  }
+  const cid = normalizeConversationId(conversationId);
+  if (!cid || cid === 'default' || !/^[a-zA-Z0-9_-]{1,128}$/.test(cid)) return '';
+  const brainRoots = Array.isArray(customBrainDirs) && customBrainDirs.length > 0
+    ? customBrainDirs
+    : ['antigravity', 'antigravity-ide', 'antigravity-cli'].map((d) => join(homedir(), '.gemini', d, 'brain'));
+  for (const bRoot of brainRoots) {
+    const candidate = join(bRoot, cid, '.system_generated', 'logs', 'transcript.jsonl');
+    if (existsSync(candidate)) return candidate;
+    const fullCandidate = join(bRoot, cid, '.system_generated', 'logs', 'transcript_full.jsonl');
+    if (existsSync(fullCandidate)) return fullCandidate;
+  }
+  return '';
+}
+
+const STEP_CODE_EXT_RE = '(?:mjs|cjs|js|ts|tsx|jsx|py|rs|go|html|css|scss|json|vue|svelte|md|sql|sh|ps1|yaml|yml|toml)';
+const TEST_FILE_RE = /\.(?:test|spec)\.[a-z0-9]+$|^test_[a-z0-9_]+\.py$/i;
+const IGNORED_AST_SYMBOLS = new Set([
+  'if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'await',
+  'constructor', 'super', 'import', 'export', 'default', 'else', 'try',
+  'finally', 'throw', 'delete', 'void', 'function', 'class', 'const',
+  'let', 'var', 'async', 'new', 'this', 'true', 'false', 'null', 'undefined',
+]);
+
+export function truncateAtCleanBoundary(text = '', limit = 30) {
+  const s = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+  if (s.length <= limit) return s;
+  const maxContent = Math.max(4, limit - 1);
+  const slice = s.slice(0, maxContent);
+  const lastSep = Math.max(slice.lastIndexOf(' '), slice.lastIndexOf(','), slice.lastIndexOf(';'), slice.lastIndexOf('·'));
+  const minPrefix = Math.floor(limit * 0.48);
+
+  if (lastSep >= minPrefix) {
+    const trimmed = slice.slice(0, lastSep).replace(/[\s,;:\-–—·]+$/g, '').trim();
+    if (trimmed) return `${trimmed}…`;
+  }
+
+  // Long compound filename or identifier crossing the boundary: preserve a readable stem
+  const stemSep = Math.max(slice.lastIndexOf('.'), slice.lastIndexOf('-'), slice.lastIndexOf('_'), slice.lastIndexOf('/'));
+  if (stemSep >= Math.floor(limit * 0.6)) {
+    const stem = slice.slice(0, stemSep).replace(/[\s,;:\-–—·/]+$/g, '').trim();
+    if (stem) return `${stem}…`;
+  }
+
+  return `${slice.replace(/[\s,;:\-–—·]+$/g, '').trim()}…`;
+}
+
+/**
+ * Normalizes a verbose plan heading or tool description into a compact technical step badge
+ * plus a full technical tooltip string.
+ */
+export function compactTechnicalStepLabel(rawText = '', maxChars = 30) {
+  let text = String(rawText || '').trim();
+  if (!text) return { title: '', fullTitle: '' };
+
+  // Resolve markdown links `[label](file:///.../foo.mjs#L10)` -> `foo.mjs`
+  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, lbl, href) => {
+    const cleanLbl = String(lbl || '').trim();
+    const cleanHref = String(href || '').split('#')[0].split('?')[0].trim();
+    const base = sanitizeFileBasename(cleanHref);
+    if (base && (cleanLbl.includes(base) || !/\.[a-z0-9]{1,8}$/i.test(cleanLbl))) {
+      return base;
+    }
+    return cleanLbl || base;
+  });
+
+  // Strip markdown markup, checkboxes, (Recommended), and leading numbering
+  text = text
+    .replace(/^\s*#{1,6}\s+/, '')
+    .replace(/^\s*[-*+]\s+\[[ xX]\]\s*/, '')
+    .replace(/^\s*[-*+]\s+/, '')
+    .replace(/[`*_~]/g, '')
+    .replace(/\((?:recommended|рекомендуется)\)\s*/gi, '')
+    .replace(/^(?:(?:step|шаг|этап)\s*\d+\s*[.:—–-]\s*|\d+[.)]\s*)/i, '')
+    .replace(/^(?:(?:step|шаг|этап)\s*\d+\s*[.:—–-]\s*|\d+[.)]\s*)/i, '')
+    .trim();
+
+  // Shorten full/relative file paths (outside http/https URLs) to basename
+  text = text.replace(
+    new RegExp(`(?<![:/])(?:[A-Za-z]:[\\\\/]|[.\\\\/])?(?:[A-Za-z0-9_.-]+[\\\\/])+([A-Za-z0-9_.-]+\\.${STEP_CODE_EXT_RE})(?:#L\\d+(?:-L?\\d+)?)?`, 'gi'),
+    '$1'
+  );
+
+  // Drop bureaucratic filler verbs at the beginning
+  for (let pass = 0; pass < 2; pass++) {
+    text = text
+      .replace(/^(?:необходимо|нужно|следует|потребуется|требуется|предстоит|выполнить|произвести|осуществить|сделать|провести)\s+/i, '')
+      .trim();
+  }
+
+  // Drop redundant generic Russian nouns right before an explicit filename
+  text = text.replace(
+    new RegExp(`\\b(?:файла|файлов|файл|модуля|модулей|модуль|скрипта|скрипт|компонента|компонент|теста)\\s+(?=[A-Za-z0-9_.-]+\\.${STEP_CODE_EXT_RE}\\b)`, 'gi'),
+    ''
+  );
+
+  // Map common English plan headings to crisp Russian engineering verbs
+  text = text
+    .replace(/^run\s+tests?\b[\s:-]*/i, 'Тесты ')
+    .replace(/^(?:update|modify|edit|patch)\b[\s:-]*/i, 'Патч ')
+    .replace(/^(?:add|implement|create|build)\b[\s:-]*/i, 'Реализация ')
+    .replace(/^(?:verify|test|validate)\b[\s:-]*/i, 'Тесты ')
+    .replace(/^(?:read|inspect|check|analyze|analyse)\b[\s:-]*/i, 'Анализ ')
+    .replace(/^(?:sync|deploy|install)\b[\s:-]*/i, 'Синхронизация ')
+    .replace(/\s+/g, ' ')
+    .replace(/[.,;:\-–—\s]+$/g, '')
+    .trim();
+
+  if (!text) return { title: '', fullTitle: '' };
+
+  // Capitalize first letter unless it starts with a lowercase code/filename token (e.g. `server.mjs`, `node:test`)
+  if (!/^[a-z0-9_.-]+(?:\.[a-z0-9]+|:)/i.test(text)) {
+    text = text.charAt(0).toUpperCase() + text.slice(1);
+  }
+
+  const fullTitle = text.length > 140 ? truncateAtCleanBoundary(text, 140) : text;
+  const limit = Math.min(32, Math.max(8, Number(maxChars) || 30));
+
+  let title = '';
+  if (text.length <= limit) {
+    title = text;
+  } else {
+    const sepMatch = /^(.+?)\s+(?:—|–|:)\s+(.+)$/.exec(text);
+    if (sepMatch && sepMatch[1].trim().length >= 5 && sepMatch[1].trim().length <= limit) {
+      const head = sepMatch[1].trim();
+      const tailWords = sepMatch[2].trim().split(/\s+/).filter(Boolean);
+      const firstJoined = tailWords.length > 0 ? `${head} · ${tailWords[0]}` : head;
+      title = firstJoined.length <= limit ? truncateAtCleanBoundary(text, limit) : head;
+    } else {
+      title = truncateAtCleanBoundary(text, limit);
+    }
+  }
+
+  return { title, fullTitle };
+}
+
+/**
+ * Extracts the primary function, class, or exported constant identifier from an edit snippet.
+ */
+export function extractPrimarySymbolFromSnippet(snippet = '') {
+  const src = String(snippet || '');
+  if (!src.trim()) return '';
+
+  const patterns = [
+    /(?:export\s+(?:default\s+)?)?(?:async\s+)?(?:function\*?|class)\s+([A-Za-z_$][A-Za-z0-9_$]{1,40})\b/,
+    /(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]{1,40})\s*=\s*(?:async\s*)?(?:\(|[A-Za-z_$][A-Za-z0-9_$]*\s*=>|function\b|class\b)/,
+    /\b(?:def|fn|func)\s+([A-Za-z_][A-Za-z0-9_]{1,40})\s*(?:\(|<)/,
+    /^\s*(?:(?:public|private|protected)\s+)?(?:static\s+)?(?:async\s+)?([A-Za-z_$][A-Za-z0-9_$]{2,40})\s*\([^)\n]*\)\s*(?::\s*[A-Za-z0-9_<>\[\]| ]+)?\s*\{/m,
+    /(?:export\s+)?(?:const|let)\s+([A-Za-z_$][A-Za-z0-9_$]{2,40})\s*=/,
+  ];
+
+  for (const re of patterns) {
+    const m = re.exec(src);
+    if (m && m[1]) {
+      const sym = m[1].trim();
+      if (!IGNORED_AST_SYMBOLS.has(sym.toLowerCase())) {
+        return sym.length > 22 ? `${sym.slice(0, 21)}…` : sym;
+      }
+    }
+  }
+  return '';
+}
+
+/**
+ * Extracts explicitly named code/test files from user prompt or text.
+ */
+export function extractTargetFilesFromText(text = '') {
+  let clean = String(text || '');
+  clean = clean
+    .replace(/<USER_SETTINGS_CHANGE>[\s\S]*?<\/USER_SETTINGS_CHANGE>/gi, ' ')
+    .replace(/<ADDITIONAL_METADATA>[\s\S]*?<\/ADDITIONAL_METADATA>/gi, ' ')
+    .replace(/<SYSTEM_MESSAGE>[\s\S]*?<\/SYSTEM_MESSAGE>/gi, ' ')
+    .replace(/https?:\/\/\S+/gi, ' ');
+
+  const re = new RegExp(`(?<![A-Za-z0-9_.-])(?:[A-Za-z0-9_.-]+[\\\\/])*([A-Za-z0-9_.-]+\\.${STEP_CODE_EXT_RE})\\b`, 'gi');
+  const seen = new Set();
+  const codeFiles = [];
+  const testFiles = [];
+
+  let m;
+  while ((m = re.exec(clean)) !== null) {
+    const base = sanitizeFileBasename(m[1]);
+    if (!base) continue;
+    const key = base.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (TEST_FILE_RE.test(base)) {
+      testFiles.push(base);
+    } else {
+      codeFiles.push(base);
+    }
+  }
+
+  return {
+    allFiles: [...codeFiles, ...testFiles],
+    codeFiles,
+    testFiles,
+  };
+}
+
+/**
+ * Formats a list of target filenames compactly (e.g. `server.mjs, ui.html +1`).
+ */
+export function formatTargetFilesCompact(files = [], maxLen = 22) {
+  const unique = [];
+  const seen = new Set();
+  for (const raw of Array.isArray(files) ? files : []) {
+    const base = sanitizeFileBasename(raw);
+    if (!base) continue;
+    const k = base.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    unique.push(base);
+  }
+  if (unique.length === 0) return '';
+  if (unique.length === 1) {
+    return unique[0].length <= maxLen ? unique[0] : truncateAtCleanBoundary(unique[0], maxLen);
+  }
+
+  const picked = [];
+  for (let i = 0; i < unique.length; i++) {
+    const candidateList = [...picked, unique[i]];
+    const remaining = unique.length - candidateList.length;
+    const suffix = remaining > 0 ? ` +${remaining}` : '';
+    const joined = candidateList.join(', ') + suffix;
+    if (joined.length <= maxLen || picked.length === 0) {
+      picked.push(unique[i]);
+      if (joined.length > maxLen && picked.length === 1) break;
+    } else {
+      break;
+    }
+  }
+
+  const rem = unique.length - picked.length;
+  const suffix = rem > 0 ? ` +${rem}` : '';
+  const result = picked.join(', ') + suffix;
+  if (result.length <= maxLen) return result;
+
+  const singleBudget = Math.max(8, maxLen - suffix.length);
+  return `${truncateAtCleanBoundary(picked[0], singleBudget)}${suffix}`;
+}
+
+export function classifyScopeTargets(matchedFiles = [], userPrompt = '') {
+  const fromPrompt = extractTargetFilesFromText(userPrompt);
+  const seen = new Set();
+  const codeFiles = [];
+  const testFiles = [];
+
+  const pushFile = (raw) => {
+    const base = sanitizeFileBasename(raw);
+    if (!base) return;
+    const key = base.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    if (TEST_FILE_RE.test(base)) {
+      testFiles.push(base);
+    } else {
+      codeFiles.push(base);
+    }
+  };
+
+  for (const f of Array.isArray(matchedFiles) ? matchedFiles : []) pushFile(f);
+  for (const f of fromPrompt.allFiles) pushFile(f);
+
+  return {
+    codeFiles,
+    testFiles,
+    editTargets: codeFiles.length > 0 ? codeFiles : testFiles,
+    allFiles: [...codeFiles, ...testFiles],
+  };
+}
+
+const RECON_CMD_RE = /^(?:(?:cd|pushd|Set-Location|sl)\s+[^;&|\n]+[;&|]+\s*)*(?:git\s+(?:status|diff|log|show|grep|branch|rev-parse|ls-files)|rg|grep|ag|ack|Select-String|sls|Get-ChildItem|gci|ls|dir|Get-Content|gc|cat|type|head|tail|find|fd|tree|where|which|Get-Item|gi|Test-Path|stat)\b/i;
+const STRICT_TEST_RUNNER_RE = /\b(?:node\s+(?:[^\n;|]*?\s)?--(?:test|check)\b|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|check|lint|typecheck|verify)\b|pytest\b|vitest\b|jest\b|mocha\b|cargo\s+(?:test|check)\b|go\s+test\b|dotnet\s+test\b|tsc\b[^\n;|]*--noEmit|run-stress-audit\.mjs\b)/i;
+const TEST_EXEC_PREFIX_RE = /^(?:(?:cd|pushd|Set-Location|sl)\s+[^;&|\n]+[;&|]+\s*)*(?:node|python3?|tsx|ts-node|npx|bun|deno|vitest|jest|pytest|mocha)\b/i;
+
+export function formatCommandStepLabel(commandLine = '', toolSummary = '', isPost = false) {
+  const cmd = String(commandLine || '').trim();
+  const hasTestRunner = STRICT_TEST_RUNNER_RE.test(cmd);
+  const isReconCmd = !hasTestRunner && RECON_CMD_RE.test(cmd);
+  const isTestCmd = !isReconCmd && hasTestRunner;
+
+  // 1. Explicit test filename ONLY when executed by a test runner or interpreter (never for ls/rg/Get-ChildItem)
+  const testFileMatch = !isReconCmd && (isTestCmd || TEST_EXEC_PREFIX_RE.test(cmd))
+    ? /(?:^|[\s"'\\/])([A-Za-z0-9_.-]+\.(?:test|spec)\.[A-Za-z0-9]+|test_[A-Za-z0-9_]+\.py)\b/i.exec(cmd)
+    : null;
+  if (testFileMatch && testFileMatch[1]) {
+    const tf = sanitizeFileBasename(testFileMatch[1]);
+    const base = compactTechnicalStepLabel(`Тест ${tf}`, 30);
+    return {
+      title: base.title,
+      postTitle: isPost ? `Тест ${tf} ✓` : base.title,
+      fullTitle: `${isPost ? 'Проверено' : 'Запуск тестов'}: ${tf}`,
+      isTestCmd: true,
+      isReconCmd: false,
+    };
+  }
+
+  // 2. Named script execution (e.g. `node install.js`, `python build.py`)
+  let scriptMatch = null;
+  if (!isReconCmd) {
+    const execArgsMatch = /(?:^|\s)(?:node|python3?|tsx|ts-node|pwsh|bash)\s+([^\n"'|;>&]+)/i.exec(cmd);
+    if (execArgsMatch) {
+      const tokens = execArgsMatch[1].trim().split(/\s+/);
+      for (const tok of tokens) {
+        if (!tok || tok.startsWith('-')) continue;
+        const mFile = /^([^\s"'|;>&]+\.(?:mjs|cjs|js|ts|py|sh|ps1))\b/i.exec(tok);
+        if (mFile) {
+          scriptMatch = mFile;
+        }
+        break;
+      }
+    }
+  }
+  if (scriptMatch && scriptMatch[1]) {
+    const sf = sanitizeFileBasename(scriptMatch[1]);
+    const lbl = compactTechnicalStepLabel(`Запуск ${sf}`, 30);
+    return {
+      title: lbl.title,
+      postTitle: isPost ? `${sf} выполнен ✓` : lbl.title,
+      fullTitle: `Команда: ${sf}${toolSummary ? ` (${toolSummary})` : ''}`.slice(0, 140),
+      isTestCmd,
+      isReconCmd: false,
+    };
+  }
+
+  // 3. Test runner without single file
+  if (isTestCmd) {
+    const runnerMatch = /\b(pytest|vitest|jest|mocha|cargo\s+test|go\s+test|npm\s+test|node\s+--test)\b/i.exec(cmd);
+    const runner = runnerMatch ? runnerMatch[1].replace(/\s+/g, ' ') : 'автотесты';
+    const lbl = compactTechnicalStepLabel(`Тесты: ${runner}`, 30);
+    return {
+      title: lbl.title,
+      postTitle: isPost ? 'Проверки пройдены · финализация' : lbl.title,
+      fullTitle: toolSummary ? `${toolSummary} (${runner})` : `Прогон тестов (${runner})`,
+      isTestCmd: true,
+      isReconCmd: false,
+    };
+  }
+
+  // 4. Russian/clean toolSummary
+  if (toolSummary) {
+    const lbl = compactTechnicalStepLabel(toolSummary, 30);
+    if (lbl.title) {
+      return {
+        title: lbl.title,
+        postTitle: isPost ? 'Команда выполнена' : lbl.title,
+        fullTitle: lbl.fullTitle,
+        isTestCmd: false,
+        isReconCmd,
+      };
+    }
+  }
+
+  // 5. Fallback binary + subcommand
+  const binMatch = /^([A-Za-z0-9_.-]+)(?:\s+([A-Za-z0-9_.:/-]+))?/.exec(cmd);
+  if (binMatch) {
+    const cliStr = binMatch[2] && !binMatch[2].startsWith('-') ? `${binMatch[1]} ${binMatch[2]}` : binMatch[1];
+    const lbl = compactTechnicalStepLabel(`CLI: ${cliStr}`, 30);
+    return {
+      title: lbl.title,
+      postTitle: isPost ? 'Команда выполнена' : lbl.title,
+      fullTitle: `Терминал: ${cmd.slice(0, 120)}`,
+      isTestCmd: false,
+      isReconCmd,
+    };
+  }
+
+  return {
+    title: 'Команда терминала',
+    postTitle: isPost ? 'Команда выполнена' : 'Команда терминала',
+    fullTitle: 'Выполнение команды терминала',
+    isTestCmd: false,
+    isReconCmd,
+  };
+}
+
+/**
+ * Parses top-level steps from an `exit_plan_mode` markdown plan, excluding `Re-plan if:` tails.
+ */
+export function extractStepsFromPlanText(planText = '', maxSteps = 24) {
+  const raw = String(planText || '').replace(/\r\n/g, '\n').trim();
+  if (!raw) return [];
+
+  // Strip trailing emergency / notes blocks so they never leak into progress chips
+  const cutMatch = /^(?:#{1,4}\s*)?(?:re-plan\s+if\b|перепланировать\b|pitfalls\b|подводные\s+камни\b)/im.exec(raw);
+  const body = cutMatch ? raw.slice(0, cutMatch.index).trim() : raw;
+  if (!body) return [];
+
+  const headingItems = [];
+  const headingRe = /^#{1,4}\s*(?:(?:step|шаг|этап)\s*\d+\s*[.:—–-]\s*|\d+[.)]\s+)(.+)$/gim;
+  let hm;
+  while ((hm = headingRe.exec(body)) !== null) {
+    const txt = String(hm[1] || '').trim();
+    if (txt.length >= 4) headingItems.push(txt);
+  }
+
+  let selectedRaw = [];
+  if (headingItems.length >= 2) {
+    selectedRaw = headingItems;
+  } else {
+    const listItems = [];
+    const listRe = /^ {0,2}(\d+)[.)]\s+(.+)$/gm;
+    let lm;
+    while ((lm = listRe.exec(body)) !== null) {
+      const txt = String(lm[2] || '').trim();
+      if (txt.length >= 4) listItems.push(txt);
+    }
+    if (listItems.length >= 2) {
+      selectedRaw = listItems;
+    }
+  }
+
+  if (selectedRaw.length < 2) return [];
+
+  const cap = Math.max(2, Math.min(MAX_TIMELINE_STEPS, Number(maxSteps) || 24));
+  if (selectedRaw.length > cap) {
+    selectedRaw = [...selectedRaw.slice(0, cap - 1), selectedRaw[selectedRaw.length - 1]];
+  }
+
+  const out = [];
+  for (const rawItem of selectedRaw) {
+    const compacted = compactTechnicalStepLabel(rawItem, 30);
+    if (!compacted.title) continue;
+    out.push({
+      index: out.length + 1,
+      title: compacted.title,
+      fullTitle: compacted.fullTitle || compacted.title,
+      source: 'plan',
+      status: out.length === 0 ? 'running' : 'pending',
+    });
+  }
+
+  return out.length >= 2 ? out : [];
+}
+
+/**
+ * Normalizes an Antigravity `update_steps` checklist payload into progress timeline steps.
+ */
+export function normalizeChecklistSteps(rawSteps = []) {
+  let list = rawSteps;
+  if (typeof list === 'string') {
+    try { list = JSON.parse(list); } catch { list = []; }
+  }
+  if (!Array.isArray(list) || list.length === 0) return [];
+
+  const out = [];
+  for (const item of list) {
+    if (out.length >= MAX_TIMELINE_STEPS) break;
+    const rawTitle = typeof item === 'string'
+      ? item.trim()
+      : String(item?.title || item?.label || item?.name || '').trim();
+    if (!rawTitle) continue;
+    const rawSt = String(item?.status || 'pending').trim().toLowerCase();
+    let status = 'pending';
+    if (rawSt === 'done' || rawSt === 'completed' || rawSt === 'skipped') {
+      status = 'completed';
+    } else if (rawSt === 'in_progress' || rawSt === 'running' || rawSt === 'active') {
+      status = 'running';
+    } else if (rawSt === 'failed' || rawSt === 'error') {
+      status = 'error';
+    }
+    const compacted = compactTechnicalStepLabel(rawTitle, 30);
+    out.push({
+      index: out.length + 1,
+      title: compacted.title || rawTitle.slice(0, 30),
+      fullTitle: rawTitle.slice(0, 140),
+      source: 'checklist',
+      status,
+      ...(rawSt === 'skipped' ? { skipped: true } : {}),
+    });
+  }
+  return out;
+}
+
+export function formatMcpToolSubtitle(toolName = '', args = {}) {
+  const t = String(toolName || '');
+  const f = args?.filePath || args?.Path || args?.path || '';
+  const shortF = sanitizeFileBasename(f);
+  const rawSummary = String(args?.toolSummary || '').trim();
+  const rawQuery = String(args?.query || args?.prompt || '').trim();
+  const qCompact = rawQuery ? truncateAtCleanBoundary(rawQuery, 18) : '';
+
+  if (t === 'update_steps') return 'Обновление чек-листа';
+  if (t.includes('ram_slice')) return shortF ? `RAM-срез ${shortF}` : 'Чтение среза в RAM';
+  if (t.includes('ram_search')) return qCompact ? `RAM-поиск: ${qCompact}` : 'Быстрый поиск в RAM';
+  if (t.includes('ram_graph_query')) return 'Анализ графа связей в RAM';
+  if (t.includes('ram_context_pack')) {
+    return rawSummary ? compactTechnicalStepLabel(rawSummary, 30).title : 'Сборка контекста в RAM';
+  }
+  if (t.includes('gpu_semantic_search')) return qCompact ? `GPU-поиск: ${qCompact}` : 'Семантический поиск GPU';
+  if (t.includes('gpu_distill')) return shortF ? `GPU-сжатие ${shortF}` : 'Дистилляция на GPU';
+  if (t === 'read_file') return shortF ? `Чтение ${shortF}` : 'Чтение файла';
+  if (t === 'edit_file' || t === 'write_file') return shortF ? `Правка ${shortF}` : 'Внесение изменений';
+  if (t === 'run_command') {
+    return formatCommandStepLabel(args?.CommandLine || args?.command || args?.cmd || '', rawSummary, false).title;
+  }
+  if (t === 'exit_plan_mode') return 'Фиксация плана работ';
+  if (rawSummary) return compactTechnicalStepLabel(rawSummary, 30).title;
+  return '';
+}
+
+export function resolveTranscriptBirthMs(transcriptPath = '', fallbackNow = Date.now()) {
+  if (!transcriptPath || typeof transcriptPath !== 'string' || !existsSync(transcriptPath)) {
+    return fallbackNow;
+  }
+  try {
+    const st = statSync(transcriptPath);
+    return Math.round(st.birthtimeMs || fallbackNow);
+  } catch {
+    return fallbackNow;
+  }
+}
+
+const SKILL_PATH_RE = /(?:^|[\\/])skills[\\/]([a-z0-9._-]+)[\\/]SKILL\.md$/i;
+export const RAM_GPU_TOOL_RE = /(?:ram_search|ram_slice|ram_context_pack|ram_graph_query|ram_stats|gpu_distill|gpu_semantic_search)/i;
+export const RAM_SAVED_TOKENS_PER_CALL = 650;
+
+export function extractSkillSlugFromPath(rawPath = '') {
+  const clean = String(rawPath || '').replace(/^@file:/i, '').trim();
+  if (!clean) return '';
+  const m = SKILL_PATH_RE.exec(clean);
+  return m && m[1] ? m[1] : '';
+}
+
+export function inspectTranscriptTurnState(transcriptPath = '', now = Date.now()) {
+  if (!transcriptPath || typeof transcriptPath !== 'string' || !existsSync(transcriptPath)) {
+    return { exists: false };
+  }
+  let st;
+  try {
+    st = statSync(transcriptPath);
+  } catch {
+    return { exists: false };
+  }
+  if (!st.size) return { exists: true, mtimeMs: st.mtimeMs, size: 0, state: 'empty', stepKey: '' };
+
+  const tailBytes = Math.min(st.size, 65536);
+  const buf = Buffer.allocUnsafe(tailBytes);
+  let fd = null;
+  try {
+    fd = openSync(transcriptPath, 'r');
+    readSync(fd, buf, 0, tailBytes, st.size - tailBytes);
+  } catch {
+    return { exists: false };
+  } finally {
+    if (fd !== null) {
+      try { closeSync(fd); } catch {}
+    }
+  }
+
+  const rawText = buf.toString('utf-8');
+  const rawLines = rawText.split('\n');
+  const startIdx = st.size > tailBytes ? 1 : 0;
+  const parsed = [];
+  for (let i = startIdx; i < rawLines.length; i++) {
+    const line = rawLines[i].trim();
+    if (!line) continue;
+    try {
+      parsed.push(JSON.parse(line));
+    } catch {}
+  }
+  if (parsed.length === 0) {
+    return { exists: true, mtimeMs: st.mtimeMs, size: st.size, state: 'active', stepKey: '' };
+  }
+
+  let lastUserIdx = -1;
+  let lastUserPrompt = '';
+  for (let i = parsed.length - 1; i >= 0; i--) {
+    if (parsed[i]?.type === 'USER_INPUT') {
+      lastUserIdx = i;
+      lastUserPrompt = String(parsed[i]?.content || '');
+      break;
+    }
+  }
+
+  let plannerToolSteps = 0;
+  let latestToolSubtitle = '';
+  let detectedWorkspace = '';
+  let extractedPlanSteps = [];
+  let latestChecklistSteps = [];
+  let ranTestLabel = '';
+  const inspectedFiles = [];
+  const searchQueries = [];
+  const editedFiles = [];
+  const askedQuestions = [];
+  const activeSkills = [];
+  let ramSavedCalls = 0;
+  const spawnedSubagentRoles = {};
+  const swarmNameToCids = new Map();
+  const killedSubagentCids = new Set();
+  const killedSwarmNames = new Set();
+  let killedAllSubagents = false;
+  let coordinatorPostedDone = false;
+  let allSubagentsStoppedByRestart = false;
+
+  // Cross-turn scan of Swarm / subagent roster, kills, and server-restart stop notices
+  for (let i = 0; i < parsed.length; i++) {
+    const entry = parsed[i];
+    if (!entry) continue;
+    if (entry.source === 'SYSTEM' && typeof entry.content === 'string') {
+      if (/All your subagents and background tasks have been stopped/i.test(entry.content)) {
+        allSubagentsStoppedByRestart = true;
+      }
+      continue;
+    }
+    if (entry.type === 'PLANNER_RESPONSE' && Array.isArray(entry.tool_calls)) {
+      for (const tc of entry.tool_calls) {
+        const tName = String(tc?.name || '');
+        const tArgs = tc?.args && typeof tc.args === 'object' ? tc.args : {};
+        if (tName === 'invoke_subagent') {
+          allSubagentsStoppedByRestart = false;
+          killedAllSubagents = false;
+        } else if (tName === 'swarm') {
+          const act = String(tArgs.action || '').replace(/^["'\s]+|["'\s]+$/g, '').toLowerCase();
+          const rawMember = String(tArgs.name || '').replace(/^["'\s]+|["'\s]+$/g, '').toLowerCase();
+          if (act === 'add') {
+            allSubagentsStoppedByRestart = false;
+            killedAllSubagents = false;
+            coordinatorPostedDone = false;
+            if (rawMember) {
+              for (const k of Array.from(killedSwarmNames)) {
+                if (k === rawMember || k.startsWith(`${rawMember}-`)) killedSwarmNames.delete(k);
+              }
+            }
+          } else if (act === 'kill' && rawMember) {
+            killedSwarmNames.add(rawMember);
+            for (const [mName, cids] of swarmNameToCids.entries()) {
+              if (mName === rawMember || mName.startsWith(`${rawMember}-`)) {
+                for (const kc of cids) killedSubagentCids.add(kc);
+              }
+            }
+          }
+        } else if (tName === 'manage_subagents') {
+          const mAct = String(tArgs.Action || tArgs.action || '').replace(/^["'\s]+|["'\s]+$/g, '').toLowerCase();
+          if (mAct === 'kill_all') {
+            killedAllSubagents = true;
+            for (const sc of Object.keys(spawnedSubagentRoles)) killedSubagentCids.add(sc);
+          } else if (mAct === 'kill') {
+            let ids = tArgs.ConversationIds ?? tArgs.conversationIds;
+            if (typeof ids === 'string') {
+              try { ids = JSON.parse(ids); } catch { ids = []; }
+            }
+            if (Array.isArray(ids)) {
+              for (const rawId of ids) {
+                const normId = normalizeConversationId(rawId);
+                if (normId && normId !== 'default') killedSubagentCids.add(normId);
+              }
+            }
+          }
+        } else if (tName === 'post_message') {
+          const pTxt = String(tArgs.text || '').replace(/^["'\s]+|["'\s]+$/g, '');
+          if (/^\[done\]/i.test(pTxt)) {
+            coordinatorPostedDone = true;
+          }
+        }
+      }
+    } else if (entry.type === 'GENERIC' && typeof entry.content === 'string') {
+      if (entry.content.includes('"added"') && entry.content.includes('"conversation_id"')) {
+        const addedMatches = entry.content.matchAll(
+          /"status"\s*:\s*"added"[\s\S]*?"name"\s*:\s*"([a-zA-Z0-9_-]{1,48})"[\s\S]*?"conversation_id"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[a-zA-Z0-9_-]{6,64})"/gi
+        );
+        for (const am of addedMatches) {
+          const wName = String(am[1] || '').trim();
+          const wCid = normalizeConversationId(am[2]);
+          if (wName && wCid && wCid !== 'default') {
+            spawnedSubagentRoles[wCid] = wName;
+            killedSubagentCids.delete(wCid);
+            const lk = wName.toLowerCase();
+            if (!swarmNameToCids.has(lk)) swarmNameToCids.set(lk, new Set());
+            swarmNameToCids.get(lk).add(wCid);
+          }
+        }
+      }
+    }
+  }
+
+  let pendingInvokeRoles = [];
+  for (let i = Math.max(0, lastUserIdx + 1); i < parsed.length; i++) {
+    const item = parsed[i];
+    if (item?.type === 'PLANNER_RESPONSE' && Array.isArray(item.tool_calls) && item.tool_calls.length > 0) {
+      plannerToolSteps += 1;
+      const lastTc = item.tool_calls[item.tool_calls.length - 1];
+      const sub = formatMcpToolSubtitle(lastTc?.name, lastTc?.args);
+      if (sub) latestToolSubtitle = sub;
+      const wsArg = lastTc?.args?.workspaceRoot || lastTc?.args?.Cwd || '';
+      if (wsArg && typeof wsArg === 'string' && !isBrainOrTempWorkspacePath(wsArg)) {
+        detectedWorkspace = sanitizeWorkspaceRoot(wsArg);
+      }
+      const rolesBatch = [];
+      for (const tc of item.tool_calls) {
+        const tName = String(tc?.name || '');
+        const tArgs = tc?.args && typeof tc.args === 'object' ? tc.args : {};
+        if (tName === 'update_steps') {
+          const parsedChecklist = normalizeChecklistSteps(tArgs.steps);
+          if (parsedChecklist.length > 0) {
+            latestChecklistSteps = parsedChecklist;
+          }
+        }
+        if (tName === 'exit_plan_mode' && typeof tArgs.plan === 'string' && tArgs.plan.trim()) {
+          const parsedPlan = extractStepsFromPlanText(tArgs.plan, 24);
+          if (parsedPlan.length >= 2) {
+            extractedPlanSteps = parsedPlan;
+          }
+        }
+        if (tName === 'ask_question') {
+          let qList = tArgs.questions;
+          if (typeof qList === 'string') {
+            try { qList = JSON.parse(qList); } catch {}
+          }
+          const firstQ = Array.isArray(qList) && qList[0]
+            ? (typeof qList[0] === 'string' ? qList[0] : String(qList[0]?.question || ''))
+            : '';
+          const qLine = firstQ.split(/[\n?!]/)[0].trim().slice(0, 100);
+          askedQuestions.push(qLine || 'Вопрос пользователю');
+        }
+        const rawPathArg = String(tArgs.filePath || tArgs.Path || tArgs.path || tArgs.text || '').trim();
+        const skillSlug = extractSkillSlugFromPath(rawPathArg);
+        if (skillSlug && (tName === 'read_file' || tName.includes('ram_slice') || tName.includes('gpu_distill')) && !activeSkills.includes(skillSlug) && activeSkills.length < 6) {
+          activeSkills.push(skillSlug);
+        }
+        if (RAM_GPU_TOOL_RE.test(tName)) {
+          ramSavedCalls += 1;
+        }
+        const fArg = sanitizeFileBasename(tArgs.filePath || tArgs.Path || tArgs.path || '');
+        if (fArg && (tName === 'read_file' || tName.includes('ram_slice') || tName.includes('gpu_distill'))) {
+          if (!inspectedFiles.includes(fArg)) inspectedFiles.push(fArg);
+        }
+        if (tName.includes('ram_search') || tName.includes('gpu_semantic_search') || tName.includes('ram_context_pack')) {
+          const q = String(tArgs.query || tArgs.prompt || '').trim();
+          if (q && !searchQueries.includes(q)) searchQueries.push(q);
+        }
+        if (fArg && (tName === 'edit_file' || tName === 'write_file')) {
+          if (!editedFiles.includes(fArg)) editedFiles.push(fArg);
+        }
+        if (tName === 'run_command') {
+          const cmdStr = String(tArgs.CommandLine || tArgs.command || tArgs.cmd || '').trim();
+          const cmdMeta = formatCommandStepLabel(cmdStr, String(tArgs.toolSummary || '').trim(), false);
+          if (cmdMeta.isTestCmd) {
+            ranTestLabel = cmdMeta.title;
+          }
+        }
+        if (tName === 'invoke_subagent') {
+          const r = String(tArgs.Role || tArgs.role || '').trim();
+          if (r) rolesBatch.push(r);
+        }
+      }
+      if (rolesBatch.length > 0) pendingInvokeRoles = rolesBatch;
+    } else if (pendingInvokeRoles.length > 0 && typeof item?.content === 'string') {
+      const cidMatches = [...item.content.matchAll(/(?:conversationId["'\s:=]+|conversation:\/\/)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[a-zA-Z0-9_-]{6,64})/gi)];
+      for (let mIdx = 0; mIdx < cidMatches.length; mIdx++) {
+        const foundCid = normalizeConversationId(cidMatches[mIdx][1]);
+        const roleForCid = pendingInvokeRoles[Math.min(mIdx, pendingInvokeRoles.length - 1)];
+        if (foundCid && roleForCid) {
+          spawnedSubagentRoles[foundCid] = roleForCid;
+          killedSubagentCids.delete(foundCid);
+        }
+      }
+      if (cidMatches.length > 0) pendingInvokeRoles = [];
+    }
+  }
+
+  let lastMeaningful = null;
+  let lastMeaningfulIdx = -1;
+  let lastPlannerIdx = -1;
+  for (let i = parsed.length - 1; i >= 0; i--) {
+    const item = parsed[i];
+    if (!item) continue;
+    if (lastPlannerIdx < 0 && item.type === 'PLANNER_RESPONSE') {
+      lastPlannerIdx = i;
+    }
+    if (lastMeaningfulIdx < 0 && item.source !== 'SYSTEM' && item.source !== 'SYSTEM_SDK') {
+      lastMeaningful = item;
+      lastMeaningfulIdx = i;
+    }
+    if (lastPlannerIdx >= 0 && lastMeaningfulIdx >= 0) break;
+  }
+  if (!lastMeaningful) {
+    lastMeaningful = parsed[parsed.length - 1];
+    lastMeaningfulIdx = parsed.length - 1;
+  }
+
+  let stoppedByServerRestart = false;
+  let hasTrailingWakeupMessage = false;
+  for (let i = Math.max(0, lastMeaningfulIdx + 1); i < parsed.length; i++) {
+    const trailing = parsed[i];
+    if (!trailing || trailing.source !== 'SYSTEM' || typeof trailing.content !== 'string') continue;
+    if (/All your subagents and background tasks have been stopped/i.test(trailing.content)) {
+      stoppedByServerRestart = true;
+    } else if (trailing.content.includes('[Message]') || trailing.content.includes('[board]')) {
+      hasTrailingWakeupMessage = true;
+    }
+  }
+
+  const stepKey = `${lastMeaningful?.step_index ?? ''}:${lastMeaningful?.created_at ?? ''}:${lastMeaningful?.type ?? ''}`;
+  const statusUpper = String(lastMeaningful?.status || '').toUpperCase();
+  const lastToolCalls = lastMeaningful?.type === 'PLANNER_RESPONSE' && Array.isArray(lastMeaningful.tool_calls)
+    ? lastMeaningful.tool_calls
+    : [];
+  const lastToolIsExitPlan = lastToolCalls.some((tc) => tc?.name === 'exit_plan_mode');
+  const baseTelemetry = {
+    exists: true,
+    mtimeMs: st.mtimeMs,
+    size: st.size,
+    stepKey,
+    plannerToolSteps,
+    latestToolSubtitle,
+    lastUserPrompt,
+    detectedWorkspace,
+    spawnedSubagentRoles,
+    killedSubagentCids: Array.from(killedSubagentCids),
+    killedSwarmNames: Array.from(killedSwarmNames),
+    killedAllSubagents,
+    coordinatorPostedDone,
+    allSubagentsStoppedByRestart,
+    extractedPlanSteps,
+    checklistSteps: latestChecklistSteps,
+    inspectedFiles,
+    searchQueries,
+    editedFiles,
+    askedQuestions,
+    ranTestLabel,
+    activeSkills,
+    lastToolIsExitPlan,
+    ramSavedTokens: ramSavedCalls * RAM_SAVED_TOKENS_PER_CALL,
+  };
+
+  if (statusUpper === 'CANCELLED' || statusUpper === 'CANCELED' || statusUpper === 'ABORTED') {
+    return { ...baseTelemetry, state: 'cancelled' };
+  }
+
+  // Native Swarm worker parked on swarm_wait ("Waiting for a message...") -> sleeping on board (✓ in native UI)
+  if (lastPlannerIdx >= 0 && lastMeaningfulIdx > lastPlannerIdx) {
+    const lpTools = Array.isArray(parsed[lastPlannerIdx]?.tool_calls) ? parsed[lastPlannerIdx].tool_calls : [];
+    if (lpTools.some((tc) => tc?.name === 'swarm_wait')) {
+      const postModelSteps = parsed
+        .slice(lastPlannerIdx + 1)
+        .filter((it) => it && it.source !== 'SYSTEM' && it.source !== 'SYSTEM_SDK');
+      const hasRunningSibling = postModelSteps.some((it) => String(it?.status || '').toUpperCase() === 'RUNNING');
+      const hasWaitParkOutput = postModelSteps.some(
+        (it) => typeof it?.content === 'string' && /Waiting for a message\b/i.test(it.content)
+      );
+      const isFreshWakeup = hasTrailingWakeupMessage && !stoppedByServerRestart && (now - Number(st.mtimeMs || 0) < 45_000);
+      if (!hasRunningSibling && hasWaitParkOutput && !isFreshWakeup) {
+        return { ...baseTelemetry, swarmParked: true, state: 'completed' };
+      }
+    }
+  }
+
+  if (lastMeaningful?.type === 'PLANNER_RESPONSE') {
+    const tcs = Array.isArray(lastMeaningful.tool_calls) ? lastMeaningful.tool_calls : [];
+    if (tcs.some((tc) => tc?.name === 'ask_question')) {
+      return { ...baseTelemetry, state: 'waiting_user' };
+    }
+    if (tcs.length === 0 && (statusUpper === 'DONE' || statusUpper === '')) {
+      return { ...baseTelemetry, state: 'completed' };
+    }
+  }
+
+  if (stoppedByServerRestart) {
+    return { ...baseTelemetry, state: 'cancelled' };
+  }
+
+  return {
+    ...baseTelemetry,
+    state: 'running',
+  };
+}
+
+export function buildDefaultStepsForGrade(grade = 'M', isReadOnlyQuestion = false, context = {}) {
+  const { codeFiles, testFiles, editTargets } = classifyScopeTargets(
+    context?.matchedFiles || [],
+    context?.userPrompt || ''
+  );
+  const hasScope = editTargets.length > 0 || testFiles.length > 0;
+
+  if (isReadOnlyQuestion) {
+    if (hasScope) {
+      const readList = editTargets.length > 0 ? editTargets : testFiles;
+      const compactRead = formatTargetFilesCompact(readList, 18);
+      return [
+        {
+          index: 1,
+          title: compactTechnicalStepLabel(`RAM-срез ${compactRead}`, 30).title,
+          fullTitle: `Чтение RAM-срезов и символов: ${readList.join(', ')}`,
+          source: 'scope',
+          status: 'running',
+        },
+        {
+          index: 2,
+          title: 'Технический разбор',
+          fullTitle: 'Анализ связей, контрактов и формирование ответа',
+          source: 'scope',
+          status: 'pending',
+        },
+      ];
+    }
+    return [
+      {
+        index: 1,
+        title: 'RAM-поиск и анализ кода',
+        fullTitle: 'Поиск релевантных модулей в RAM/GPU и анализ контекста',
+        source: 'default',
+        status: 'running',
+      },
+      {
+        index: 2,
+        title: 'Технический разбор',
+        fullTitle: 'Синтез инженерного ответа по срезам кода',
+        source: 'default',
+        status: 'pending',
+      },
+    ];
+  }
+
+  const g = String(grade || 'M').toUpperCase();
+  if (g === 'S') {
+    if (hasScope) {
+      const targetList = editTargets.length > 0 ? editTargets : testFiles;
+      const compactRead = formatTargetFilesCompact(targetList, 18);
+      const compactPatch = formatTargetFilesCompact(targetList, 22);
+      return [
+        {
+          index: 1,
+          title: compactTechnicalStepLabel(`RAM-срез ${compactRead}`, 30).title,
+          fullTitle: `Чтение среза и зависимостей: ${targetList.join(', ')}`,
+          source: 'scope',
+          status: 'running',
+        },
+        {
+          index: 2,
+          title: compactTechnicalStepLabel(`Патч ${compactPatch}`, 30).title,
+          fullTitle: `Точечная правка: ${targetList.join(', ')}`,
+          source: 'scope',
+          status: 'pending',
+        },
+        {
+          index: 3,
+          title: testFiles.length > 0 ? compactTechnicalStepLabel(`Тест ${formatTargetFilesCompact(testFiles, 22)}`, 30).title : 'AST-чек синтаксиса',
+          fullTitle: testFiles.length > 0 ? `Прогон автотестов: ${testFiles.join(', ')}` : 'Авто-проверка синтаксиса и импортов',
+          source: 'scope',
+          status: 'pending',
+        },
+      ];
+    }
+    return [
+      { index: 1, title: 'RAM-срез целевого узла', fullTitle: 'Чтение целевого среза кода в RAM', source: 'default', status: 'running' },
+      { index: 2, title: 'Точечный diff-патч', fullTitle: 'Точечное изменение файла с контролем отката', source: 'default', status: 'pending' },
+      { index: 3, title: 'AST-чек синтаксиса', fullTitle: 'Авто-проверка синтаксиса и контрактов', source: 'default', status: 'pending' },
+    ];
+  }
+
+  if (g === 'L' || g === 'XL') {
+    if (hasScope) {
+      const targets = editTargets.length > 0 ? editTargets : testFiles;
+      const compactGraph = formatTargetFilesCompact(targets, 16);
+      const compactPatch = formatTargetFilesCompact(targets, 22);
+      const compactTest = testFiles.length > 0 ? formatTargetFilesCompact(testFiles, 22) : '';
+      return [
+        {
+          index: 1,
+          title: compactTechnicalStepLabel(`Граф и срез ${compactGraph}`, 30).title,
+          fullTitle: `Анализ графа зависимостей и срезов: ${targets.join(', ')}`,
+          source: 'scope',
+          status: 'running',
+        },
+        {
+          index: 2,
+          title: compactTechnicalStepLabel(`Патч ${compactPatch}`, 30).title,
+          fullTitle: `Модификация целевых модулей: ${targets.join(', ')}`,
+          source: 'scope',
+          status: 'pending',
+        },
+        {
+          index: 3,
+          title: 'Контракты AST (Blast Radius)',
+          fullTitle: 'Сверка импортов, экспортов и обратных зависимостей',
+          source: 'scope',
+          status: 'pending',
+        },
+        {
+          index: 4,
+          title: compactTest ? compactTechnicalStepLabel(`Тест ${compactTest}`, 30).title : 'Автотесты и верификация',
+          fullTitle: compactTest ? `Прогон автотестов: ${testFiles.join(', ')}` : 'Прогон регрессионных тестов и финальная проверка',
+          source: 'scope',
+          status: 'pending',
+        },
+      ];
+    }
+    return [
+      { index: 1, title: 'RAM-срез и граф связей', fullTitle: 'Архитектурный анализ графа зависимостей и срезов кода', source: 'default', status: 'running' },
+      { index: 2, title: 'Модификация целевых узлов', fullTitle: 'Последовательное внесение изменений в целевые модули', source: 'default', status: 'pending' },
+      { index: 3, title: 'Контракты AST и импорты', fullTitle: 'Контроль целостности импортов и обратных зависимостей', source: 'default', status: 'pending' },
+      { index: 4, title: 'Автотесты и верификация', fullTitle: 'Запуск тестового набора и финальная проверка', source: 'default', status: 'pending' },
+    ];
+  }
+
+  if (hasScope) {
+    const targets = editTargets.length > 0 ? editTargets : testFiles;
+    const compactRead = formatTargetFilesCompact(targets, 16);
+    const compactPatch = formatTargetFilesCompact(targets, 22);
+    const compactTest = testFiles.length > 0 ? formatTargetFilesCompact(testFiles, 22) : '';
+    return [
+      {
+        index: 1,
+        title: compactTechnicalStepLabel(`Срез и связи ${compactRead}`, 30).title,
+        fullTitle: `Чтение RAM-срезов и связей: ${targets.join(', ')}`,
+        source: 'scope',
+        status: 'running',
+      },
+      {
+        index: 2,
+        title: compactTechnicalStepLabel(`Патч ${compactPatch}`, 30).title,
+        fullTitle: `Внесение изменений в: ${targets.join(', ')}`,
+        source: 'scope',
+        status: 'pending',
+      },
+      {
+        index: 3,
+        title: compactTest ? compactTechnicalStepLabel(`Тест ${compactTest}`, 30).title : 'AST-чек и микро-тесты',
+        fullTitle: compactTest ? `Прогон тестов: ${testFiles.join(', ')}` : 'Проверка синтаксиса, контрактов импорта и микро-тестов',
+        source: 'scope',
+        status: 'pending',
+      },
+    ];
+  }
+
+  return [
+    { index: 1, title: 'RAM-срез и поиск связей', fullTitle: 'Поиск целевых модулей в RAM/GPU и анализ зависимостей', source: 'default', status: 'running' },
+    { index: 2, title: 'Внесение патчей в модули', fullTitle: 'Модификация целевых файлов через diff-патчи', source: 'default', status: 'pending' },
+    { index: 3, title: 'AST-чек и микро-тесты', fullTitle: 'Проверка синтаксиса, импортов и затронутых тестов', source: 'default', status: 'pending' },
+  ];
+}

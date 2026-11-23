@@ -1,0 +1,24 @@
+{
+  "name": "antigravity-model-router",
+  "version": "3.30.0",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE",
+  "type": "module",
+  "description": "The Tunnel · Интеллектуальный 3D-автопилот и диспетчер моделей ИИ v3.30.0 для Google Antigravity (Gemini 4 Hydrogen/Neon/Carbon/Argon, CPU worker pool, In-RAM MCP, Ollama Int8 GPU)",
+  "scripts": {
+    "test": "node --test --test-concurrency=8 tests/*.test.mjs",
+    "audit": "node skills/deep-stress-auditor/scripts/run-stress-audit.mjs --fuzz",
+    "lint:skills": "node skills/skill-architect/scripts/audit-skill.mjs --all --strict",
+    "benchmark:roi": "node scripts/benchmark-token-roi.mjs",
+    "install:plugin": "node install.js",
+    "uninstall:plugin": "node install.js --uninstall",
+    "pack": "node scripts/pack-release.mjs",
+    "pack:zip": "node scripts/pack-release.mjs --zip-only",
+    "version:check": "node scripts/bump-version.mjs --check",
+    "version:patch": "node scripts/bump-version.mjs patch",
+    "version:minor": "node scripts/bump-version.mjs minor"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

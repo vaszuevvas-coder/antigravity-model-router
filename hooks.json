@@ -1,0 +1,49 @@
+{
+  "model-router-engine": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "node ./core/hook-runner.mjs SessionStart",
+        "timeout": 8
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "node ./core/hook-runner.mjs PreInvocation",
+        "timeout": 10
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "edit_file|write_file|read_file|run_command|invoke_subagent|ask_question|swarm|exit_plan_mode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./core/hook-runner.mjs PreToolUse",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "edit_file|write_file|run_command|ask_question",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./core/hook-runner.mjs PostToolUse",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "node ./core/hook-runner.mjs Stop",
+        "timeout": 5
+      }
+    ]
+  }
+}

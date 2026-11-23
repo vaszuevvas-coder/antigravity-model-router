@@ -1,0 +1,1098 @@
+    let _smartGhostText = '';
+    let _smartGhostSource = '';
+    let _smartLastDraft = '';
+    let _smartReqSeq = 0;
+    let _smartFastTimer = null;
+    let _smartGpuTimer = null;
+    let _smartGpuAbortCtrl = null;
+    let _smartChipsLastSig = '';
+    let _smartComposerBound = false;
+    let _composerGrillArmed = false;
+
+    function syncComposerGrillToggleUi() {
+      const btn = document.getElementById('btnToggleComposerGrill');
+      if (!btn) return;
+      btn.classList.toggle('active', _composerGrillArmed);
+      btn.setAttribute('aria-pressed', _composerGrillArmed ? 'true' : 'false');
+    }
+
+    function toggleComposerGrillMe() {
+      _composerGrillArmed = !_composerGrillArmed;
+      syncComposerGrillToggleUi();
+      flashComposerStatus(
+        _composerGrillArmed
+          ? '🔥 Детальный опрос (Grill-Me) включён для следующего запроса'
+          : 'Режим детального опроса отключён',
+        'info',
+        2600
+      );
+    }
+
+    function updateComposerEngineBadge(mode, label) {
+      const badgeEl = document.getElementById('composerEngineBadge');
+      if (!badgeEl) return;
+      badgeEl.className = 'composer-engine-badge' + (mode ? (' is-' + mode) : '');
+      badgeEl.textContent = label || 'RAM + GPU · 0 тк';
+    }
+
+    function syncSmartComposerSizeAndScroll() {
+      const inputEl = document.getElementById('smartComposerInput');
+      const mirrorEl = document.getElementById('composerMirror');
+      if (!inputEl) return;
+      inputEl.style.height = 'auto';
+      const nextH = Math.min(148, Math.max(56, inputEl.scrollHeight || 56));
+      inputEl.style.height = nextH + 'px';
+      if (mirrorEl) {
+        if (inputEl.clientWidth > 0) {
+          mirrorEl.style.width = inputEl.clientWidth + 'px';
+        }
+        mirrorEl.scrollTop = inputEl.scrollTop;
+      }
+    }
+
+    function renderSmartComposerMirror() {
+      const inputEl = document.getElementById('smartComposerInput');
+      const typedEl = document.getElementById('composerMirrorTyped');
+      const ghostEl = document.getElementById('composerMirrorGhost');
+      const tabPillEl = document.getElementById('composerGhostTabPill');
+      const clearBtn = document.getElementById('btnClearComposer');
+      if (!inputEl) return;
+
+      const val = inputEl.value || '';
+      if (clearBtn) {
+        clearBtn.style.display = val.length > 0 ? 'inline-flex' : 'none';
+      }
+      const caretInMiddle = Boolean(
+        document.activeElement === inputEl &&
+        (inputEl.selectionStart !== val.length || inputEl.selectionEnd !== val.length)
+      );
+      const visibleGhost = (!caretInMiddle && val.trim().length > 0) ? _smartGhostText : '';
+      if (typedEl) typedEl.textContent = val;
+      if (ghostEl) ghostEl.textContent = visibleGhost;
+      if (tabPillEl) tabPillEl.style.display = visibleGhost ? 'inline-block' : 'none';
+      syncSmartComposerSizeAndScroll();
+    }
+
+    function renderSmartComposerChips(chips) {
+      const rowEl = document.getElementById('composerChipsRow');
+      if (!rowEl || !Array.isArray(chips) || chips.length === 0) return;
+      const sig = JSON.stringify(chips);
+      if (sig === _smartChipsLastSig) return;
+      _smartChipsLastSig = sig;
+      rowEl.textContent = '';
+      for (let i = 0; i < chips.length; i++) {
+        const c = chips[i];
+        if (!c || !c.label || !c.prompt) continue;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'composer-chip-btn';
+        btn.setAttribute('data-action', 'applyComposerChip');
+        btn.setAttribute('data-prompt', String(c.prompt));
+        btn.textContent = String(c.label);
+        btn.title = String(c.title || c.prompt);
+        rowEl.appendChild(btn);
+      }
+    }
+
+    function cancelSmartComposerPendingRequests() {
+      if (_smartFastTimer) {
+        clearTimeout(_smartFastTimer);
+        _smartFastTimer = null;
+      }
+      if (_smartGpuTimer) {
+        clearTimeout(_smartGpuTimer);
+        _smartGpuTimer = null;
+      }
+      if (_smartGpuAbortCtrl) {
+        try { _smartGpuAbortCtrl.abort(); } catch {}
+        _smartGpuAbortCtrl = null;
+      }
+    }
+
+    function dismissSmartComposerGhost() {
+      _smartGhostText = '';
+      _smartGhostSource = '';
+      renderSmartComposerMirror();
+    }
+
+    function scheduleSmartAutocomplete(draftVal) {
+      _smartReqSeq += 1;
+      const seq = _smartReqSeq;
+      cancelSmartComposerPendingRequests();
+
+      const text = String(draftVal || '');
+      const trimmed = text.trim();
+      const isDoneSentence = (function (raw) {
+        const s = String(raw || '').trimEnd();
+        if (!s) return false;
+        if (/[?!…]$/.test(s)) return true;
+        if (!s.endsWith('.')) return false;
+        const noDot = s.slice(0, -1);
+        if (/(?:^|[\s(«"'])(?:т\.\s*[дпе]|и\s+др|и\s+пр|др|пр|см|напр|рис|стр|e\.g|i\.e|vs|etc)$/i.test(noDot)) {
+          return false;
+        }
+        if (/\.\s+$/.test(raw)) return true;
+        const lastTok = (noDot.match(/(\S+)$/) || [])[1] || '';
+        if (!lastTok) return false;
+        if (/[А-Яа-яЁё]$/.test(lastTok)) return true;
+        if (/\.[A-Za-z][A-Za-z0-9]{0,5}$/.test(lastTok)) return true;
+        return false;
+      })(text);
+      if (!trimmed || text.length > 600 || isDoneSentence) {
+        _smartGhostText = '';
+        _smartGhostSource = '';
+        updateComposerEngineBadge('', 'RAM + GPU · 0 тк');
+        renderSmartComposerMirror();
+        return;
+      }
+
+      _smartFastTimer = setTimeout(async function () {
+        _smartFastTimer = null;
+        if (seq !== _smartReqSeq) return;
+        try {
+          const res = await panelFetch('/api/autocomplete', {
+            method: 'POST',
+            body: JSON.stringify({ draft: text, stage: 'fast', seq: seq }),
+          });
+          if (!res || !res.ok || seq !== _smartReqSeq) return;
+          const data = await res.json();
+          if (!data || !data.ok || seq !== _smartReqSeq) return;
+          if (Array.isArray(data.chips)) renderSmartComposerChips(data.chips);
+          if (data.continuation && (_smartGhostSource !== 'gpu' || !_smartGhostText)) {
+            _smartGhostText = String(data.continuation);
+            _smartGhostSource = 'ram';
+            updateComposerEngineBadge('ram', 'RAM · <5 мс');
+            renderSmartComposerMirror();
+          }
+        } catch {}
+      }, 65);
+
+      if (trimmed.length >= 3 && currentState && currentState.gpuEnabled !== false) {
+        _smartGpuTimer = setTimeout(async function () {
+          _smartGpuTimer = null;
+          if (seq !== _smartReqSeq) return;
+          updateComposerEngineBadge('loading', 'GPU · подбор...');
+          const ac = typeof AbortController !== 'undefined' ? new AbortController() : null;
+          _smartGpuAbortCtrl = ac;
+          try {
+            const fetchOpts = {
+              method: 'POST',
+              body: JSON.stringify({ draft: text, stage: 'gpu', seq: seq }),
+            };
+            if (ac) fetchOpts.signal = ac.signal;
+            const res = await panelFetch('/api/autocomplete', fetchOpts);
+            if (_smartGpuAbortCtrl === ac) _smartGpuAbortCtrl = null;
+            if (!res || !res.ok || seq !== _smartReqSeq || (ac && ac.signal.aborted)) return;
+            const data = await res.json();
+            if (!data || data.aborted || seq !== _smartReqSeq) return;
+            if (Array.isArray(data.chips)) renderSmartComposerChips(data.chips);
+            if (data.ok && data.continuation) {
+              _smartGhostText = String(data.continuation);
+              _smartGhostSource = data.source || 'gpu';
+              if (_smartGhostSource === 'gpu') {
+                const msText = data.fromRamCache
+                  ? 'кэш'
+                  : (Math.max(1, Math.round(Number(data.latencyMs || 0))) + ' мс');
+                updateComposerEngineBadge('gpu', 'GPU · ' + msText);
+              } else {
+                updateComposerEngineBadge('ram', 'RAM · <5 мс');
+              }
+              renderSmartComposerMirror();
+            } else {
+              updateComposerEngineBadge(
+                _smartGhostText ? 'ram' : '',
+                _smartGhostText ? 'RAM · <5 мс' : 'RAM + GPU · 0 тк'
+              );
+            }
+          } catch (err) {
+            if (_smartGpuAbortCtrl === ac) _smartGpuAbortCtrl = null;
+            if (seq === _smartReqSeq && !_smartGhostText && (!err || err.name !== 'AbortError')) {
+              updateComposerEngineBadge('', 'RAM + GPU · 0 тк');
+            }
+          }
+        }, 220);
+      }
+    }
+
+    function handleSmartComposerInput() {
+      const inputEl = document.getElementById('smartComposerInput');
+      if (!inputEl) return;
+      const val = inputEl.value || '';
+      const caretAtEnd = inputEl.selectionStart === val.length && inputEl.selectionEnd === val.length;
+      if (
+        caretAtEnd &&
+        _smartGhostText &&
+        _smartLastDraft &&
+        val.length > _smartLastDraft.length &&
+        val.indexOf(_smartLastDraft) === 0
+      ) {
+        const typedDelta = val.slice(_smartLastDraft.length);
+        if (_smartGhostText.toLowerCase().indexOf(typedDelta.toLowerCase()) === 0) {
+          _smartGhostText = _smartGhostText.slice(typedDelta.length);
+        } else {
+          _smartGhostText = '';
+          _smartGhostSource = '';
+        }
+      } else if (val !== _smartLastDraft) {
+        _smartGhostText = '';
+        _smartGhostSource = '';
+      }
+      _smartLastDraft = val;
+      renderSmartComposerMirror();
+      scheduleSmartAutocomplete(val);
+      checkSmartComposerAtTrigger(val);
+    }
+
+    function acceptSmartComposerGhost(wordOnly) {
+      const inputEl = document.getElementById('smartComposerInput');
+      if (!inputEl || !_smartGhostText) return;
+      const len = inputEl.value.length;
+      if (inputEl.selectionStart !== len || inputEl.selectionEnd !== len) return;
+
+      if (wordOnly) {
+        const m = /^(\s*\S+)/.exec(_smartGhostText);
+        const piece = m ? m[1] : _smartGhostText;
+        inputEl.value += piece;
+        _smartGhostText = _smartGhostText.slice(piece.length);
+      } else {
+        inputEl.value += _smartGhostText;
+        _smartGhostText = '';
+      }
+      _smartLastDraft = inputEl.value;
+      const endPos = inputEl.value.length;
+      inputEl.focus();
+      try { inputEl.setSelectionRange(endPos, endPos); } catch {}
+      renderSmartComposerMirror();
+      if (!_smartGhostText && !wordOnly && /[/.]$/.test(inputEl.value) && !/\.\s*$/.test(inputEl.value.trimEnd().slice(0, -1))) {
+        scheduleSmartAutocomplete(inputEl.value);
+      }
+    }
+
+    let _smartComposerStatusTimer = null;
+    let _smartSendBtnResetTimer = null;
+    const DEFAULT_COMPOSER_HINT_HTML =
+      '<span><kbd class="composer-kbd-hint">Tab</kbd> принять</span>' +
+      '<span><kbd class="composer-kbd-hint">Ctrl+→</kbd> слово</span>' +
+      '<span><kbd class="composer-kbd-hint">Ctrl+↵</kbd> локально</span>' +
+      '<span><kbd class="composer-kbd-hint">Enter</kbd> в чат</span>';
+
+    const _localRagHistory = [];
+    let _localRagBusy = false;
+
+    function formatSafeLocalRagMarkdown(rawText) {
+      let safe = escapeHtml(String(rawText || ''));
+      const codeBlocks = [];
+      safe = safe.replace(/```[^\n]*\n([\s\S]*?)```/g, function (_m, inner) {
+        const idx = codeBlocks.length;
+        codeBlocks.push('<pre class="rag-code-block"><code>' + inner.replace(/\n$/, '') + '</code></pre>');
+        return '\x00CB' + idx + '\x00';
+      });
+      safe = safe.replace(/`([^`\n]+)`/g, '<code class="rag-inline-code">$1</code>');
+      safe = safe.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+      safe = safe
+        .split('\n')
+        .map(function (ln) {
+          if (/^#{1,4}\s+/.test(ln)) {
+            return '<div class="rag-md-heading">' + ln.replace(/^#{1,4}\s+/, '') + '</div>';
+          }
+          if (/^\s*[-*]\s+/.test(ln)) {
+            return '<div class="rag-md-li">• ' + ln.replace(/^\s*[-*]\s+/, '') + '</div>';
+          }
+          return ln;
+        })
+        .join('\n');
+      for (let i = 0; i < codeBlocks.length; i++) {
+        safe = safe.replace('\x00CB' + i + '\x00', codeBlocks[i]);
+      }
+      return safe;
+    }
+
+    function renderLocalRagMessages() {
+      const boxEl = document.getElementById('localRagChatBox');
+      const listEl = document.getElementById('localRagMessages');
+      if (!boxEl || !listEl) return;
+      if (_localRagHistory.length === 0) {
+        boxEl.style.display = 'none';
+        listEl.textContent = '';
+        return;
+      }
+      boxEl.style.display = 'flex';
+      listEl.textContent = '';
+      for (let i = 0; i < _localRagHistory.length; i++) {
+        const msg = _localRagHistory[i];
+        const card = document.createElement('div');
+        card.className = 'local-rag-msg ' + (msg.error ? 'is-error' : (msg.role === 'user' ? 'is-user' : 'is-assistant'));
+
+        const head = document.createElement('div');
+        head.className = 'local-rag-msg-head';
+        const roleSpan = document.createElement('span');
+        roleSpan.textContent = msg.role === 'user'
+          ? 'Вы'
+          : (msg.error ? '⚠ Локальная модель' : ('🧠 ' + (msg.model || 'GPU') + ' · 0 тк'));
+        head.appendChild(roleSpan);
+        let displayMetaText = msg.metaText || '';
+        if (!displayMetaText && msg.grounding && typeof msg.grounding === 'object') {
+          if (msg.grounding.grounded === false) {
+            displayMetaText = '⚠ Есть неподтверждённые имена';
+          } else {
+            const vf = Array.isArray(msg.grounding.verifiedFiles) ? msg.grounding.verifiedFiles.length : 0;
+            const vs = Array.isArray(msg.grounding.verifiedSymbols) ? msg.grounding.verifiedSymbols.length : 0;
+            displayMetaText = (vf + vs) > 0 ? ('✓ AST · ' + (vf + vs)) : '✓ Проверено в RAM';
+          }
+        }
+        if (displayMetaText) {
+          const metaSpan = document.createElement('span');
+          metaSpan.textContent = displayMetaText;
+          if (msg.grounding && typeof msg.grounding === 'object') {
+            if (msg.grounding.grounded === false && msg.grounding.warningRu) {
+              metaSpan.title = String(msg.grounding.warningRu);
+            } else if (msg.grounding.grounded !== false) {
+              metaSpan.title = 'Сверено с AST и индексом файлов проекта в RAM';
+            }
+          }
+          head.appendChild(metaSpan);
+        }
+        card.appendChild(head);
+
+        const body = document.createElement('div');
+        body.className = 'local-rag-msg-body';
+        if (msg.role === 'assistant' && !msg.error) {
+          body.innerHTML = formatSafeLocalRagMarkdown(msg.content);
+        } else {
+          body.textContent = String(msg.content || '');
+        }
+        card.appendChild(body);
+
+        if (Array.isArray(msg.sources) && msg.sources.length > 0) {
+          const srcWrap = document.createElement('div');
+          srcWrap.className = 'local-rag-sources';
+          for (let j = 0; j < msg.sources.length; j++) {
+            const s = msg.sources[j];
+            if (!s || !s.file) continue;
+            const refStr = s.file + (s.startLine ? (':L' + s.startLine + (s.endLine >= s.startLine ? '-' + s.endLine : '')) : '');
+            const pill = document.createElement('button');
+            pill.type = 'button';
+            pill.className = 'local-rag-source-pill';
+            pill.setAttribute('data-action', 'insertRagSourceRef');
+            pill.setAttribute('data-source', refStr);
+            pill.textContent = refStr;
+            pill.title = 'Вставить ссылку ' + refStr + ' в поле ввода';
+            srcWrap.appendChild(pill);
+          }
+          card.appendChild(srcWrap);
+        }
+
+        listEl.appendChild(card);
+      }
+      listEl.scrollTop = listEl.scrollHeight;
+    }
+
+    function insertRagSourceRef(refText) {
+      const inputEl = document.getElementById('smartComposerInput');
+      const ref = String(refText || '').trim();
+      if (!inputEl || !ref) return;
+      const cur = inputEl.value || '';
+      const sep = cur && !/\s$/.test(cur) ? ' ' : '';
+      inputEl.value = cur + sep + ref + ' ';
+      _smartLastDraft = inputEl.value;
+      inputEl.focus();
+      const endPos = inputEl.value.length;
+      try { inputEl.setSelectionRange(endPos, endPos); } catch {}
+      renderSmartComposerMirror();
+    }
+
+    function clearLocalRagChat() {
+      _localRagHistory.length = 0;
+      const labelEl = document.getElementById('localRagMetaLabel');
+      if (labelEl) labelEl.textContent = '🧠 Локальный RAG-диалог · 0 тк';
+      renderLocalRagMessages();
+    }
+
+    async function askLocalRagChat() {
+      if (_localRagBusy) return;
+      const inputEl = document.getElementById('smartComposerInput');
+      const btnEl = document.getElementById('btnAskLocalRag');
+      const metaEl = document.getElementById('localRagMetaLabel');
+      const text = inputEl ? inputEl.value.trim() : '';
+      if (!text) {
+        flashComposerStatus('Введите вопрос по проекту для локального RAG-чата', 'warn', 3200);
+        if (inputEl) inputEl.focus();
+        return;
+      }
+
+      cancelSmartComposerPendingRequests();
+      _smartReqSeq += 1;
+      _smartGhostText = '';
+      _smartGhostSource = '';
+      _smartLastDraft = '';
+      if (inputEl) {
+        inputEl.value = '';
+        inputEl.style.height = '56px';
+        inputEl.focus();
+      }
+      updateComposerEngineBadge('loading', 'GPU RAG · ответ...');
+      renderSmartComposerMirror();
+
+      const priorTurns = _localRagHistory
+        .filter(function (m) { return !m.error && (m.role === 'user' || m.role === 'assistant'); })
+        .slice(-10)
+        .map(function (m) { return { role: m.role, content: m.content }; });
+
+      _localRagHistory.push({ role: 'user', content: text });
+      renderLocalRagMessages();
+
+      _localRagBusy = true;
+      if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.textContent = 'Думает…';
+      }
+      flashComposerStatus('Локальный RAG-поиск и ответ на GPU (0% квоты)…', 'info', 25000);
+
+      try {
+        const res = await panelFetch('/api/local-chat', {
+          method: 'POST',
+          body: JSON.stringify({ message: text, messages: priorTurns }),
+        });
+        const data = res ? await res.json() : null;
+        if (data && data.ok && data.answer) {
+          const tokText = data.contextTokensEst ? (data.contextTokensEst + ' тк окна') : '';
+          const msText = data.latencyMs ? (Math.round(Number(data.latencyMs) / 100) / 10 + ' с') : '';
+          const groundingObj = (data.grounding && typeof data.grounding === 'object') ? data.grounding : null;
+          let groundingBadgeText = '';
+          if (groundingObj) {
+            if (groundingObj.grounded === false) {
+              groundingBadgeText = '⚠ Есть неподтверждённые имена';
+            } else {
+              const vFilesCount = Array.isArray(groundingObj.verifiedFiles) ? groundingObj.verifiedFiles.length : 0;
+              const vSymsCount = Array.isArray(groundingObj.verifiedSymbols) ? groundingObj.verifiedSymbols.length : 0;
+              const vCount = vFilesCount + vSymsCount;
+              groundingBadgeText = vCount > 0 ? ('✓ AST · ' + vCount) : '✓ Проверено в RAM';
+            }
+          }
+          const metaText = [groundingBadgeText, tokText, msText].filter(Boolean).join(' · ');
+          _localRagHistory.push({
+            role: 'assistant',
+            content: data.answer,
+            model: data.model || 'GPU',
+            metaText: metaText,
+            grounding: groundingObj,
+            sources: Array.isArray(data.sources) ? data.sources : [],
+          });
+          if (metaEl) {
+            metaEl.textContent = '🧠 ' + (data.model || 'GPU') + (data.numCtxUsed ? (' · ctx ' + data.numCtxUsed) : '') + ' · 0 тк облака';
+          }
+          updateComposerEngineBadge('gpu', 'GPU · 0 тк');
+          flashComposerStatus('✓ Ответ получен локально (0% облачной квоты)', 'ok', 4200);
+        } else {
+          const errText = (data && data.error) ? String(data.error) : 'Локальная модель не ответила (проверьте Ollama и переключатель GPU)';
+          _localRagHistory.push({ role: 'assistant', content: errText, error: true });
+          updateComposerEngineBadge('', 'RAM + GPU · 0 тк');
+          flashComposerStatus('⚠ ' + errText, 'err', 5500);
+        }
+      } catch (err) {
+        const errMsg = (err && err.message) ? String(err.message) : 'Сетевой сбой sidecar при обращении к /api/local-chat';
+        _localRagHistory.push({ role: 'assistant', content: errMsg, error: true });
+        updateComposerEngineBadge('', 'RAM + GPU · 0 тк');
+        flashComposerStatus('⚠ ' + errMsg, 'err', 5500);
+      } finally {
+        _localRagBusy = false;
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.textContent = '💬 Локально · 0 тк';
+        }
+        renderLocalRagMessages();
+      }
+    }
+
+    function flashComposerStatus(message, tone, durationMs) {
+      const hintEl = document.getElementById('composerHintText');
+      if (!hintEl) return;
+      if (_smartComposerStatusTimer) {
+        clearTimeout(_smartComposerStatusTimer);
+        _smartComposerStatusTimer = null;
+      }
+      if (!message) {
+        hintEl.className = 'composer-shortcuts';
+        hintEl.innerHTML = DEFAULT_COMPOSER_HINT_HTML;
+        return;
+      }
+      const safeTone = (tone === 'ok' || tone === 'warn' || tone === 'err' || tone === 'info') ? tone : 'info';
+      hintEl.className = 'composer-shortcuts is-status-' + safeTone;
+      hintEl.textContent = String(message);
+      const ttl = Number(durationMs) > 0 ? Number(durationMs) : 4500;
+      _smartComposerStatusTimer = setTimeout(function () {
+        _smartComposerStatusTimer = null;
+        hintEl.className = 'composer-shortcuts';
+        hintEl.innerHTML = DEFAULT_COMPOSER_HINT_HTML;
+      }, ttl);
+    }
+
+    function clearSmartComposer() {
+      const inputEl = document.getElementById('smartComposerInput');
+      cancelSmartComposerPendingRequests();
+      _smartReqSeq += 1;
+      _smartGhostText = '';
+      _smartGhostSource = '';
+      _smartLastDraft = '';
+      if (inputEl) {
+        inputEl.value = '';
+        inputEl.style.height = '56px';
+        inputEl.focus();
+      }
+      flashComposerStatus('', '');
+      updateComposerEngineBadge('', 'RAM + GPU · 0 тк');
+      renderSmartComposerMirror();
+    }
+
+    function applyComposerChip(promptText) {
+      const inputEl = document.getElementById('smartComposerInput');
+      if (!inputEl) return;
+      cancelSmartComposerPendingRequests();
+      _smartGhostText = '';
+      _smartGhostSource = '';
+      const text = String(promptText || '');
+      inputEl.value = text;
+      _smartLastDraft = text;
+      inputEl.focus();
+      try { inputEl.setSelectionRange(text.length, text.length); } catch {}
+      renderSmartComposerMirror();
+      scheduleSmartAutocomplete(text);
+    }
+
+    const _SMART_SEND_QUEUE_LIMIT = 100;
+    const _SMART_SEND_QUEUE_TTL_MS = 45000;
+    const _smartSendQueue = [];
+    let _smartSendProcessing = false;
+    let _smartSendQueueTimer = null;
+    let _smartSendDroppedCount = 0;
+
+    function syncSmartSendButtonLabel(overrideText) {
+      const sendBtn = document.getElementById('btnSendSmartComposer');
+      if (!sendBtn) return;
+      if (overrideText) {
+        sendBtn.textContent = overrideText;
+        return;
+      }
+      const totalPending = _smartSendQueue.length + (_smartSendProcessing ? 1 : 0);
+      if (_smartSendQueue.length > 0) {
+        sendBtn.textContent = 'В очереди (' + totalPending + ')';
+      } else if (_smartSendProcessing) {
+        sendBtn.textContent = 'Отправка…';
+      } else if (!_smartSendBtnResetTimer) {
+        sendBtn.textContent = 'В чат ↑';
+      }
+    }
+
+    function pruneSmartSendQueue() {
+      const now = Date.now();
+      let dropped = 0;
+      let guard = 0;
+      while (_smartSendQueue.length > 0 && guard < _SMART_SEND_QUEUE_LIMIT + 10) {
+        guard += 1;
+        const head = _smartSendQueue[0];
+        if (!head || now >= head.expiresAt) {
+          _smartSendQueue.shift();
+          dropped += 1;
+        } else {
+          break;
+        }
+      }
+      if (dropped > 0) {
+        _smartSendDroppedCount += dropped;
+      }
+      return dropped;
+    }
+
+    function scheduleNextSmartSendTick() {
+      if (_smartSendProcessing || _smartSendQueue.length === 0 || _smartSendQueueTimer) return;
+      _smartSendQueueTimer = setTimeout(function () {
+        _smartSendQueueTimer = null;
+        void processNextSmartSend();
+      }, 0);
+    }
+
+    function enqueueSmartComposerMessage(text) {
+      const now = Date.now();
+      let dropped = pruneSmartSendQueue();
+      let guard = 0;
+      while (_smartSendQueue.length >= _SMART_SEND_QUEUE_LIMIT && guard < _SMART_SEND_QUEUE_LIMIT + 2) {
+        guard += 1;
+        _smartSendQueue.shift();
+        dropped += 1;
+        _smartSendDroppedCount += 1;
+      }
+      _smartSendQueue.push({
+        text: String(text || ''),
+        createdAt: now,
+        expiresAt: now + _SMART_SEND_QUEUE_TTL_MS,
+      });
+      if (_smartSendBtnResetTimer) {
+        clearTimeout(_smartSendBtnResetTimer);
+        _smartSendBtnResetTimer = null;
+      }
+      syncSmartSendButtonLabel();
+      if (dropped > 0) {
+        flashComposerStatus('Лимит 100: автосброс старых задач (' + dropped + '), в очереди: ' + _smartSendQueue.length, 'warn', 4200);
+      } else if (_smartSendQueue.length > 1 || _smartSendProcessing) {
+        flashComposerStatus('Добавлено в очередь (в ожидании: ' + _smartSendQueue.length + ')', 'info', 4000);
+      } else {
+        flashComposerStatus('Отправка запроса в чат Antigravity…', 'info', 8000);
+      }
+      scheduleNextSmartSendTick();
+    }
+
+    async function processNextSmartSend() {
+      if (_smartSendProcessing) return;
+      _smartSendProcessing = true;
+      syncSmartSendButtonLabel();
+      try {
+        const expiredCount = pruneSmartSendQueue();
+        if (expiredCount > 0 && _smartSendQueue.length === 0) {
+          flashComposerStatus('Автосброс устаревших задач очереди (' + expiredCount + ')', 'warn', 4200);
+          return;
+        }
+        const item = _smartSendQueue.shift();
+        if (!item || !item.text) return;
+
+        syncSmartSendButtonLabel();
+        let res = null;
+        try {
+          res = await dispatchPromptToChatDetailed(
+            item.text,
+            '✓ Запрос отправлен в активный чат',
+            '📋 Активный чат недоступен — запрос скопирован в буфер (Ctrl+V)',
+            '✓ Открыт новый чат и отправлен запрос'
+          );
+        } catch (err) {
+          res = {
+            sent: false,
+            copied: false,
+            statusText: (err && err.message) ? String(err.message) : 'Ошибка шага очереди отправки',
+          };
+        }
+
+        if (res && res.sent) {
+          void loadSmartComposerContext();
+          const remainingSuffix = _smartSendQueue.length > 0 ? (' · осталось: ' + _smartSendQueue.length) : '';
+          flashComposerStatus((res.statusText || '✓ Запрос отправлен в чат') + remainingSuffix, 'ok', 4200);
+          if (_smartSendQueue.length === 0) {
+            syncSmartSendButtonLabel('Отправлено ✓');
+            _smartSendBtnResetTimer = setTimeout(function () {
+              _smartSendBtnResetTimer = null;
+              syncSmartSendButtonLabel();
+            }, 1800);
+          }
+        } else if (res && res.copied) {
+          flashComposerStatus(res.statusText || '📋 Запрос скопирован в буфер — вставьте в чат (Ctrl+V)', 'warn', 5500);
+          if (_smartSendQueue.length === 0) {
+            syncSmartSendButtonLabel('В буфере ✓');
+            _smartSendBtnResetTimer = setTimeout(function () {
+              _smartSendBtnResetTimer = null;
+              syncSmartSendButtonLabel();
+            }, 2200);
+          }
+        } else {
+          flashComposerStatus('⚠ ' + ((res && res.statusText) || 'Не удалось отправить запрос в чат'), 'err', 6000);
+        }
+      } finally {
+        _smartSendProcessing = false;
+        syncSmartSendButtonLabel();
+        if (_smartSendQueue.length > 0) {
+          scheduleNextSmartSendTick();
+        }
+      }
+    }
+
+    async function sendSmartComposer() {
+      const inputEl = document.getElementById('smartComposerInput');
+      const rawText = inputEl ? inputEl.value.trim() : '';
+      if (!rawText) {
+        flashComposerStatus('Введите запрос или выберите готовую подсказку выше', 'warn', 3200);
+        if (inputEl) inputEl.focus();
+        return;
+      }
+      const text = (_composerGrillArmed && !/^\[Grill-Me/i.test(rawText))
+        ? ('[Grill-Me: проведи детальный опрос по развилкам перед кодом] ' + rawText)
+        : rawText;
+      if (_composerGrillArmed) {
+        _composerGrillArmed = false;
+        syncComposerGrillToggleUi();
+      }
+      cancelSmartComposerPendingRequests();
+      _smartReqSeq += 1;
+      _smartGhostText = '';
+      _smartGhostSource = '';
+      _smartLastDraft = '';
+      if (inputEl) {
+        inputEl.value = '';
+        inputEl.style.height = '56px';
+        inputEl.focus();
+      }
+      updateComposerEngineBadge('', 'RAM + GPU · 0 тк');
+      renderSmartComposerMirror();
+      enqueueSmartComposerMessage(text);
+    }
+
+    async function loadSmartComposerContext() {
+      try {
+        const res = await panelFetch('/api/autocomplete', {
+          method: 'POST',
+          body: JSON.stringify({ mode: 'context' }),
+        });
+        if (!res || !res.ok) return;
+        const data = await res.json();
+        if (data && data.ok && Array.isArray(data.chips)) {
+          renderSmartComposerChips(data.chips);
+        }
+      } catch {}
+    }
+
+    let _composerAtTimer = null;
+    let _composerAttachedImageB64 = '';
+    let _composerVoiceRec = null;
+
+    function renderComposerAtMenu(items) {
+      const menuEl = document.getElementById('composerAtMenu');
+      if (!menuEl) return;
+      if (!Array.isArray(items) || items.length === 0) {
+        menuEl.style.display = 'none';
+        menuEl.innerHTML = '';
+        return;
+      }
+      let html = '';
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        html +=
+          '<button type="button" class="win-btn" data-action="selectComposerAtItem" data-token="' + escapeHtml(it.token) + '" style="display: flex; width: 100%; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 7px; margin-bottom: 2px; text-align: left; font-size: 10.5px;">' +
+            '<span style="font-weight: 600; color: var(--accent-cyan);">' + escapeHtml(it.token) + '</span>' +
+            '<span style="color: var(--text-sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px;">' + escapeHtml(it.detail || it.label || '') + '</span>' +
+          '</button>';
+      }
+      menuEl.innerHTML = html;
+      menuEl.style.display = 'block';
+    }
+
+    function checkSmartComposerAtTrigger(val) {
+      const inputEl = document.getElementById('smartComposerInput');
+      if (!inputEl) return;
+      const caret = Number.isInteger(inputEl.selectionStart) ? inputEl.selectionStart : val.length;
+      const beforeCaret = val.slice(0, caret);
+      const m = /(?:^|\s)(@[A-Za-z0-9_:./-]*)$/.exec(beforeCaret);
+      if (!m) {
+        renderComposerAtMenu([]);
+        return;
+      }
+      const queryToken = m[1];
+      if (_composerAtTimer) clearTimeout(_composerAtTimer);
+      _composerAtTimer = setTimeout(async function () {
+        try {
+          const res = await panelFetch('/api/composer/at-suggest', {
+            method: 'POST',
+            body: JSON.stringify({ query: queryToken, limit: 8 }),
+          });
+          if (!res || !res.ok) return;
+          const data = await res.json();
+          if (data && data.ok && Array.isArray(data.items)) {
+            renderComposerAtMenu(data.items);
+          }
+        } catch {}
+      }, 65);
+    }
+
+    function selectComposerAtItem(token) {
+      const cleanToken = String(token || '').trim();
+      const inputEl = document.getElementById('smartComposerInput');
+      renderComposerAtMenu([]);
+      if (!inputEl || !cleanToken) return;
+      const val = inputEl.value || '';
+      const caret = Number.isInteger(inputEl.selectionStart) ? inputEl.selectionStart : val.length;
+      const before = val.slice(0, caret);
+      const after = val.slice(caret);
+      const nextBefore = before.replace(/(?:^|\s)(@[A-Za-z0-9_:./-]*)$/, function (full, tok) {
+        return full.slice(0, full.length - tok.length) + cleanToken + ' ';
+      });
+      inputEl.value = nextBefore + after;
+      _smartLastDraft = inputEl.value;
+      inputEl.focus();
+      try {
+        inputEl.setSelectionRange(nextBefore.length, nextBefore.length);
+      } catch {}
+      renderSmartComposerMirror();
+    }
+
+    function clearComposerScreenshot() {
+      _composerAttachedImageB64 = '';
+      const bar = document.getElementById('composerImagePreviewBar');
+      const thumb = document.getElementById('composerImageThumb');
+      if (thumb) thumb.removeAttribute('src');
+      if (bar) bar.style.display = 'none';
+    }
+
+    function attachComposerScreenshotFile(file) {
+      if (!file || !file.type || file.type.indexOf('image/') !== 0) return;
+      if (file.size > 4 * 1024 * 1024) {
+        flashComposerStatus('Скриншот превышает лимит 4 МБ', 'warn', 4000);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = function () {
+        const resultStr = String(reader.result || '');
+        if (!resultStr) return;
+        _composerAttachedImageB64 = resultStr;
+        const bar = document.getElementById('composerImagePreviewBar');
+        const thumb = document.getElementById('composerImageThumb');
+        const meta = document.getElementById('composerImageMeta');
+        if (thumb) thumb.src = resultStr;
+        if (meta) meta.textContent = (file.name || 'Скриншот') + ' · ' + Math.max(1, Math.round(file.size / 1024)) + ' КБ';
+        if (bar) bar.style.display = 'block';
+        flashComposerStatus('Скриншот прикреплён — нажмите «🔍 Разобрать UI · 0 тк»', 'ok', 3500);
+      };
+      reader.readAsDataURL(file);
+    }
+
+    async function analyzeComposerScreenshot() {
+      if (!_composerAttachedImageB64) {
+        flashComposerStatus('Сначала вставьте скриншот (Ctrl+V)', 'warn', 3000);
+        return;
+      }
+      const inputEl = document.getElementById('smartComposerInput');
+      const btn = document.getElementById('btnAnalyzeVision');
+      if (btn) { btn.disabled = true; btn.textContent = 'Анализ…'; }
+      flashComposerStatus('Локальный визуальный разбор скриншота (Gemma 4, 0% квоты)…', 'info', 25000);
+      try {
+        const res = await panelFetch('/api/composer/vision', {
+          method: 'POST',
+          body: JSON.stringify({
+            imageBase64: _composerAttachedImageB64,
+            userHint: inputEl ? inputEl.value.trim() : '',
+          }),
+        });
+        const data = res ? await res.json() : null;
+        if (data && data.ok) {
+          const defects = Array.isArray(data.defectsRu) && data.defectsRu.length
+            ? ('\n• ' + data.defectsRu.join('\n• '))
+            : '';
+          _localRagHistory.push({
+            role: 'assistant',
+            content: '🖼️ Визуальный разбор UI:\n' + (data.analysisRu || '') + defects +
+              (data.promptPatchRu ? ('\n\nПромпт для правки:\n' + data.promptPatchRu) : ''),
+            model: data.model || 'GPU Vision',
+          });
+          renderLocalRagMessages();
+          if (inputEl && data.promptPatchRu && !inputEl.value.trim()) {
+            inputEl.value = data.promptPatchRu;
+            _smartLastDraft = inputEl.value;
+            renderSmartComposerMirror();
+          }
+          flashComposerStatus('✓ UI разобран локально (0 тк облака)', 'ok', 4200);
+        } else {
+          flashComposerStatus('⚠ ' + ((data && data.error) || 'Локальный GPU недоступен'), 'err', 4800);
+        }
+      } catch {
+        flashComposerStatus('⚠ Ошибка обращения к /api/composer/vision', 'err', 4500);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '🔍 Разобрать UI · 0 тк'; }
+      }
+    }
+
+    async function prepareLocalCommit() {
+      const btn = document.getElementById('btnPrepareCommit');
+      if (btn) { btn.disabled = true; btn.textContent = 'Проверка…'; }
+      flashComposerStatus('Локальный Pre-Commit (Shadow Guard + секреты + сообщение, 0 тк)…', 'info', 20000);
+      try {
+        const res = await panelFetch('/api/sentinel', {
+          method: 'POST',
+          body: JSON.stringify({ action: 'prepare_commit', force: true }),
+        });
+        const data = res ? await res.json() : null;
+        const pc = data && data.preCommit ? data.preCommit : null;
+        if (pc && pc.ok) {
+          const statusLine = pc.readyToCommit
+            ? '✅ Готово к коммиту (0 критических блокеров)'
+            : ('🛑 Блокеры перед коммитом:\n• ' + (pc.blockers || []).join('\n• '));
+          const warnLine = Array.isArray(pc.warnings) && pc.warnings.length
+            ? ('\n\n⚠ Замечания:\n• ' + pc.warnings.join('\n• '))
+            : '';
+          const msgLine = pc.commitMessage
+            ? ('\n\nСообщение коммита:\n' + pc.commitMessage + (pc.summaryRu ? ('\n' + pc.summaryRu) : ''))
+            : ('\n\n' + (pc.summaryRu || 'Изменений не обнаружено'));
+          _localRagHistory.push({
+            role: 'assistant',
+            content: statusLine + warnLine + msgLine,
+            model: pc.viaGpu ? 'GPU + Sentinel' : 'CPU + Sentinel',
+          });
+          renderLocalRagMessages();
+          flashComposerStatus(pc.readyToCommit ? '✓ Pre-Commit пройден' : '⚠ Найдены блокеры перед коммитом', pc.readyToCommit ? 'ok' : 'warn', 4500);
+        } else {
+          flashComposerStatus('⚠ ' + ((data && data.error) || 'Pre-Commit завершился с ошибкой'), 'err', 4500);
+        }
+      } catch {
+        flashComposerStatus('⚠ Ошибка вызова /api/sentinel prepare_commit', 'err', 4500);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '✓ Коммит · 0 тк'; }
+      }
+    }
+
+    function toggleComposerVoice() {
+      const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!Rec) {
+        flashComposerStatus('Голосовой ввод Web Speech не поддерживается в текущем окне WebView', 'warn', 4200);
+        return;
+      }
+      if (_composerVoiceRec) {
+        try { _composerVoiceRec.stop(); } catch {}
+        _composerVoiceRec = null;
+        flashComposerStatus('Запись остановлена', 'info', 2000);
+        return;
+      }
+      const btn = document.getElementById('btnVoiceComposer');
+      try {
+        const rec = new Rec();
+        _composerVoiceRec = rec;
+        rec.lang = 'ru-RU';
+        rec.interimResults = false;
+        rec.maxAlternatives = 1;
+        if (btn) btn.classList.add('active');
+        flashComposerStatus('🎙️ Слушаю диктовку...', 'info', 10000);
+        rec.onresult = async function (ev) {
+          const rawTranscript = (ev.results && ev.results[0] && ev.results[0][0] && ev.results[0][0].transcript) || '';
+          if (!rawTranscript) return;
+          try {
+            const res = await panelFetch('/api/composer/voice-structure', {
+              method: 'POST',
+              body: JSON.stringify({ rawTranscript }),
+            });
+            const data = res ? await res.json() : null;
+            const cleanText = (data && data.ok && data.structuredPrompt) ? data.structuredPrompt : rawTranscript;
+            applyComposerChip(cleanText);
+            flashComposerStatus('✓ Голос структурирован в промпт', 'ok', 3500);
+          } catch {
+            applyComposerChip(rawTranscript);
+          }
+        };
+        rec.onerror = function () {
+          flashComposerStatus('Не удалось распознать речь', 'warn', 3200);
+        };
+        rec.onend = function () {
+          _composerVoiceRec = null;
+          if (btn) btn.classList.remove('active');
+        };
+        rec.start();
+      } catch {
+        _composerVoiceRec = null;
+        if (btn) btn.classList.remove('active');
+      }
+    }
+
+    function initSmartComposerWidget() {
+      if (_smartComposerBound) return;
+      const inputEl = document.getElementById('smartComposerInput');
+      if (!inputEl) return;
+      _smartComposerBound = true;
+      inputEl.addEventListener('scroll', syncSmartComposerSizeAndScroll, { passive: true });
+      inputEl.addEventListener('click', renderSmartComposerMirror);
+      inputEl.addEventListener('paste', function (ev) {
+        const items = ev.clipboardData && ev.clipboardData.items;
+        if (!items) return;
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].type && items[i].type.indexOf('image/') === 0) {
+            const imgFile = items[i].getAsFile();
+            if (imgFile) {
+              ev.preventDefault();
+              attachComposerScreenshotFile(imgFile);
+              break;
+            }
+          }
+        }
+      });
+      inputEl.addEventListener('dragover', function (ev) {
+        ev.preventDefault();
+      });
+      inputEl.addEventListener('drop', function (ev) {
+        const files = ev.dataTransfer && ev.dataTransfer.files;
+        if (files && files[0] && files[0].type && files[0].type.indexOf('image/') === 0) {
+          ev.preventDefault();
+          attachComposerScreenshotFile(files[0]);
+        }
+      });
+      inputEl.addEventListener('keyup', function (ev) {
+        if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight' || ev.key === 'Home' || ev.key === 'End') {
+          renderSmartComposerMirror();
+        }
+      });
+      inputEl.addEventListener('keydown', function (ev) {
+        const len = inputEl.value.length;
+        const caretAtEnd = inputEl.selectionStart === len && inputEl.selectionEnd === len;
+        if (ev.key === 'Escape') {
+          const menuEl = document.getElementById('composerAtMenu');
+          if (menuEl && menuEl.style.display === 'block') {
+            ev.preventDefault();
+            renderComposerAtMenu([]);
+            return;
+          }
+        }
+        if (ev.key === 'Tab' && !ev.shiftKey && _smartGhostText && caretAtEnd) {
+          ev.preventDefault();
+          acceptSmartComposerGhost(false);
+          return;
+        }
+        if (ev.key === 'ArrowRight' && (ev.ctrlKey || ev.metaKey) && _smartGhostText && caretAtEnd) {
+          ev.preventDefault();
+          acceptSmartComposerGhost(true);
+          return;
+        }
+        if (ev.key === 'Escape' && _smartGhostText) {
+          ev.preventDefault();
+          dismissSmartComposerGhost();
+          return;
+        }
+        if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey) && !ev.isComposing) {
+          ev.preventDefault();
+          void askLocalRagChat();
+          return;
+        }
+        if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing) {
+          ev.preventDefault();
+          void sendSmartComposer();
+        }
+      });
+      renderSmartComposerMirror();
+    }
+
+    document.addEventListener('input', function (ev) {
+      const target = ev.target;
+      if (!target || !target.getAttribute) return;
+      if (target.id && target.id.indexOf('inp-gpu') === 0) {
+        target.setAttribute('data-dirty', '1');
+      }
+      const inputAction = target.getAttribute('data-input-action');
+      if (inputAction === 'filterSkillsView') {
+        filterSkillsView(target.value);
+      } else if (inputAction === 'onSmartComposerInput') {
+        handleSmartComposerInput();
+      }
+    });
+
+    document.body.classList.toggle('is-tab-hidden', document.visibilityState !== 'visible');
+    document.addEventListener('visibilitychange', function () {
+      const isHidden = document.visibilityState !== 'visible';
+      document.body.classList.toggle('is-tab-hidden', isHidden);
+      if (!isHidden) {
+        pollTelemetryTick();
+      } else if (telemetryPollTimer) {
+        clearTimeout(telemetryPollTimer);
+        telemetryPollTimer = null;
+      }
+    });
+
+    (async function init() {
+      ensureBlockMoveControls();
+      setupSpoilerPersistence();
+      applyAllCollapsedCardsState();
+      applyAllSpoilersOpenState();
+      applyPanelBlockOrder(null);
+      initBlockVisibilityObserver();
+      initSmartComposerWidget();
+      await refreshAll();
+      void loadSmartComposerContext();
+    })();

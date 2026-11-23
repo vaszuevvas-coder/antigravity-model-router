@@ -1,0 +1,61 @@
+{
+  "mcpServers": {
+    "ram-memory": {
+      "command": "node",
+      "args": [
+        "--max-old-space-size=4096",
+        "./core/ram-memory-mcp.mjs"
+      ],
+      "tools": {
+        "ram_search": {
+          "eager": true
+        },
+        "ram_slice": {
+          "eager": true
+        },
+        "ram_context_pack": {
+          "eager": true
+        },
+        "ram_warm_workspace": {
+          "eager": false
+        },
+        "ram_stats": {
+          "eager": false
+        },
+        "gpu_distill": {
+          "eager": true
+        },
+        "gpu_semantic_search": {
+          "eager": true
+        },
+        "gpu_status": {
+          "eager": false
+        },
+        "lsp_diagnostics": {
+          "eager": false
+        },
+        "lsp_references": {
+          "eager": false
+        },
+        "lsp_code_actions": {
+          "eager": false
+        },
+        "git_bisect_auto": {
+          "eager": false
+        },
+        "ram_graph_query": {
+          "eager": false
+        },
+        "mutation_guard_check": {
+          "eager": false
+        },
+        "ram_ccr_retrieve": {
+          "eager": false
+        },
+        "ram_memory_recall": {
+          "eager": false
+        }
+      }
+    }
+  }
+}

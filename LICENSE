@@ -1,0 +1,96 @@
+The Tunnel Source-Available & Commercial Royalty License v1.0
+=============================================================
+
+Copyright (c) 2026 Vasili Zuev (Василий Зуев). All rights reserved.
+Repository: https://github.com/vaszuevvas-coder/antigravity-model-router
+
+------------------------------------------------------------------------------
+ENGLISH VERSION (CONTROLLING TEXT)
+------------------------------------------------------------------------------
+
+1. Free Use Grant
+   Subject to the terms and restrictions below, the Copyright Holder hereby
+   grants any individual developer or organization a free, worldwide,
+   non-exclusive, royalty-free, revocable license to download, install, execute,
+   inspect, and use this software and its documentation (the "Software") locally
+   for personal, educational, research, and internal software development
+   workflows, as well as to submit contributions back to the official repository.
+
+2. Commercial Sale, Redistribution & Monetization Restrictions
+   WITHOUT A PRIOR WRITTEN COMMERCIAL LICENSE OR ROYALTY AGREEMENT WITH THE
+   COPYRIGHT HOLDER (Vasili Zuev), YOU MAY NOT:
+   (a) Sell, resell, lease, rent, sublicense, or charge any fee (directly or
+       indirectly, including paywalls, paid bundles, paid courses, or paid
+       support/installation packages) for the Software, any copy of the
+       Software, or any modified/derivative version (fork) of the Software;
+   (b) Embed, bundle, redistribute, or offer the Software (or any substantial
+       portion of its routing engine, memory architecture, UI, skills, or rules)
+       as part of a commercial product, paid plugin/extension, proprietary
+       enterprise distribution, or hosted/SaaS service;
+   (c) Remove, obscure, or alter any copyright, authorship ("Created by Vasili
+       Zuev"), or license notices contained in the Software or its UI.
+
+3. Commercial Licensing & Royalties
+   Commercial distribution, paid bundling, white-labeling, or revenue-sharing /
+   royalty arrangements are available ONLY by prior written agreement with the
+   author:
+   Vasili Zuev — https://github.com/vaszuevvas-coder
+
+4. Third-Party Open Reference Data
+   Specific openly licensed reference files that carry their own upstream open
+   attribution headers (such as curated design matrices attributed to MIT /
+   Apache-2.0 sources) remain governed by their respective upstream terms.
+
+5. Disclaimer of Warranty & Limitation of Liability
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHOR OR COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING
+   FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+   DEALINGS IN THE SOFTWARE.
+
+------------------------------------------------------------------------------
+ОФИЦИАЛЬНАЯ РУССКАЯ ВЕРСИЯ (ДЛЯ УДОБСТВА ЧТЕНИЯ)
+------------------------------------------------------------------------------
+
+Авторское право (c) 2026 Василий Зуев (Vasili Zuev). Все права защищены.
+
+1. Право на бесплатное использование
+   При соблюдении условий ниже Правообладатель бесплатно предоставляет любому
+   разработчику или пользователю неисключительное право скачивать,
+   устанавливать, запускать, изучать исходный код и локально использовать данное
+   программное обеспечение («Программное обеспечение» / The Tunnel) в личных,
+   учебных, исследовательских и повседневных рабочих задачах разработки, а также
+   предлагать улучшения (Pull Requests) в официальный репозиторий Автора.
+
+2. Запрет свободной продажи и коммерческой монетизации
+   БЕЗ ПРЕДВАРИТЕЛЬНОГО ПИСЬМЕННОГО ДОГОВОРА С АВТОРОМ (Василием Зуевым) ИЛИ
+   СОГЛАСОВАННЫХ ОТЧИСЛЕНИЙ (РОЯЛТИ) СТРОГО ЗАПРЕЩАЕТСЯ:
+   а) продавать, перепродавать, сдавать в аренду, сублицензировать или взимать
+      любую плату (напрямую или косвенно — через платный доступ, платные сборки,
+      платные подборки/курсы или платную установку) за само Программное
+      обеспечение, его копии либо изменённые версии и форки;
+   б) встраивать, упаковывать или распространять Программное обеспечение (или
+      существенные части его движка маршрутизации, архитектуры памяти, панели
+      управления, навыков и правил) в составе платных коммерческих продуктов,
+      платных плагинов/расширений, закрытых тиражируемых платформ или SaaS/облачных
+      сервисов;
+   в) удалять, скрывать или изменять уведомления об авторских правах, подпись
+      автора («Created by Vasili Zuev») и текст настоящей лицензии.
+
+3. Коммерческое лицензирование и отчисления (роялти)
+   Право на коммерческую продажу, платное распространение, встраивание в
+   коммерческие продукты или партнёрство на условиях отчислений (роялти)
+   предоставляется ИСКЛЮЧИТЕЛЬНО по отдельной письменной договорённости с
+   автором:
+   Василий Зуев (Vasili Zuev) — https://github.com/vaszuevvas-coder
+
+4. Отказ от гарантий и ограничение ответственности
+   ПРОГРАММНОЕ ОБЕСПЕЧЕНИЕ ПРЕДОСТАВЛЯЕТСЯ «КАК ЕСТЬ» (AS IS), БЕЗ КАКИХ-ЛИБО
+   ПРЯМЫХ ИЛИ ПОДРАЗУМЕВАЕМЫХ ГАРАНТИЙ, ВКЛЮЧАЯ ГАРАНТИИ КОММЕРЧЕСКОЙ ПРИГОДНОСТИ,
+   ПРИГОДНОСТИ ДЛЯ КОНКРЕТНОЙ ЦЕЛИ И НЕНАРУШЕНИЯ ПРАВ ТРЕТЬИХ ЛИЦ. НИ ПРИ КАКИХ
+   ОБСТОЯТЕЛЬСТВАХ АВТОР ИЛИ ПРАВООБЛАДАТЕЛЬ НЕ НЕСУТ ОТВЕТСТВЕННОСТИ ЗА ЛЮБЫЕ
+   УБЫТКИ, УЩЕРБ ИЛИ ПРЕТЕНЗИИ, ВОЗНИКШИЕ В СВЯЗИ С ИСПОЛЬЗОВАНИЕМ ИЛИ
+   НЕВОЗМОЖНОСТЬЮ ИСПОЛЬЗОВАНИЯ ПРОГРАММНОГО ОБЕСПЕЧЕНИЯ.
+
