@@ -626,6 +626,9 @@
       if (currentState && typeof currentState === 'object') {
         currentState.uiLanguage = valid;
       }
+      if (typeof _lastSkillsDomSig !== 'undefined') {
+        _lastSkillsDomSig = '';
+      }
       if (typeof telemetryLastSig !== 'undefined') {
         telemetryLastSig = '';
       }
@@ -638,6 +641,10 @@
       if (typeof renderWorkspaceSwitcher === 'function') {
         renderWorkspaceSwitcher(lastPayloadCache);
       }
+      if (typeof flushAllRendersForLanguageChange === 'function') {
+        flushAllRendersForLanguageChange();
+      }
+      applyUiLanguageDom(valid);
       if (typeof syncComposerGrillToggleUi === 'function') {
         syncComposerGrillToggleUi();
       }

@@ -2,7 +2,27 @@
 
 Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
 
-> Хронология с `v3.8.0` по `v3.32.0` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`54` основных / `62` всего ESM-модуля ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `12` навыков и `36` наборов автотестов).
+> Хронология с `v3.8.0` по `v3.32.1` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`54` основных / `62` всего ESM-модуля ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `12` навыков и `36` наборов автотестов).
+
+---
+
+## [3.32.1] — 2026-11-23
+
+### Исправлено и улучшено
+- **Мастер настройки (Setup Wizard)**:
+  - Кнопка отправки конфигурации ПК в чат (`sendHardwareTunePrompt()` на Шаге 1) больше не закрывает мастер досрочно и не пропускает Шаги 2–4 ([03-hardware-gpu.js](sidecars/panel/ui-src/js/03-hardware-gpu.js)).
+  - Сводка ресурсов на Шаге 4 (`.wiz-summary-v`) переведена на многострочный перенос без обрезки `...`, а ширина модального окна `.wiz-overlay` ограничена под узкие вьюпорты `<= 420px` ([styles.css](sidecars/panel/ui-src/styles.css)).
+- **Вёрстка панели на узких экранах (`420px`)**:
+  - Устранено горизонтальное растяжение карточек `.lg-card`, `.expert-spoiler`, `.smart-banner`, `.sunken-box`, `.control-row` и `.sentinel-status-box` (`min-width: 0; max-width: 100%; flex-wrap: wrap` в [styles.css](sidecars/panel/ui-src/styles.css)).
+  - Добавлена автоматическая регрессионная проверка отсутствия правого переполнения (`offendingBoxes`) в [tests/panel-browser-layout-cdp.test.mjs](tests/panel-browser-layout-cdp.test.mjs).
+- **Надёжность состояния и профили хуков**:
+  - Запросы `updateState(patch, opts)` сериализованы через очередь слияния патчей (`mergeStatePatches` / `flushPendingStateUpdates`), исключая отмену и гонки при быстрых кликах ([02-telemetry-cards.js](sidecars/panel/ui-src/js/02-telemetry-cards.js)).
+  - `applyHookProfileOverridesToUi(profile, stateObj)` корректно восстанавливает состояние чекбоксов и активной кнопки `#hookProfileGroup` при возврате с `strict` на `standard`.
+- **Полная живая синхронизация `RU ↔ EN`**:
+  - Снят захардкоженный класс `active` с кнопки `EN` в [head-body.html](sidecars/panel/ui-src/head-body.html), убрано стартовое мигание `EN` при запуске на русском языке.
+  - Добавлены кэширование и принудительная перерисовка всех свёрнутых, отложенных и диагностических виджетов (`flushAllRendersForLanguageChange()` для `AgentShield`, `GATES.md`, `Setup Doctor`, `Graphify v2`, `Техдолг shortcut:`, `Инстинкты`, `Эпизоды` в [02-telemetry-cards.js](sidecars/panel/ui-src/js/02-telemetry-cards.js) и [00-i18n.js](sidecars/panel/ui-src/js/00-i18n.js)) и кэш быстрых чипов Композера `_smartChipsLastList` ([06-smart-composer.js](sidecars/panel/ui-src/js/06-smart-composer.js)).
+  - Устранена утечка `"Idle (waiting)"` в Фоновом Дозоре ([panel-sentinel-adapter.mjs](sidecars/panel/lib/panel-sentinel-adapter.mjs)) и добавлена двуязычная локализация `statusTextRu` / `statusTextEn` при загрузке каскада GPU-моделей ([core/gpu/gpu-vram-runtime.mjs](core/gpu/gpu-vram-runtime.mjs), [sidecars/panel/server.mjs](sidecars/panel/server.mjs), [03-hardware-gpu.js](sidecars/panel/ui-src/js/03-hardware-gpu.js)).
+  - Пересобран [sidecars/panel/ui.html](sidecars/panel/ui.html).
 
 ---
 

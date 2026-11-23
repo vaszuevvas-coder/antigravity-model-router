@@ -1260,7 +1260,14 @@ export function getGpuPullJobStatus() {
     if (disk.active) {
       const stale = (Date.now() - Number(disk.updatedAt || 0)) > 15 * 60 * 1000 || (disk.pid && !isProcessAliveSafe(disk.pid));
       if (stale) {
-        return { ...disk, active: false, statusText: disk.statusText || (readActiveUiLanguage() === 'en' ? 'Download interrupted' : 'Загрузка прервана') };
+        const isEnStale = readActiveUiLanguage() === 'en';
+        return {
+          ...disk,
+          active: false,
+          statusText: disk.statusText || (isEnStale ? 'Download interrupted' : 'Загрузка прервана'),
+          statusTextRu: disk.statusTextRu || 'Загрузка прервана',
+          statusTextEn: disk.statusTextEn || 'Download interrupted',
+        };
       }
     }
     return disk;
@@ -1281,6 +1288,8 @@ export function cancelGpuPullJob() {
     activePullJob.status.finishedAt = Date.now();
     activePullJob.status.updatedAt = Date.now();
     activePullJob.status.statusText = readActiveUiLanguage() === 'en' ? 'Download cancelled by user' : 'Загрузка отменена пользователем';
+    activePullJob.status.statusTextRu = 'Загрузка отменена пользователем';
+    activePullJob.status.statusTextEn = 'Download cancelled by user';
     activePullJob.active = false;
     persistPullStatus(activePullJob.status, true);
   }
@@ -1796,6 +1805,8 @@ export async function startGpuCascadePull({
       currentPercent: 100,
       source: 'installed',
       statusText: isEnPull ? 'All cascade models are already installed ✓' : 'Все модели каскада уже установлены ✓',
+      statusTextRu: 'Все модели каскада уже установлены ✓',
+      statusTextEn: 'All cascade models are already installed ✓',
       cancelled: false,
       error: '',
       items,
@@ -1820,6 +1831,8 @@ export async function startGpuCascadePull({
     currentPercent: 0,
     source: '',
     statusText: isEnPull ? 'Preparing cascade model download...' : 'Подготовка каскадной загрузки моделей...',
+    statusTextRu: 'Подготовка каскадной загрузки моделей...',
+    statusTextEn: 'Preparing cascade model download...',
     cancelled: false,
     error: '',
     items,
@@ -1853,6 +1866,8 @@ export async function startGpuCascadePull({
             activePullJob.status.currentPercent = item.percent;
             activePullJob.status.source = source || activePullJob.status.source;
             activePullJob.status.statusText = statusText || activePullJob.status.statusText;
+            activePullJob.status.statusTextRu = statusText || activePullJob.status.statusTextRu;
+            activePullJob.status.statusTextEn = statusText || activePullJob.status.statusTextEn;
             activePullJob.status.updatedAt = Date.now();
             persistPullStatus(activePullJob.status, false);
           },
@@ -1865,6 +1880,8 @@ export async function startGpuCascadePull({
           activePullJob.status.completedCount = items.filter((x) => x.status === 'done' || x.status === 'skipped').length;
           activePullJob.status.currentPercent = 100;
           activePullJob.status.statusText = isEnPull ? `Installed: ${item.name}` : `Установлено: ${item.name}`;
+          activePullJob.status.statusTextRu = `Установлено: ${item.name}`;
+          activePullJob.status.statusTextEn = `Installed: ${item.name}`;
         } else {
           item.status = res.cancelled ? 'cancelled' : 'error';
           item.error = res.error || (isEnPull ? 'Download error' : 'Ошибка загрузки');
@@ -1887,15 +1904,21 @@ export async function startGpuCascadePull({
       if (activePullJob.cancelRequested) {
         activePullJob.status.cancelled = true;
         activePullJob.status.statusText = isEnPull ? 'Download cancelled' : 'Загрузка отменена';
+        activePullJob.status.statusTextRu = 'Загрузка отменена';
+        activePullJob.status.statusTextEn = 'Download cancelled';
       } else if (errors.length > 0) {
         activePullJob.status.error = formatCompactPullError(errors.join('; '), 320);
         activePullJob.status.statusText = isEnPull
           ? `Completed with errors (${activePullJob.status.completedCount}/${items.length})`
           : `Завершено с ошибками (${activePullJob.status.completedCount}/${items.length})`;
+        activePullJob.status.statusTextRu = `Завершено с ошибками (${activePullJob.status.completedCount}/${items.length})`;
+        activePullJob.status.statusTextEn = `Completed with errors (${activePullJob.status.completedCount}/${items.length})`;
       } else {
         activePullJob.status.statusText = isEnPull
           ? `Done: downloaded ${activePullJob.status.completedCount}/${items.length} models ✓`
           : `Готово: загружено ${activePullJob.status.completedCount}/${items.length} моделей ✓`;
+        activePullJob.status.statusTextRu = `Готово: загружено ${activePullJob.status.completedCount}/${items.length} моделей ✓`;
+        activePullJob.status.statusTextEn = `Done: downloaded ${activePullJob.status.completedCount}/${items.length} models ✓`;
       }
       persistPullStatus(activePullJob.status, true);
     }

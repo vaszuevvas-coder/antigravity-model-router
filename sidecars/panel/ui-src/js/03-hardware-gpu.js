@@ -1416,6 +1416,22 @@
 
     let _gpuPullActiveUi = false;
 
+    function formatGpuPullStatusText(pullStatus) {
+      if (!pullStatus || typeof pullStatus !== 'object') {
+        return L('Выполняется загрузка...', 'Downloading...');
+      }
+      const picked = pickText(pullStatus, 'statusTextRu', 'statusTextEn', '');
+      if (picked) return picked;
+      const raw = String(pullStatus.statusText || '');
+      if (raw === 'All cascade models are already installed ✓') {
+        return L('Все модели каскада уже установлены ✓', 'All cascade models are already installed ✓');
+      }
+      if (raw === 'Все модели каскада уже установлены ✓') {
+        return L('Все модели каскада уже установлены ✓', 'All cascade models are already installed ✓');
+      }
+      return raw || L('Выполняется загрузка...', 'Downloading...');
+    }
+
     function renderGpuCascadePullStatus(pullStatus, gpu, s) {
       const box = document.getElementById('gpuCascadePullBox');
       const titleEl = document.getElementById('gpuCascadePullTitle');
@@ -1485,7 +1501,7 @@
       }
       if (subEl) {
         const srcBadge = pullStatus.source === 'huggingface' ? ' [Hugging Face]' : (pullStatus.source === 'ollama' ? ' [Ollama]' : '');
-        const stText = pickText(pullStatus, 'statusText', 'statusTextEn', L('Выполняется загрузка...', 'Downloading...'));
+        const stText = formatGpuPullStatusText(pullStatus);
         subEl.textContent = stText + srcBadge + (pullStatus.error && !isActive ? (' · ' + pullStatus.error) : '');
       }
     }
@@ -1508,8 +1524,8 @@
           if (data.pullStatus && data.pullStatus.active) {
             flashStatus(L('Каскад моделей качается в фоне...', 'Model cascade downloading in background...'));
             scheduleTelemetryPoll();
-          } else if (data.pullStatus && (data.pullStatus.statusText || data.pullStatus.statusTextEn)) {
-            flashStatus(pickText(data.pullStatus, 'statusText', 'statusTextEn', ''));
+          } else if (data.pullStatus && (data.pullStatus.statusText || data.pullStatus.statusTextRu || data.pullStatus.statusTextEn)) {
+            flashStatus(formatGpuPullStatusText(data.pullStatus));
           }
         } else {
           flashStatus(L('Ошибка запуска загрузки: ', 'Download start failed: ') + (data && data.error ? data.error : L('неизвестно', 'unknown')));
@@ -1905,12 +1921,12 @@
           currentHardwareProfile = data.hardwareProfile;
         }
         const modal = document.getElementById('onboardingWizardModal');
-        if (modal && modal.classList.contains('visible')) {
-          await finishOnboardingWizard();
-        }
+        const insideWizard = Boolean(modal && modal.classList.contains('visible'));
         await dispatchPromptToChatOrClipboard(
           data.promptText,
-          L('Паспорт ПК отправлен в активный чат для ИИ-оптимизации ✓', 'PC hardware passport sent to active chat ✓'),
+          insideWizard
+            ? L('Паспорт ПК отправлен в чат ✓ — можно продолжить настройку', 'PC hardware passport sent to chat ✓ — continue setup below')
+            : L('Паспорт ПК отправлен в активный чат для ИИ-оптимизации ✓', 'PC hardware passport sent to active chat ✓'),
           L('Промпт скопирован в буфер! Откройте новый чат и нажмите Вставить ✓', 'Prompt copied to clipboard! Open a new chat and paste ✓')
         );
       } catch (err) {

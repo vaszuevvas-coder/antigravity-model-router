@@ -6,6 +6,7 @@
     let _smartGpuTimer = null;
     let _smartGpuAbortCtrl = null;
     let _smartChipsLastSig = '';
+    let _smartChipsLastList = [];
     let _smartComposerBound = false;
     let _composerGrillArmed = false;
 
@@ -75,13 +76,17 @@
 
     function renderSmartComposerChips(chips) {
       const rowEl = document.getElementById('composerChipsRow');
-      if (!rowEl || !Array.isArray(chips) || chips.length === 0) return;
-      const sig = getUiLanguage() + '|' + JSON.stringify(chips);
+      if (Array.isArray(chips) && chips.length > 0) {
+        _smartChipsLastList = chips;
+      }
+      const list = (Array.isArray(chips) && chips.length > 0) ? chips : _smartChipsLastList;
+      if (!rowEl || !Array.isArray(list) || list.length === 0) return;
+      const sig = getUiLanguage() + '|' + JSON.stringify(list);
       if (sig === _smartChipsLastSig) return;
       _smartChipsLastSig = sig;
       rowEl.textContent = '';
-      for (let i = 0; i < chips.length; i++) {
-        const c = chips[i];
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i];
         if (!c || !c.label || !c.prompt) continue;
         const lbl = pickText(c, 'label', 'labelEn', c.label);
         const prm = pickText(c, 'prompt', 'promptEn', c.prompt);

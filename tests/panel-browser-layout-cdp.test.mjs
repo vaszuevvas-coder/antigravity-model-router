@@ -559,10 +559,22 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
       const lastFooterOrCard = shellChildren[shellChildren.length - 1] || document.querySelector('.status-bar');
       const lastRect = lastFooterOrCard.getBoundingClientRect();
       const statusBarRect = document.querySelector('.status-bar')?.getBoundingClientRect() || null;
+      const clientW = document.documentElement.clientWidth;
+      const offendingBoxes = Array.from(document.querySelectorAll('.lg-card, .expert-spoiler'))
+        .map((el) => {
+          const st = getComputedStyle(el);
+          if (st.display === 'none' || st.visibility === 'hidden') return null;
+          const r = el.getBoundingClientRect();
+          if (r.width <= 0 || r.height <= 0) return null;
+          return r.right > clientW + 2
+            ? { id: el.id || el.className, right: Math.round(r.right), clientWidth: clientW }
+            : null;
+        })
+        .filter(Boolean);
 
       return {
         scrollWidth: document.documentElement.scrollWidth,
-        clientWidth: document.documentElement.clientWidth,
+        clientWidth: clientW,
         scrollerTag: scroller.tagName,
         scrollHeight: scroller.scrollHeight,
         clientHeight: scroller.clientHeight,
@@ -571,12 +583,18 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
         lastRectBottom: lastRect.bottom,
         lastRectHeight: lastRect.height,
         statusBarBottom: statusBarRect ? statusBarRect.bottom : null,
+        offendingBoxes,
       };
     }, [...PANEL_SPOILER_IDS], [...COLLAPSIBLE_PANEL_CARD_IDS]);
 
     assert.ok(
       expandedScrollMetrics.scrollWidth <= expandedScrollMetrics.clientWidth + 2,
       `Horizontal overflow when all spoilers/cards expanded: scrollWidth=${expandedScrollMetrics.scrollWidth} > clientWidth+2 (${expandedScrollMetrics.clientWidth + 2})`,
+    );
+    assert.deepEqual(
+      expandedScrollMetrics.offendingBoxes,
+      [],
+      `Expanded cards/spoilers overflow viewport width: ${JSON.stringify(expandedScrollMetrics.offendingBoxes)}`,
     );
     assert.ok(
       expandedScrollMetrics.scrollHeight > expandedScrollMetrics.clientHeight,

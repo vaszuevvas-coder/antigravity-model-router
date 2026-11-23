@@ -67,6 +67,8 @@ export function normalizeSentinelSnapshotPayload(rawSnap, currentState = {}) {
     ...base,
     ...src,
     ok: true,
+    currentTaskRu: (typeof src.currentTaskRu === 'string' && src.currentTaskRu.trim()) ? src.currentTaskRu : base.currentTaskRu,
+    currentTaskEn: (typeof src.currentTaskEn === 'string' && src.currentTaskEn.trim()) ? src.currentTaskEn : base.currentTaskEn,
     shadowGuard: {
       ...base.shadowGuard,
       ...(src.shadowGuard && typeof src.shadowGuard === 'object' ? src.shadowGuard : {}),

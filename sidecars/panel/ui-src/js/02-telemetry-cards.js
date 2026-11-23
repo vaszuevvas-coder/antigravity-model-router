@@ -1232,7 +1232,7 @@
           selCompThresh.value = curThresh;
         }
       }
-      applyHookProfileOverridesToUi(activeHookProfile);
+      applyHookProfileOverridesToUi(activeHookProfile, s);
       if (typeof syncHwHeaderSummaryBadge === 'function') {
         syncHwHeaderSummaryBadge(
           s,
@@ -1592,19 +1592,86 @@
       }, 2500);
     }
 
-    let _updateStateSeq = 0;
+    let _pendingUpdatePatch = null;
+    let _updateFlushInFlight = false;
+    let _updateBatchWaiters = [];
 
-    async function updateState(patch, opts) {
-      const reqSeq = ++_updateStateSeq;
+    function mergeStatePatches(target, src) {
+      const out = Object.assign({}, target || {});
+      if (!src || typeof src !== 'object') return out;
+      for (const k of Object.keys(src)) {
+        if (k === 'skillModes' && src.skillModes && typeof src.skillModes === 'object') {
+          if (src.replaceSkillModes) {
+            out.skillModes = Object.assign({}, src.skillModes);
+          } else {
+            out.skillModes = Object.assign({}, out.skillModes || {}, src.skillModes);
+          }
+        } else {
+          out[k] = src[k];
+        }
+      }
+      if (src.replaceSkillModes) {
+        out.replaceSkillModes = true;
+      }
+      return out;
+    }
+
+    async function flushPendingStateUpdates() {
+      if (_updateFlushInFlight) return;
+      _updateFlushInFlight = true;
+      try {
+        while (_pendingUpdatePatch) {
+          const patchToSend = _pendingUpdatePatch;
+          const waiters = _updateBatchWaiters;
+          _pendingUpdatePatch = null;
+          _updateBatchWaiters = [];
+          const rollbackSnap = Object.assign({}, currentState, {
+            skillModes: Object.assign({}, currentState.skillModes || {}),
+            panelCollapsedCards: Object.assign({}, currentState.panelCollapsedCards || {}),
+            panelOpenSpoilers: Object.assign({}, currentState.panelOpenSpoilers || {}),
+          });
+          let ok = false;
+          try {
+            const res = await panelFetch('/api/update', {
+              method: 'POST',
+              body: JSON.stringify(patchToSend),
+            });
+            if (!res || !res.ok) {
+              throw new Error('HTTP ' + (res ? res.status : 'err'));
+            }
+            const updated = await res.json();
+            if (!updated || updated.ok === false || !updated.state) {
+              throw new Error((updated && updated.error) ? updated.error : L('Ответ сервера без state', 'Server response missing state'));
+            }
+            if (!_pendingUpdatePatch) {
+              renderPayload(updated);
+              flashStatus(L('Сохранено в router-state.json ✓', 'Saved to router-state.json ✓'));
+            } else if (updated.state) {
+              currentState = Object.assign({}, updated.state, _pendingUpdatePatch);
+            }
+            ok = true;
+          } catch (err) {
+            console.error(err);
+            if (!_pendingUpdatePatch) {
+              renderPayload(Object.assign({}, lastPayloadCache || {}, { state: rollbackSnap }));
+              flashStatus(L('Ошибка записи: ', 'Save error: ') + (err && err.message ? err.message : L('сбой', 'failed')));
+            }
+            ok = false;
+          }
+          for (let i = 0; i < waiters.length; i++) {
+            try { waiters[i](ok); } catch {}
+          }
+        }
+      } finally {
+        _updateFlushInFlight = false;
+      }
+    }
+
+    function updateState(patch, opts) {
       const skipOptimistic = Boolean(opts && opts.skipOptimistic);
-      const prevState = Object.assign({}, currentState, {
-        skillModes: Object.assign({}, currentState.skillModes || {}),
-        panelCollapsedCards: Object.assign({}, currentState.panelCollapsedCards || {}),
-        panelOpenSpoilers: Object.assign({}, currentState.panelOpenSpoilers || {}),
-      });
       const optimistic = Object.assign({}, currentState, patch);
       if (patch && patch.skillModes) {
-        const mergedModes = Object.assign({}, currentState.skillModes || {});
+        const mergedModes = patch.replaceSkillModes ? {} : Object.assign({}, currentState.skillModes || {});
         for (const k of Object.keys(patch.skillModes)) {
           if (patch.skillModes[k] === 'auto') delete mergedModes[k];
           else mergedModes[k] = patch.skillModes[k];
@@ -1614,33 +1681,11 @@
       if (!skipOptimistic) {
         renderPayload(Object.assign({}, lastPayloadCache || {}, { state: optimistic }));
       }
-      try {
-        const res = await panelFetch('/api/update', {
-          method: 'POST',
-          body: JSON.stringify(patch),
-        });
-        if (!res || !res.ok) {
-          throw new Error('HTTP ' + (res ? res.status : 'err'));
-        }
-        const updated = await res.json();
-        if (!updated || updated.ok === false || !updated.state) {
-          throw new Error((updated && updated.error) ? updated.error : L('Ответ сервера без state', 'Server response missing state'));
-        }
-        if (reqSeq === _updateStateSeq) {
-          renderPayload(updated);
-          flashStatus(L('Сохранено в router-state.json ✓', 'Saved to router-state.json ✓'));
-        }
-        return true;
-      } catch (err) {
-        console.error(err);
-        if (reqSeq === _updateStateSeq) {
-          if (!skipOptimistic) {
-            renderPayload(Object.assign({}, lastPayloadCache || {}, { state: prevState }));
-          }
-          flashStatus(L('Ошибка записи: ', 'Save error: ') + (err && err.message ? err.message : L('сбой', 'failed')));
-        }
-        return false;
-      }
+      _pendingUpdatePatch = mergeStatePatches(_pendingUpdatePatch, patch);
+      return new Promise((resolve) => {
+        _updateBatchWaiters.push(resolve);
+        void flushPendingStateUpdates();
+      });
     }
 
     function setAdvisorMode(confirmBeforeRun) {
@@ -2189,9 +2234,16 @@
       'circuitBreaker', 'lspBridgeEnabled',
     ];
 
-    function applyHookProfileOverridesToUi(profile) {
+    const HOOK_PROFILE_DEFAULT_FALSE_KEYS = new Set([
+      'mutationGuardEnabled',
+      'composerVoiceEnabled',
+      'sentinelShadowTests',
+    ]);
+
+    function applyHookProfileOverridesToUi(profile, stateObj) {
       const clean = (profile === 'minimal' || profile === 'strict') ? profile : 'standard';
       const overrides = HOOK_PROFILE_UI_OVERRIDES[clean] || {};
+      const st = (stateObj && typeof stateObj === 'object') ? stateObj : (currentState || {});
       const profLabel = clean === 'minimal' ? L('Лёгкий', 'Minimal') : L('Строгий', 'Strict');
       for (let i = 0; i < HOOK_PROFILE_OVERRIDE_KEYS.length; i++) {
         const key = HOOK_PROFILE_OVERRIDE_KEYS[i];
@@ -2209,6 +2261,7 @@
           }
         } else {
           el.disabled = false;
+          el.checked = HOOK_PROFILE_DEFAULT_FALSE_KEYS.has(key) ? Boolean(st[key]) : st[key] !== false;
           if (row) {
             const origTitle = row.getAttribute('data-orig-title') || '';
             if (origTitle) row.setAttribute('title', origTitle);
@@ -2220,7 +2273,10 @@
 
     function setHookProfile(profile) {
       const clean = (profile === 'minimal' || profile === 'strict') ? profile : 'standard';
-      applyHookProfileOverridesToUi(clean);
+      document.querySelectorAll('#hookProfileGroup button').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.val === clean);
+      });
+      applyHookProfileOverridesToUi(clean, currentState);
       void updateState({ hookProfile: clean });
     }
 
@@ -2229,6 +2285,40 @@
       const clean = Math.max(16000, Math.min(500000, n));
       void updateState({ compactionTokenThreshold: clean });
       flashStatus(L('Порог сжатия эпохи: ', 'Epoch compaction threshold: ') + Math.round(clean / 1000) + 'k ✓');
+    }
+
+    let _lastAgentShieldData = null;
+    let _lastProjectInstinctsData = null;
+    let _lastSetupDoctorData = null;
+    let _lastSessionEpisodesData = null;
+    let _lastGatesData = null;
+    let _lastGraphifyData = null;
+    let _lastShortcutDebtData = null;
+    let _lastGraphDebtKind = '';
+
+    function renderAgentShieldData(data) {
+      if (!data) return;
+      _lastAgentShieldData = data;
+      const badge = document.getElementById('agentShieldBadge');
+      const sumEl = document.getElementById('agentShieldSummary');
+      if (badge) {
+        badge.textContent = String(data.score ?? 100) + '/100 (' + (data.grade || 'A') + ')';
+        badge.className = 'swarm-pill ' + ((data.counts && data.counts.critical > 0) ? 'warn' : (data.score >= 90 ? 'idle' : 'active'));
+      }
+      if (sumEl) {
+        const findings = Array.isArray(data.findings) ? data.findings : [];
+        const summaryTxt = pickText(data, 'summaryRu', 'summaryEn', '');
+        if (findings.length === 0) {
+          sumEl.textContent = summaryTxt || L('Угроз не обнаружено', 'No threats detected');
+        } else {
+          sumEl.innerHTML = '<div>' + escapeHtml(summaryTxt) + '</div>' +
+            findings.slice(0, 6).map(function (f) {
+              return '<div class="pitfall-item"><span class="pitfall-bullet">⚠️</span><span><strong>[' +
+                escapeHtml(String(f.severity || '').toUpperCase()) + ']</strong> ' + escapeHtml(pickText(f, 'message', 'messageEn', f.message || '')) +
+                '</span></div>';
+            }).join('');
+        }
+      }
     }
 
     async function runAgentShield() {
@@ -2244,24 +2334,7 @@
         if (!res || !res.ok || !data || data.ok === false) {
           throw new Error((data && data.error) || L('Ошибка аудита AgentShield', 'AgentShield audit error'));
         }
-        if (badge) {
-          badge.textContent = String(data.score ?? 100) + '/100 (' + (data.grade || 'A') + ')';
-          badge.className = 'swarm-pill ' + ((data.counts && data.counts.critical > 0) ? 'warn' : (data.score >= 90 ? 'idle' : 'active'));
-        }
-        if (sumEl) {
-          const findings = Array.isArray(data.findings) ? data.findings : [];
-          const summaryTxt = pickText(data, 'summaryRu', 'summaryEn', '');
-          if (findings.length === 0) {
-            sumEl.textContent = summaryTxt || L('Угроз не обнаружено', 'No threats detected');
-          } else {
-            sumEl.innerHTML = '<div>' + escapeHtml(summaryTxt) + '</div>' +
-              findings.slice(0, 6).map(function (f) {
-                return '<div class="pitfall-item"><span class="pitfall-bullet">⚠️</span><span><strong>[' +
-                  escapeHtml(String(f.severity || '').toUpperCase()) + ']</strong> ' + escapeHtml(pickText(f, 'message', 'messageEn', f.message || '')) +
-                  '</span></div>';
-              }).join('');
-          }
-        }
+        renderAgentShieldData(data);
         flashStatus(L('Аудит AgentShield завершён ✓', 'AgentShield audit completed ✓'));
       } catch (err) {
         if (badge) {
@@ -2276,6 +2349,7 @@
       const box = document.getElementById('projectInstinctsList');
       if (!box) return;
       const list = Array.isArray(items) ? items : [];
+      _lastProjectInstinctsData = list;
       if (list.length === 0) {
         box.innerHTML = '<div>' + L('Пока нет накопленных инстинктов для текущего проекта.', 'No learned instincts for this workspace yet.') + '</div>';
         return;
@@ -2354,6 +2428,7 @@
     function renderSetupDoctorReport(rec) {
       const box = document.getElementById('setupDoctorBox');
       if (!box) return;
+      _lastSetupDoctorData = rec;
       if (!rec || rec.ok === false) {
         box.innerHTML = '<div style="color: var(--status-warn);">' + L('Не удалось проанализировать стек проекта: ', 'Failed to analyze project stack: ') +
           escapeHtml((rec && rec.error) || L('ошибка', 'error')) + '</div>';
@@ -2372,7 +2447,7 @@
 
       let html =
         '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px;">' +
-          '<strong style="color:var(--accent-cyan);">🩺 Setup Doctor · ' + escapeHtml(langs + fws) + ' (' + Number(st.totalFiles || 0) + L(' ф.)', ' files)') + '</strong>' +
+          '<strong style="color:var(--accent-cyan);">' + L('🩺 Диагностика стека · ', '🩺 Setup Doctor · ') + escapeHtml(langs + fws) + ' (' + Number(st.totalFiles || 0) + L(' ф.)', ' files)') + '</strong>' +
           '<button type="button" class="win-btn" style="padding:1px 6px;font-size:10px;" data-action="loadSetupDoctor">' + L('↻ Пересканировать', '↻ Rescan') + '</button>' +
         '</div>' +
         '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px;color:var(--text-sub);">' +
@@ -2563,6 +2638,23 @@
       }
     }
 
+    function renderSessionEpisodesData(items) {
+      const box = document.getElementById('sessionEpisodesContainer');
+      if (!box) return;
+      const list = Array.isArray(items) ? items : [];
+      _lastSessionEpisodesData = list;
+      if (list.length === 0) {
+        box.innerHTML = '<div style="color:var(--text-sub);padding:2px;">' + L('Пока нет записанных эпизодов прошлых сессий.', 'No recorded session episodes yet.') + '</div>';
+        return;
+      }
+      box.innerHTML = list.map(function (ep) {
+        const filesStr = Array.isArray(ep.files) && ep.files.length ? (' · ' + ep.files.slice(0, 2).join(', ')) : '';
+        return '<div class="pitfall-item"><span class="pitfall-bullet">🗂</span><span style="min-width:0;word-break:break-word;"><strong>[' +
+          escapeHtml((ep.date || '') + ' · ' + (ep.kind || 'session')) + ']</strong> ' +
+          escapeHtml((ep.title || ep.shortId || '') + filesStr) + '</span></div>';
+      }).join('');
+    }
+
     async function loadSessionEpisodes() {
       const box = document.getElementById('sessionEpisodesContainer');
       if (!box) return;
@@ -2573,17 +2665,10 @@
         const data = await res.json();
         const items = Array.isArray(data && data.items) ? data.items : [];
         if (data && data.stats) renderKnowledgeHub(undefined, undefined, data.stats);
-        if (items.length === 0) {
-          box.innerHTML = '<div style="color:var(--text-sub);padding:2px;">' + L('Пока нет записанных эпизодов прошлых сессий.', 'No recorded session episodes yet.') + '</div>';
-          return;
+        renderSessionEpisodesData(items);
+        if (items.length > 0) {
+          flashStatus(L('Загружено эпизодов памяти: ', 'Loaded memory episodes: ') + items.length + ' ✓');
         }
-        box.innerHTML = items.map(function (ep) {
-          const filesStr = Array.isArray(ep.files) && ep.files.length ? (' · ' + ep.files.slice(0, 2).join(', ')) : '';
-          return '<div class="pitfall-item"><span class="pitfall-bullet">🗂</span><span style="min-width:0;word-break:break-word;"><strong>[' +
-            escapeHtml((ep.date || '') + ' · ' + (ep.kind || 'session')) + ']</strong> ' +
-            escapeHtml((ep.title || ep.shortId || '') + filesStr) + '</span></div>';
-        }).join('');
-        flashStatus(L('Загружено эпизодов памяти: ', 'Loaded memory episodes: ') + items.length + ' ✓');
       } catch {
         box.innerHTML = '<div style="color:var(--status-warn);padding:2px;">' + L('Ошибка загрузки эпизодов памяти', 'Error loading memory episodes') + '</div>';
       }
@@ -2604,6 +2689,19 @@
       }
     }
 
+    function renderGatesStatusData(data) {
+      const badge = document.getElementById('gatesStatusBadge');
+      if (!badge || !data) return;
+      _lastGatesData = data;
+      if (data.exists === false) {
+        badge.textContent = L('GATES.md: файл не создан', 'GATES.md: not created');
+        badge.style.color = 'var(--text-sub)';
+      } else {
+        badge.textContent = 'GATES.md: ' + Number(data.metCount || 0) + '/' + Number(data.total || 0) + L(' выполнено', ' met');
+        badge.style.color = Number(data.unmetCount || 0) > 0 ? 'var(--status-warn)' : 'var(--status-ok)';
+      }
+    }
+
     async function refreshGatesStatus(opts) {
       const silent = Boolean(opts && opts.silent);
       const badge = document.getElementById('gatesStatusBadge');
@@ -2612,13 +2710,7 @@
         const res = await panelFetch('/api/gates', { method: 'GET' });
         const data = await res.json();
         if (res && res.ok && data && data.ok) {
-          if (!data.exists) {
-            badge.textContent = L('GATES.md: файл не создан', 'GATES.md: not created');
-            badge.style.color = 'var(--text-sub)';
-          } else {
-            badge.textContent = 'GATES.md: ' + Number(data.metCount || 0) + '/' + Number(data.total || 0) + L(' выполнено', ' met');
-            badge.style.color = Number(data.unmetCount || 0) > 0 ? 'var(--status-warn)' : 'var(--status-ok)';
-          }
+          renderGatesStatusData(data);
           if (!silent) flashStatus(L('Статус GATES.md обновлён ✓', 'GATES.md status updated ✓'));
         }
       } catch {
@@ -2627,7 +2719,6 @@
     }
 
     async function initGatesMd() {
-      const badge = document.getElementById('gatesStatusBadge');
       try {
         const res = await panelFetch('/api/gates', {
           method: 'POST',
@@ -2636,10 +2727,7 @@
         });
         const data = await res.json();
         if (res && res.ok && data && data.ok) {
-          if (badge) {
-            badge.textContent = 'GATES.md: ' + Number(data.metCount || 0) + '/' + Number(data.total || 0) + L(' выполнено', ' met');
-            badge.style.color = 'var(--status-ok)';
-          }
+          renderGatesStatusData(Object.assign({ exists: true, unmetCount: 0 }, data));
           flashStatus(L('Журнал GATES.md готов ✓', 'GATES.md created ✓'));
         } else {
           flashStatus('GATES.md: ' + ((data && data.error) || L('ошибка создания', 'creation error')));
@@ -2649,9 +2737,60 @@
       }
     }
 
-    async function loadGraphifyOverview() {
+    function renderGraphifyData(data) {
       const drawer = document.getElementById('graphDebtDrawer');
       const badge = document.getElementById('graphDebtStatusBadge');
+      if (!drawer || !data) return;
+      _lastGraphifyData = data;
+      _lastGraphDebtKind = 'graph';
+      const warmth = data.cacheWarmth || {};
+      const warmthLabel = warmth.status === 'warm'
+        ? (L('🔥 Кэш тёплый (', '🔥 Cache warm (') + Number(warmth.remainingSeconds || 0) + L('с)', 's)'))
+        : warmth.status === 'cooling'
+          ? (L('⏳ Кэш остывает (', '⏳ Cache cooling (') + Number(warmth.remainingSeconds || 0) + L('с)', 's)'))
+          : L('❄️ Кэш холодный', '❄️ Cache cold');
+      const reuse = data.reuse || {};
+      const reuseLabel = reuse.reusePct !== null && reuse.reusePct !== undefined
+        ? ('Reuse: ' + Number(reuse.reusePct) + '% (' + Number(reuse.reusedCount || 0) + L(' исп. / ', ' used / ') + Number(reuse.newCount || 0) + L(' нов.)', ' new)'))
+        : 'Reuse: —';
+      if (badge) {
+        badge.textContent = 'Q=' + Number(data.modularityQ || 0) + ' · ' + Number((data.clusters || []).length) + L(' класт. · ', ' clust. · ') + reuseLabel;
+        badge.style.color = '';
+      }
+      const clustersHtml = (data.clusters || []).slice(0, 6).map(function (c) {
+        const wPct = Math.min(100, Math.max(14, Math.round((Number(c.size || 1) / Math.max(1, Number(data.fileCount || 1))) * 100)));
+        return '<div style="margin-bottom:4px;">' +
+          '<div style="display:flex;justify-content:space-between;gap:6px;">' +
+            '<strong>' + escapeHtml(c.label || c.id) + '</strong>' +
+            '<span style="color:var(--text-sub);">' + Number(c.size || 0) + L(' ф. · hub: ', ' f. · hub: ') + escapeHtml((c.hubFile || '').split('/').pop()) + '</span>' +
+          '</div>' +
+          '<div style="height:4px;background:var(--border-subtle);border-radius:2px;overflow:hidden;margin-top:2px;">' +
+            '<div style="height:100%;width:' + wPct + '%;background:var(--accent-cyan);"></div>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+      const godsHtml = (data.godNodes || []).slice(0, 4).map(function (g) {
+        return '<span class="swarm-pill idle" style="margin:1px 3px 1px 0;">🌟 ' + escapeHtml(g.file) + ' (in:' + Number(g.inDegree || 0) + ')</span>';
+      }).join('');
+      const bridgesHtml = (data.bridges || []).slice(0, 4).map(function (b) {
+        const confTone = b.confidence === 'AMBIGUOUS' ? 'var(--status-warn)' : 'var(--accent-cyan)';
+        return '<div style="margin-top:2px;word-break:break-word;">' +
+          '<span style="color:' + confTone + ';font-weight:600;">[' + escapeHtml(b.confidence || 'EXTRACTED') + ']</span> ' +
+          escapeHtml(b.fromFile + ':L' + (b.callSiteLine || 1) + ' → ' + b.toFile + (b.toSymbol ? '#' + b.toSymbol : '')) +
+        '</div>';
+      }).join('');
+      drawer.innerHTML =
+        '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;margin-bottom:6px;color:var(--text-sub);">' +
+          '<span>' + escapeHtml(warmthLabel) + '</span>' +
+          '<span>' + escapeHtml(reuseLabel) + ' · ' + escapeHtml(data.topologyHash || '') + '</span>' +
+        '</div>' +
+        (godsHtml ? '<div style="margin-bottom:6px;">' + godsHtml + '</div>' : '') +
+        (clustersHtml || '<div style="color:var(--text-sub);">' + L('Кластеры не обнаружены', 'No clusters detected') + '</div>') +
+        (bridgesHtml ? '<div style="margin-top:6px;border-top:1px solid var(--border-subtle);padding-top:4px;"><strong>' + L('Межкластерные мосты:', 'Cross-cluster bridges:') + '</strong>' + bridgesHtml + '</div>' : '');
+    }
+
+    async function loadGraphifyOverview() {
+      const drawer = document.getElementById('graphDebtDrawer');
       if (!drawer) return;
       drawer.style.display = 'block';
       drawer.innerHTML = '<div style="color:var(--text-sub);">' + L('Построение графа архитектуры Graphify v2...', 'Building Graphify v2 architecture graph...') + '</div>';
@@ -2662,58 +2801,42 @@
           drawer.innerHTML = '<div style="color:var(--status-warn);">' + L('Граф недоступен: ', 'Graph unavailable: ') + escapeHtml((data && data.error) || L('ошибка', 'error')) + '</div>';
           return;
         }
-        const warmth = data.cacheWarmth || {};
-        const warmthLabel = warmth.status === 'warm'
-          ? (L('🔥 Кэш тёплый (', '🔥 Cache warm (') + Number(warmth.remainingSeconds || 0) + L('с)', 's)'))
-          : warmth.status === 'cooling'
-            ? (L('⏳ Кэш остывает (', '⏳ Cache cooling (') + Number(warmth.remainingSeconds || 0) + L('с)', 's)'))
-            : L('❄️ Кэш холодный', '❄️ Cache cold');
-        const reuse = data.reuse || {};
-        const reuseLabel = reuse.reusePct !== null && reuse.reusePct !== undefined
-          ? ('Reuse: ' + Number(reuse.reusePct) + '% (' + Number(reuse.reusedCount || 0) + L(' исп. / ', ' used / ') + Number(reuse.newCount || 0) + L(' нов.)', ' new)'))
-          : 'Reuse: —';
-        if (badge) {
-          badge.textContent = 'Q=' + Number(data.modularityQ || 0) + ' · ' + Number((data.clusters || []).length) + L(' класт. · ', ' clust. · ') + reuseLabel;
-        }
-        const clustersHtml = (data.clusters || []).slice(0, 6).map(function (c) {
-          const wPct = Math.min(100, Math.max(14, Math.round((Number(c.size || 1) / Math.max(1, Number(data.fileCount || 1))) * 100)));
-          return '<div style="margin-bottom:4px;">' +
-            '<div style="display:flex;justify-content:space-between;gap:6px;">' +
-              '<strong>' + escapeHtml(c.label || c.id) + '</strong>' +
-              '<span style="color:var(--text-sub);">' + Number(c.size || 0) + L(' ф. · hub: ', ' f. · hub: ') + escapeHtml((c.hubFile || '').split('/').pop()) + '</span>' +
-            '</div>' +
-            '<div style="height:4px;background:var(--border-subtle);border-radius:2px;overflow:hidden;margin-top:2px;">' +
-              '<div style="height:100%;width:' + wPct + '%;background:var(--accent-cyan);"></div>' +
-            '</div>' +
-          '</div>';
-        }).join('');
-        const godsHtml = (data.godNodes || []).slice(0, 4).map(function (g) {
-          return '<span class="swarm-pill idle" style="margin:1px 3px 1px 0;">🌟 ' + escapeHtml(g.file) + ' (in:' + Number(g.inDegree || 0) + ')</span>';
-        }).join('');
-        const bridgesHtml = (data.bridges || []).slice(0, 4).map(function (b) {
-          const confTone = b.confidence === 'AMBIGUOUS' ? 'var(--status-warn)' : 'var(--accent-cyan)';
-          return '<div style="margin-top:2px;word-break:break-word;">' +
-            '<span style="color:' + confTone + ';font-weight:600;">[' + escapeHtml(b.confidence || 'EXTRACTED') + ']</span> ' +
-            escapeHtml(b.fromFile + ':L' + (b.callSiteLine || 1) + ' → ' + b.toFile + (b.toSymbol ? '#' + b.toSymbol : '')) +
-          '</div>';
-        }).join('');
-        drawer.innerHTML =
-          '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;margin-bottom:6px;color:var(--text-sub);">' +
-            '<span>' + escapeHtml(warmthLabel) + '</span>' +
-            '<span>' + escapeHtml(reuseLabel) + ' · ' + escapeHtml(data.topologyHash || '') + '</span>' +
-          '</div>' +
-          (godsHtml ? '<div style="margin-bottom:6px;">' + godsHtml + '</div>' : '') +
-          (clustersHtml || '<div style="color:var(--text-sub);">' + L('Кластеры не обнаружены', 'No clusters detected') + '</div>') +
-          (bridgesHtml ? '<div style="margin-top:6px;border-top:1px solid var(--border-subtle);padding-top:4px;"><strong>' + L('Межкластерные мосты:', 'Cross-cluster bridges:') + '</strong>' + bridgesHtml + '</div>' : '');
+        renderGraphifyData(data);
         flashStatus(L('Карта архитектуры Graphify v2 обновлена ✓', 'Graphify v2 architecture map updated ✓'));
       } catch {
         drawer.innerHTML = '<div style="color:var(--status-warn);">' + L('Ошибка загрузки графа архитектуры', 'Error loading architecture graph') + '</div>';
       }
     }
 
-    async function loadShortcutDebt() {
+    function renderShortcutDebtData(data) {
       const drawer = document.getElementById('graphDebtDrawer');
       const badge = document.getElementById('graphDebtStatusBadge');
+      if (!drawer || !data) return;
+      _lastShortcutDebtData = data;
+      _lastGraphDebtKind = 'debt';
+      const items = Array.isArray(data.items) ? data.items : [];
+      if (badge) {
+        badge.textContent = L('Техдолг shortcut: ', 'Shortcut debt: ') + items.length + ' (no-trigger: ' + Number(data.noTriggerCount || 0) + ')';
+        badge.style.color = Number(data.noTriggerCount || 0) > 0 ? 'var(--status-warn)' : 'var(--status-ok)';
+      }
+      if (items.length === 0) {
+        drawer.textContent = L(
+          '✅ Осознанный техдолг (shortcut:) не обнаружен. Чистый реестр (' + Number(data.scannedFiles || 0) + ' файлов).',
+          '✅ No deliberate shortcut: debt found. Clean ledger (' + Number(data.scannedFiles || 0) + ' files).'
+        );
+        return;
+      }
+      drawer.innerHTML = items.slice(0, 25).map(function (it) {
+        const warnTag = it.rotRisk ? ' <strong style="color:var(--status-warn);">[no-trigger]</strong>' : '';
+        const upg = it.upgradeTrigger ? (' · <em>' + escapeHtml(it.upgradeTrigger) + '</em>') : '';
+        return '<div class="pitfall-item"><span class="pitfall-bullet">📌</span><span style="min-width:0;word-break:break-word;">' +
+          '<strong>' + escapeHtml(it.file + ':' + it.line) + '</strong> — ' + escapeHtml(it.ceiling || '') + upg + warnTag +
+        '</span></div>';
+      }).join('');
+    }
+
+    async function loadShortcutDebt() {
+      const drawer = document.getElementById('graphDebtDrawer');
       if (!drawer) return;
       drawer.style.display = 'block';
       drawer.innerHTML = '<div style="color:var(--text-sub);">' + L('Сканирование меток техдолга shortcut:...', 'Scanning shortcut: tech debt markers...') + '</div>';
@@ -2724,29 +2847,140 @@
           drawer.innerHTML = '<div style="color:var(--status-warn);">' + L('Ошибка сканирования техдолга', 'Error scanning tech debt') + '</div>';
           return;
         }
+        renderShortcutDebtData(data);
         const items = Array.isArray(data.items) ? data.items : [];
-        if (badge) {
-          badge.textContent = L('Техдолг shortcut: ', 'Shortcut debt: ') + items.length + ' (no-trigger: ' + Number(data.noTriggerCount || 0) + ')';
-          badge.style.color = Number(data.noTriggerCount || 0) > 0 ? 'var(--status-warn)' : 'var(--status-ok)';
-        }
         if (items.length === 0) {
-          drawer.textContent = L(
-            '✅ Осознанный техдолг (shortcut:) не обнаружен. Чистый реестр (' + Number(data.scannedFiles || 0) + ' файлов).',
-            '✅ No deliberate shortcut: debt found. Clean ledger (' + Number(data.scannedFiles || 0) + ' files).'
-          );
           flashStatus(L('Техдолг shortcut: 0 меток ✓', 'Shortcut debt: 0 markers ✓'));
-          return;
+        } else {
+          flashStatus(L('Найдено меток shortcut: ', 'Found shortcut markers: ') + items.length + ' ✓');
         }
-        drawer.innerHTML = items.slice(0, 25).map(function (it) {
-          const warnTag = it.rotRisk ? ' <strong style="color:var(--status-warn);">[no-trigger]</strong>' : '';
-          const upg = it.upgradeTrigger ? (' · <em>' + escapeHtml(it.upgradeTrigger) + '</em>') : '';
-          return '<div class="pitfall-item"><span class="pitfall-bullet">📌</span><span style="min-width:0;word-break:break-word;">' +
-            '<strong>' + escapeHtml(it.file + ':' + it.line) + '</strong> — ' + escapeHtml(it.ceiling || '') + upg + warnTag +
-          '</span></div>';
-        }).join('');
-        flashStatus(L('Найдено меток shortcut: ', 'Found shortcut markers: ') + items.length + ' ✓');
       } catch {
         drawer.innerHTML = '<div style="color:var(--status-warn);">' + L('Ошибка чтения реестра техдолга', 'Error reading tech debt ledger') + '</div>';
+      }
+    }
+
+    function flushAllRendersForLanguageChange() {
+      const s = (typeof currentState === 'object' && currentState) ? currentState : {};
+      const p = (typeof lastPayloadCache === 'object' && lastPayloadCache) ? lastPayloadCache : null;
+
+      if (typeof _lastSkillsDomSig !== 'undefined') _lastSkillsDomSig = '';
+      if (typeof telemetryLastSig !== 'undefined') telemetryLastSig = '';
+
+      const pendingKeys = Object.keys(_pendingBlockRenders);
+      for (let i = 0; i < pendingKeys.length; i++) {
+        const k = pendingKeys[i];
+        const fn = _pendingBlockRenders[k];
+        delete _pendingBlockRenders[k];
+        if (typeof fn === 'function') {
+          try { fn(); } catch {}
+        }
+      }
+
+      if (typeof discoveredSkills !== 'undefined' && Array.isArray(discoveredSkills) && typeof renderSkills === 'function') {
+        try { renderSkills(discoveredSkills, s.skillModes || {}); } catch {}
+      }
+      if (typeof renderCheckpoints === 'function') {
+        try {
+          renderCheckpoints(
+            p && Array.isArray(p.checkpoints) ? p.checkpoints : undefined,
+            p && Array.isArray(p.turnCheckpoints) ? p.turnCheckpoints : undefined,
+            p && Array.isArray(p.shadowWorktrees) ? p.shadowWorktrees : undefined
+          );
+        } catch {}
+      }
+      const telSnap = (p && p.telemetry) || (typeof _lastTelemetrySnapshot !== 'undefined' ? _lastTelemetrySnapshot : null);
+      if (telSnap && typeof renderTelemetry === 'function') {
+        try { renderTelemetry(telSnap); } catch {}
+      } else if (typeof renderSwarmTelemetry === 'function') {
+        try { renderSwarmTelemetry(p && p.telemetry ? p.telemetry.swarm : null, s); } catch {}
+      }
+      if (p && p.circuitBreaker !== undefined && typeof renderCircuitBreaker === 'function') {
+        try { renderCircuitBreaker(p.circuitBreaker); } catch {}
+      }
+      if (p && p.compaction !== undefined && typeof renderCompaction === 'function') {
+        try { renderCompaction(p.compaction); } catch {}
+      }
+      if (p && p.pitfalls !== undefined && typeof renderPitfalls === 'function') {
+        try { renderPitfalls(p.pitfalls); } catch {}
+      }
+      if (typeof renderKnowledgeHub === 'function') {
+        try {
+          if (p) renderKnowledgeHub(p.victoryRecipes, p.federatedPeers, p.knowledgeStats);
+          else renderKnowledgeHub();
+        } catch {}
+      }
+      if (p && p.bayesian !== undefined && typeof renderBayesian === 'function') {
+        try { renderBayesian(p.bayesian, s); } catch {}
+      }
+      if (typeof renderSentinelStatus === 'function') {
+        try { renderSentinelStatus(p ? p.sentinel : null, s); } catch {}
+      }
+      const hwCtx = typeof _lastHwRenderCtx !== 'undefined' ? _lastHwRenderCtx : null;
+      if ((p && (p.gpu !== undefined || p.ramCache !== undefined || p.cpu !== undefined)) || hwCtx) {
+        const effGpu = p && p.gpu !== undefined ? p.gpu : (hwCtx ? hwCtx.gpu : null);
+        const effRam = p && p.ramCache !== undefined ? p.ramCache : (hwCtx ? hwCtx.ramCache : null);
+        const effCpu = p && p.cpu !== undefined ? p.cpu : (hwCtx ? hwCtx.cpu : null);
+        if (typeof renderGpuAndRam === 'function') {
+          try { renderGpuAndRam(effGpu, effRam, s, effCpu); } catch {}
+        }
+        if (typeof syncHwHeaderSummaryBadge === 'function') {
+          try { syncHwHeaderSummaryBadge(s, effGpu, effRam); } catch {}
+        }
+        if (hwCtx && typeof updateLiveHardwareOpticalUi === 'function') {
+          try {
+            updateLiveHardwareOpticalUi(
+              hwCtx.gpu,
+              hwCtx.ollResolved,
+              hwCtx.ramCache,
+              s,
+              hwCtx.capGb,
+              hwCtx.ramBudgetMb,
+              hwCtx.cpu
+            );
+          } catch {}
+        }
+      }
+      if (typeof renderWiretapAndQuota === 'function') {
+        try { renderWiretapAndQuota(p ? p.wiretapFaults : undefined, p ? p.quotaPacer : undefined); } catch {}
+      }
+      if (typeof renderTaskProgressAndHud === 'function') {
+        try { renderTaskProgressAndHud(p ? p.taskProgress : null, p ? p.floatingHud : null, s); } catch {}
+      }
+      if (typeof detectedProjectInfo !== 'undefined' && detectedProjectInfo && typeof renderSmartPilotBanner === 'function') {
+        try { renderSmartPilotBanner(detectedProjectInfo); } catch {}
+      }
+      if (typeof syncCustomSelectTrigger === 'function') {
+        try { syncCustomSelectTrigger('sel-compactionThreshold'); } catch {}
+      }
+
+      if (_lastSetupDoctorData) {
+        const docBox = document.getElementById('setupDoctorBox');
+        if (docBox && docBox.style.display !== 'none') {
+          try { renderSetupDoctorReport(_lastSetupDoctorData); } catch {}
+        }
+      }
+      if (_lastAgentShieldData) {
+        try { renderAgentShieldData(_lastAgentShieldData); } catch {}
+      }
+      if (_lastGatesData) {
+        try { renderGatesStatusData(_lastGatesData); } catch {}
+      }
+      if (_lastProjectInstinctsData !== null) {
+        try { renderProjectInstinctsList(_lastProjectInstinctsData); } catch {}
+      }
+      if (_lastSessionEpisodesData !== null) {
+        const epBox = document.getElementById('sessionEpisodesContainer');
+        if (epBox && epBox.style.display !== 'none') {
+          try { renderSessionEpisodesData(_lastSessionEpisodesData); } catch {}
+        }
+      }
+      const gdDrawer = document.getElementById('graphDebtDrawer');
+      if (gdDrawer && gdDrawer.style.display !== 'none') {
+        if (_lastGraphDebtKind === 'graph' && _lastGraphifyData) {
+          try { renderGraphifyData(_lastGraphifyData); } catch {}
+        } else if (_lastGraphDebtKind === 'debt' && _lastShortcutDebtData) {
+          try { renderShortcutDebtData(_lastShortcutDebtData); } catch {}
+        }
       }
     }
 

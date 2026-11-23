@@ -1,9 +1,9 @@
 ---
 name: context-fork
-description: Token-economy and context-isolation protocol for The Tunnel v3.32.0: Gemini 4 implicit cache alignment, RAM-first slicing, subagent search offloading, and log masking. Use when compressing prompt context, batching reads, or isolating broad exploration.
+description: Token-economy and context-isolation protocol for The Tunnel v3.32.1: Gemini 4 implicit cache alignment, RAM-first slicing, subagent search offloading, and log masking. Use when compressing prompt context, batching reads, or isolating broad exploration.
 ---
 
-# Context Fork & Token Economy (v3.32.0)
+# Context Fork & Token Economy (v3.32.1)
 
 Save 80–95% context tokens while preserving EN-Internal / RU-User boundaries.
 

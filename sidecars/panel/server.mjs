@@ -192,7 +192,7 @@ function getPluginVersion() {
     const ver = typeof meta?.version === 'string' ? meta.version.trim() : '';
     if (ver) return ver;
   } catch {}
-  return '3.32.0';
+  return '3.32.1';
 }
 
 function getUiBuildVersion() {
@@ -1314,6 +1314,7 @@ export async function startSidecarPanel(options = {}) {
               totalVramMb,
               selectedCapMb,
               installedTags: downloadedModels.map((m) => m.name),
+              lang: normalizeLang(curState?.uiLanguage, lang),
             })
           : null;
         gpuStatusPanelCache.ts = 0;
