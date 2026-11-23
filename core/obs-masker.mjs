@@ -144,6 +144,60 @@ export function compressRtkCommandOutput(cleanText = '', exitCode = 0, cmdHint =
     }
   }
 
+  // 3. Large Git Status profile (>= 18 porcelain/status file rows)
+  const gitStatusRx = /^(?:\s*(?:modified:|new file:|deleted:|renamed:)\s+.+|[ MADRCU?!]?[MADRCU?!]\s+\S+|[MADRCU?!][ MADRCU?!]\s+\S+)/;
+  const statusRows = lines.filter((l) => gitStatusRx.test(l));
+  if (statusRows.length >= 18) {
+    const byDir = new Map();
+    for (const r of statusRows) {
+      const filePart = r.replace(/^(?:\s*(?:modified:|new file:|deleted:|renamed:)\s+|[ MADRCU?!]{1,2}\s+)/, '').trim();
+      const dir = path.posix.dirname(filePart.replace(/\\/g, '/'));
+      byDir.set(dir, (byDir.get(dir) || 0) + 1);
+    }
+    const dirSummary = Array.from(byDir.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 12)
+      .map(([d, c]) => `  ${d}/ (${c} files)`);
+    const compressed = [
+      `[⚡ RTK-GitStatus: ${statusRows.length} changed/untracked files across ${byDir.size} dirs]`,
+      ...dirSummary,
+      ...statusRows.slice(0, 8),
+    ].join('\n');
+    if (compressed.length < text.length * 0.75) {
+      return {
+        matched: true,
+        profile: 'git_status',
+        compressed,
+        savedChars: text.length - compressed.length,
+      };
+    }
+  }
+
+  // 4. Jest / Vitest / Pytest / Cargo Test suite profile
+  const suitePassRx = /^\s*(?:PASS\b|\S+::\S+\s+PASSED\b|test\s+\S+\s+\.\.\.\s+ok\b)/;
+  const suiteFailRx = /^\s*(?:FAIL\b|\S+::\S+\s+FAILED\b|test\s+\S+\s+\.\.\.\s+FAILED\b|●\s+)/;
+  let sPasses = 0;
+  let sFails = 0;
+  for (const l of lines) {
+    if (suitePassRx.test(l)) sPasses += 1;
+    else if (suiteFailRx.test(l)) sFails += 1;
+  }
+  if (sPasses >= 8) {
+    const kept = lines.filter((l) => !suitePassRx.test(l)).slice(0, 40);
+    const compressed = [
+      `[✓ RTK-Suite Summary: ${sPasses} passed, ${sFails} failed across ${lines.length}L]`,
+      ...kept,
+    ].join('\n');
+    if (compressed.length < text.length * 0.8) {
+      return {
+        matched: true,
+        profile: 'test_suites',
+        compressed,
+        savedChars: text.length - compressed.length,
+      };
+    }
+  }
+
   return { matched: false, profile: 'none', compressed: text, savedChars: 0 };
 }
 

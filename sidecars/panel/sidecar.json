@@ -3,7 +3,7 @@
   "args": ["server.mjs"],
   "restart_policy": "always",
   "display_name": "The Tunnel",
-  "description": "The Tunnel · Интерактивный пульт управления v3.30.0 для связки моделей Gemini 4 (Hydrogen, Neon, Carbon, Argon), адаптивного In-RAM кэша (до 32 ГБ) и локального GPU Ollama.",
+  "description": "The Tunnel · Интерактивный пульт управления v3.31.0 для связки моделей Gemini 4 (Hydrogen, Neon, Carbon, Argon), адаптивного In-RAM кэша (до 32 ГБ) и локального GPU Ollama.",
   "has_web_ui": true,
   "ui_config": {
     "display_name": "The Tunnel",

@@ -191,7 +191,7 @@ function getPluginVersion() {
     const ver = typeof meta?.version === 'string' ? meta.version.trim() : '';
     if (ver) return ver;
   } catch {}
-  return '3.30.0';
+  return '3.31.0';
 }
 
 function getUiBuildVersion() {
@@ -1128,6 +1128,55 @@ export async function startSidecarPanel(options = {}) {
       return { ok: false, error: err?.message || 'Ошибка сброса пауз Combo' };
     }
   }, 'POST');
+
+  app.api('/api/graph', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    try {
+      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const { RamMemoryEngine } = await import('../../core/ram-memory-engine.mjs');
+      const { computeCacheWarmthStatus } = await import('../../core/quota-pacer.mjs');
+      const { getSessionReuseSummary, getSessionVerificationFreshness } = await import('../../core/completion-gates.mjs');
+      const tmpEngine = new RamMemoryEngine({ budgetMb: 256 });
+      const graphReport = tmpEngine.queryKnowledgeGraph(activeWs, {
+        mode: 'report',
+        maxClusters: 8,
+        maxGodNodes: 6,
+      });
+      const warmth = computeCacheWarmthStatus();
+      const reuse = getSessionReuseSummary();
+      const verification = getSessionVerificationFreshness();
+      return {
+        ok: Boolean(graphReport?.ok),
+        workspaceRoot: activeWs,
+        topologyHash: graphReport?.topologyHash || '',
+        fileCount: Number(graphReport?.fileCount || 0),
+        modularityQ: Number(graphReport?.modularityQ || 0),
+        clusters: graphReport?.clusters || [],
+        godNodes: graphReport?.godNodes || [],
+        bridges: graphReport?.bridges || [],
+        questions: graphReport?.questions || [],
+        cacheWarmth: warmth,
+        reuse,
+        verification,
+      };
+    } catch (err) {
+      return { ok: false, error: err?.message || 'Ошибка построения графа архитектуры' };
+    }
+  }, 'GET');
+
+  app.api('/api/debt', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    try {
+      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const { scanShortcutDebt } = await import('../../core/shortcut-debt-ledger.mjs');
+      const res = scanShortcutDebt(activeWs, {
+        marker: typeof data?.marker === 'string' ? data.marker : '',
+      });
+      return res;
+    } catch (err) {
+      return { ok: false, error: err?.message || 'Ошибка сканирования техдолга shortcut:' };
+    }
+  }, 'GET');
 
   app.api('/api/profile-backup', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };

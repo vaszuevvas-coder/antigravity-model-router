@@ -732,7 +732,7 @@ export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun =
   const log = silent ? () => {} : (...args) => console.log(...args);
 
   const srcManifest = safeParseJsonObject(path.join(resolvedSrc, 'plugin.json'));
-  const version = srcManifest?.version ? String(srcManifest.version) : '3.30.0';
+  const version = srcManifest?.version ? String(srcManifest.version) : '3.31.0';
   const srcStatePath = path.join(resolvedSrc, 'router-state.json');
   const destStatePath = path.join(destRoot, 'router-state.json');
   const externalBackupPath = getExternalBackupPath(destRoot);
@@ -821,7 +821,7 @@ export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun =
 
   const globalDupesRemoved = isDefaultTarget ? purgeDuplicateGlobalSkills(destRoot) : 0;
 
-  // Чистка и обновление кэшей (.cache) The Tunnel v3.30.0: legacy priors/ledgers, старый f32bin-v1, нулевые repomap/digest
+  // Чистка и обновление кэшей (.cache) The Tunnel v3.31.0: legacy priors/ledgers, старый f32bin-v1, нулевые repomap/digest
   const targetCacheStats = maintainCacheDir(path.join(destRoot, '.cache'));
   const localCacheStats = inPlace || !isDefaultTarget
     ? { repomapsRemoved: 0, vectorsPurged: 0, digestsPruned: 0, legacyRemoved: 0 }
@@ -832,7 +832,7 @@ export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun =
   const totalLegacyRemoved = targetCacheStats.legacyRemoved + localCacheStats.legacyRemoved;
 
   log(
-    `[✓] Обслуживание The Tunnel v3.30.0: удалено сирот=${orphansRemoved}, дублей скиллов v3.0=${globalDupesRemoved}, ` +
+    `[✓] Обслуживание The Tunnel v3.31.0: удалено сирот=${orphansRemoved}, дублей скиллов v3.0=${globalDupesRemoved}, ` +
     `legacy-кэшей=${totalLegacyRemoved}, устаревших f32bin/json векторов=${totalVectorsPurged}, ` +
     `устаревших repomap=${totalRepomapsRemoved}, старых дайджестов=${totalDigestsPruned}`
   );

@@ -34,6 +34,9 @@ export function parseYamlFrontmatter(content = '') {
       hasFrontmatter: false,
       name: '',
       description: '',
+      license: '',
+      compatibility: '',
+      allowedTools: '',
       body: text,
       bodyLinesCount: totalLinesCount,
       totalLinesCount,
@@ -46,6 +49,9 @@ export function parseYamlFrontmatter(content = '') {
 
   let name = '';
   let description = '';
+  let license = '';
+  let compatibility = '';
+  let allowedTools = '';
   const fmLines = rawFm.split(/\r?\n/);
 
   for (let i = 0; i < fmLines.length; i++) {
@@ -83,12 +89,18 @@ export function parseYamlFrontmatter(content = '') {
 
     if (key === 'name') name = resolvedVal;
     if (key === 'description') description = resolvedVal;
+    if (key === 'license') license = resolvedVal;
+    if (key === 'compatibility') compatibility = resolvedVal;
+    if (key === 'allowed-tools' || key === 'allowed_tools') allowedTools = resolvedVal;
   }
 
   return {
     hasFrontmatter: true,
     name,
     description,
+    license,
+    compatibility,
+    allowedTools,
     body,
     bodyLinesCount,
     totalLinesCount,
@@ -161,6 +173,48 @@ export function analyzeNegativeTransfer(content = '', skillDir = '') {
       'Missing YAML frontmatter or required `name` / `description` fields for progressive disclosure.'
     );
   } else {
+    // agentskills.io v1 specification checks (`name`, `description`, `compatibility`)
+    if (
+      parsed.name.length > 64 ||
+      !/^[a-z0-9-]+$/.test(parsed.name) ||
+      parsed.name.startsWith('-') ||
+      parsed.name.endsWith('-') ||
+      parsed.name.includes('--')
+    ) {
+      pushFinding(
+        'FM_SPEC_NAME_INVALID',
+        'error',
+        20,
+        `Frontmatter \`name\` ("${parsed.name}") violates agentskills.io spec (must be 1..64 chars, lowercase a-z0-9-, no leading/trailing '-' or '--').`
+      );
+    } else if (skillDir) {
+      const dirBase = basename(resolve(skillDir));
+      const isTempFixtureDir = /^(?:amr-|tmp-|skill-test-|quarantine-)/i.test(dirBase);
+      if (!isTempFixtureDir && dirBase !== parsed.name) {
+        pushFinding(
+          'FM_NAME_DIR_MISMATCH',
+          'warn',
+          6,
+          `Frontmatter \`name\` ("${parsed.name}") should match parent directory name ("${dirBase}") per agentskills.io spec.`
+        );
+      }
+    }
+    if (parsed.compatibility && parsed.compatibility.length > 500) {
+      pushFinding(
+        'FM_SPEC_COMPAT_OVERFLOW',
+        'error',
+        15,
+        `Frontmatter \`compatibility\` is ${parsed.compatibility.length} chars (agentskills.io max is 500).`
+      );
+    }
+    if (parsed.description.length > 1024) {
+      pushFinding(
+        'FM_SPEC_DESC_OVERFLOW',
+        'error',
+        20,
+        `Frontmatter \`description\` is ${parsed.description.length} chars (agentskills.io max is 1024).`
+      );
+    }
     if (parsed.description.length < 35 || /^skill capsule for\b/i.test(parsed.description)) {
       pushFinding(
         'FM_GENERIC_DESC',

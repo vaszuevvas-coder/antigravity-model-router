@@ -340,6 +340,14 @@
       updateState({ grillMode: mode });
     }
 
+    function setLeanMode(mode) {
+      updateState({ leanMode: mode });
+    }
+
+    function setTerseMode(mode) {
+      updateState({ terseMode: mode });
+    }
+
     function selectCuratedSkillPreset(repo, slug) {
       const srcInp = document.getElementById('extSkillSourceInput');
       const slugInp = document.getElementById('extSkillSlugInput');

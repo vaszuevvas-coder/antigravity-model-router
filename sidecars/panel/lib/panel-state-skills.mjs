@@ -295,6 +295,8 @@ export const DEFAULT_STATE = {
   uiDesignPreviewGate: true,
   uiInspirationMode: 'ask',
   grillMode: 'auto',
+  leanMode: 'full',
+  terseMode: 'off',
   skillModes: {},
   repoMap: true,
   toolPruning: true,
@@ -401,6 +403,10 @@ const VALID_UI_INSPIRATION_MODES = new Set(['ask', 'showroom', 'web_refs']);
 
 const VALID_GRILL_MODES = new Set(['off', 'auto', 'always']);
 
+const VALID_LEAN_MODES = new Set(['off', 'lite', 'full', 'ultra']);
+
+const VALID_TERSE_MODES = new Set(['off', 'caveman', 'ultracave']);
+
 const VALID_HOOK_PROFILES = new Set(['minimal', 'standard', 'strict']);
 
 export function clampSafeInt(val, min, max, fallback) {
@@ -477,6 +483,12 @@ export function sanitizeStatePatch(patch = {}, options = {}) {
         break;
       case 'grillMode':
         if (VALID_GRILL_MODES.has(String(val))) out[key] = String(val);
+        break;
+      case 'leanMode':
+        if (VALID_LEAN_MODES.has(String(val))) out[key] = String(val);
+        break;
+      case 'terseMode':
+        if (VALID_TERSE_MODES.has(String(val))) out[key] = String(val);
         break;
       case 'hookProfile':
         if (VALID_HOOK_PROFILES.has(String(val))) out[key] = String(val);

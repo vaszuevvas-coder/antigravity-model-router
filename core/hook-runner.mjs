@@ -43,16 +43,35 @@ export function resolveUserLanguage(state = {}) {
 
 function buildStaticSessionStartHeader(state = {}) {
   const isEn = resolveUserLanguage(state) === 'en';
-  return [
+  const lines = [
     isEn
-      ? '# The Tunnel v3.30.0 (EN-Internal / EN-Chat)'
-      : '# The Tunnel v3.30.0 (EN-Internal / RU-Chat)',
+      ? '# The Tunnel v3.31.0 (EN-Internal / EN-Chat)'
+      : '# The Tunnel v3.31.0 (EN-Internal / RU-Chat)',
     isEn
       ? '- User replies/UI/Role/toolSummary: 100% English.'
       : '- User replies/UI/Role/toolSummary: 100% Russian.',
     '- Internal thinking (unthrottled compact EN), subagent prompts/replies (<=6L), code comments: compact English.',
     '- Edits: use edit_file / diff-patcher; never full-overwrite >50L files.',
   ];
+  const lean = typeof state?.leanMode === 'string' ? state.leanMode.trim().toLowerCase() : 'full';
+  if (lean && lean !== 'off') {
+    if (lean === 'lite') {
+      lines.push('- Lean Senior (lite): prefer existing repo helpers -> stdlib -> native platform before writing new helpers.');
+    } else {
+      const ultraExtra = lean === 'ultra' ? ' Push back on speculative scope before building.' : '';
+      lines.push(
+        `- Lean Senior (${lean}): Ladder of Laziness: (1) Need to exist? (2) Already in repo? (3) Stdlib/platform? (4) Installed dep? (5) One readable line? (6) Minimum complete diff + 1 test on new branch/loop/parser/security. Mark deliberate deferrals with \`// shortcut: <ceiling>, <when to upgrade>\`; NEVER cut trust-boundary validation, security, or a11y.${ultraExtra}`
+      );
+    }
+  }
+  const terse = typeof state?.terseMode === 'string' ? state.terseMode.trim().toLowerCase() : 'off';
+  if (terse === 'caveman' || terse === 'ultracave') {
+    const cap = terse === 'ultracave' ? 12 : 20;
+    lines.push(
+      `- Controlled Brevity (${terse} · ASD-STE100): answer-first (\`[target] [action] [reason]\`, <=${cap} words/sentence, zero filler); keep code, paths, negations, numbers, and security warnings 100% exact.`
+    );
+  }
+  return lines;
 }
 
 function enqueuePostCommandHint(convoKey = 'default', hintText = '') {
@@ -276,6 +295,7 @@ const DEP_LOADERS = {
   floatingHud: () => import('./floating-hud.mjs').then((m) => m),
   runtimeWiretap: () => import('./runtime-wiretap.mjs').then((m) => m),
   cpuMutationGuard: () => import('./cpu-mutation-guard.mjs').then((m) => m),
+  shortcutDebt: () => import('./shortcut-debt-ledger.mjs').then((m) => m),
 };
 
 function loadDepsByNames(names = []) {
@@ -651,7 +671,7 @@ export function buildZeroTokenUserBadgeStep({
       ? `Pro-Архитектор${subSuffix}`
       : strat === 'flash_dispatcher' || strat === 'economy'
         ? `Flash-Диспетчер${subSuffix}`
-        : `Автопилот v3.30.0${subSuffix}`;
+        : `Автопилот v3.31.0${subSuffix}`;
   const executor = modelProfile?.displayRu || modelProfile?.displayNameRu || modelProfile?.shortLabel || 'Текущий исполнитель';
   const domainKey = String(pruningResult?.domain || 'general').trim();
   const domainRu = DOMAIN_LABELS_RU[domainKey] || domainKey;
@@ -1179,7 +1199,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
       }
     }
 
-    // 2. Когнитивный ИИ-Автопилот v3.30.0 (3D-матрица Breadth × Depth × Risk + безлимитное EN-мышление на Gemini 4)
+    // 2. Когнитивный ИИ-Автопилот v3.31.0 (3D-матрица Breadth × Depth × Risk + безлимитное EN-мышление на Gemini 4)
     if (baseState.thinkingLimiter !== false && toolPruner && typeof toolPruner.estimateTaskGradeAndThinkingBudget === 'function') {
       try {
         const budgetRes = toolPruner.estimateTaskGradeAndThinkingBudget(userInput, effectiveState, {
@@ -1719,6 +1739,9 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
   }
 
   if (isFirstStepOfTurn && pendingTurnEntry) {
+    try {
+      circuitBreaker?.resetToolRoundHistory?.({ conversationId: convoId });
+    } catch {}
     try {
       updateJsonAtomicSync(turnFile, () => ({ turns: {} }), (tState) => {
         const rawTurns = (tState && typeof tState.turns === 'object') ? { ...tState.turns } : {};
@@ -2847,6 +2870,36 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
       } catch {}
     }
 
+    if (state.completionGates !== false && completionGates?.isVerificationTestCommand) {
+      try {
+        const cmdLineForGate = String(args.CommandLine || args.command || args.cmd || '');
+        if (completionGates.isVerificationTestCommand(cmdLineForGate)) {
+          completionGates.recordSessionTestExecution?.({
+            conversationId: postConvoKey,
+            workspaceRoot: wsPath,
+            commandLine: cmdLineForGate,
+            output: safeCmdOutput,
+            exitCode: payload.error ? 1 : 0,
+          });
+        }
+      } catch {}
+    }
+
+    if (state.circuitBreaker !== false && circuitBreaker?.recordAndCheckStalledToolRound) {
+      try {
+        const stallRes = circuitBreaker.recordAndCheckStalledToolRound({
+          conversationId: postConvoKey,
+          toolName: 'run_command',
+          args: { CommandLine: String(args.CommandLine || args.command || args.cmd || '') },
+          resultText: safeCmdOutput || safeErrStr,
+          isError: Boolean(payload.error),
+        });
+        if (stallRes?.stalled && stallRes.formattedAlert) {
+          enqueuePostCommandHint(postConvoKey, stallRes.formattedAlert);
+        }
+      } catch {}
+    }
+
     if (state.ramCacheEnabled !== false && state.ramSotaEngines !== false && !payload.error && safeCmdOutput.length >= 600) {
       try {
         const cmdStr = String(args.CommandLine || args.command || args.cmd || '');
@@ -3080,6 +3133,36 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
         let prevEditText = '';
         if (toolName === 'edit_file' && args.Target !== undefined && args.Replacement !== undefined && newCodeForGate.includes(String(args.Replacement))) {
           prevEditText = newCodeForGate.replace(String(args.Replacement), String(args.Target));
+        }
+
+        if (state.completionGates !== false) {
+          completionGates?.recordSessionCodeEdit?.({
+            conversationId: postConvoKey,
+            workspaceRoot: effectiveFileWs,
+            filePath,
+          });
+          if (completionGates?.computeDiffReuseMetrics && prevEditText) {
+            const cachedMap = repoMapper?.getCachedRepoMap?.(effectiveFileWs, { skipWrite: true });
+            const knownSyms = [];
+            if (cachedMap?.files && typeof cachedMap.files === 'object') {
+              for (const fInfo of Object.values(cachedMap.files)) {
+                if (Array.isArray(fInfo?.symbols)) {
+                  for (const s of fInfo.symbols) {
+                    if (s?.name) knownSyms.push(s.name);
+                    else if (typeof s === 'string') knownSyms.push(s);
+                  }
+                }
+              }
+            }
+            const reuseRes = completionGates.computeDiffReuseMetrics(prevEditText, newCodeForGate, filePath, knownSyms);
+            if (!reuseRes?.skipped) {
+              completionGates.recordSessionReuseMetrics?.({
+                conversationId: postConvoKey,
+                reusedSymbols: reuseRes.reusedSymbols,
+                newSymbols: reuseRes.newSymbols,
+              });
+            }
+          }
         }
 
         if (state.completionGates !== false && (completionGates?.scanAddedStubsInDiff || completionGates?.scanAddedSkippedTestsInDiff)) {

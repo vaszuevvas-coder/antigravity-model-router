@@ -449,6 +449,8 @@
         case 'setUiDesignGate': setUiDesignGate(arg === 'true'); break;
         case 'setUiInspirationMode': setUiInspirationMode(arg); break;
         case 'setGrillMode': setGrillMode(arg); break;
+        case 'setLeanMode': setLeanMode(arg); break;
+        case 'setTerseMode': setTerseMode(arg); break;
         case 'toggleComposerGrillMe': toggleComposerGrillMe(); break;
         case 'selectCuratedSkillPreset': selectCuratedSkillPreset(actionEl.getAttribute('data-repo') || '', actionEl.getAttribute('data-slug') || ''); break;
         case 'rollbackLastCheckpoint': rollbackLastCheckpoint(); break;
@@ -513,6 +515,8 @@
         case 'loadSessionEpisodes': loadSessionEpisodes(); break;
         case 'refreshGatesStatus': refreshGatesStatus(); break;
         case 'initGatesMd': initGatesMd(); break;
+        case 'loadGraphifyOverview': loadGraphifyOverview(); break;
+        case 'loadShortcutDebt': loadShortcutDebt(); break;
         case 'resetComboCooldowns': resetComboCooldowns(); break;
         default: break;
       }

@@ -19,7 +19,7 @@ What you expected to happen.
 ## Environment
 - OS: [e.g., Windows 11, macOS, Linux]
 - Node.js version: [e.g., v22.x]
-- Plugin version: [e.g., v3.30.0]
+- Plugin version: [e.g., v3.31.0]
 
 ## Logs / Screenshots (Sanitized)
 Paste relevant error output (please redact any personal paths, tokens, or secrets).

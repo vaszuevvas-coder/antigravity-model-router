@@ -821,6 +821,18 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
     return { status: 200, body: { ok: true, archived: true } };
   }
 
+  if (method === 'POST' && url === '/graph/overview') {
+    const wsPath = body.wsPath || latestActiveWorkspace || stdioClientWorkspace || process.cwd();
+    if (!st.enabled || !wsPath) return { status: 200, body: { ok: false } };
+    registerDaemonWorkspace(wsPath);
+    const res = targetEngine.queryKnowledgeGraph(wsPath, {
+      mode: 'report',
+      maxClusters: Number(body.maxClusters) || 8,
+      maxGodNodes: Number(body.maxGodNodes) || 6,
+    });
+    return { status: 200, body: res };
+  }
+
   if (method === 'POST' && url === '/hook/pre-invocation') {
     try {
       sentinel?.preempt?.('pre_invocation');
@@ -1746,7 +1758,7 @@ export const MCP_TOOLS = [
   },
   {
     name: 'ram_graph_query',
-    description: 'Queries the in-RAM Knowledge Graph: shortest k-hop paths between symbols/files (mode="path"), architectural clusters & God Nodes ("clusters"|"god_nodes"|"summary"), doc/config/skill <-> code links ("doc_refs"), or full entity explanations ("explain").',
+    description: 'Queries the in-RAM Knowledge Graph: shortest k-hop paths (mode="path"), clusters & God Nodes ("clusters"|"god_nodes"|"summary"), cross-cluster bridges ("surprising_bridges"), architecture audit questions ("questions"), transitive reverse blast radius incl. dynamic_import & re_exports ("affected"), full report ("report"), doc/config links ("doc_refs"), or entity explanations ("explain").',
     annotations: {
       title: 'RAM Knowledge Graph Query',
       readOnlyHint: true,
@@ -1759,7 +1771,7 @@ export const MCP_TOOLS = [
       properties: {
         mode: {
           type: 'string',
-          enum: ['path', 'clusters', 'god_nodes', 'doc_refs', 'explain', 'summary'],
+          enum: ['path', 'clusters', 'god_nodes', 'doc_refs', 'explain', 'summary', 'surprising_bridges', 'questions', 'affected', 'report'],
           description: 'Graph query mode (default summary).',
         },
         from: { type: 'string', description: 'Starting symbol or file path for mode="path".' },

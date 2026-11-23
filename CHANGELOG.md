@@ -2,7 +2,35 @@
 
 Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
 
-> Хронология с `v3.8.0` по `v3.30.0` восстановлена по журналам разработки и проверена по состоянию кодовой базы (ядро, пульт управления, агенты, навыки и автотесты).
+> Хронология с `v3.8.0` по `v3.31.0` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`53` основных / `61` всего ESM-модуля ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `12` навыков и `36` наборов автотестов).
+
+---
+
+## [3.31.0] — 2026-11-23
+
+### Добавлено
+- **Wave 1 — Дисциплина минимального диффа (`Lean / Terse`), реестр техдолга и Fresh-Test Gate**:
+  - Новые настройки `leanMode` (`off | lite | full | ultra`) и `terseMode` (`off | caveman | ultracave`) в [router-state.json](router-state.json), [sidecars/panel/lib/panel-state-skills.mjs](sidecars/panel/lib/panel-state-skills.mjs), [core/tool-pruner.mjs](core/tool-pruner.mjs), [core/hook-runner.mjs](core/hook-runner.mjs) и в пульте управления ([sidecars/panel/ui-src/head-body.html](sidecars/panel/ui-src/head-body.html), [sidecars/panel/ui-src/js/00-i18n.js](sidecars/panel/ui-src/js/00-i18n.js), [sidecars/panel/ui-src/js/01-workspace-wizard.js](sidecars/panel/ui-src/js/01-workspace-wizard.js), [sidecars/panel/ui-src/js/04-sentinel-layout.js](sidecars/panel/ui-src/js/04-sentinel-layout.js)).
+  - Новый модуль [core/shortcut-debt-ledger.mjs](core/shortcut-debt-ledger.mjs) (`scanShortcutDebt`, `extractFileShortcutMarkers`, `parseShortcutCommentBody`) для сбора меток осознанного техдолга `// shortcut:` / `// ponytail:` с детектом рисков `no-trigger` без условия апгрейда, плюс подкоманда `debt` в [core/router-cli.mjs](core/router-cli.mjs) и маршрут `/api/debt` в [sidecars/panel/server.mjs](sidecars/panel/server.mjs).
+  - В [core/completion-gates.mjs](core/completion-gates.mjs) добавлены метрики переиспользования кода в диффе (`computeDiffReuseMetrics`, `recordSessionReuseMetrics`, `getSessionReuseSummary`) и гейт свежести тестов (`isVerificationTestCommand`, `recordSessionCodeEdit`, `recordSessionTestExecution`, `getSessionVerificationFreshness`); обновлены [agents/router-verifier.md](agents/router-verifier.md) и [GATES.md](GATES.md).
+- **Wave 2 — Graphify v2 (достоверность рёбер, `topologyHash`, мосты и `dynamic_import`)**:
+  - В [core/cpu-ast-graph-compressor.mjs](core/cpu-ast-graph-compressor.mjs) и [core/ram-memory-engine.mjs](core/ram-memory-engine.mjs) добавлена разметка достоверности связей `EXTRACTED / INFERRED / AMBIGUOUS`, детерминированный `computeGraphTopologyHash`, поиск неожиданных архитектурных мостов `findSurprisingConnections`, генерация вопросов по архитектуре `suggestArchitectureQuestions`, а также обход `dynamic_import` и `re_exports` в `queryAffectedBlastGraph`.
+  - В пульте и сервере добавлен маршрут `/api/graph` и интерактивный ящик «Карта графа / Техдолг» в [sidecars/panel/ui-src/js/02-telemetry-cards.js](sidecars/panel/ui-src/js/02-telemetry-cards.js).
+- **Wave 3 — OmniRoute Guardrails и профили RTK v2**:
+  - Защита от холостых повторов инструментов (`recordAndCheckStalledToolRound`, `resetToolRoundHistory`) в [core/circuit-breaker.mjs](core/circuit-breaker.mjs).
+  - В [core/quota-pacer.mjs](core/quota-pacer.mjs) добавлены stateless-подбор глубины мышления (`resolveStatelessTurnEffort`), аудит теплоты кэша (`computeCacheWarmthStatus`) и score-ориентированный выбор failover-цели (`resolveScoreDrivenComboTarget`).
+  - В [core/obs-masker.mjs](core/obs-masker.mjs) добавлены профили сжатия `compressRtkCommandOutput` (`git status`, сводки тестовых прогонов).
+- **Wave 4 — Валидатор `agentskills.io`, A/B Evals, Caveman Blocks и OpenSpec**:
+  - Проверка спецификации `agentskills.io` и Negative Transfer в [skills/skill-architect/scripts/audit-skill.mjs](skills/skill-architect/scripts/audit-skill.mjs).
+  - Детерминированный A/B-оценщик навыков [skills/skill-architect/scripts/eval-skill-benchmark.mjs](skills/skill-architect/scripts/eval-skill-benchmark.mjs) и подкоманда `eval-skill` в [core/router-cli.mjs](core/router-cli.mjs).
+  - Новый модуль [core/reusable-blocks-specs.mjs](core/reusable-blocks-specs.mjs) для кэширования диагностических микро-скриптов (`saveReusableBlock`, `listReusableBlocks`) и ограниченных дельта-спецификаций OpenSpec до `50 КБ` (`upsertOpenSpecDelta`, `readOpenSpecDelta`, `listOpenSpecDeltas`, `formatActiveSpecsForHandoff` в [core/session-handoff.mjs](core/session-handoff.mjs)), плюс CLI-команды `spec` и `blocks`.
+  - Новый набор автотестов [tests/v331-sota-4waves.test.mjs](tests/v331-sota-4waves.test.mjs) (итого `36` наборов тестов).
+
+### Исправлено и обновлено
+- В [core/hardware-profiler.mjs](core/hardware-profiler.mjs) добавлена `isActivePluginInstallDir` для калибровки `mcp_config.json` при прямом `git clone` в папку плагинов ([tests/router-core.test.mjs](tests/router-core.test.mjs)).
+- В [core/gpu/gpu-shared-state.mjs](core/gpu/gpu-shared-state.mjs) и [core/gpu/gpu-vram-runtime.mjs](core/gpu/gpu-vram-runtime.mjs) оффлайн-backoff Ollama изолирован по origin endpoint (`ollamaOfflineEndpoint`).
+- В [skills/programmatic-video-studio/scripts/lint-video-composition.mjs](skills/programmatic-video-studio/scripts/lint-video-composition.mjs) и [skills/ui-ux-design-system/scripts/build-showroom.mjs](skills/ui-ux-design-system/scripts/build-showroom.mjs) пути преобразуются через `pathToFileURL`.
+- Актуализирована нумерация разделов и счётчиков (`53`/`61` модулей ядра, `59` защитных контуров в UI и документации вместо `25+`, `36` наборов тестов), пересобрана панель [sidecars/panel/ui.html](sidecars/panel/ui.html) и обновлена лицензия [LICENSE](LICENSE).
 
 ---
 

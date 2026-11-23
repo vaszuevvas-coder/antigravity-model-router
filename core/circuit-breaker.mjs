@@ -627,3 +627,111 @@ export function buildCleanRestartOverlay(bucketOrOpts = {}) {
     `- Action: Stop retrying local tweaks; inspect callers/contracts or bisect minimal failing input via ddmin.`,
   ].join('\n');
 }
+
+// --- OmniRoute Stalled Tool-Loop Guard (`agenticLoopGuard` pattern) ---
+// Catches silent non-error loops where identical (tool, canonicalArgs) -> result pairs repeat across consecutive rounds.
+
+function canonicalizeStableValue(val) {
+  if (Array.isArray(val)) return `[${val.map(canonicalizeStableValue).join(',')}]`;
+  if (val && typeof val === 'object') {
+    const keys = Object.keys(val).filter((k) => k !== 'toolSummary' && k !== 'WaitMsBeforeAsync').sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalizeStableValue(val[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(val) ?? 'null';
+}
+
+function getToolLoopFile(customCacheDir = '') {
+  const dir = customCacheDir ? resolve(customCacheDir) : ensureTunnelCacheDir(getCacheDir());
+  return join(dir, 'stalled-tool-loops.json');
+}
+
+export function resetToolRoundHistory(opts = {}) {
+  const { conversationId = 'default', cacheDir = '' } = opts && typeof opts === 'object' ? opts : {};
+  const convoKey = String(conversationId || 'default').trim().slice(0, 120) || 'default';
+  const filePath = getToolLoopFile(cacheDir);
+  try {
+    updateJsonAtomicSync(filePath, () => ({ convos: {} }), (doc) => {
+      const convos = doc?.convos && typeof doc.convos === 'object' ? { ...doc.convos } : {};
+      delete convos[convoKey];
+      return { convos };
+    }, { spaces: 0 });
+  } catch {}
+  return { ok: true };
+}
+
+/**
+ * Records a completed tool invocation and checks if two consecutive rounds produced identical call->result evidence
+ * or consecutive round errors (OmniRoute `stalledToolLoopReason`).
+ */
+export function recordAndCheckStalledToolRound(opts = {}) {
+  const {
+    conversationId = 'default',
+    toolName = '',
+    args = {},
+    resultText = '',
+    isError = false,
+    cacheDir = '',
+    nowMs = Date.now(),
+  } = opts && typeof opts === 'object' ? opts : {};
+  const cleanTool = String(toolName || '').trim();
+  if (!cleanTool) {
+    return { stalled: false, reason: '', formattedAlert: '' };
+  }
+  const convoKey = String(conversationId || 'default').trim().slice(0, 120) || 'default';
+  const callSig = createHash('sha1')
+    .update(`${cleanTool}|${canonicalizeStableValue(args)}`)
+    .digest('hex')
+    .slice(0, 16);
+  const resHash = createHash('sha1')
+    .update(String(resultText || '').slice(0, 16384))
+    .digest('hex')
+    .slice(0, 16);
+
+  const filePath = getToolLoopFile(cacheDir);
+  let stalled = false;
+  let reason = '';
+  let repeatRounds = 1;
+
+  updateJsonAtomicSync(filePath, () => ({ convos: {} }), (doc) => {
+    const rawConvos = doc?.convos && typeof doc.convos === 'object' ? doc.convos : {};
+    const convos = pruneObjectMapByTimestamp(rawConvos, {
+      maxEntries: 40,
+      maxAgeMs: 30 * 60 * 1000,
+      nowMs,
+      getTs: (v) => Number(v?.updatedAt || 0),
+    });
+    const prevEntry = Object.hasOwn(convos, convoKey) ? convos[convoKey] : { history: [], updatedAt: nowMs };
+    const history = Array.isArray(prevEntry.history) ? [...prevEntry.history].slice(-7) : [];
+    const last = history.length > 0 ? history[history.length - 1] : null;
+    const current = { tool: cleanTool, callSig, resHash, isError: Boolean(isError), ts: nowMs };
+
+    if (last && last.callSig === current.callSig && last.resHash === current.resHash) {
+      stalled = true;
+      repeatRounds = Number(last.streak || 1) + 1;
+      current.streak = repeatRounds;
+      reason = 'identical_tool_evidence_consecutive_rounds';
+    } else if (last && last.isError && current.isError && last.tool === current.tool && last.callSig === current.callSig) {
+      stalled = true;
+      repeatRounds = Number(last.streak || 1) + 1;
+      current.streak = repeatRounds;
+      reason = 'consecutive_identical_tool_failures';
+    } else {
+      current.streak = 1;
+    }
+
+    history.push(current);
+    convos[convoKey] = { history, updatedAt: nowMs };
+    return { convos };
+  }, { spaces: 0 });
+
+  const formattedAlert = stalled
+    ? `🛑 [Stalled Tool-Loop Guard] Вызов \`${cleanTool}\` с теми же аргументами вернул идентичный результат ${repeatRounds} раза подряд (${reason}). Не повторяй тот же вызов — смени подход или прочитай другой срез.`
+    : '';
+
+  return {
+    stalled,
+    reason,
+    repeatRounds,
+    formattedAlert,
+  };
+}

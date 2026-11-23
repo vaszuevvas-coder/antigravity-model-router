@@ -232,7 +232,7 @@
       '↺ Хрупкость': '↺ Fragility',
       '↺ Сбросить': '↺ Reset',
       'Домены: нет накопленных запусков': 'Domains: no recorded runs yet',
-      '⚙️ Экспертные параметры (25+ контуров защиты и диагностика)': '⚙️ Expert Settings (25+ Guardrails & Diagnostics)',
+      '⚙️ Экспертные параметры (59 контуров защиты и диагностика)': '⚙️ Expert Settings (59 Guardrails & Diagnostics)',
       'НОРМА (0/3)': 'OK (0/3)',
       'Сбросить': 'Reset',
       'Автомат замкнут. Защита от зацикливания правок активна.': 'Circuit closed. Edit-loop protection is active.',
@@ -246,7 +246,7 @@
       'Эпизоды: 0 · CCR-блобы: 0 · RepairKV: 0 · Инстинкты: 0': 'Episodes: 0 · CCR blobs: 0 · RepairKV: 0 · Instincts: 0',
       'Пока нет сохранённых рецептов побед': 'No saved win recipes yet',
       'Связать': 'Link',
-      '25+ контуров разведки и защиты': '25+ Scout & Guardrail Contours',
+      '26 контуров разведки и защиты': '26 Scout & Guardrail Contours',
       'Профиль хуков (': 'Hook Profile (',
       'Лёгкий': 'Minimal',
       'Стандарт': 'Standard',
@@ -363,7 +363,12 @@
       '← Назад': '← Back',
       'Далее →': 'Next →',
       'Позже': 'Later',
-      '✓ Сохранить и начать': '✓ Save & Start'
+      '✓ Сохранить и начать': '✓ Save & Start',
+      'Лестница лени (Ponytail):': 'Ladder of Laziness (Ponytail):',
+      'Плотность ответа (Caveman):': 'Response Density (Caveman):',
+      'Graphify v2 · Техдолг shortcut:': 'Graphify v2 · Shortcut Debt:',
+      '🕸️ Карта графа': '🕸️ Graph Map',
+      '📌 Техдолг': '📌 Tech Debt'
     };
 
     const UI_RU_TO_EN_ATTR = {
@@ -489,7 +494,16 @@
       'Keep-Alive для Embed-модели (gpuEmbedKeepAlive)': 'Keep-Alive for Embed model (gpuEmbedKeepAlive)',
       'Окно контекста Ollama (gpuContextTokens)': 'Ollama context window (gpuContextTokens)',
       'Авто (OLLAMA_MODELS / ~/.ollama/models)': 'Auto (OLLAMA_MODELS / ~/.ollama/models)',
-      'Отложить или закрыть окно настройки (Esc)': 'Postpone or close setup wizard (Esc)'
+      'Отложить или закрыть окно настройки (Esc)': 'Postpone or close setup wizard (Esc)',
+      'Отключить правила экономии нового кода Ponytail': 'Disable Ponytail minimal-code rules',
+      'Мягкий режим: подсказывать компактные альтернативы на базе существующих функций': 'Lite mode: suggest compact alternatives reusing existing functions',
+      'Полная 7-ступенчатая лестница переиспользования кода и метки shortcut:': 'Full 7-rung code reuse ladder & shortcut: deferral markers',
+      'Максимальная строгость: оспаривать избыточные требования до написания кода': 'Ultra strictness: push back on speculative scope before coding',
+      'Стандартный лаконичный стиль ответов': 'Standard concise response style',
+      'Стандарт ASD-STE100: до 20 слов в предложении без вводных фраз, код без сокращений': 'ASD-STE100 standard: <=20 words/sentence, zero filler, verbatim code',
+      'Сверхплотный телеграфный ответ до 12 слов в предложении': 'Ultra-dense telegraphic replies <=12 words/sentence',
+      'Построить интерактивную карту кластеров, God Nodes, мостов и теплоты кэша': 'Build interactive map of clusters, God Nodes, bridges & cache warmth',
+      'Собрать реестр меток осознанного техдолга shortcut: и проверить риски no-trigger': 'Harvest deliberate shortcut: debt markers and flag no-trigger rot risks'
     };
 
     function translateUiString(raw, dict) {

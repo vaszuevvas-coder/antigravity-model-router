@@ -1,6 +1,6 @@
 /**
  * @file tool-pruner.mjs
- * @description Когнитивный 3D-маршрутизатор The Tunnel (3D Cognitive Router v3.30.0):
+ * @description Когнитивный 3D-маршрутизатор The Tunnel (3D Cognitive Router v3.31.0):
  * Оценивает реальный охват графа кода (Scope-Scout + PageRank), строит 3D-тензор
  * Ширина × Глубина × Неопределённость/Риск, генерирует адаптивные варианты плана и проверяет селектор модели Gemini 4.
  */
@@ -1353,4 +1353,53 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
     isModalAnalyticalQuestion: Boolean(signals.isModalAnalyticalQuestion),
     isApprovalFollowUp: false,
   };
+}
+
+/**
+ * Resolves effective Ponytail Lean-Senior intensity (`off | lite | full | ultra`)
+ * from prompt overrides (`/ponytail ultra`) or persisted state.
+ */
+export function resolveLeanMode(promptText = '', state = {}) {
+  const text = String(promptText || '');
+  const m = /(?:^|\s)\/ponytail(?:\s+(off|lite|full|ultra))?\b/i.exec(text);
+  if (m) {
+    return (m[1] || 'full').toLowerCase();
+  }
+  if (/\b(?:stop\s+ponytail|normal\s+mode)\b/i.test(text)) return 'off';
+  const raw = typeof state?.leanMode === 'string' ? state.leanMode.trim().toLowerCase() : 'full';
+  return (raw === 'off' || raw === 'lite' || raw === 'full' || raw === 'ultra') ? raw : 'full';
+}
+
+/**
+ * Builds prefix-stable Ponytail 7-Rung Ladder instructions for SessionStart / prompt overrides.
+ */
+export function buildLeanModeDirective(mode = 'full') {
+  const clean = String(mode || 'full').toLowerCase();
+  if (clean === 'off') return '';
+  if (clean === 'lite') {
+    return '- Lean Senior (lite): prefer existing repo helpers -> stdlib -> native platform before writing new helpers; mention smaller alternatives in 1 line.';
+  }
+  const ultraTail = clean === 'ultra'
+    ? ' Push back on speculative scope the need does not justify before building.'
+    : '';
+  return `- Lean Senior (${clean}): Ladder of Laziness before coding: (1) Need to exist? (2) Already in repo? (3) Stdlib/platform? (4) Installed dep? (5) One readable line? (6) Minimum complete diff + 1 test on new branch/loop/parser/security. Mark deliberate deferrals with \`// shortcut: <ceiling>, <when to upgrade>\`; NEVER cut trust-boundary validation, security, or a11y.${ultraTail}`;
+}
+
+/**
+ * Resolves Caveman ASD-STE100 controlled technical brevity (`off | caveman | ultracave`).
+ */
+export function resolveTerseMode(promptText = '', state = {}) {
+  const text = String(promptText || '');
+  if (/(?:^|\s)\/ultracave\b/i.test(text)) return 'ultracave';
+  if (/(?:^|\s)\/caveman\b/i.test(text)) return 'caveman';
+  if (/\bstop\s+caveman\b/i.test(text)) return 'off';
+  const raw = typeof state?.terseMode === 'string' ? state.terseMode.trim().toLowerCase() : 'off';
+  return (raw === 'caveman' || raw === 'ultracave') ? raw : 'off';
+}
+
+export function buildTerseModeDirective(mode = 'off') {
+  const clean = String(mode || 'off').toLowerCase();
+  if (clean !== 'caveman' && clean !== 'ultracave') return '';
+  const maxWords = clean === 'ultracave' ? 12 : 20;
+  return `- Controlled Brevity (${clean} · ASD-STE100): answer-first (\`[target] [action] [reason]\`, <=${maxWords} words/sentence, zero filler); keep code, paths, negations, numbers, and security/destructive warnings 100% exact and complete.`;
 }

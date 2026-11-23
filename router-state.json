@@ -45,6 +45,8 @@
   "uiDesignPreviewGate": true,
   "uiInspirationMode": "ask",
   "grillMode": "auto",
+  "leanMode": "full",
+  "terseMode": "off",
   "skillModes": {},
   "repoMap": true,
   "toolPruning": true,

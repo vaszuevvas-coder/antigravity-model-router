@@ -29,10 +29,13 @@ import {
   buildSymbolCallGraph,
   detectArchitectureClusters,
   findShortestGraphPath,
+  findSurprisingConnections,
   foldCodeWithKnapsack,
+  queryAffectedBlastGraph,
   queryDocRefsForFile,
   querySymbolEgoGraph,
   selectDiverseSlicesMMR,
+  suggestArchitectureQuestions,
 } from './cpu-ast-graph-compressor.mjs';
 import {
   buildWorkspaceSimHashIndex,
@@ -1972,6 +1975,91 @@ export class RamMemoryEngine {
         stepLines.push(`${i + 1}. ${labelA} --[${edge.relation} | ${edge.provenance}]--> ${labelB}`);
       }
       return { ...pathRes, mode: 'path', formatted: stepLines.join('\n') };
+    }
+
+    if (qMode === 'surprising_bridges' || qMode === 'bridges') {
+      const arch = this.getArchitectureClusters(ws.absRoot, { maxClusters, maxGodNodes });
+      const bridges = findSurprisingConnections(ws.files, arch, ws.symbolGraph, ws.forwardDeps, { topN: 8 });
+      this.recordCompletedOp('ram_graph_query', { target: 'surprising_bridges', latencyMs: 0.5 });
+      const lines = [
+        `🌉 [Surprising Cross-Cluster Bridges | ${bridges.length} found | topo:${arch.topologyHash || 'v1'}]`,
+        ...(bridges.length > 0
+          ? bridges.map((b) => `- [${b.confidence} | ${b.relation}] \`${b.fromFile}:L${b.callSiteLine}\` (${b.fromCluster}) -> \`${b.toFile}\`${b.toSymbol ? `#${b.toSymbol}` : ''} (${b.toCluster})`)
+          : ['- (no surprising cross-cluster bridges detected)']),
+      ];
+      return { ok: true, mode: 'surprising_bridges', topologyHash: arch.topologyHash, bridges, formatted: lines.join('\n') };
+    }
+
+    if (qMode === 'questions') {
+      const arch = this.getArchitectureClusters(ws.absRoot, { maxClusters, maxGodNodes });
+      const bridges = findSurprisingConnections(ws.files, arch, ws.symbolGraph, ws.forwardDeps, { topN: 8 });
+      const questions = suggestArchitectureQuestions(arch, bridges, { maxQuestions: 6 });
+      this.recordCompletedOp('ram_graph_query', { target: 'questions', latencyMs: 0.5 });
+      const lines = [
+        `❓ [Architecture Questions | ${questions.length}]`,
+        ...(questions.length > 0
+          ? questions.map((q, idx) => `${idx + 1}. [${q.confidence}] ${q.question}`)
+          : ['- Architecture clusters are cohesive with no ambiguous cross-cluster bridges.']),
+      ];
+      return { ok: true, mode: 'questions', questions, formatted: lines.join('\n') };
+    }
+
+    if (qMode === 'affected') {
+      const tgt = String(target || from || '').trim();
+      if (!tgt) {
+        return { ok: false, mode: 'affected', formatted: 'ram_graph_query(mode="affected") requires "target".' };
+      }
+      const aff = queryAffectedBlastGraph(ws.files, tgt, {
+        forwardDeps: ws.forwardDeps,
+        reverseDeps: ws.reverseDeps,
+        symbolGraph: ws.symbolGraph,
+        maxDepth,
+      });
+      this.recordCompletedOp('ram_graph_query', { target: `affected:${tgt}`, latencyMs: 0.6 });
+      return { ...aff, mode: 'affected' };
+    }
+
+    if (qMode === 'report') {
+      const arch = this.getArchitectureClusters(ws.absRoot, { maxClusters, maxGodNodes });
+      const bridges = findSurprisingConnections(ws.files, arch, ws.symbolGraph, ws.forwardDeps, { topN: 6 });
+      const questions = suggestArchitectureQuestions(arch, bridges, { maxQuestions: 5 });
+      this.recordCompletedOp('ram_graph_query', { target: 'report', latencyMs: 0.8 });
+      const reportLines = [
+        `# Architecture Graph Report (\`${arch.topologyHash || 'v1'}\`)`,
+        `- **Files**: ${arch.fileCount} | **Clusters**: ${arch.clusterCount} | **Modularity Q**: ${arch.modularityQ}`,
+        '',
+        '## God Nodes (Core Hubs)',
+        ...(arch.godNodes.length > 0
+          ? arch.godNodes.map((g) => `- \`${g.file}\` (in:${g.inDegree}, out:${g.outDegree}, docs:${g.docRefCount}, coupling:${g.couplingScore})`)
+          : ['- None']),
+        '',
+        '## Architectural Clusters',
+        ...(arch.clusters.length > 0
+          ? arch.clusters.map((c) => `- **${c.label}** (\`${c.id}\`, ${c.size}f, hub: \`${c.hubFile}\`, int:${c.internalEdges}, ext:${c.externalEdges})`)
+          : ['- None']),
+        '',
+        '## Surprising Cross-Cluster Bridges',
+        ...(bridges.length > 0
+          ? bridges.map((b) => `- [${b.confidence}] \`${b.fromFile}:L${b.callSiteLine}\` (${b.fromCluster}) -> \`${b.toFile}\` (${b.toCluster})`)
+          : ['- None']),
+        '',
+        '## Suggested Questions',
+        ...(questions.length > 0
+          ? questions.map((q, i) => `${i + 1}. ${q.question}`)
+          : ['- None']),
+      ];
+      return {
+        ok: true,
+        mode: 'report',
+        topologyHash: arch.topologyHash,
+        clusters: arch.clusters,
+        godNodes: arch.godNodes,
+        modularityQ: arch.modularityQ,
+        fileCount: arch.fileCount,
+        bridges,
+        questions,
+        formatted: reportLines.join('\n'),
+      };
     }
 
     if (qMode === 'clusters' || qMode === 'god_nodes' || qMode === 'summary') {

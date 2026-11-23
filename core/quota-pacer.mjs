@@ -424,3 +424,122 @@ export function resolveComboFailoverTarget(opts = {}) {
     localOfflineFallback,
   };
 }
+
+/**
+ * Stateless Per-Turn Effort Pinning (OmniRoute `adaptiveEffort.ts` / Hermes pattern).
+ * Resolves `low | medium | high` strictly from turn-entry signals (before mid-turn tool results)
+ * so reasoning depth never flips mid-loop and never invalidates prompt prefix caches.
+ */
+export function resolveStatelessTurnEffort(opts = {}) {
+  const {
+    userChars = 0,
+    estimatedContextTokens = 0,
+    priorToolResultsCount = 0,
+    explicitEffort = '',
+  } = asObj(opts);
+  const explicitKey = normalizeThinkingKey(explicitEffort);
+  if (explicitKey) {
+    return { effort: explicitKey, pinnedStateless: true, source: 'explicit' };
+  }
+  const uChars = Math.max(0, Number(userChars) || 0);
+  const ctxTok = Math.max(0, Number(estimatedContextTokens) || 0);
+  const priorTools = Math.max(0, Number(priorToolResultsCount) || 0);
+
+  if (uChars <= 160 && ctxTok <= 4000 && priorTools === 0) {
+    return { effort: 'low', pinnedStateless: true, source: 'stateless_trivial_band' };
+  }
+  if (ctxTok >= 60000 || priorTools >= 6 || uChars >= 4000) {
+    return { effort: 'high', pinnedStateless: true, source: 'stateless_heavy_band' };
+  }
+  return { effort: 'medium', pinnedStateless: true, source: 'stateless_balanced_band' };
+}
+
+/**
+ * Evaluates Implicit Prompt Cache warmth & TTL countdown (Caveman v4 `Waste fixes` pattern).
+ */
+export function computeCacheWarmthStatus(opts = {}) {
+  const safeOpts = asObj(opts);
+  const convoId = asStr(safeOpts.convoId, 96).trim() || 'default';
+  const safeNow = Number.isFinite(Number(safeOpts.nowMs)) ? Number(safeOpts.nowMs) : Date.now();
+  const ttlMs = Math.max(30_000, Number(safeOpts.ttlMs) || 5 * 60 * 1000);
+  const { prefixFile } = resolveCachePaths(safeOpts.cacheDir);
+
+  if (!existsSync(prefixFile)) {
+    return { ok: true, status: 'cold', remainingSeconds: 0, streakTurns: 0, driftCount: 0 };
+  }
+  const doc = safeReadJsonSync(prefixFile, () => ({ convos: {} }), { selfHeal: false });
+  const convos = doc?.convos && typeof doc.convos === 'object' ? doc.convos : {};
+  let entry = Object.hasOwn(convos, convoId) ? convos[convoId] : null;
+  if (!entry && convoId === 'default') {
+    const newest = Object.values(convos)
+      .filter((v) => v && Number.isFinite(Number(v.ts)))
+      .sort((a, b) => Number(b.ts) - Number(a.ts))[0];
+    if (newest) entry = newest;
+  }
+  if (!entry || !entry.ts) {
+    return { ok: true, status: 'cold', remainingSeconds: 0, streakTurns: 0, driftCount: 0 };
+  }
+  const elapsedMs = Math.max(0, safeNow - Number(entry.ts));
+  const remainingMs = Math.max(0, ttlMs - elapsedMs);
+  const remainingSeconds = Math.round(remainingMs / 1000);
+  const status = remainingSeconds <= 0 ? 'cold' : remainingSeconds <= 60 ? 'cooling' : 'warm';
+
+  return {
+    ok: true,
+    status,
+    remainingSeconds,
+    streakTurns: Number(entry.streakTurns || 0),
+    driftCount: Number(entry.driftCount || 0),
+    prefixHash: String(entry.hash || ''),
+  };
+}
+
+/**
+ * Composite Score-Driven Combo Router (OmniRoute auto-score + Quota Family + Cache-Warmth affinity).
+ */
+export function resolveScoreDrivenComboTarget(opts = {}) {
+  const {
+    combo = 'daily_coding',
+    customChain = null,
+    cacheDir = '',
+    nowMs = Date.now(),
+    localGpuAvailable = false,
+    subscriptionTier = '',
+    warmTier = '',
+    domainScores = {},
+  } = asObj(opts);
+  const base = resolveComboFailoverTarget({
+    combo,
+    customChain,
+    cacheDir,
+    nowMs,
+    localGpuAvailable,
+    subscriptionTier,
+  });
+  const cooledSet = new Set(base.skippedOnCooldown.map((s) => s.model.toLowerCase()));
+  const warmKey = normalizeTierKey(warmTier);
+  const cooledFamilies = new Set(base.skippedOnCooldown.map((s) => normalizeTierKey(s.model)).filter((k) => k !== 'unknown'));
+
+  const scored = base.chain
+    .filter((m) => m.toLowerCase() !== 'local_ollama' || localGpuAvailable)
+    .map((model, idx) => {
+      const low = model.toLowerCase();
+      const tier = normalizeTierKey(low);
+      const onCooldown = cooledSet.has(low);
+      const siblingFamilyCooled = !onCooldown && tier !== 'unknown' && cooledFamilies.has(tier);
+      const priorityBase = Math.max(0.1, 1.0 - idx * 0.14);
+      const cacheAffinityBonus = warmKey && warmKey !== 'unknown' && tier === warmKey ? 0.22 : 0;
+      const domainRel = Number.isFinite(Number(domainScores?.[tier])) ? Number(domainScores[tier]) * 0.2 : 0;
+      const familyPenalty = siblingFamilyCooled ? 0.35 : 0;
+      const cooldownPenalty = onCooldown ? 2.0 : 0;
+      const score = Number((priorityBase + cacheAffinityBonus + domainRel - familyPenalty - cooldownPenalty).toFixed(3));
+      return { model, tier, score, onCooldown, siblingFamilyCooled };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  return {
+    ...base,
+    selected: scored[0]?.model || base.selected,
+    scoredCandidates: scored,
+  };
+}

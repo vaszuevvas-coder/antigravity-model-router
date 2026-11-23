@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * @file router-cli.mjs
- * @description Единый интерфейс командной строки (CLI) для The Tunnel v3.30.0.
+ * @description Единый интерфейс командной строки (CLI) для The Tunnel v3.31.0.
  * Предоставляет команды диагностики, анализа символов, слайсинга, кодомода и резервного копирования профиля.
  */
 
@@ -24,6 +24,9 @@ import {
 import { auditAgentEnvironment } from './agent-shield.mjs';
 import { knowledgeHub } from './sqlite-knowledge-hub.mjs';
 import { checkProjectCompletionInvariants, initAcceptanceGatesMarkdown } from './completion-gates.mjs';
+import { scanShortcutDebt } from './shortcut-debt-ledger.mjs';
+import { listOpenSpecDeltas, listReusableBlocks, readOpenSpecDelta, saveReusableBlock, upsertOpenSpecDelta } from './reusable-blocks-specs.mjs';
+import { aggregateEvalIteration, initSkillEvalsTemplate } from '../skills/skill-architect/scripts/eval-skill-benchmark.mjs';
 import { formatProjectSetupReportRu, recommendProjectSetup } from './project-setup-recommender.mjs';
 import { importSkillFromSource, searchSkillsCatalog } from './skill-registry-bridge.mjs';
 import { clearExpiredComboCooldowns, DEFAULT_COMBO_CHAINS, recordComboProviderCooldown, resolveComboFailoverTarget } from './quota-pacer.mjs';
@@ -192,7 +195,7 @@ export function backupRouterProfile(backupPath = '', options = {}) {
 
     const pluginMeta = safeReadJsonSync(join(PLUGIN_ROOT, 'plugin.json'), {});
     const snapshot = {
-      version: String(pluginMeta?.version || '3.30.0'),
+      version: String(pluginMeta?.version || '3.31.0'),
       createdAt: new Date().toISOString(),
       state,
       cacheFiles
@@ -377,7 +380,7 @@ export function getRouterStatusSummary(workspaceRoot = process.cwd()) {
   } catch {}
 
   const pluginMeta = safeReadJsonSync(join(PLUGIN_ROOT, 'plugin.json'), {});
-  const version = String(pluginMeta?.version || '3.30.0');
+  const version = String(pluginMeta?.version || '3.31.0');
   const formatted = `🛡️ [Router Status] v${version} | Strategy: ${strategy} | Profile: ${hookProfile} | Guardrails: ${activeGuardrails}/${totalGuardrails} active | Skills: ${skillsCount} ready`;
 
   return {
@@ -419,6 +422,21 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const dir = args[1] || process.cwd();
     const res = findDeadExports(dir);
     console.log(res.formatted || JSON.stringify(res, null, 2));
+  } else if (cmd === 'debt') {
+    const debtArgs = args.slice(1);
+    let dir = process.cwd();
+    let marker = '';
+    let asJson = false;
+    let includeTests = false;
+    for (let i = 0; i < debtArgs.length; i++) {
+      const a = debtArgs[i];
+      if ((a === '--marker' || a === '-m') && i + 1 < debtArgs.length) marker = debtArgs[++i];
+      else if (a === '--json') asJson = true;
+      else if (a === '--include-tests') includeTests = true;
+      else if (!a.startsWith('-')) dir = a;
+    }
+    const res = scanShortcutDebt(dir, { marker, includeTests });
+    console.log(asJson ? JSON.stringify(res, null, 2) : res.formatted);
   } else if (cmd === 'slice') {
     const file = args[1];
     const symbol = args[2];
@@ -552,6 +570,40 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       }
     }
     if (!res.ok) process.exit(1);
+  } else if (cmd === 'eval-skill') {
+    const sub = args[1] || '';
+    const target = args[2] || '';
+    if (sub === 'init' && target) {
+      console.log(JSON.stringify(initSkillEvalsTemplate(target), null, 2));
+    } else if (sub === 'aggregate' && target) {
+      console.log(JSON.stringify(aggregateEvalIteration(target), null, 2));
+    } else {
+      console.error('Usage: node router-cli.mjs eval-skill (init <skillDir> | aggregate <iterationDir>)');
+      process.exit(1);
+    }
+  } else if (cmd === 'spec') {
+    const sub = args[1] || 'list';
+    if (sub === 'list') {
+      const specs = listOpenSpecDeltas({ workspaceRoot: process.cwd(), includeArchived: args.includes('--all') });
+      console.log(JSON.stringify({ ok: true, count: specs.length, specs }, null, 2));
+    } else if (sub === 'show' && args[2]) {
+      console.log(JSON.stringify(readOpenSpecDelta({ workspaceRoot: process.cwd(), slug: args[2] }), null, 2));
+    } else if ((sub === 'propose' || sub === 'apply' || sub === 'archive') && args[2]) {
+      const slug = args[2];
+      const existing = readOpenSpecDelta({ workspaceRoot: process.cwd(), slug });
+      const body = args[3] || existing.content || `# Spec: ${slug}`;
+      console.log(JSON.stringify(upsertOpenSpecDelta({ workspaceRoot: process.cwd(), slug, phase: sub, content: body }), null, 2));
+    } else {
+      console.error('Usage: node router-cli.mjs spec (list [--all] | show <slug> | propose|apply|archive <slug> ["markdown"])');
+      process.exit(1);
+    }
+  } else if (cmd === 'blocks') {
+    const sub = args[1] || 'list';
+    if (sub === 'save' && args[2] && args[3]) {
+      console.log(JSON.stringify(saveReusableBlock({ workspaceRoot: process.cwd(), name: args[2], command: args[3], description: args[4] || '' }), null, 2));
+    } else {
+      console.log(JSON.stringify({ ok: true, blocks: listReusableBlocks({ workspaceRoot: process.cwd(), query: args[2] || '' }) }, null, 2));
+    }
   } else if (cmd === 'distill-pitfalls') {
     const distillArgs = args.slice(1);
     let dryRun = false;

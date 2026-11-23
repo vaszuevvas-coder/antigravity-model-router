@@ -27,7 +27,7 @@ function getStateFilePath(customPath = '') {
 }
 
 function defaultState() {
-  return { conversations: {}, stopBlocks: {} };
+  return { conversations: {}, stopBlocks: {}, verification: {}, reuse: {} };
 }
 
 function normWsKey(ws = '') {
@@ -360,10 +360,139 @@ export function recordSessionFileStubs(opts = {}) {
     return {
       conversations: convos,
       stopBlocks: pruneMapByTs(cur?.stopBlocks, nowMs),
+      verification: pruneMapByTs(cur?.verification, nowMs),
+      reuse: pruneMapByTs(cur?.reuse, nowMs),
     };
   }, { spaces: 0 });
 
   return { ok: true, count: list.length };
+}
+
+const TEST_CMD_RE = /\b(?:npm\s+(?:run\s+)?test|pnpm\s+(?:run\s+)?test|yarn\s+test|bun\s+test|npx\s+(?:jest|vitest)|jest|vitest|pytest|python3?\s+-m\s+pytest|go\s+test|cargo\s+test|mvn\s+test|gradle\s+test|rspec|phpunit|dotnet\s+test|node\s+(?:[^\n;&|]*\s+)?--test|deno\s+test|make\s+test)\b/i;
+
+export function isVerificationTestCommand(commandLine = '') {
+  return TEST_CMD_RE.test(String(commandLine || ''));
+}
+
+export function parseTestPassFailCounts(output = '') {
+  const str = String(output || '');
+  const pick = (re) => {
+    const m = re.exec(str);
+    return m ? Number(m[1]) : undefined;
+  };
+  return {
+    passed: pick(/(\d+)\s+(?:passed|passing)\b/i) ?? pick(/(?:ℹ|#)\s*pass\s+(\d+)\b/i),
+    failed: pick(/(\d+)\s+(?:failed|failing)\b/i) ?? pick(/(?:ℹ|#)\s*fail\s+(\d+)\b/i),
+  };
+}
+
+export function recordSessionCodeEdit(opts = {}) {
+  const {
+    conversationId = 'default',
+    workspaceRoot = '',
+    filePath = '',
+    stateFile = '',
+    nowMs = Date.now(),
+  } = opts && typeof opts === 'object' && !Array.isArray(opts) ? opts : {};
+  const cleanPath = String(filePath || '').replace(/\\/g, '/').trim();
+  if (!cleanPath || SKIP_STUB_EXT_RE.test(cleanPath)) {
+    return { ok: true, skipped: true };
+  }
+  const cid = normConvoKey(conversationId);
+  const targetPath = getStateFilePath(stateFile);
+  const wsKey = normWsKey(workspaceRoot);
+
+  updateJsonAtomicSync(targetPath, defaultState, (cur) => {
+    const verMap = pruneMapByTs(cur?.verification, nowMs);
+    const prev = Object.hasOwn(verMap, cid) ? verMap[cid] : {};
+    verMap[cid] = {
+      ...prev,
+      wsKey: wsKey || prev.wsKey || '',
+      lastCodeEditAt: nowMs,
+      lastEditedFile: cleanPath,
+      updatedAt: nowMs,
+    };
+    return {
+      conversations: pruneMapByTs(cur?.conversations, nowMs),
+      stopBlocks: pruneMapByTs(cur?.stopBlocks, nowMs),
+      verification: verMap,
+      reuse: pruneMapByTs(cur?.reuse, nowMs),
+    };
+  }, { spaces: 0 });
+
+  return { ok: true, skipped: false, lastCodeEditAt: nowMs };
+}
+
+export function recordSessionTestExecution(opts = {}) {
+  const {
+    conversationId = 'default',
+    workspaceRoot = '',
+    commandLine = '',
+    output = '',
+    exitCode = 0,
+    stateFile = '',
+    nowMs = Date.now(),
+  } = opts && typeof opts === 'object' && !Array.isArray(opts) ? opts : {};
+  const cid = normConvoKey(conversationId);
+  const targetPath = getStateFilePath(stateFile);
+  const wsKey = normWsKey(workspaceRoot);
+  const counts = parseTestPassFailCounts(output);
+  const passed = counts.passed;
+  const failed = counts.failed ?? (exitCode !== 0 ? 1 : 0);
+  const lastTestExitOk = exitCode === 0 && (counts.failed === undefined || counts.failed === 0);
+
+  updateJsonAtomicSync(targetPath, defaultState, (cur) => {
+    const verMap = pruneMapByTs(cur?.verification, nowMs);
+    const prev = Object.hasOwn(verMap, cid) ? verMap[cid] : {};
+    verMap[cid] = {
+      ...prev,
+      wsKey: wsKey || prev.wsKey || '',
+      lastTestRunAt: nowMs,
+      lastTestCmd: String(commandLine || '').slice(0, 140),
+      lastTestExitOk,
+      passed: passed ?? prev.passed ?? 0,
+      failed,
+      updatedAt: nowMs,
+    };
+    return {
+      conversations: pruneMapByTs(cur?.conversations, nowMs),
+      stopBlocks: pruneMapByTs(cur?.stopBlocks, nowMs),
+      verification: verMap,
+      reuse: pruneMapByTs(cur?.reuse, nowMs),
+    };
+  }, { spaces: 0 });
+
+  return { ok: true, lastTestExitOk, passed, failed };
+}
+
+export function getSessionVerificationFreshness(opts = {}) {
+  const { conversationId = 'default', stateFile = '', nowMs = Date.now() } = opts && typeof opts === 'object' && !Array.isArray(opts) ? opts : {};
+  const cid = normConvoKey(conversationId);
+  const st = safeReadJsonSync(getStateFilePath(stateFile), defaultState, { selfHeal: true });
+  const entry = st?.verification && Object.hasOwn(st.verification, cid) ? st.verification[cid] : null;
+  if (!entry || (nowMs - Number(entry.updatedAt || 0)) >= STUB_STATE_TTL_MS) {
+    return { state: 'not_run', lastCodeEditAt: 0, lastTestRunAt: 0, passed: 0, failed: 0, lastEditedFile: '' };
+  }
+  const lastCodeEditAt = Number(entry.lastCodeEditAt || 0);
+  const lastTestRunAt = Number(entry.lastTestRunAt || 0);
+  let state = 'not_run';
+  if (lastTestRunAt > 0) {
+    if (entry.lastTestExitOk === false) {
+      state = 'fail';
+    } else if (lastCodeEditAt > lastTestRunAt) {
+      state = 'stale';
+    } else {
+      state = 'pass';
+    }
+  }
+  return {
+    state,
+    lastCodeEditAt,
+    lastTestRunAt,
+    passed: Number(entry.passed || 0),
+    failed: Number(entry.failed || 0),
+    lastEditedFile: String(entry.lastEditedFile || ''),
+  };
 }
 
 export function clearSessionFileStubs(opts = {}) {
@@ -502,6 +631,20 @@ export function evaluateStopCompletionGates(opts = {}) {
     warnings.push(...invRes.warnings);
   }
 
+  const verFresh = getSessionVerificationFreshness({ conversationId, stateFile, nowMs });
+  if (verFresh.state === 'stale') {
+    const editedShort = verFresh.lastEditedFile ? verFresh.lastEditedFile.split('/').pop() : 'source';
+    warnings.push({
+      kind: 'stale_tests',
+      message: `Устаревший прогон тестов (stale): файл ${editedShort} редактировался ПОСЛЕ последнего запуска тестов — перезапусти проверку перед завершением.`,
+    });
+  } else if (verFresh.state === 'fail') {
+    warnings.push({
+      kind: 'failing_tests',
+      message: `Последний прогон тестов завершился с ошибками (failed: ${verFresh.failed || 1}) — добейся зелёного статуса.`,
+    });
+  }
+
   const cid = normConvoKey(conversationId);
   const targetPath = getStateFilePath(stateFile);
 
@@ -513,6 +656,8 @@ export function evaluateStopCompletionGates(opts = {}) {
         return {
           conversations: pruneMapByTs(cur?.conversations, nowMs),
           stopBlocks,
+          verification: pruneMapByTs(cur?.verification, nowMs),
+          reuse: pruneMapByTs(cur?.reuse, nowMs),
         };
       }, { spaces: 0 });
     } catch {}
@@ -533,6 +678,8 @@ export function evaluateStopCompletionGates(opts = {}) {
     return {
       conversations: pruneMapByTs(cur?.conversations, nowMs),
       stopBlocks,
+      verification: pruneMapByTs(cur?.verification, nowMs),
+      reuse: pruneMapByTs(cur?.reuse, nowMs),
     };
   }, { spaces: 0 });
 
@@ -612,5 +759,163 @@ export function assessDiffSurgicalDiscipline(
     expansionRatio,
     newTrivialWrappers,
     warnings,
+  };
+}
+
+const GENERIC_REUSE_NAMES = new Set([
+  'main', 'init', 'run', 'get', 'set', 'test', 'setup', 'open', 'close', 'read', 'write',
+  'start', 'stop', 'load', 'save', 'update', 'create', 'delete', 'handle', 'render', 'index',
+  'new', 'call', 'apply', 'map', 'filter', 'reduce', 'forEach', 'some', 'every', 'find',
+  'slice', 'push', 'join', 'split', 'trim', 'replace', 'match', 'exec', 'resolve', 'reject',
+  'require', 'import', 'from', 'if', 'for', 'while', 'switch', 'catch', 'return', 'Number',
+  'String', 'Boolean', 'Array', 'Object', 'Set', 'Map', 'Promise', 'Error', 'Date', 'Math', 'JSON',
+]);
+
+const REUSE_DEF_RULES = [
+  [/\.[cm]?[jt]sx?$/i, [
+    /^export\s+(?:default\s+)?(?:async\s+)?(?:function\*?|class|const|let|var)\s+([A-Za-z_$][\w$]*)/gm,
+    /^(?:async\s+)?function\*?\s+([A-Za-z_$][\w$]*)/gm,
+    /^class\s+([A-Za-z_$][\w$]*)/gm,
+  ]],
+  [/\.py$/i, [/^(?:async\s+)?def\s+([A-Za-z]\w*)/gm, /^class\s+([A-Za-z]\w*)/gm]],
+  [/\.go$/i, [/^func\s+(?:\([^)]*\)\s*)?([A-Za-z]\w*)/gm]],
+  [/\.rs$/i, [/^(?:pub\s+)?(?:async\s+)?fn\s+(\w+)/gm]],
+];
+
+/**
+ * Computes Ponytail-style code reuse score on a file edit:
+ * `reusePct = reusedSymbols / (reusedSymbols + newDefinitions)`.
+ * @param {string} oldText
+ * @param {string} newText
+ * @param {string} filePath
+ * @param {Iterable<string>|Set<string>|Map<string, any>} [knownRepoSymbols=[]]
+ */
+export function computeDiffReuseMetrics(oldText = '', newText = '', filePath = '', knownRepoSymbols = []) {
+  const cleanPath = String(filePath || '').replace(/\\/g, '/');
+  if (!cleanPath || SKIP_STUB_EXT_RE.test(cleanPath) || SKIP_STUB_TEST_RE.test(cleanPath)) {
+    return { skipped: true, reusedSymbols: [], newSymbols: [], reusedCount: 0, newCount: 0, reusePct: null };
+  }
+  const ruleEntry = REUSE_DEF_RULES.find(([extRe]) => extRe.test(cleanPath));
+  if (!ruleEntry) {
+    return { skipped: true, reusedSymbols: [], newSymbols: [], reusedCount: 0, newCount: 0, reusePct: null };
+  }
+
+  const oldSet = new Set(String(oldText || '').split(/\r?\n/));
+  const addedBlock = String(newText || '')
+    .split(/\r?\n/)
+    .filter((ln) => !oldSet.has(ln))
+    .join('\n');
+  if (!addedBlock.trim()) {
+    return { skipped: true, reusedSymbols: [], newSymbols: [], reusedCount: 0, newCount: 0, reusePct: null };
+  }
+
+  const existingDefsInOld = new Set();
+  for (const re of ruleEntry[1]) {
+    re.lastIndex = 0;
+    for (const m of String(oldText || '').matchAll(re)) {
+      if (m[1]) existingDefsInOld.add(m[1]);
+    }
+  }
+
+  const newDefsSet = new Set();
+  for (const re of ruleEntry[1]) {
+    re.lastIndex = 0;
+    for (const m of addedBlock.matchAll(re)) {
+      const sym = m[1];
+      if (sym && !existingDefsInOld.has(sym) && !GENERIC_REUSE_NAMES.has(sym) && !GENERIC_REUSE_NAMES.has(sym.toLowerCase())) {
+        newDefsSet.add(sym);
+      }
+    }
+  }
+
+  const knownSet = new Set();
+  if (knownRepoSymbols instanceof Map) {
+    for (const k of knownRepoSymbols.keys()) knownSet.add(String(k));
+  } else if (knownRepoSymbols && typeof knownRepoSymbols[Symbol.iterator] === 'function') {
+    for (const item of knownRepoSymbols) {
+      const sym = typeof item === 'string' ? item : item?.name || item?.symbol || '';
+      if (sym) knownSet.add(String(sym));
+    }
+  }
+  for (const s of existingDefsInOld) knownSet.add(s);
+
+  const reusedSet = new Set();
+  for (const m of addedBlock.matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(/g)) {
+    const callee = m[1];
+    if (
+      callee &&
+      knownSet.has(callee) &&
+      !newDefsSet.has(callee) &&
+      !GENERIC_REUSE_NAMES.has(callee) &&
+      !GENERIC_REUSE_NAMES.has(callee.toLowerCase())
+    ) {
+      reusedSet.add(callee);
+    }
+  }
+
+  const reusedSymbols = [...reusedSet];
+  const newSymbols = [...newDefsSet];
+  const denom = reusedSymbols.length + newSymbols.length;
+  const reusePct = denom > 0 ? Math.round((reusedSymbols.length / denom) * 100) : null;
+
+  return {
+    skipped: false,
+    reusedSymbols,
+    newSymbols,
+    reusedCount: reusedSymbols.length,
+    newCount: newSymbols.length,
+    reusePct,
+  };
+}
+
+export function recordSessionReuseMetrics(opts = {}) {
+  const {
+    conversationId = 'default',
+    reusedSymbols = [],
+    newSymbols = [],
+    stateFile = '',
+    nowMs = Date.now(),
+  } = opts && typeof opts === 'object' && !Array.isArray(opts) ? opts : {};
+  if ((!Array.isArray(reusedSymbols) || reusedSymbols.length === 0) && (!Array.isArray(newSymbols) || newSymbols.length === 0)) {
+    return { ok: true, skipped: true };
+  }
+  const cid = normConvoKey(conversationId);
+  const targetPath = getStateFilePath(stateFile);
+  let snapshot = null;
+
+  updateJsonAtomicSync(targetPath, defaultState, (cur) => {
+    const reuseMap = pruneMapByTs(cur?.reuse, nowMs);
+    const prev = Object.hasOwn(reuseMap, cid) ? reuseMap[cid] : { reused: [], created: [] };
+    const reused = Array.from(new Set([...(Array.isArray(prev.reused) ? prev.reused : []), ...reusedSymbols])).slice(0, 120);
+    const created = Array.from(new Set([...(Array.isArray(prev.created) ? prev.created : []), ...newSymbols])).slice(0, 120);
+    const denom = reused.length + created.length;
+    const reusePct = denom > 0 ? Math.round((reused.length / denom) * 100) : null;
+    snapshot = { reused, created, reusedCount: reused.length, newCount: created.length, reusePct, updatedAt: nowMs };
+    reuseMap[cid] = snapshot;
+    return {
+      conversations: pruneMapByTs(cur?.conversations, nowMs),
+      stopBlocks: pruneMapByTs(cur?.stopBlocks, nowMs),
+      verification: pruneMapByTs(cur?.verification, nowMs),
+      reuse: reuseMap,
+    };
+  }, { spaces: 0 });
+
+  return { ok: true, ...snapshot };
+}
+
+export function getSessionReuseSummary(opts = {}) {
+  const { conversationId = 'default', stateFile = '', nowMs = Date.now() } = opts && typeof opts === 'object' && !Array.isArray(opts) ? opts : {};
+  const cid = normConvoKey(conversationId);
+  const st = safeReadJsonSync(getStateFilePath(stateFile), defaultState, { selfHeal: true });
+  const entry = st?.reuse && Object.hasOwn(st.reuse, cid) ? st.reuse[cid] : null;
+  if (!entry || (nowMs - Number(entry.updatedAt || 0)) >= STUB_STATE_TTL_MS) {
+    return { reusedCount: 0, newCount: 0, reusePct: null, reused: [], created: [] };
+  }
+  return {
+    reusedCount: Number(entry.reusedCount || 0),
+    newCount: Number(entry.newCount || 0),
+    reusePct: entry.reusePct ?? null,
+    reused: Array.isArray(entry.reused) ? entry.reused : [],
+    created: Array.isArray(entry.created) ? entry.created : [],
   };
 }

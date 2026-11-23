@@ -8,6 +8,7 @@
  *   5. Submodular Maximal Marginal Relevance diversity filter (`selectDiverseSlicesMMR`)
  */
 
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { extractFileSymbolsWithRanges } from './repo-mapper.mjs';
 import { expandQueryBilingualStems, splitIdentifierSubtokens } from './cpu-reranker.mjs';
@@ -741,6 +742,13 @@ export function buildSymbolCallGraph(filesMap) {
   for (const pf of parsedFiles) {
     const lines = pf.text.split(/\r?\n/);
     const syms = pf.fileSyms;
+    const importedIdents = new Set();
+    for (const im of pf.text.matchAll(/(?:import\s+([\s\S]{1,220}?)\s+from\s+['"]|(?:const|let|var)\s+\{([^}]{1,200})\}\s*=\s*require\()/g)) {
+      const clause = im[1] || im[2] || '';
+      for (const idm of clause.matchAll(/\b([A-Za-z_$][A-Za-z0-9_$]*)\b/g)) {
+        if (idm[1] !== 'as' && idm[1] !== 'type') importedIdents.add(idm[1]);
+      }
+    }
     let inBlockComment = false;
 
     for (let i = 0; i < lines.length; i++) {
@@ -811,8 +819,19 @@ export function buildSymbolCallGraph(filesMap) {
         }
 
         const targetDefs = isRepoSymbol ? definedSymbols.get(calleeName) : null;
-        const calleeFile = targetDefs?.[0]?.file || '';
-        const calleeLine = targetDefs?.[0]?.startLine || 0;
+        const sameFileDef = targetDefs?.find((d) => d.file === pf.relPath) || null;
+        const chosenDef = sameFileDef || targetDefs?.[0] || null;
+        const calleeFile = chosenDef?.file || '';
+        const calleeLine = chosenDef?.startLine || 0;
+        const isDotted = m[0].startsWith('.');
+        let confidence = 'AMBIGUOUS';
+        if (isRepoSymbol && !isDotted) {
+          if (sameFileDef || (targetDefs.length === 1 && importedIdents.has(calleeName))) {
+            confidence = 'EXTRACTED';
+          } else if (targetDefs.length === 1) {
+            confidence = 'INFERRED';
+          }
+        }
 
         const callerKey = `${pf.relPath}#${callerName}`;
         const calleeKey = `${calleeFile}#${calleeName}`;
@@ -822,13 +841,17 @@ export function buildSymbolCallGraph(filesMap) {
           name: calleeName,
           file: calleeFile,
           line: calleeLine,
+          callSiteLine: lineNo,
           isRepoSymbol,
+          confidence,
         });
         addEdge(callersOf, calleeName, callerKey, {
           name: callerName,
           file: pf.relPath,
           line: lineNo,
+          callSiteLine: lineNo,
           isRepoSymbol: Boolean(enclosing),
+          confidence,
         });
         if ((calleesOf.get(callerName)?.size || 0) > prevSize) {
           edgeCount++;
@@ -1603,10 +1626,18 @@ export function buildDocConfigReferenceGraph(filesMap) {
     if (matchedCode.size > 0) {
       const outArr = [];
       for (const [codeFile, evidence] of matchedCode.entries()) {
+        const edgeConfidence = isChangelog
+          ? 'AMBIGUOUS'
+          : evidence.startsWith('sym:')
+            ? 'INFERRED'
+            : evidence.includes('/') || doc.ext === '.json'
+              ? 'EXTRACTED'
+              : 'INFERRED';
         const outEdge = {
           codeFile,
           relation: 'DOC_REF',
           provenance: 'DOC_REF',
+          confidence: edgeConfidence,
           kind,
           isChangelog,
           evidence,
@@ -1622,6 +1653,7 @@ export function buildDocConfigReferenceGraph(filesMap) {
           docFile: doc.relPath,
           relation: 'DOC_REF',
           provenance: 'DOC_REF',
+          confidence: edgeConfidence,
           kind,
           isChangelog,
           evidence,
@@ -1719,6 +1751,8 @@ export function detectArchitectureClusters(
     maxClusters = 8,
     maxGodNodes = 5,
     maxIterations = 12,
+    ambiguousScale = 0.25,
+    excludeHubsPercentile = null,
   } = {}
 ) {
   const t0 = performance.now();
@@ -1809,7 +1843,12 @@ export function detectArchitectureClusters(
         const v = nodeIndex.get(normalizePosixRel(edge.file));
         if (v === undefined || u === v) continue;
         const pairKey = u < v ? `${u}|${v}` : `${v}|${u}`;
-        pairCalls.set(pairKey, (pairCalls.get(pairKey) || 0) + 1);
+        const confScale = edge.confidence === 'AMBIGUOUS'
+          ? Math.max(0.05, Number(ambiguousScale) || 0.25)
+          : edge.confidence === 'INFERRED'
+            ? 0.75
+            : 1.0;
+        pairCalls.set(pairKey, (pairCalls.get(pairKey) || 0) + confScale);
       }
     }
     for (const [pairKey, cnt] of pairCalls.entries()) {
@@ -1987,9 +2026,27 @@ export function detectArchitectureClusters(
     }
   });
 
+  let hubCutoffScore = Infinity;
+  if (excludeHubsPercentile !== null && Number.isFinite(Number(excludeHubsPercentile))) {
+    const pct = Math.max(1, Math.min(100, Number(excludeHubsPercentile)));
+    const sortedScores = nodeMetrics.map((m) => m.couplingScore).sort((a, b) => a - b);
+    if (sortedScores.length > 0) {
+      const idx = Math.max(0, Math.floor((sortedScores.length * pct) / 100) - 1);
+      hubCutoffScore = sortedScores[idx];
+    }
+  }
+
+  const nonBarrelCandidates = nodeMetrics.filter((m) => {
+    const base = path.posix.basename(m.file).toLowerCase();
+    const isPureBarrel = /^index\.[a-z]+$/.test(base) && m.symbolCount === 0 && m.outDegree >= 2;
+    return !isPureBarrel && m.couplingScore <= hubCutoffScore && (m.couplingScore >= 2 || m.inDegree >= 1);
+  });
+  const godPool = nonBarrelCandidates.length > 0
+    ? nonBarrelCandidates
+    : nodeMetrics.filter((m) => m.couplingScore <= hubCutoffScore && (m.couplingScore >= 2 || m.inDegree >= 1));
+
   const clusters = allClusters.slice(0, Math.max(1, Number(maxClusters) || 8));
-  const godNodes = nodeMetrics
-    .filter((m) => m.couplingScore >= 2 || m.inDegree >= 1)
+  const godNodes = godPool
     .sort((a, b) => b.couplingScore - a.couplingScore || b.inDegree - a.inDegree || a.file.localeCompare(b.file))
     .slice(0, Math.max(1, Number(maxGodNodes) || 5))
     .map(({ file, inDegree, outDegree, docRefCount, symbolCount, couplingScore }) => ({
@@ -2000,6 +2057,12 @@ export function detectArchitectureClusters(
       symbolCount,
       couplingScore,
     }));
+
+  const topologyHash = computeGraphTopologyHash(
+    nodes.map((n) => n.relPath),
+    directedImportPairs,
+    { ambiguousScale, excludeHubsPercentile, maxIterations }
+  );
 
   const digestLines = [`🧩 [Arch Graph | ${N} code files | ${allClusters.length} clusters | Q=${modularityQ}]`];
   if (godNodes.length > 0) {
@@ -2024,6 +2087,7 @@ export function detectArchitectureClusters(
   return {
     ok: true,
     elapsedMs: Number((performance.now() - t0).toFixed(2)),
+    topologyHash,
     fileCount: N,
     clusterCount: allClusters.length,
     modularityQ,
@@ -2176,4 +2240,338 @@ export function selectDiverseSlicesMMR(candidates = [], { topK = 6, lambda = 0.7
   }
 
   return { selected, filteredDuplicates };
+}
+
+/**
+ * Order-independent XOR SHA-256 fingerprint of graph topology & clustering parameters
+ * (inspired by Graphify `_topology_hash`).
+ */
+export function computeGraphTopologyHash(nodeIds = [], edgeKeys = [], params = {}) {
+  const accNodes = Buffer.alloc(32, 0);
+  for (const n of nodeIds || []) {
+    const d = createHash('sha256').update(`n\0${String(n)}`).digest();
+    for (let i = 0; i < 32; i++) accNodes[i] ^= d[i];
+  }
+  const accEdges = Buffer.alloc(32, 0);
+  for (const e of edgeKeys || []) {
+    const d = createHash('sha256').update(`e\0${String(e)}`).digest();
+    for (let i = 0; i < 32; i++) accEdges[i] ^= d[i];
+  }
+  const h = createHash('sha256');
+  h.update(JSON.stringify({
+    v: 'topo-v1',
+    nodeCount: Array.isArray(nodeIds) ? nodeIds.length : (nodeIds?.size || 0),
+    edgeCount: Array.isArray(edgeKeys) ? edgeKeys.length : (edgeKeys?.size || 0),
+    ambiguousScale: params?.ambiguousScale ?? 0.25,
+    excludeHubsPercentile: params?.excludeHubsPercentile ?? null,
+    maxIterations: params?.maxIterations ?? 12,
+  }));
+  h.update(accNodes);
+  h.update(accEdges);
+  return `v1:${h.digest('hex').slice(0, 24)}`;
+}
+
+const CONFIDENCE_SURPRISE_RANK = { AMBIGUOUS: 0, INFERRED: 1, EXTRACTED: 2 };
+
+/**
+ * Finds surprising cross-cluster / cross-subsystem bridges (Graphify `surprising_connections`),
+ * ranking AMBIGUOUS -> INFERRED -> EXTRACTED so fragile implicit couplings surface first.
+ */
+export function findSurprisingConnections(
+  filesMap,
+  archClusters,
+  symbolGraph = null,
+  forwardDeps = null,
+  { topN = 6 } = {}
+) {
+  const fileToCluster = archClusters?.fileToCluster instanceof Map ? archClusters.fileToCluster : new Map();
+  const bridges = [];
+  const seen = new Set();
+
+  if (symbolGraph?.calleesOf && symbolGraph?.definedSymbols) {
+    for (const [callerName, edgeMap] of symbolGraph.calleesOf.entries()) {
+      const callerDefs = symbolGraph.definedSymbols.get(callerName);
+      if (!callerDefs || callerDefs.length === 0) continue;
+      const srcFile = normalizePosixRel(callerDefs[0].file);
+      const srcCluster = fileToCluster.get(srcFile);
+      for (const edge of edgeMap.values()) {
+        if (!edge?.file) continue;
+        const dstFile = normalizePosixRel(edge.file);
+        if (!dstFile || dstFile === srcFile) continue;
+        const dstCluster = fileToCluster.get(dstFile);
+        const crossCluster = Boolean(srcCluster && dstCluster && srcCluster.id !== dstCluster.id);
+        const crossDir = path.posix.dirname(srcFile) !== path.posix.dirname(dstFile);
+        if (!crossCluster && !crossDir) continue;
+        const key = `${srcFile}#${callerName}->${dstFile}#${edge.name}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        bridges.push({
+          fromFile: srcFile,
+          fromSymbol: callerName,
+          toFile: dstFile,
+          toSymbol: edge.name,
+          callSiteLine: edge.callSiteLine || edge.line || 1,
+          relation: 'calls',
+          confidence: edge.confidence || 'INFERRED',
+          fromCluster: srcCluster?.label || path.posix.dirname(srcFile),
+          toCluster: dstCluster?.label || path.posix.dirname(dstFile),
+          crossCluster,
+        });
+      }
+    }
+  }
+
+  if (forwardDeps) {
+    for (const [rawSrc, targets] of iterMapOrObjectEntries(forwardDeps)) {
+      const srcFile = normalizePosixRel(rawSrc);
+      const srcCluster = fileToCluster.get(srcFile);
+      for (const rawDst of toArrayIter(targets)) {
+        const dstFile = normalizePosixRel(rawDst);
+        if (!dstFile || dstFile === srcFile) continue;
+        const dstCluster = fileToCluster.get(dstFile);
+        if (!srcCluster || !dstCluster || srcCluster.id === dstCluster.id) continue;
+        const key = `imp:${srcFile}->${dstFile}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        bridges.push({
+          fromFile: srcFile,
+          fromSymbol: '',
+          toFile: dstFile,
+          toSymbol: '',
+          callSiteLine: 1,
+          relation: 'imports',
+          confidence: 'EXTRACTED',
+          fromCluster: srcCluster.label,
+          toCluster: dstCluster.label,
+          crossCluster: true,
+        });
+      }
+    }
+  }
+
+  bridges.sort((a, b) => {
+    if (a.crossCluster !== b.crossCluster) return a.crossCluster ? -1 : 1;
+    const rA = CONFIDENCE_SURPRISE_RANK[a.confidence] ?? 2;
+    const rB = CONFIDENCE_SURPRISE_RANK[b.confidence] ?? 2;
+    if (rA !== rB) return rA - rB;
+    return a.fromFile.localeCompare(b.fromFile);
+  });
+
+  return bridges.slice(0, Math.max(1, Number(topN) || 6));
+}
+
+/**
+ * Generates targeted architectural questions from AMBIGUOUS cross-cluster edges and undocumented God Nodes
+ * (inspired by Graphify `suggest_questions`).
+ */
+export function suggestArchitectureQuestions(archClusters, surprisingBridges = [], { maxQuestions = 5 } = {}) {
+  const questions = [];
+  const ambigBridges = (surprisingBridges || []).filter((b) => b.confidence === 'AMBIGUOUS' || b.confidence === 'INFERRED');
+  for (const b of ambigBridges.slice(0, 3)) {
+    questions.push({
+      kind: 'ambiguous_bridge',
+      confidence: b.confidence,
+      question: `Why does \`${b.fromFile}\` (${b.fromCluster}) couple to \`${b.toSymbol || b.toFile}\` in \`${b.toFile}\` (${b.toCluster}) via [${b.confidence}] ${b.relation} at L${b.callSiteLine}?`,
+    });
+  }
+  for (const g of archClusters?.godNodes || []) {
+    if (questions.length >= maxQuestions) break;
+    if (g.inDegree >= 3 && g.docRefCount === 0) {
+      questions.push({
+        kind: 'undocumented_god_node',
+        confidence: 'EXTRACTED',
+        question: `God Node \`${g.file}\` has ${g.inDegree} reverse dependents (coupling:${g.couplingScore}) but 0 documentation/spec references — should its contract be pinned?`,
+      });
+    }
+  }
+  for (const c of archClusters?.clusters || []) {
+    if (questions.length >= maxQuestions) break;
+    if (c.externalEdges > c.internalEdges && c.size >= 2) {
+      questions.push({
+        kind: 'leaky_cluster',
+        confidence: 'EXTRACTED',
+        question: `Cluster **${c.label}** (${c.size} files) has more external edges (${c.externalEdges}) than internal cohesion (${c.internalEdges}) — should hub \`${c.hubFile}\` expose a narrower facade?`,
+      });
+    }
+  }
+  return questions.slice(0, Math.max(1, Number(maxQuestions) || 5));
+}
+
+function resolveRelativeModuleCandidate(fromFile, spec, codeLowerMap) {
+  const rawSpec = String(spec || '').trim();
+  if (!rawSpec.startsWith('.')) return '';
+  const baseDir = path.posix.dirname(normalizePosixRel(fromFile));
+  const joined = normalizePosixRel(path.posix.join(baseDir, rawSpec));
+  const candidates = [
+    joined,
+    `${joined}.mjs`,
+    `${joined}.js`,
+    `${joined}.ts`,
+    `${joined}.tsx`,
+    `${joined}.cjs`,
+    `${joined}/index.js`,
+    `${joined}/index.ts`,
+    `${joined}/index.mjs`,
+  ];
+  if (/\.[cm]?js$/i.test(joined)) {
+    candidates.push(joined.replace(/\.[cm]?js$/i, '.ts'), joined.replace(/\.[cm]?js$/i, '.tsx'));
+  }
+  for (const c of candidates) {
+    const hit = codeLowerMap.get(c.toLowerCase());
+    if (hit) return hit;
+  }
+  return '';
+}
+
+/**
+ * Transitive reverse blast-radius walker (Graphify `affected.py`) covering static `imports`,
+ * `dynamic_import` (`import('...')`), `re_exports` (`export * from`), and symbol `calls`,
+ * preserving exact call/import site `viaLocation` (`file:L#`).
+ */
+export function queryAffectedBlastGraph(
+  filesMap,
+  targetQuery,
+  { forwardDeps = null, reverseDeps = null, symbolGraph = null, maxDepth = 4 } = {}
+) {
+  const entries = iterMapOrObjectEntries(filesMap)
+    .map(([r, v]) => [normalizePosixRel(r), v])
+    .filter(([r]) => Boolean(r));
+  const codeLowerMap = new Map();
+  const fileTexts = new Map();
+  for (const [rel, val] of entries) {
+    codeLowerMap.set(rel.toLowerCase(), rel);
+    const txt = typeof val === 'string'
+      ? val
+      : (val?.text ?? val?.content ?? (val?.buf ? val.buf.toString('utf8') : ''));
+    if (txt) fileTexts.set(rel, txt);
+  }
+
+  // Incoming consumer edges: targetFile -> Array<{ consumerFile, relation, viaLocation, confidence }>
+  const incomingByFile = new Map();
+  const pushIncoming = (targetFile, consumerFile, relation, lineNo = 1, confidence = 'EXTRACTED') => {
+    if (!targetFile || !consumerFile || targetFile === consumerFile) return;
+    let list = incomingByFile.get(targetFile);
+    if (!list) {
+      list = [];
+      incomingByFile.set(targetFile, list);
+    }
+    if (!list.some((e) => e.consumerFile === consumerFile && e.relation === relation)) {
+      list.push({
+        consumerFile,
+        relation,
+        viaLocation: `${consumerFile}:L${Math.max(1, Number(lineNo) || 1)}`,
+        confidence,
+      });
+    }
+  };
+
+  for (const [rel, txt] of fileTexts.entries()) {
+    const lines = txt.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      const ln = lines[i];
+      if (!ln.includes('import') && !ln.includes('export') && !ln.includes('require')) continue;
+      for (const dm of ln.matchAll(/\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+        const resolved = resolveRelativeModuleCandidate(rel, dm[1], codeLowerMap);
+        if (resolved) pushIncoming(resolved, rel, 'dynamic_import', i + 1, 'EXTRACTED');
+      }
+      for (const rm of ln.matchAll(/^\s*export\s+(?:\*|\{[^}]*\})\s+from\s+['"]([^'"]+)['"]/g)) {
+        const resolved = resolveRelativeModuleCandidate(rel, rm[1], codeLowerMap);
+        if (resolved) pushIncoming(resolved, rel, 're_exports', i + 1, 'EXTRACTED');
+      }
+      for (const sm of ln.matchAll(/(?:^\s*import\s+[\s\S]*?\bfrom\s+['"]([^'"]+)['"]|\brequire\s*\(\s*['"]([^'"]+)['"]\s*\))/g)) {
+        const resolved = resolveRelativeModuleCandidate(rel, sm[1] || sm[2], codeLowerMap);
+        if (resolved) pushIncoming(resolved, rel, 'imports', i + 1, 'EXTRACTED');
+      }
+    }
+  }
+
+  if (reverseDeps) {
+    for (const [rawTarget, consumers] of iterMapOrObjectEntries(reverseDeps)) {
+      const tRel = normalizePosixRel(rawTarget);
+      for (const rawCons of toArrayIter(consumers)) {
+        pushIncoming(tRel, normalizePosixRel(rawCons), 'imports', 1, 'EXTRACTED');
+      }
+    }
+  }
+
+  const rawQ = String(targetQuery || '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
+  let seedFile = codeLowerMap.get(rawQ.toLowerCase()) || '';
+  let seedSymbol = '';
+  if (!seedFile) {
+    for (const k of codeLowerMap.values()) {
+      if (k.toLowerCase().endsWith(`/${rawQ.toLowerCase()}`) || path.posix.basename(k).toLowerCase() === rawQ.toLowerCase()) {
+        seedFile = k;
+        break;
+      }
+    }
+  }
+  if (!seedFile && symbolGraph?.definedSymbols) {
+    const cleanSym = rawQ.replace(/\(\)$/, '');
+    const defs = symbolGraph.definedSymbols.get(cleanSym);
+    if (defs && defs.length > 0) {
+      seedSymbol = cleanSym;
+      seedFile = normalizePosixRel(defs[0].file);
+    }
+  }
+
+  if (!seedFile) {
+    return { ok: false, target: rawQ, seedFile: '', affected: [], formatted: `No file or symbol matching "${rawQ}" in graph.` };
+  }
+
+  const hits = [];
+  const visited = new Set([seedFile]);
+  const queue = [{ file: seedFile, depth: 0 }];
+  const capDepth = Math.max(1, Math.min(8, Number(maxDepth) || 4));
+
+  if (seedSymbol && symbolGraph?.callersOf?.has(seedSymbol)) {
+    for (const edge of symbolGraph.callersOf.get(seedSymbol).values()) {
+      const cf = normalizePosixRel(edge.file);
+      if (cf && cf !== seedFile && !visited.has(cf)) {
+        visited.add(cf);
+        const hit = {
+          file: cf,
+          depth: 1,
+          viaRelation: 'calls',
+          viaLocation: `${cf}:L${edge.callSiteLine || edge.line || 1}`,
+          confidence: edge.confidence || 'INFERRED',
+        };
+        hits.push(hit);
+        queue.push({ file: cf, depth: 1 });
+      }
+    }
+  }
+
+  while (queue.length > 0) {
+    const cur = queue.shift();
+    if (cur.depth >= capDepth) continue;
+    const consumers = incomingByFile.get(cur.file) || [];
+    for (const c of consumers) {
+      if (visited.has(c.consumerFile)) continue;
+      visited.add(c.consumerFile);
+      const nextDepth = cur.depth + 1;
+      hits.push({
+        file: c.consumerFile,
+        depth: nextDepth,
+        viaRelation: c.relation,
+        viaLocation: c.viaLocation,
+        confidence: c.confidence,
+      });
+      queue.push({ file: c.consumerFile, depth: nextDepth });
+    }
+  }
+
+  const lines = [
+    `💥 [Affected Blast Radius] Seed: \`${seedSymbol ? `${seedSymbol} (${seedFile})` : seedFile}\` -> ${hits.length} consumer(s) within ${capDepth} hop(s):`,
+    ...hits.slice(0, 20).map((h) => `- [d=${h.depth} | ${h.viaRelation} | ${h.confidence}] \`${h.file}\` (site: \`${h.viaLocation}\`)`),
+  ];
+
+  return {
+    ok: true,
+    target: rawQ,
+    seedFile,
+    seedSymbol,
+    affectedCount: hits.length,
+    affected: hits,
+    formatted: lines.join('\n'),
+  };
 }

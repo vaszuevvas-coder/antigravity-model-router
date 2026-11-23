@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%230a84ff'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%23ffffff'/%3E%3C/svg%3E" />
-  <title>The Tunnel v3.30.0</title>
+  <title>The Tunnel v3.31.0</title>
   <script src="/preload.js"></script>
   <style>
 /*__PANEL_STYLES__*/
@@ -119,7 +119,7 @@
         </div>
       </div>
 
-      <!-- 0.5. УМНЫЙ ВВОД В ЧАТ (GHOST TEXT: RAM <10мс + OLLAMA GPU, 0 ТОКЕНОВ GEMINI) -->
+      <!-- 1. УМНЫЙ ВВОД В ЧАТ (GHOST TEXT: RAM <10мс + OLLAMA GPU, 0 ТОКЕНОВ GEMINI) -->
       <section class="lg-card reorderable-block" id="smartComposerCard">
         <div class="lg-card-head">
           <span class="lg-card-title">✦ Умный ввод в чат</span>
@@ -185,7 +185,7 @@
         </div>
       </section>
 
-      <!-- 1. НАВЫКИ АГЕНТА (СКИЛЛЫ) — ГЛАВНЫЙ АКЦЕНТ ЕДИНОЙ СТРАНИЦЫ -->
+      <!-- 2. НАВЫКИ АГЕНТА (СКИЛЛЫ) — ГЛАВНЫЙ АКЦЕНТ ЕДИНОЙ СТРАНИЦЫ -->
       <section class="lg-card reorderable-block" id="skillsSectionCard">
         <div class="lg-card-head">
           <span class="lg-card-title">Навыки ИИ-Пилота</span>
@@ -231,7 +231,7 @@
         </div>
       </section>
 
-      <!-- 2. РЕЖИМ РАБОТЫ -->
+      <!-- 3. РЕЖИМ РАБОТЫ -->
       <section class="lg-card reorderable-block" id="agentModeCard">
         <div class="lg-card-head">
           <span class="lg-card-title">Режим работы агента</span>
@@ -296,6 +296,23 @@
                 <div id="grillModeHint" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px; line-height: 1.35;">
                   Режим «Авто M+»: предлагает детальный опрос по развилкам в стартовом окне на крупных или новых задачах.
                 </div>
+                <div class="control-row" style="margin-top: 8px;">
+                  <span>Лестница лени (Ponytail):</span>
+                  <div class="win-btn-group" id="leanModeGroup">
+                    <button type="button" class="win-btn" data-val="off" data-action="setLeanMode" data-arg="off" title="Отключить правила экономии нового кода Ponytail">Выкл</button>
+                    <button type="button" class="win-btn" data-val="lite" data-action="setLeanMode" data-arg="lite" title="Мягкий режим: подсказывать компактные альтернативы на базе существующих функций">Lite</button>
+                    <button type="button" class="win-btn active" data-val="full" data-action="setLeanMode" data-arg="full" title="Полная 7-ступенчатая лестница переиспользования кода и метки shortcut:">Full</button>
+                    <button type="button" class="win-btn" data-val="ultra" data-action="setLeanMode" data-arg="ultra" title="Максимальная строгость: оспаривать избыточные требования до написания кода">Ultra</button>
+                  </div>
+                </div>
+                <div class="control-row" style="margin-top: 6px;">
+                  <span>Плотность ответа (Caveman):</span>
+                  <div class="win-btn-group" id="terseModeGroup">
+                    <button type="button" class="win-btn active" data-val="off" data-action="setTerseMode" data-arg="off" title="Стандартный лаконичный стиль ответов">Выкл</button>
+                    <button type="button" class="win-btn" data-val="caveman" data-action="setTerseMode" data-arg="caveman" title="Стандарт ASD-STE100: до 20 слов в предложении без вводных фраз, код без сокращений">Caveman</button>
+                    <button type="button" class="win-btn" data-val="ultracave" data-action="setTerseMode" data-arg="ultracave" title="Сверхплотный телеграфный ответ до 12 слов в предложении">Ultra</button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -337,7 +354,7 @@
         </div>
       </section>
 
-      <!-- 3. ДИЗАЙН-ВИТРИНА (A/B/C) -->
+      <!-- 4. ДИЗАЙН-ВИТРИНА (A/B/C) -->
       <section class="lg-card reorderable-block" id="skillProfilesFieldset">
         <div class="lg-card-head">
           <span class="lg-card-title">Дизайн-витрина и превью UI</span>
@@ -377,7 +394,7 @@
         </div>
       </section>
 
-      <!-- 4. СТАТИСТИКА ЧАТОВ И КОМАНДНЫЙ РОЙ -->
+      <!-- 5. СТАТИСТИКА ЧАТОВ И КОМАНДНЫЙ РОЙ -->
       <section class="lg-card reorderable-block is-collapsed" id="swarmTelemetryCard">
         <div class="lg-card-head">
           <span class="lg-card-title">📊 Статистика чатов и Командный Рой</span>
@@ -474,7 +491,7 @@
             </div>
       </section>
 
-      <!-- 4.5. РЕСУРСЫ ПК: GPU, CPU И ПАМЯТЬ IN-RAM -->
+      <!-- 6. РЕСУРСЫ ПК: GPU, CPU И ПАМЯТЬ IN-RAM -->
       <section class="lg-card reorderable-block is-collapsed" id="gpuRamCard">
         <div class="lg-card-head">
           <span class="lg-card-title" id="gpuRamSectionLegend">🎮 Ресурсы ПК: GPU, CPU и память In-RAM</span>
@@ -708,7 +725,7 @@
             </div>
       </section>
 
-      <!-- 4.6. ФОНОВЫЙ ДОЗОР (IDLE SENTINEL · P0 AUTO-YIELD) -->
+      <!-- 7. ФОНОВЫЙ ДОЗОР (IDLE SENTINEL · P0 AUTO-YIELD) -->
       <section class="lg-card reorderable-block is-collapsed" id="sentinelSectionCard">
         <div class="lg-card-head">
           <span class="lg-card-title">🛡️ Фоновый Дозор · P0 Auto-Yield</span>
@@ -781,7 +798,7 @@
               </div>
       </section>
 
-      <!-- 5. СНИМКИ ОТКАТА, САМООБУЧЕНИЕ И BAYESIAN V2 (КОМПАКТНЫЙ СПОЙЛЕР) -->
+      <!-- 8. СНИМКИ ОТКАТА, САМООБУЧЕНИЕ И BAYESIAN V2 (КОМПАКТНЫЙ СПОЙЛЕР) -->
       <details class="expert-spoiler" id="snapshotsBayesianSpoiler">
         <summary>🛡️ Снимки отката, Самообучение и Bayesian v2</summary>
         <div class="spoiler-stack" id="snapshotsInnerStack">
@@ -848,9 +865,9 @@
         </div>
       </details>
 
-      <!-- 6. ТОНКАЯ НАСТРОЙКА ДЛЯ ЭКСПЕРТОВ -->
+      <!-- 9. ТОНКАЯ НАСТРОЙКА ДЛЯ ЭКСПЕРТОВ -->
       <details class="expert-spoiler" id="expertDetailsBox">
-        <summary>⚙️ Экспертные параметры (25+ контуров защиты и диагностика)</summary>
+        <summary>⚙️ Экспертные параметры (59 контуров защиты и диагностика)</summary>
 
         <div class="spoiler-stack" id="expertInnerStack" style="margin-top: 10px;">
           <!-- 1. Индикатор автомата Thrashing Circuit Breaker -->
@@ -883,7 +900,7 @@
             </div>
           </div>
 
-          <!-- 2.5. Хаб знаний SQLite WAL: Рецепты побед, Эпизоды и Связанные репозитории -->
+          <!-- 3. Хаб знаний SQLite WAL: Рецепты побед, Эпизоды и Связанные репозитории -->
           <div class="sunken-box" id="expertKnowledgeBox" style="margin-bottom: 8px;">
             <div id="expertKnowledgeHeadRow" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; gap: 6px; flex-wrap: wrap;">
               <span style="font-weight: 600; font-size: 11px; color: var(--accent-cyan); margin-right: auto;">Рецепты побед и Кросс-репо (SQLite)</span>
@@ -907,10 +924,10 @@
             <div id="federatedPeersContainer" style="font-size: 10.5px; color: var(--text-sub);"></div>
           </div>
 
-          <!-- 25+ систем разведки, мышления и защиты -->
+          <!-- 26 экспертных контуров разведки, мышления и защиты (всего 59 GUARDRAIL_KEYS) -->
           <section class="lg-card" id="expertGuardrailsCard" style="margin-top: 8px;">
             <div class="lg-card-head">
-              <span class="lg-card-title">25+ контуров разведки и защиты</span>
+              <span class="lg-card-title">26 контуров разведки и защиты</span>
             </div>
             <div class="control-row" style="margin: 2px 0 4px;">
               <span style="font-weight: 600; font-size: 10.5px; color: var(--text-main);">Профиль хуков (<code>Hook Profile</code>):</span>
@@ -1094,6 +1111,14 @@
                 <button type="button" class="win-btn" style="padding: 1px 7px; font-size: 10px;" data-action="initGatesMd">Создать GATES.md</button>
               </div>
             </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0 2px; font-size: 10.5px;">
+              <span id="graphDebtStatusBadge" style="color: var(--text-sub);">Graphify v2 · Техдолг shortcut:</span>
+              <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+                <button type="button" class="win-btn" style="padding: 1px 7px; font-size: 10px;" data-action="loadGraphifyOverview" title="Построить интерактивную карту кластеров, God Nodes, мостов и теплоты кэша">🕸️ Карта графа</button>
+                <button type="button" class="win-btn" style="padding: 1px 7px; font-size: 10px;" data-action="loadShortcutDebt" title="Собрать реестр меток осознанного техдолга shortcut: и проверить риски no-trigger">📌 Техдолг</button>
+              </div>
+            </div>
+            <div id="graphDebtDrawer" class="sunken-box" style="display: none; margin-top: 6px; padding: 6px 8px; font-size: 10.5px; max-height: 240px; overflow-y: auto;"></div>
 
             <div class="divider"></div>
             <div class="control-row">
@@ -1191,7 +1216,7 @@
 
     <div class="status-bar">
       <div id="statusPill" class="status-pane">Готово · Синхронизировано</div>
-      <div class="status-pane" id="footerPluginVersion">The Tunnel v3.30.0</div>
+      <div class="status-pane" id="footerPluginVersion">The Tunnel v3.31.0</div>
     </div>
     <div style="text-align:center;font-size:10.5px;color:var(--text-sub);opacity:0.7;padding:4px 0 2px;letter-spacing:0.02em;">Created by Vasili Zuev</div>
   </div>
@@ -1202,7 +1227,7 @@
       <div class="wiz-head">
         <div class="lg-brand">
           <span class="lg-brand-orb"></span>
-          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v3.30.0</span>
+          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v3.31.0</span>
           <span class="lg-session-pill" id="wizLaunchBadge">Первый запуск</span>
         </div>
         <button class="lg-icon-btn round" type="button" data-action="closeOnboardingWizard" title="Отложить или закрыть окно настройки (Esc)">×</button>

@@ -10,6 +10,7 @@ import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWriteJsonSync, safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
 import { redactSecretsInText } from './security-guard.mjs';
+import { formatActiveSpecsForHandoff } from './reusable-blocks-specs.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
@@ -1017,6 +1018,13 @@ export function formatHandoffForSessionStart(workspaceRoot = '', currentConversa
       lines.push(`- Process Rationale (Why / Dead-ends): ${ratPreview}`);
     }
   }
+
+  try {
+    const activeSpecsLine = formatActiveSpecsForHandoff(workspaceRoot);
+    if (activeSpecsLine) {
+      lines.push(activeSpecsLine);
+    }
+  } catch {}
 
   lines.push('Resume seamlessly from this state without redundant repo exploration.');
 

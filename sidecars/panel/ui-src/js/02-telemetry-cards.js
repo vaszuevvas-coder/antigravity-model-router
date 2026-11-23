@@ -1029,6 +1029,16 @@
       document.querySelectorAll('#grillModeGroup button').forEach((btn) => {
         btn.classList.toggle('active', btn.dataset.val === activeGrillMode);
       });
+
+      const activeLeanMode = (s.leanMode === 'off' || s.leanMode === 'lite' || s.leanMode === 'ultra') ? s.leanMode : 'full';
+      document.querySelectorAll('#leanModeGroup button').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.val === activeLeanMode);
+      });
+
+      const activeTerseMode = (s.terseMode === 'caveman' || s.terseMode === 'ultracave') ? s.terseMode : 'off';
+      document.querySelectorAll('#terseModeGroup button').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.val === activeTerseMode);
+      });
       const grillHintEl = document.getElementById('grillModeHint');
       if (grillHintEl) {
         if (activeGrillMode === 'off') {
@@ -2579,6 +2589,104 @@
         }
       } catch {
         flashStatus('Ошибка создания GATES.md');
+      }
+    }
+
+    async function loadGraphifyOverview() {
+      const drawer = document.getElementById('graphDebtDrawer');
+      const badge = document.getElementById('graphDebtStatusBadge');
+      if (!drawer) return;
+      drawer.style.display = 'block';
+      drawer.innerHTML = '<div style="color:var(--text-sub);">Построение графа архитектуры Graphify v2...</div>';
+      try {
+        const res = await panelFetch('/api/graph', { method: 'GET' });
+        const data = await res.json();
+        if (!res || !res.ok || !data || !data.ok) {
+          drawer.innerHTML = '<div style="color:var(--status-warn);">Граф недоступен: ' + escapeHtml((data && data.error) || 'ошибка') + '</div>';
+          return;
+        }
+        const warmth = data.cacheWarmth || {};
+        const warmthLabel = warmth.status === 'warm'
+          ? ('🔥 Кэш тёплый (' + Number(warmth.remainingSeconds || 0) + 'с)')
+          : warmth.status === 'cooling'
+            ? ('⏳ Кэш остывает (' + Number(warmth.remainingSeconds || 0) + 'с)')
+            : '❄️ Кэш холодный';
+        const reuse = data.reuse || {};
+        const reuseLabel = reuse.reusePct !== null && reuse.reusePct !== undefined
+          ? ('Reuse: ' + Number(reuse.reusePct) + '% (' + Number(reuse.reusedCount || 0) + ' исп. / ' + Number(reuse.newCount || 0) + ' нов.)')
+          : 'Reuse: —';
+        if (badge) {
+          badge.textContent = 'Q=' + Number(data.modularityQ || 0) + ' · ' + Number((data.clusters || []).length) + ' класт. · ' + reuseLabel;
+        }
+        const clustersHtml = (data.clusters || []).slice(0, 6).map(function (c) {
+          const wPct = Math.min(100, Math.max(14, Math.round((Number(c.size || 1) / Math.max(1, Number(data.fileCount || 1))) * 100)));
+          return '<div style="margin-bottom:4px;">' +
+            '<div style="display:flex;justify-content:space-between;gap:6px;">' +
+              '<strong>' + escapeHtml(c.label || c.id) + '</strong>' +
+              '<span style="color:var(--text-sub);">' + Number(c.size || 0) + ' ф. · hub: ' + escapeHtml((c.hubFile || '').split('/').pop()) + '</span>' +
+            '</div>' +
+            '<div style="height:4px;background:var(--border-subtle);border-radius:2px;overflow:hidden;margin-top:2px;">' +
+              '<div style="height:100%;width:' + wPct + '%;background:var(--accent-cyan);"></div>' +
+            '</div>' +
+          '</div>';
+        }).join('');
+        const godsHtml = (data.godNodes || []).slice(0, 4).map(function (g) {
+          return '<span class="swarm-pill idle" style="margin:1px 3px 1px 0;">🌟 ' + escapeHtml(g.file) + ' (in:' + Number(g.inDegree || 0) + ')</span>';
+        }).join('');
+        const bridgesHtml = (data.bridges || []).slice(0, 4).map(function (b) {
+          const confTone = b.confidence === 'AMBIGUOUS' ? 'var(--status-warn)' : 'var(--accent-cyan)';
+          return '<div style="margin-top:2px;word-break:break-word;">' +
+            '<span style="color:' + confTone + ';font-weight:600;">[' + escapeHtml(b.confidence || 'EXTRACTED') + ']</span> ' +
+            escapeHtml(b.fromFile + ':L' + (b.callSiteLine || 1) + ' → ' + b.toFile + (b.toSymbol ? '#' + b.toSymbol : '')) +
+          '</div>';
+        }).join('');
+        drawer.innerHTML =
+          '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;margin-bottom:6px;color:var(--text-sub);">' +
+            '<span>' + escapeHtml(warmthLabel) + '</span>' +
+            '<span>' + escapeHtml(reuseLabel) + ' · ' + escapeHtml(data.topologyHash || '') + '</span>' +
+          '</div>' +
+          (godsHtml ? '<div style="margin-bottom:6px;">' + godsHtml + '</div>' : '') +
+          (clustersHtml || '<div style="color:var(--text-sub);">Кластеры не обнаружены</div>') +
+          (bridgesHtml ? '<div style="margin-top:6px;border-top:1px solid var(--border-subtle);padding-top:4px;"><strong>Межкластерные мосты:</strong>' + bridgesHtml + '</div>' : '');
+        flashStatus('Карта архитектуры Graphify v2 обновлена ✓');
+      } catch {
+        drawer.innerHTML = '<div style="color:var(--status-warn);">Ошибка загрузки графа архитектуры</div>';
+      }
+    }
+
+    async function loadShortcutDebt() {
+      const drawer = document.getElementById('graphDebtDrawer');
+      const badge = document.getElementById('graphDebtStatusBadge');
+      if (!drawer) return;
+      drawer.style.display = 'block';
+      drawer.innerHTML = '<div style="color:var(--text-sub);">Сканирование меток техдолга shortcut:...</div>';
+      try {
+        const res = await panelFetch('/api/debt', { method: 'GET' });
+        const data = await res.json();
+        if (!res || !res.ok || !data || !data.ok) {
+          drawer.innerHTML = '<div style="color:var(--status-warn);">Ошибка сканирования техдолга</div>';
+          return;
+        }
+        const items = Array.isArray(data.items) ? data.items : [];
+        if (badge) {
+          badge.textContent = 'Техдолг shortcut: ' + items.length + ' (no-trigger: ' + Number(data.noTriggerCount || 0) + ')';
+          badge.style.color = Number(data.noTriggerCount || 0) > 0 ? 'var(--status-warn)' : 'var(--status-ok)';
+        }
+        if (items.length === 0) {
+          drawer.textContent = '✅ Осознанный техдолг (shortcut:) не обнаружен. Чистый реестр (' + Number(data.scannedFiles || 0) + ' файлов).';
+          flashStatus('Техдолг shortcut: 0 меток ✓');
+          return;
+        }
+        drawer.innerHTML = items.slice(0, 25).map(function (it) {
+          const warnTag = it.rotRisk ? ' <strong style="color:var(--status-warn);">[no-trigger]</strong>' : '';
+          const upg = it.upgradeTrigger ? (' · <em>' + escapeHtml(it.upgradeTrigger) + '</em>') : '';
+          return '<div class="pitfall-item"><span class="pitfall-bullet">📌</span><span style="min-width:0;word-break:break-word;">' +
+            '<strong>' + escapeHtml(it.file + ':' + it.line) + '</strong> — ' + escapeHtml(it.ceiling || '') + upg + warnTag +
+          '</span></div>';
+        }).join('');
+        flashStatus('Найдено меток shortcut: ' + items.length + ' ✓');
+      } catch {
+        drawer.innerHTML = '<div style="color:var(--status-warn);">Ошибка чтения реестра техдолга</div>';
       }
     }
 
