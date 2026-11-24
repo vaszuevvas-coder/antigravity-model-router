@@ -2,7 +2,25 @@
 
 Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
 
-> Хронология с `v3.8.0` по `v3.32.2` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`54` основных / `62` всего ESM-модуля ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `12` навыков и `36` наборов автотестов).
+> Хронология с `v3.8.0` по `v3.33.0` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`55` основных / `63` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `12` навыков и `37` наборов автотестов).
+
+---
+
+## [3.33.0] — 2026-11-24
+
+### Добавлено (Интерактивная «Карта проекта» — фазы 1–3)
+- **Ядро графа и In-RAM MCP ([core/project-graph-builder.mjs](core/project-graph-builder.mjs), [core/ram-memory-mcp.mjs](core/ram-memory-mcp.mjs))**:
+  - Построитель графа зависимостей с итеративным детектором циклов Tarjan SCC (`detectImportCyclesTarjan`), поиском изолированных файлов (`detectOrphanFiles`), картой влияния на тесты (`testFilesByTarget`), оценкой бюджета токенов (`estimateNodeTokens`), графом AST-символов файла (`buildFileSymbolGraphPayload`), парсером git churn (`parseGitChurnOutput`) и агрегацией семантических совпадений (`aggregateSemanticGraphHits`).
+  - Добавлены 4 IPC-маршрута в RAM-демоне: `/graph/project-map`, `/graph/path`, `/graph/symbols` и `/graph/semantic-search`.
+- **Бэкенд панели и автономное окно ([sidecars/panel/server.mjs](sidecars/panel/server.mjs))**:
+  - Добавлены 7 API-маршрутов: `/api/project-graph`, `/api/project-graph/path`, `/api/project-graph/git-diff`, `/api/project-graph/symbols`, `/api/project-graph/git-churn`, `/api/project-graph/semantic-search` и `/api/project-graph/open-window`, а также поддержка автономного окна `?view=graph`.
+- **Интерактивный UI карты проекта ([sidecars/panel/ui-src/js/07-project-graph.js](sidecars/panel/ui-src/js/07-project-graph.js), [07b-project-graph-lenses.js](sidecars/panel/ui-src/js/07b-project-graph-lenses.js), [07c-project-graph-visuals.js](sidecars/panel/ui-src/js/07c-project-graph-visuals.js), [07d-project-graph-spatial.js](sidecars/panel/ui-src/js/07d-project-graph-spatial.js), [head-body.html](sidecars/panel/ui-src/head-body.html), [styles.css](sidecars/panel/ui-src/styles.css), [00-i18n.js](sidecars/panel/ui-src/js/00-i18n.js), [sidecars/panel/ui.html](sidecars/panel/ui.html))**:
+  - `07-project-graph.js`: уровни детализации «Папки / Файлы / Символы», раскладки «Слои» (Sugiyama) и «Облако» (Force), режимы «Глобальный / Локальный» (1–3 хопа), кластерные острова (Convex Hull), drill-down по папкам, сплит-инспектор («Blast / Импорты / Обзор / Файлы»), адаптивные тултипы с переворотом у края экрана, синхронизация тёмной/светлой тем и живой `EN / RU` перевод.
+  - `07b-project-graph-lenses.js`: 5 инженерных линз («Архитектура», «Blast & Diff» с волной 1–3 хопа и живым `git diff`, «Циклы» Tarjan SCC + сироты, «Hotspots» churn × связность, «Путь A→B» по `Shift+клик`) и контекстная корзина с подсчётом токенов и отправкой пакета `@file:` в Smart Composer.
+  - `07c-project-graph-visuals.js`: Edge Bundling по подсистемам, интерактивная миникарта, граф AST-символов, смысловой GPU-поиск (`Ollama` / лексический фолбэк), экспорт в Mermaid (`MMD`) и PNG.
+  - `07d-project-graph-spatial.js`: поддержка мега-масштаба (5k–25k узлов) на базе пространственного квадранта Barnes-Hut `O(N log N)` и нуль-зависимого WebGL2 Instanced Renderer (авто-включение от `>=1200` узлов или вручную).
+- **Автотесты и документация ([tests/project-graph-panel.test.mjs](tests/project-graph-panel.test.mjs), [README.md](README.md))**:
+  - Добавлен набор из 9 комплексных тестов: проверка сборки и CSP, API/IPC-контракты, автономный запуск `?view=graph`, линзы, AST-символы, git churn, GPU-поиск, экспорт, стресс-тест 5k узлов Barnes-Hut/WebGL2 и E2E UX-полировка; актуализированы счётчики проекта (`55`/`63` модулей ядра, `37` наборов тестов).
 
 ---
 

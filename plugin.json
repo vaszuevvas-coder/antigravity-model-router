@@ -1,8 +1,8 @@
 {
   "name": "antigravity-model-router",
   "displayName": "The Tunnel · AI Model Router",
-  "version": "3.32.2",
-  "description": "The Tunnel v3.32.2 — intelligent 3D AI autopilot and model router: multi-threaded CPU coprocessor (node:worker_threads up to 64 threads, trigram+BM25F index, Zero-VRAM CPU Cross-Reranker <15 ms, parallel verification/ddmin), 3D task tensor (Breadth × Depth × Risk), Bayesian v2 (14d + risk), In-RAM cache (up to 32 GB) + GPU (gemma4:12b + qwen3-embedding:0.6b, MRL-512 i8bin-v2), and interactive control panel.",
+  "version": "3.33.0",
+  "description": "The Tunnel v3.33.0 — intelligent 3D AI autopilot and model router: multi-threaded CPU coprocessor (node:worker_threads up to 64 threads, trigram+BM25F index, Zero-VRAM CPU Cross-Reranker <15 ms, parallel verification/ddmin), 3D task tensor (Breadth × Depth × Risk), Bayesian v2 (14d + risk), In-RAM cache (up to 32 GB) + GPU (gemma4:12b + qwen3-embedding:0.6b, MRL-512 i8bin-v2), and interactive control panel.",
   "author": {
     "name": "Vasili Zuev",
     "url": "https://github.com/vaszuevvas-coder"

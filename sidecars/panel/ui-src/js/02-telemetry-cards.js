@@ -1811,6 +1811,11 @@
       wizDraft.panelTheme = valid;
       wizThemePreviewDirty = false;
       document.body.setAttribute('data-panel-theme', valid);
+      if (typeof pgState !== 'undefined' && pgState.open) {
+        if (typeof pgRenderClusterPills === 'function') pgRenderClusterPills();
+        if (typeof pgRenderInspector === 'function') pgRenderInspector();
+        if (typeof pgDrawGraph === 'function') pgDrawGraph();
+      }
       void updateState({ panelTheme: valid });
     }
 

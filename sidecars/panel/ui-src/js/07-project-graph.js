@@ -1,0 +1,3270 @@
+    // =========================================================================
+    // 07. INTERACTIVE PROJECT GRAPH (OBSIDIAN GRAPH + SPLIT INSPECTOR)
+    // =========================================================================
+    const PG_CLUSTER_PALETTE_DARK = [
+      '#0a84ff', '#30d158', '#ff9f0a', '#bf5af2',
+      '#64d2ff', '#ff375f', '#ffd60a', '#5e5ce6',
+      '#32ade6', '#ac8e68'
+    ];
+    const PG_CLUSTER_PALETTE_LIGHT = [
+      '#0284c7', '#16a34a', '#ea580c', '#9333ea',
+      '#0d9488', '#dc2626', '#d97706', '#4f46e5',
+      '#2563eb', '#b45309'
+    ];
+
+    const pgState = {
+      open: false,
+      loading: false,
+      mode: 'global', // 'global' | 'local'
+      viewLevel: 'folders', // 'folders' | 'files'
+      layoutMode: 'layered', // 'layered' | 'force'
+      showHulls: true,
+      drillFolder: '',
+      focusFile: '',
+      depth: 2,
+      includeTests: false,
+      includeDocs: true,
+      showLabels: true,
+      searchQuery: '',
+      activeClusterId: '',
+      inspectorTab: 'blast', // 'blast' | 'imports' | 'overview' | 'files'
+      selectedNodeId: '',
+      hoveredNodeId: '',
+      rawGraphData: null,
+      graphData: null,
+      nodes: [],
+      nodeById: new Map(),
+      edges: [],
+      inNeighbors: new Map(),
+      outNeighbors: new Map(),
+      clusterColors: new Map(),
+      layeredColumns: [],
+      alpha: 0,
+      rafId: 0,
+      width: 0,
+      height: 0,
+      dpr: 1,
+      camX: 0,
+      camY: 0,
+      camScale: 1,
+      dragMode: '', // '' | 'pan' | 'node'
+      dragNode: null,
+      dragMoved: false,
+      lastClientX: 0,
+      lastClientY: 0,
+      resizeObserver: null,
+      bound: false,
+      fetchSeq: 0,
+      lens: 'arch', // 'arch' | 'blast' | 'cycles' | 'path'
+      blastUseGitDiff: false,
+      blastWaveMap: new Map(),
+      blastFileWaveMap: new Map(),
+      blastByHop: { 0: [], 1: [], 2: [], 3: [] },
+      blastAffectedTests: [],
+      blastEstTokens: 0,
+      gitDiffFiles: [],
+      gitDiffSet: new Set(),
+      gitDiffAvailable: true,
+      gitDiffLoaded: false,
+      gitDiffLoading: false,
+      cycles: [],
+      cycleNodeSet: new Set(),
+      cycleEdgeSet: new Set(),
+      macroCycleNodeSet: new Set(),
+      macroCycleEdgeSet: new Set(),
+      activeCycleIdx: -1,
+      activeCycleNodeSet: new Set(),
+      activeCycleEdgeSet: new Set(),
+      orphanSet: new Set(),
+      pathFrom: '',
+      pathTo: '',
+      pathResult: null,
+      pathLoading: false,
+      pathFileSequence: [],
+      pathNodeSet: new Set(),
+      pathEdgeSet: new Set(),
+      contextCart: new Set(),
+      edgeBundling: true,
+      showMinimap: true,
+      minimapRect: null,
+      symbolFile: '',
+      symbolGraphData: null,
+      symbolLoading: false,
+      symbolReturnLevel: 'files',
+      churnDays: 90,
+      churnLoaded: false,
+      churnLoading: false,
+      churnSeq: 0,
+      churnAvailable: true,
+      churnMax: 0,
+      churnByFile: {},
+      hotspotScoreMap: new Map(),
+      hotspotRankList: [],
+      semanticSearchEnabled: false,
+      semanticLoading: false,
+      semanticMode: '',
+      semanticQuery: '',
+      semanticScores: new Map(),
+      semanticTimer: 0,
+      semanticSeq: 0,
+      maxNodes: 220,
+      renderMode: 'auto', // 'auto' | 'webgl2' | '2d'
+      webglActive: false,
+      spatialTree: null
+    };
+
+    function pgIsLightTheme() {
+      return document.body && document.body.getAttribute('data-panel-theme') === 'studio_titanium';
+    }
+
+    function pgPrefersReducedMotion() {
+      try {
+        return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+      } catch {
+        return false;
+      }
+    }
+
+    function pgGetClusterPalette() {
+      return pgIsLightTheme() ? PG_CLUSTER_PALETTE_LIGHT : PG_CLUSTER_PALETTE_DARK;
+    }
+
+    function pgGetClusterColor(clusterId) {
+      if (!clusterId) return pgGetClusterPalette()[0];
+      let idx = pgState.clusterColors.get(clusterId);
+      if (idx === undefined) {
+        idx = pgState.clusterColors.size;
+        pgState.clusterColors.set(clusterId, idx);
+      }
+      const pal = pgGetClusterPalette();
+      return pal[idx % pal.length];
+    }
+
+    function pgSyncCanvasSize() {
+      const stage = document.getElementById('pgCanvasStage');
+      const canvas = document.getElementById('projectGraphCanvas');
+      if (!stage || !canvas) return false;
+      const rect = stage.getBoundingClientRect();
+      const w = Math.max(220, Math.floor(rect.width));
+      const h = Math.max(180, Math.floor(rect.height));
+      const dpr = Math.min(2.5, window.devicePixelRatio || 1);
+      if (pgState.width === w && pgState.height === h && pgState.dpr === dpr) return false;
+      pgState.width = w;
+      pgState.height = h;
+      pgState.dpr = dpr;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      const glCanvas = document.getElementById('projectGraphWebglCanvas');
+      if (glCanvas) {
+        glCanvas.width = Math.round(w * dpr);
+        glCanvas.height = Math.round(h * dpr);
+        glCanvas.style.width = w + 'px';
+        glCanvas.style.height = h + 'px';
+      }
+      return true;
+    }
+
+    function pgStopLoop() {
+      if (pgState.rafId) {
+        cancelAnimationFrame(pgState.rafId);
+        pgState.rafId = 0;
+      }
+    }
+
+    function pgHasActivePulses() {
+      const hasHoveredOrSelected = Boolean(pgState.hoveredNodeId || pgState.selectedNodeId);
+      const hasLensPulse = Boolean(
+        (pgState.lens === 'cycles' && Array.isArray(pgState.cycles) && pgState.cycles.length > 0) ||
+        (pgState.lens === 'path' && pgState.pathEdgeSet && pgState.pathEdgeSet.size > 0) ||
+        (pgState.lens === 'blast' && pgState.blastWaveMap && pgState.blastWaveMap.size > 1) ||
+        (pgState.lens === 'hotspots' && Array.isArray(pgState.hotspotRankList) && pgState.hotspotRankList.length > 0) ||
+        (pgState.semanticSearchEnabled && pgState.semanticScores && pgState.semanticScores.size > 0)
+      );
+      return Boolean(
+        pgState.open &&
+        !pgPrefersReducedMotion() &&
+        (typeof document === 'undefined' || document.visibilityState !== 'hidden') &&
+        (hasHoveredOrSelected || hasLensPulse) &&
+        pgState.edges.length > 0
+      );
+    }
+
+    function pgStartLoop(alphaBoost) {
+      if (!pgState.open) return;
+      if (pgState.layoutMode === 'layered') {
+        pgState.alpha = 0;
+        pgDrawGraph();
+        if (pgHasActivePulses() && !pgState.rafId) {
+          pgState.rafId = requestAnimationFrame(pgTickFrame);
+        } else if (!pgHasActivePulses()) {
+          pgStopLoop();
+        }
+        return;
+      }
+      if (typeof alphaBoost === 'number') {
+        pgState.alpha = Math.max(pgState.alpha, alphaBoost);
+      }
+      if (pgPrefersReducedMotion()) {
+        if (pgState.alpha > 0.02) {
+          for (let i = 0; i < 65; i++) pgStepPhysics(0.06);
+          pgState.alpha = 0;
+        }
+        pgDrawGraph();
+        return;
+      }
+      if (!pgState.rafId && (pgState.alpha >= 0.008 || pgState.dragMode === 'node' || pgHasActivePulses())) {
+        pgState.rafId = requestAnimationFrame(pgTickFrame);
+      }
+    }
+
+    function pgWorldToScreen(wx, wy) {
+      return {
+        x: (wx - pgState.camX) * pgState.camScale + pgState.width * 0.5,
+        y: (wy - pgState.camY) * pgState.camScale + pgState.height * 0.5
+      };
+    }
+
+    function pgScreenToWorld(sx, sy) {
+      return {
+        x: (sx - pgState.width * 0.5) / pgState.camScale + pgState.camX,
+        y: (sy - pgState.height * 0.5) / pgState.camScale + pgState.camY
+      };
+    }
+
+    function pgFitView() {
+      const nodes = pgState.nodes;
+      if (!nodes.length) {
+        pgState.camX = 0;
+        pgState.camY = 0;
+        pgState.camScale = 1;
+        return;
+      }
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (let i = 0; i < nodes.length; i++) {
+        const n = nodes[i];
+        if (n.x < minX) minX = n.x;
+        if (n.x > maxX) maxX = n.x;
+        if (n.y < minY) minY = n.y;
+        if (n.y > maxY) maxY = n.y;
+      }
+      const spanX = Math.max(140, (maxX - minX) + 90);
+      const spanY = Math.max(120, (maxY - minY) + 90);
+      const w = Math.max(240, pgState.width || 600);
+      const h = Math.max(200, pgState.height || 420);
+      const scale = Math.max(0.28, Math.min(2.1, Math.min(w / spanX, h / spanY) * 0.88));
+      pgState.camX = (minX + maxX) * 0.5;
+      pgState.camY = (minY + maxY) * 0.5;
+      pgState.camScale = scale;
+      pgDrawGraph();
+    }
+
+    function pgHashUnit(str) {
+      let h = 2166136261;
+      for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return ((h >>> 0) % 10000) / 10000;
+    }
+
+    function pgBuildSubsystemMap(rawNodes) {
+      const subdirsBySeg0 = new Map();
+      for (let i = 0; i < rawNodes.length; i++) {
+        const rel = String(rawNodes[i].id || '');
+        const parts = rel.split('/');
+        if (parts.length >= 3) {
+          const seg0 = parts[0];
+          const seg1 = parts[1];
+          let set = subdirsBySeg0.get(seg0);
+          if (!set) {
+            set = new Set();
+            subdirsBySeg0.set(seg0, set);
+          }
+          set.add(seg1);
+        }
+      }
+
+      const fileToSubsystem = new Map();
+      for (let i = 0; i < rawNodes.length; i++) {
+        const rel = String(rawNodes[i].id || '');
+        const parts = rel.split('/');
+        let key = 'root';
+        if (parts.length === 2) {
+          key = parts[0];
+        } else if (parts.length >= 3) {
+          const seg0 = parts[0];
+          const subSet = subdirsBySeg0.get(seg0);
+          key = (subSet && subSet.size >= 1 && subSet.size <= 5) ? (seg0 + '/' + parts[1]) : seg0;
+        }
+        fileToSubsystem.set(rel, key);
+      }
+      return fileToSubsystem;
+    }
+
+    function pgBuildMacroGraph(rawData) {
+      const rawNodes = Array.isArray(rawData?.nodes) ? rawData.nodes : [];
+      const rawEdges = Array.isArray(rawData?.edges) ? rawData.edges : [];
+      const fileToSubsystem = pgBuildSubsystemMap(rawNodes);
+
+      const folderAcc = new Map();
+      for (let i = 0; i < rawNodes.length; i++) {
+        const n = rawNodes[i];
+        const fKey = fileToSubsystem.get(n.id) || 'root';
+        let acc = folderAcc.get(fKey);
+        if (!acc) {
+          acc = {
+            id: 'folder:' + fKey,
+            isFolder: true,
+            folderKey: fKey,
+            label: fKey,
+            dir: fKey,
+            ext: '',
+            lines: 0,
+            symbolsCount: 0,
+            filesCount: 0,
+            godCount: 0,
+            fragileCount: 0,
+            reliabilitySum: 0,
+            internalEdges: 0,
+            clusterId: fKey,
+            clusterLabel: fKey,
+            inDeg: 0,
+            outDeg: 0,
+            inFiles: new Set(),
+            outFiles: new Set(),
+            fileIds: [],
+            topHubFile: '',
+            topHubScore: -1,
+            isGod: false,
+            isTest: false,
+            isFragile: false,
+            reliabilityPercent: 100,
+            hop: -1
+          };
+          folderAcc.set(fKey, acc);
+        }
+        acc.filesCount += 1;
+        acc.lines += Number(n.lines || 0);
+        acc.symbolsCount += Number(n.symbolsCount || 0);
+        acc.reliabilitySum += Number(n.reliabilityPercent ?? 100);
+        if (n.isGod) acc.godCount += 1;
+        if (n.isFragile) acc.fragileCount += 1;
+        acc.fileIds.push(n.id);
+        const hubScore = Number(n.inDeg || 0) * 3 + Number(n.outDeg || 0) + (n.isGod ? 20 : 0);
+        if (hubScore > acc.topHubScore) {
+          acc.topHubScore = hubScore;
+          acc.topHubFile = n.id;
+        }
+      }
+
+      const edgeMap = new Map();
+      for (let i = 0; i < rawEdges.length; i++) {
+        const e = rawEdges[i];
+        const sKey = fileToSubsystem.get(e.source);
+        const tKey = fileToSubsystem.get(e.target);
+        if (!sKey || !tKey) continue;
+        if (sKey === tKey) {
+          const sameAcc = folderAcc.get(sKey);
+          if (sameAcc) sameAcc.internalEdges += 1;
+          continue;
+        }
+        const sFolderId = 'folder:' + sKey;
+        const tFolderId = 'folder:' + tKey;
+        const sAcc = folderAcc.get(sKey);
+        const tAcc = folderAcc.get(tKey);
+        if (sAcc) sAcc.outFiles.add(tKey);
+        if (tAcc) tAcc.inFiles.add(sKey);
+        const pairKey = sFolderId + '->' + tFolderId;
+        let rec = edgeMap.get(pairKey);
+        if (!rec) {
+          rec = { source: sFolderId, target: tFolderId, kind: e.kind === 'doc' ? 'doc' : 'import', weight: 0 };
+          edgeMap.set(pairKey, rec);
+        }
+        rec.weight += 1;
+        if (e.kind !== 'doc') rec.kind = 'import';
+      }
+
+      const macroNodes = [];
+      const clusters = [];
+      for (const acc of folderAcc.values()) {
+        acc.inDeg = acc.inFiles.size;
+        acc.outDeg = acc.outFiles.size;
+        acc.isGod = acc.godCount > 0 || acc.inDeg >= 4;
+        acc.isFragile = acc.fragileCount > 0;
+        acc.reliabilityPercent = acc.filesCount > 0 ? Math.round(acc.reliabilitySum / acc.filesCount) : 100;
+        delete acc.inFiles;
+        delete acc.outFiles;
+        delete acc.reliabilitySum;
+        delete acc.topHubScore;
+        macroNodes.push(acc);
+        clusters.push({
+          id: acc.folderKey,
+          label: acc.folderKey,
+          size: acc.filesCount,
+          shownSize: acc.filesCount,
+          hubFile: acc.topHubFile
+        });
+      }
+      clusters.sort(function (a, b) {
+        return b.size - a.size || a.label.localeCompare(b.label);
+      });
+
+      return {
+        ...rawData,
+        isMacro: true,
+        shownNodes: macroNodes.length,
+        shownEdges: edgeMap.size,
+        clusters,
+        nodes: macroNodes,
+        edges: Array.from(edgeMap.values())
+      };
+    }
+
+    function pgComputeLayeredLayout(simNodes, simEdges, isMacro) {
+      const len = simNodes.length;
+      if (len === 0) {
+        pgState.layeredColumns = [];
+        return;
+      }
+
+      const adjOut = new Map();
+      const adjIn = new Map();
+      const adjOutW = new Map();
+      const adjInW = new Map();
+      const inDegCount = new Map();
+      for (let i = 0; i < len; i++) {
+        const id = simNodes[i].id;
+        adjOut.set(id, []);
+        adjIn.set(id, []);
+        adjOutW.set(id, []);
+        adjInW.set(id, []);
+        inDegCount.set(id, 0);
+      }
+      for (let i = 0; i < simEdges.length; i++) {
+        const e = simEdges[i];
+        const sId = e.source.id;
+        const tId = e.target.id;
+        if (sId === tId) continue;
+        const ew = Math.max(1, Number(e.weight || 1));
+        adjOut.get(sId).push(tId);
+        adjIn.get(tId).push(sId);
+        adjOutW.get(sId).push({ id: tId, w: ew });
+        adjInW.get(tId).push({ id: sId, w: ew });
+        inDegCount.set(tId, (inDegCount.get(tId) || 0) + 1);
+      }
+
+      // Cycle-safe topological ranking: entries on the left (tier 0), core hubs on the right
+      const rank = new Map();
+      const queue = [];
+      for (let i = 0; i < len; i++) {
+        const n = simNodes[i];
+        rank.set(n.id, 0);
+        if ((inDegCount.get(n.id) || 0) === 0) {
+          queue.push(n.id);
+        }
+      }
+
+      let head = 0;
+      const visitedKahn = new Set();
+      while (head < queue.length) {
+        const u = queue[head++];
+        visitedKahn.add(u);
+        const uRank = rank.get(u) || 0;
+        const outs = adjOut.get(u) || [];
+        for (let i = 0; i < outs.length; i++) {
+          const v = outs[i];
+          if ((rank.get(v) || 0) <= uRank) {
+            rank.set(v, Math.min(6, uRank + 1));
+          }
+          const rem = (inDegCount.get(v) || 0) - 1;
+          inDegCount.set(v, rem);
+          if (rem === 0) queue.push(v);
+        }
+      }
+
+      // Relax remaining nodes involved in cycles (capped iterations)
+      if (visitedKahn.size < len) {
+        for (let iter = 0; iter < 12; iter++) {
+          let changed = false;
+          for (let i = 0; i < simEdges.length; i++) {
+            const sId = simEdges[i].source.id;
+            const tId = simEdges[i].target.id;
+            if (sId === tId) continue;
+            const sr = rank.get(sId) || 0;
+            const tr = rank.get(tId) || 0;
+            if (tr <= sr && sr < 6) {
+              rank.set(tId, sr + 1);
+              changed = true;
+            }
+          }
+          if (!changed) break;
+        }
+      }
+
+      // Push pure dependency sinks toward the rightmost foundation layer
+      let maxTier = 0;
+      for (const r of rank.values()) {
+        if (r > maxTier) maxTier = r;
+      }
+      if (maxTier > 0) {
+        for (let i = 0; i < len; i++) {
+          const n = simNodes[i];
+          if ((adjOut.get(n.id) || []).length === 0 && (adjIn.get(n.id) || []).length > 0) {
+            rank.set(n.id, maxTier);
+          }
+        }
+      }
+
+      const tiers = new Map();
+      for (let i = 0; i < len; i++) {
+        const n = simNodes[i];
+        const t = rank.get(n.id) || 0;
+        n._tier = t;
+        let arr = tiers.get(t);
+        if (!arr) {
+          arr = [];
+          tiers.set(t, arr);
+        }
+        arr.push(n);
+      }
+
+      const tierKeys = Array.from(tiers.keys()).sort(function (a, b) { return a - b; });
+      const colCount = tierKeys.length;
+
+      // Initial deterministic order inside each column
+      for (let k = 0; k < colCount; k++) {
+        const colNodes = tiers.get(tierKeys[k]);
+        colNodes.sort(function (a, b) {
+          return String(a.subsystemKey || a.clusterId || '').localeCompare(String(b.subsystemKey || b.clusterId || '')) ||
+            (Number(b.inDeg || 0) - Number(a.inDeg || 0)) ||
+            a.id.localeCompare(b.id);
+        });
+        for (let r = 0; r < colNodes.length; r++) colNodes[r]._rowIdx = r;
+      }
+
+      // 5-pass weighted Sugiyama barycenter sweep + adjacent transpose to minimize edge crossings
+      for (let pass = 0; pass < 5; pass++) {
+        for (let k = 1; k < colCount; k++) {
+          const colNodes = tiers.get(tierKeys[k]);
+          for (let r = 0; r < colNodes.length; r++) {
+            const ins = adjInW.get(colNodes[r].id) || [];
+            if (ins.length === 0) {
+              colNodes[r]._bary = r;
+              continue;
+            }
+            let sum = 0;
+            let wSum = 0;
+            for (let j = 0; j < ins.length; j++) {
+              const item = ins[j];
+              const pNode = pgState.nodeById.get(item.id);
+              if (pNode && pNode._tier < colNodes[r]._tier) {
+                sum += (pNode._rowIdx || 0) * item.w;
+                wSum += item.w;
+              }
+            }
+            colNodes[r]._bary = wSum > 0 ? (sum / wSum) : r;
+          }
+          colNodes.sort(function (a, b) {
+            return (a._bary - b._bary) ||
+              String(a.subsystemKey || a.clusterId || '').localeCompare(String(b.subsystemKey || b.clusterId || '')) ||
+              a.id.localeCompare(b.id);
+          });
+          for (let r = 0; r < colNodes.length; r++) colNodes[r]._rowIdx = r;
+        }
+        for (let k = colCount - 2; k >= 0; k--) {
+          const colNodes = tiers.get(tierKeys[k]);
+          for (let r = 0; r < colNodes.length; r++) {
+            const outs = adjOutW.get(colNodes[r].id) || [];
+            if (outs.length === 0) {
+              colNodes[r]._bary = r;
+              continue;
+            }
+            let sum = 0;
+            let wSum = 0;
+            for (let j = 0; j < outs.length; j++) {
+              const item = outs[j];
+              const cNode = pgState.nodeById.get(item.id);
+              if (cNode && cNode._tier > colNodes[r]._tier) {
+                sum += (cNode._rowIdx || 0) * item.w;
+                wSum += item.w;
+              }
+            }
+            colNodes[r]._bary = wSum > 0 ? (sum / wSum) : r;
+          }
+          colNodes.sort(function (a, b) {
+            return (a._bary - b._bary) ||
+              String(a.subsystemKey || a.clusterId || '').localeCompare(String(b.subsystemKey || b.clusterId || '')) ||
+              a.id.localeCompare(b.id);
+          });
+          for (let r = 0; r < colNodes.length; r++) colNodes[r]._rowIdx = r;
+        }
+      }
+
+      // Lightweight adjacent-pair transpose pass per column to eliminate local X-crossings
+      function pgPairCrossings(aNode, bNode) {
+        const aRow = aNode._rowIdx || 0;
+        const bRow = bNode._rowIdx || 0;
+        const aIns = adjInW.get(aNode.id) || [];
+        const bIns = adjInW.get(bNode.id) || [];
+        const aOuts = adjOutW.get(aNode.id) || [];
+        const bOuts = adjOutW.get(bNode.id) || [];
+        let cur = 0;
+        let swapped = 0;
+        for (let i = 0; i < aIns.length; i++) {
+          const pa = pgState.nodeById.get(aIns[i].id);
+          if (!pa || pa._tier >= aNode._tier) continue;
+          for (let j = 0; j < bIns.length; j++) {
+            const pb = pgState.nodeById.get(bIns[j].id);
+            if (!pb || pb._tier >= bNode._tier) continue;
+            const prDiff = (pa._rowIdx || 0) - (pb._rowIdx || 0);
+            if ((prDiff < 0 && aRow > bRow) || (prDiff > 0 && aRow < bRow)) cur += 1;
+            else if ((prDiff < 0 && bRow > aRow) || (prDiff > 0 && bRow < aRow)) swapped += 1;
+          }
+        }
+        for (let i = 0; i < aOuts.length; i++) {
+          const ca = pgState.nodeById.get(aOuts[i].id);
+          if (!ca || ca._tier <= aNode._tier) continue;
+          for (let j = 0; j < bOuts.length; j++) {
+            const cb = pgState.nodeById.get(bOuts[j].id);
+            if (!cb || cb._tier <= bNode._tier) continue;
+            const crDiff = (ca._rowIdx || 0) - (cb._rowIdx || 0);
+            if ((crDiff < 0 && aRow > bRow) || (crDiff > 0 && aRow < bRow)) cur += 1;
+            else if ((crDiff < 0 && bRow > aRow) || (crDiff > 0 && bRow < aRow)) swapped += 1;
+          }
+        }
+        return cur - swapped;
+      }
+
+      for (let k = 0; k < colCount; k++) {
+        const colNodes = tiers.get(tierKeys[k]);
+        if (colNodes.length < 2 || colNodes.length > 60) continue;
+        for (let iter = 0; iter < 3; iter++) {
+          let swappedAny = false;
+          for (let r = 0; r < colNodes.length - 1; r++) {
+            if (pgPairCrossings(colNodes[r], colNodes[r + 1]) > 0) {
+              const tmp = colNodes[r];
+              colNodes[r] = colNodes[r + 1];
+              colNodes[r + 1] = tmp;
+              colNodes[r]._rowIdx = r;
+              colNodes[r + 1]._rowIdx = r + 1;
+              swappedAny = true;
+            }
+          }
+          if (!swappedAny) break;
+        }
+      }
+
+      const colGap = isMacro ? 235 : 205;
+      const rowGap = isMacro ? 74 : (len > 80 ? 23 : 34);
+      const startX = -((colCount - 1) * colGap) * 0.5;
+      const columns = [];
+
+      for (let k = 0; k < colCount; k++) {
+        const tierId = tierKeys[k];
+        const colNodes = tiers.get(tierId);
+        const colX = startX + k * colGap;
+        const startY = -((colNodes.length - 1) * rowGap) * 0.5;
+        for (let r = 0; r < colNodes.length; r++) {
+          colNodes[r].x = colX;
+          colNodes[r].y = startY + r * rowGap;
+          colNodes[r].vx = 0;
+          colNodes[r].vy = 0;
+        }
+        let labelRu = 'Слой ' + (k + 1);
+        let labelEn = 'Layer ' + (k + 1);
+        if (k === 0 && colCount > 1) {
+          labelRu = 'Входы / UI';
+          labelEn = 'Entries / UI';
+        } else if (k === colCount - 1 && colCount > 1) {
+          labelRu = 'Ядро / Хабы';
+          labelEn = 'Core / Hubs';
+        } else if (colCount === 1) {
+          labelRu = 'Модули';
+          labelEn = 'Modules';
+        }
+        columns.push({ x: colX, count: colNodes.length, labelRu, labelEn });
+      }
+      pgState.layeredColumns = columns;
+
+      // Compute long-span bypass arcs for edges skipping intermediate tiers
+      let longArcIdx = 0;
+      for (let i = 0; i < simEdges.length; i++) {
+        const e = simEdges[i];
+        const sTier = e.source._tier || 0;
+        const tTier = e.target._tier || 0;
+        const span = Math.abs(tTier - sTier);
+        e._span = span;
+        if (span >= 2) {
+          const avgY = (e.source.y + e.target.y) * 0.5;
+          const dirSign = avgY < 0 ? -1 : 1;
+          const mag = (isMacro ? 54 : 38) + (span - 2) * 18 + (longArcIdx % 4) * 7;
+          e._bypassArc = dirSign * Math.min(140, mag);
+          longArcIdx += 1;
+        } else {
+          e._bypassArc = 0;
+        }
+      }
+    }
+
+    function pgComputeConvexHull(points) {
+      if (!points || points.length < 3) return points || [];
+      const pts = points.slice().sort(function (a, b) {
+        return a.x - b.x || a.y - b.y;
+      });
+      const cross = function (o, a, b) {
+        return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+      };
+      const lower = [];
+      for (let i = 0; i < pts.length; i++) {
+        while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], pts[i]) <= 0) {
+          lower.pop();
+        }
+        lower.push(pts[i]);
+      }
+      const upper = [];
+      for (let i = pts.length - 1; i >= 0; i--) {
+        while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], pts[i]) <= 0) {
+          upper.pop();
+        }
+        upper.push(pts[i]);
+      }
+      lower.pop();
+      upper.pop();
+      return lower.concat(upper);
+    }
+
+    function pgBuildViewDataFromRaw(rawData) {
+      if (rawData && rawData.isSymbolsView) {
+        const symNodes = Array.isArray(rawData.nodes) ? rawData.nodes.map(function (n) {
+          return { ...n, subsystemKey: n.clusterId || (n.isExternal ? 'external' : 'internal') };
+        }) : [];
+        return {
+          ...rawData,
+          isMacro: false,
+          isSymbolsView: true,
+          nodes: symNodes,
+          edges: Array.isArray(rawData.edges) ? rawData.edges : []
+        };
+      }
+      const baseNodes = Array.isArray(rawData?.nodes) ? rawData.nodes : [];
+      const baseEdges = Array.isArray(rawData?.edges) ? rawData.edges : [];
+      const fileToSubsystem = pgBuildSubsystemMap(baseNodes);
+
+      if (pgState.viewLevel === 'folders' && pgState.mode === 'global' && !pgState.drillFolder) {
+        return pgBuildMacroGraph(rawData);
+      }
+
+      if (pgState.drillFolder) {
+        const inFolder = new Set();
+        for (let i = 0; i < baseNodes.length; i++) {
+          const sub = fileToSubsystem.get(baseNodes[i].id) || 'root';
+          if (sub === pgState.drillFolder) inFolder.add(baseNodes[i].id);
+        }
+        const keepIds = new Set(inFolder);
+        for (let i = 0; i < baseEdges.length; i++) {
+          const e = baseEdges[i];
+          if (inFolder.has(e.source)) keepIds.add(e.target);
+          if (inFolder.has(e.target)) keepIds.add(e.source);
+        }
+        const filteredNodes = [];
+        const subMap = new Map();
+        for (let i = 0; i < baseNodes.length; i++) {
+          const n = baseNodes[i];
+          if (!keepIds.has(n.id)) continue;
+          const sub = fileToSubsystem.get(n.id) || 'root';
+          filteredNodes.push({ ...n, subsystemKey: sub, clusterId: sub, clusterLabel: sub });
+          if (!subMap.has(sub)) subMap.set(sub, { id: sub, label: sub, size: 0, shownSize: 0 });
+          subMap.get(sub).size += 1;
+          subMap.get(sub).shownSize += 1;
+        }
+        const filteredEdges = baseEdges.filter(function (e) {
+          return keepIds.has(e.source) && keepIds.has(e.target);
+        });
+        return {
+          ...rawData,
+          isMacro: false,
+          drillFolder: pgState.drillFolder,
+          shownNodes: filteredNodes.length,
+          shownEdges: filteredEdges.length,
+          clusters: Array.from(subMap.values()).sort(function (a, b) { return b.size - a.size; }),
+          nodes: filteredNodes,
+          edges: filteredEdges
+        };
+      }
+
+      const enrichedNodes = [];
+      const subClusters = new Map();
+      for (let i = 0; i < baseNodes.length; i++) {
+        const n = baseNodes[i];
+        const sub = fileToSubsystem.get(n.id) || 'root';
+        enrichedNodes.push({ ...n, subsystemKey: sub, clusterId: sub, clusterLabel: sub });
+        if (!subClusters.has(sub)) subClusters.set(sub, { id: sub, label: sub, size: 0, shownSize: 0 });
+        subClusters.get(sub).size += 1;
+        subClusters.get(sub).shownSize += 1;
+      }
+      return {
+        ...rawData,
+        isMacro: false,
+        clusters: Array.from(subClusters.values()).sort(function (a, b) { return b.size - a.size; }),
+        nodes: enrichedNodes,
+        edges: baseEdges
+      };
+    }
+
+    function pgHydrateSimulation(rawOrViewData) {
+      const data = pgBuildViewDataFromRaw(rawOrViewData);
+      pgState.graphData = data;
+      pgState.clusterColors.clear();
+      pgState.layeredColumns = [];
+      const rawNodes = Array.isArray(data?.nodes) ? data.nodes : [];
+      const rawEdges = Array.isArray(data?.edges) ? data.edges : [];
+      const clusters = Array.isArray(data?.clusters) ? data.clusters : [];
+
+      const clusterCenter = new Map();
+      const cCount = Math.max(1, clusters.length);
+      for (let i = 0; i < clusters.length; i++) {
+        const ang = (i / cCount) * Math.PI * 2 - Math.PI * 0.5;
+        const rad = cCount > 1 ? 220 : 0;
+        clusterCenter.set(clusters[i].id, {
+          x: Math.cos(ang) * rad,
+          y: Math.sin(ang) * rad
+        });
+        pgGetClusterColor(clusters[i].id);
+      }
+
+      const simNodes = [];
+      const nodeById = new Map();
+      for (let i = 0; i < rawNodes.length; i++) {
+        const rn = rawNodes[i];
+        const cc = clusterCenter.get(rn.clusterId) || { x: 0, y: 0 };
+        const angle = pgHashUnit(rn.id + '#a') * Math.PI * 2;
+        const dist = rn.hop === 0
+          ? 0
+          : (rn.hop > 0 ? rn.hop * 110 : (30 + pgHashUnit(rn.id + '#d') * 110));
+        const radius = rn.isFolder
+          ? Math.max(12, Math.min(20, 12 + Math.sqrt(Number(rn.filesCount || 1)) * 1.4))
+          : Math.max(3.0, Math.min(9.0, 3.0 + Math.sqrt(Number(rn.inDeg || 0)) * 1.1 + (rn.isGod ? 1.4 : 0)));
+        const node = {
+          ...rn,
+          radius,
+          x: rn.hop === 0 ? 0 : (cc.x + Math.cos(angle) * dist),
+          y: rn.hop === 0 ? 0 : (cc.y + Math.sin(angle) * dist),
+          vx: 0,
+          vy: 0,
+          anchorX: cc.x,
+          anchorY: cc.y,
+          fx: null,
+          fy: null
+        };
+        simNodes.push(node);
+        nodeById.set(node.id, node);
+      }
+
+      const simEdges = [];
+      const inNeighbors = new Map();
+      const outNeighbors = new Map();
+      const edgePairSet = new Set();
+      for (let i = 0; i < rawEdges.length; i++) {
+        const re = rawEdges[i];
+        if (re?.source && re?.target && re.source !== re.target) {
+          edgePairSet.add(re.source + '->' + re.target);
+        }
+      }
+      for (let i = 0; i < rawEdges.length; i++) {
+        const re = rawEdges[i];
+        const sNode = nodeById.get(re.source);
+        const tNode = nodeById.get(re.target);
+        if (!sNode || !tNode) continue;
+        const kind = re.kind === 'doc' ? 'doc' : 'import';
+        const weight = Math.max(1, Number(re.weight || 1));
+        const isBidir = edgePairSet.has(tNode.id + '->' + sNode.id);
+        const phase = pgHashUnit(sNode.id + '->' + tNode.id);
+        simEdges.push({ source: sNode, target: tNode, kind, weight, _isBidir: isBidir, _phase: phase });
+        if (!outNeighbors.has(sNode.id)) outNeighbors.set(sNode.id, []);
+        outNeighbors.get(sNode.id).push({ id: tNode.id, kind, weight });
+        if (!inNeighbors.has(tNode.id)) inNeighbors.set(tNode.id, []);
+        inNeighbors.get(tNode.id).push({ id: sNode.id, kind, weight });
+      }
+
+      pgState.nodes = simNodes;
+      pgState.nodeById = nodeById;
+      pgState.edges = simEdges;
+      pgState.inNeighbors = inNeighbors;
+      pgState.outNeighbors = outNeighbors;
+      pgState.hoveredNodeId = '';
+
+      if (pgState.activeClusterId && !clusters.some(function (c) { return c.id === pgState.activeClusterId; })) {
+        pgState.activeClusterId = '';
+      }
+
+      if (data?.focus && nodeById.has(data.focus)) {
+        pgState.selectedNodeId = data.focus;
+      } else if (pgState.selectedNodeId && nodeById.has(pgState.selectedNodeId)) {
+        // Keep current selection when still in graph
+      } else if (simNodes.length > 0) {
+        const godFirst = simNodes.find(function (n) { return n.isGod; }) || simNodes[0];
+        pgState.selectedNodeId = godFirst.id;
+      } else {
+        pgState.selectedNodeId = '';
+      }
+
+      if (pgState.layoutMode === 'layered') {
+        pgComputeLayeredLayout(simNodes, simEdges, Boolean(data?.isMacro));
+        pgState.alpha = 0;
+        pgStopLoop();
+      } else {
+        const preSteps = simNodes.length >= 1000
+          ? Math.min(80, Math.max(24, Math.round(92 - simNodes.length * 0.012)))
+          : Math.min(110, Math.max(45, Math.round(130 - simNodes.length * 0.2)));
+        for (let s = 0; s < preSteps; s++) {
+          pgStepPhysics(0.085 * (1 - s / (preSteps + 12)));
+        }
+        pgState.alpha = pgPrefersReducedMotion() ? 0 : 0.32;
+      }
+
+      pgState.spatialTree = typeof pgBuildQuadtree === 'function' ? pgBuildQuadtree(simNodes) : null;
+      pgFitView();
+      if (typeof pgRefreshLensState === 'function') {
+        pgRefreshLensState();
+      }
+      pgRenderToolbarAndStats();
+      pgRenderClusterPills();
+      pgRenderInspector();
+      pgStartLoop(pgState.alpha);
+    }
+
+    function pgStepPhysics(alpha) {
+      const nodes = pgState.nodes;
+      const edges = pgState.edges;
+      const len = nodes.length;
+      if (len === 0) return;
+
+      const repulseK = len > 1000 ? 1200 : (len > 140 ? 1500 : 1850);
+      if (len >= 60 && typeof pgBuildQuadtree === 'function' && typeof pgApplyBarnesHutRepulsion === 'function') {
+        const tree = pgBuildQuadtree(nodes);
+        pgState.spatialTree = tree;
+        const theta = len > 1800 ? 0.85 : 0.72;
+        for (let i = 0; i < len; i++) {
+          const a = nodes[i];
+          const pullCenter = a.hop === 0 ? 0.08 : 0.012;
+          a.vx += (a.anchorX * 0.25 - a.x) * pullCenter * alpha;
+          a.vy += (a.anchorY * 0.25 - a.y) * pullCenter * alpha;
+          pgApplyBarnesHutRepulsion(tree, a, theta, repulseK, alpha);
+        }
+      } else {
+        for (let i = 0; i < len; i++) {
+          const a = nodes[i];
+          // Center & cluster gravity
+          const pullCenter = a.hop === 0 ? 0.08 : 0.012;
+          a.vx += (a.anchorX * 0.25 - a.x) * pullCenter * alpha;
+          a.vy += (a.anchorY * 0.25 - a.y) * pullCenter * alpha;
+
+          for (let j = i + 1; j < len; j++) {
+            const b = nodes[j];
+            let dx = b.x - a.x;
+            let dy = b.y - a.y;
+            let distSq = dx * dx + dy * dy;
+            if (distSq < 1) {
+              dx = 0.7;
+              dy = 0.7;
+              distSq = 1;
+            }
+            if (distSq > 95000) continue;
+            const dist = Math.sqrt(distSq);
+            const minSep = a.radius + b.radius + 22;
+            const overlapBoost = dist < minSep ? (minSep - dist) * 0.22 : 0;
+            const force = ((repulseK / distSq) * alpha) + overlapBoost * alpha;
+            const fx = (dx / dist) * force;
+            const fy = (dy / dist) * force;
+            a.vx -= fx;
+            a.vy -= fy;
+            b.vx += fx;
+            b.vy += fy;
+          }
+        }
+      }
+
+      for (let e = 0; e < edges.length; e++) {
+        const edge = edges[e];
+        const a = edge.source;
+        const b = edge.target;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const targetDist = edge.kind === 'doc' ? 150 : 112;
+        const strength = edge.kind === 'doc' ? 0.045 : 0.095;
+        const f = ((dist - targetDist) / dist) * strength * alpha;
+        const fx = dx * f;
+        const fy = dy * f;
+        a.vx += fx;
+        a.vy += fy;
+        b.vx -= fx;
+        b.vy -= fy;
+      }
+
+      const damping = 0.82;
+      for (let i = 0; i < len; i++) {
+        const n = nodes[i];
+        if (n.fx !== null && n.fy !== null) {
+          n.x = n.fx;
+          n.y = n.fy;
+          n.vx = 0;
+          n.vy = 0;
+          continue;
+        }
+        n.vx *= damping;
+        n.vy *= damping;
+        const speed = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
+        if (speed > 18) {
+          n.vx = (n.vx / speed) * 18;
+          n.vy = (n.vy / speed) * 18;
+        }
+        n.x += n.vx;
+        n.y += n.vy;
+      }
+    }
+
+    function pgTickFrame() {
+      pgState.rafId = 0;
+      if (!pgState.open) return;
+      const hasPhysics = pgState.layoutMode !== 'layered' && (pgState.alpha >= 0.008 || pgState.dragMode === 'node');
+      if (hasPhysics) {
+        const stepAlpha = pgState.dragMode === 'node' ? Math.max(0.08, pgState.alpha) : pgState.alpha;
+        pgStepPhysics(stepAlpha);
+        pgState.alpha *= 0.965;
+        if (pgState.alpha < 0.008 && pgState.dragMode !== 'node') {
+          pgState.alpha = 0;
+        }
+      }
+      pgDrawGraph();
+      if (
+        (pgState.layoutMode !== 'layered' && (pgState.alpha > 0 || pgState.dragMode === 'node')) ||
+        pgHasActivePulses()
+      ) {
+        pgState.rafId = requestAnimationFrame(pgTickFrame);
+      }
+    }
+
+    function pgEvalEdgePoint(geom, t) {
+      const clamped = t < 0 ? 0 : (t > 1 ? 1 : t);
+      if (geom.isCubic) {
+        const u = 1 - clamped;
+        const u2 = u * u;
+        const t2 = clamped * clamped;
+        return {
+          x: u2 * u * geom.sx + 3 * u2 * clamped * geom.cp1x + 3 * u * t2 * geom.cp2x + t2 * clamped * geom.tx,
+          y: u2 * u * geom.sy + 3 * u2 * clamped * geom.cp1y + 3 * u * t2 * geom.cp2y + t2 * clamped * geom.ty
+        };
+      }
+      if (geom.isQuad) {
+        const u = 1 - clamped;
+        return {
+          x: u * u * geom.sx + 2 * u * clamped * geom.cx + clamped * clamped * geom.tx,
+          y: u * u * geom.sy + 2 * u * clamped * geom.cy + clamped * clamped * geom.ty
+        };
+      }
+      return {
+        x: geom.sx + (geom.tx - geom.sx) * clamped,
+        y: geom.sy + (geom.ty - geom.sy) * clamped
+      };
+    }
+
+    function pgNodeMatchesFilters(node) {
+      if (pgState.activeClusterId && node.clusterId !== pgState.activeClusterId) {
+        return false;
+      }
+      const q = pgState.searchQuery.trim().toLowerCase();
+      if (q) {
+        const directTextMatch = node.id.toLowerCase().indexOf(q) !== -1 || node.label.toLowerCase().indexOf(q) !== -1;
+        if (directTextMatch) return true;
+        if (pgState.semanticSearchEnabled && pgState.semanticScores && pgState.semanticScores.size > 0) {
+          if (pgState.semanticScores.has(node.id)) return true;
+          if (node.isSymbol && node.file && pgState.semanticScores.has(node.file)) return true;
+          if (node.isFolder && Array.isArray(node.fileIds) && node.fileIds.some(function (fid) { return pgState.semanticScores.has(fid); })) {
+            return true;
+          }
+        }
+        return false;
+      }
+      return true;
+    }
+
+    function pgGetNodeScreenRadius(node, scale) {
+      const base = (node && Number(node.radius)) ? Number(node.radius) : 4.2;
+      const s = Number(scale) || 1;
+      if (s <= 1) {
+        return Math.max(2.0, base * Math.pow(Math.max(0.1, s), 0.25));
+      }
+      // Shrink screen-space dot radius gently as zoom increases so zoomed views stay crisp & airy
+      const minR = (node && node.isGod) ? 3.8 : 2.2;
+      return Math.max(minR, base / (1 + (s - 1) * 0.30));
+    }
+
+    function pgDrawRoundedRectPath(ctx, x, y, width, height, radius) {
+      const r = Math.min(radius, width * 0.5, height * 0.5);
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + width - r, y);
+      ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+      ctx.lineTo(x + width, y + height - r);
+      ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+      ctx.lineTo(x + r, y + height);
+      ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    function pgDrawGraph() {
+      const canvas = document.getElementById('projectGraphCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      const w = pgState.width || 600;
+      const h = pgState.height || 420;
+      const dpr = pgState.dpr || 1;
+      const scale = pgState.camScale || 1;
+      const isLight = pgIsLightTheme();
+      const isLayered = pgState.layoutMode === 'layered';
+      const isMacro = Boolean(pgState.graphData?.isMacro);
+
+      ctx.save();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+
+      const nodes = pgState.nodes;
+      const edges = pgState.edges;
+      if (!nodes.length) {
+        ctx.restore();
+        return;
+      }
+
+      const activeId = pgState.hoveredNodeId || pgState.selectedNodeId || '';
+      const activeNeighbors = new Set();
+      if (activeId) {
+        activeNeighbors.add(activeId);
+        const ins = pgState.inNeighbors.get(activeId) || [];
+        const outs = pgState.outNeighbors.get(activeId) || [];
+        for (let i = 0; i < ins.length; i++) activeNeighbors.add(ins[i].id);
+        for (let i = 0; i < outs.length; i++) activeNeighbors.add(outs[i].id);
+      }
+
+      const rawQuery = pgState.searchQuery.trim();
+      const hasSearch = Boolean(rawQuery);
+      const hasQueryOrCluster = Boolean(rawQuery || pgState.activeClusterId);
+      const lens = pgState.lens || 'arch';
+      const hasBlastWave = lens === 'blast' && pgState.blastWaveMap && pgState.blastWaveMap.size > 0;
+      const hasCycleLens = lens === 'cycles';
+      const activeCycleNodes = hasCycleLens
+        ? (pgState.activeCycleIdx >= 0 && pgState.activeCycleNodeSet && pgState.activeCycleNodeSet.size > 0
+            ? pgState.activeCycleNodeSet
+            : (isMacro ? pgState.macroCycleNodeSet : pgState.cycleNodeSet))
+        : null;
+      const activeCycleEdges = hasCycleLens
+        ? (pgState.activeCycleIdx >= 0 && pgState.activeCycleEdgeSet && pgState.activeCycleEdgeSet.size > 0
+            ? pgState.activeCycleEdgeSet
+            : (isMacro ? pgState.macroCycleEdgeSet : pgState.cycleEdgeSet))
+        : null;
+      const hasActiveCycleHighlight = Boolean(hasCycleLens && activeCycleEdges && activeCycleEdges.size > 0);
+      const hasPathLens = lens === 'path' && Boolean(
+        (pgState.pathNodeSet && pgState.pathNodeSet.size > 0) || pgState.pathFrom
+      );
+      const hasPathHighlight = Boolean(lens === 'path' && pgState.pathEdgeSet && pgState.pathEdgeSet.size > 0);
+      const hasHotspotsLens = lens === 'hotspots' && pgState.hotspotScoreMap && pgState.hotspotScoreMap.size > 0;
+      const hasSemanticHeat = Boolean(pgState.semanticSearchEnabled && pgState.semanticScores && pgState.semanticScores.size > 0);
+      const isSymbolsView = Boolean(pgState.graphData?.isSymbolsView || pgState.viewLevel === 'symbols');
+      const lodTier = scale < 0.55 ? 0 : (scale < 1.35 ? 1 : 2);
+      const bundleCentroids = (pgState.edgeBundling && typeof pgComputeBundleCentroids === 'function')
+        ? pgComputeBundleCentroids(nodes, isLayered)
+        : null;
+      const halfW = w * 0.5;
+      const halfH = h * 0.5;
+
+      // Project nodes into screen space once per frame
+      const cardScale = scale < 0.7 ? Math.max(0.58, scale / 0.7) : (scale > 2.0 ? Math.max(0.76, 1 / (1 + (scale - 2) * 0.12)) : 1);
+      for (let i = 0; i < nodes.length; i++) {
+        const n = nodes[i];
+        n._sx = (n.x - pgState.camX) * scale + halfW;
+        n._sy = (n.y - pgState.camY) * scale + halfH;
+        if (n.isFolder) {
+          const textW = Math.min(138, Math.max(82, String(n.label || '').length * 6.3 + 28));
+          n._bw = Math.round(textW * cardScale);
+          n._bh = Math.round(36 * cardScale);
+          n._sr = n._bw * 0.5;
+          n._inView = n._sx >= -120 && n._sx <= w + 120 && n._sy >= -90 && n._sy <= h + 90;
+        } else {
+          n._bw = 0;
+          n._bh = 0;
+          n._sr = pgGetNodeScreenRadius(n, scale);
+          n._inView = n._sx >= -90 && n._sx <= w + 90 && n._sy >= -90 && n._sy <= h + 90;
+        }
+      }
+
+      // Draw vertical layer columns & non-overlapping header chips when in Layered DAG mode
+      if (isLayered && pgState.layeredColumns.length > 0) {
+        const cols = pgState.layeredColumns;
+        ctx.save();
+        ctx.font = '700 9.5px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        const colScreenXs = [];
+        for (let c = 0; c < cols.length; c++) {
+          const colScreenX = (cols[c].x - pgState.camX) * scale + halfW;
+          colScreenXs.push(colScreenX);
+          if (colScreenX < -100 || colScreenX > w + 100) continue;
+          ctx.strokeStyle = isLight ? 'rgba(124, 45, 18, 0.08)' : 'rgba(255, 255, 255, 0.05)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([3, 5]);
+          ctx.beginPath();
+          ctx.moveTo(colScreenX, 26);
+          ctx.lineTo(colScreenX, h - 12);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        const colStepScreen = cols.length > 1 ? Math.abs(colScreenXs[1] - colScreenXs[0]) : 999;
+        if (cols.length > 1 && colStepScreen < 30) {
+          const midX = (colScreenXs[0] + colScreenXs[cols.length - 1]) * 0.5;
+          const summaryTxt = isRu() ? 'Входы / UI  →  Ядро / Хабы' : 'Entries / UI  →  Core / Hubs';
+          const chipW = Math.min(200, ctx.measureText(summaryTxt).width + 18);
+          pgDrawRoundedRectPath(ctx, midX - chipW * 0.5, 6, chipW, 18, 9);
+          ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.92)' : 'rgba(18, 24, 40, 0.90)';
+          ctx.fill();
+          ctx.strokeStyle = isLight ? 'rgba(124, 45, 18, 0.18)' : 'rgba(255, 255, 255, 0.14)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.fillStyle = isLight ? '#7c2d12' : 'rgba(235, 235, 245, 0.85)';
+          ctx.fillText(summaryTxt, midX, 15.5);
+        } else {
+          // Prioritize first & last layer pills, then intermediates, rejecting any overlap
+          const colOrder = [];
+          if (cols.length >= 1) colOrder.push(0);
+          if (cols.length > 1) colOrder.push(cols.length - 1);
+          for (let c = 1; c < cols.length - 1; c++) colOrder.push(c);
+
+          const placedHeaderSpans = [];
+          for (let idx = 0; idx < colOrder.length; idx++) {
+            const c = colOrder[idx];
+            const col = cols[c];
+            const colScreenX = colScreenXs[c];
+            if (colScreenX < -60 || colScreenX > w + 60) continue;
+
+            let lblText;
+            if (colStepScreen < 105) {
+              if (cols.length === 1) lblText = isRu() ? 'Модули' : 'Modules';
+              else if (c === 0) lblText = isRu() ? 'Входы' : 'Entries';
+              else if (c === cols.length - 1) lblText = isRu() ? 'Ядро' : 'Core';
+              else lblText = String(c + 1);
+            } else {
+              lblText = (isRu() ? col.labelRu : col.labelEn) + ' · ' + col.count;
+            }
+
+            const chipW = Math.min(126, ctx.measureText(lblText).width + 14);
+            const leftEdge = colScreenX - chipW * 0.5;
+            const rightEdge = colScreenX + chipW * 0.5;
+            let overlaps = false;
+            for (let p = 0; p < placedHeaderSpans.length; p++) {
+              const span = placedHeaderSpans[p];
+              if (leftEdge - 6 < span.right && rightEdge + 6 > span.left) {
+                overlaps = true;
+                break;
+              }
+            }
+            if (overlaps) continue;
+
+            placedHeaderSpans.push({ left: leftEdge, right: rightEdge });
+            pgDrawRoundedRectPath(ctx, leftEdge, 6, chipW, 18, 9);
+            ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.90)' : 'rgba(18, 24, 40, 0.88)';
+            ctx.fill();
+            ctx.strokeStyle = isLight ? 'rgba(124, 45, 18, 0.16)' : 'rgba(255, 255, 255, 0.12)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.fillStyle = isLight ? '#7c2d12' : 'rgba(235, 235, 245, 0.82)';
+            ctx.fillText(lblText, colScreenX, 15.5);
+          }
+        }
+        ctx.restore();
+      }
+
+      // Draw soft subsystem islands (Convex Hulls) in Files + Cloud mode
+      if (!isMacro && !isLayered && pgState.showHulls) {
+        const groups = new Map();
+        for (let i = 0; i < nodes.length; i++) {
+          const n = nodes[i];
+          const gk = n.subsystemKey || n.clusterId;
+          if (!gk) continue;
+          let arr = groups.get(gk);
+          if (!arr) {
+            arr = [];
+            groups.set(gk, arr);
+          }
+          arr.push({ x: n._sx, y: n._sy, node: n });
+        }
+        ctx.save();
+        ctx.font = '700 10px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const hullLabelQueue = [];
+        for (const [gk, pts] of groups.entries()) {
+          if (pts.length < 3) continue;
+          let cx = 0, cy = 0;
+          for (let i = 0; i < pts.length; i++) {
+            cx += pts[i].x;
+            cy += pts[i].y;
+          }
+          cx /= pts.length;
+          cy /= pts.length;
+          const hull = pgComputeConvexHull(pts);
+          if (hull.length < 3) continue;
+          const padded = hull.map(function (p) {
+            const dx = p.x - cx;
+            const dy = p.y - cy;
+            const d = Math.sqrt(dx * dx + dy * dy) || 1;
+            return { x: p.x + (dx / d) * 18, y: p.y + (dy / d) * 18 };
+          });
+          const col = pgGetClusterColor(gk);
+          ctx.beginPath();
+          const last = padded[padded.length - 1];
+          const first = padded[0];
+          ctx.moveTo((last.x + first.x) * 0.5, (last.y + first.y) * 0.5);
+          for (let k = 0; k < padded.length; k++) {
+            const cur = padded[k];
+            const nxt = padded[(k + 1) % padded.length];
+            ctx.quadraticCurveTo(cur.x, cur.y, (cur.x + nxt.x) * 0.5, (cur.y + nxt.y) * 0.5);
+          }
+          ctx.closePath();
+          ctx.globalAlpha = 0.08;
+          ctx.fillStyle = col;
+          ctx.fill();
+          ctx.globalAlpha = 0.32;
+          ctx.strokeStyle = col;
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([5, 4]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          let topY = Infinity;
+          for (let k = 0; k < padded.length; k++) {
+            if (padded[k].y < topY) topY = padded[k].y;
+          }
+          hullLabelQueue.push({
+            text: gk + ' · ' + pts.length,
+            count: pts.length,
+            col,
+            cx,
+            baseY: Math.max(12, topY + 10)
+          });
+        }
+        hullLabelQueue.sort(function (a, b) {
+          return b.count - a.count;
+        });
+        const placedHullLabels = [];
+        for (let hi = 0; hi < hullLabelQueue.length; hi++) {
+          const hl = hullLabelQueue[hi];
+          const tw = (typeof ctx.measureText === 'function' ? ctx.measureText(hl.text).width : hl.text.length * 6) + 10;
+          const x1 = Math.max(6, Math.min(w - tw - 6, hl.cx - tw * 0.5));
+          const x2 = x1 + tw;
+          const drawX = (x1 + x2) * 0.5;
+          const yOffsets = [0, 14, -14, 28];
+          let chosenY = null;
+          for (let oi = 0; oi < yOffsets.length; oi++) {
+            const candY = Math.max(12, Math.min(h - 18, hl.baseY + yOffsets[oi]));
+            const y1 = candY - 7;
+            const y2 = candY + 7;
+            let hit = false;
+            for (let pi = 0; pi < placedHullLabels.length; pi++) {
+              const b = placedHullLabels[pi];
+              if (x1 < b.x2 && x2 > b.x1 && y1 < b.y2 && y2 > b.y1) {
+                hit = true;
+                break;
+              }
+            }
+            if (!hit) {
+              chosenY = candY;
+              placedHullLabels.push({ x1, y1, x2, y2 });
+              break;
+            }
+          }
+          if (chosenY !== null) {
+            ctx.globalAlpha = 0.78;
+            ctx.fillStyle = hl.col;
+            ctx.fillText(hl.text, drawX, chosenY);
+          }
+        }
+        ctx.restore();
+      }
+
+      // Optional Zero-Deps WebGL2 Instanced layer for large graphs (5k-50k+ nodes)
+      const wantWebgl = typeof pgShouldUseWebglRenderer === 'function' && pgShouldUseWebglRenderer(nodes.length);
+      const renderedWebgl = Boolean(wantWebgl && typeof pgRenderWebgl2Scene === 'function' && pgRenderWebgl2Scene({
+        nodes,
+        edges,
+        w,
+        h,
+        dpr,
+        scale,
+        isLight,
+        isLayered,
+        isMacro,
+        activeId,
+        activeNeighbors,
+        hasQueryOrCluster,
+        hasBlastWave,
+        hasCycleLens,
+        activeCycleNodes,
+        activeCycleEdges,
+        hasActiveCycleHighlight,
+        hasPathLens,
+        hasPathHighlight,
+        hasHotspotsLens,
+        hasSemanticHeat
+      }));
+      pgState.webglActive = renderedWebgl;
+      if (!renderedWebgl && typeof pgHideWebglCanvas === 'function') {
+        pgHideWebglCanvas();
+      }
+
+      // Draw edges in screen space (skip background bulk in WebGL2 mode, keeping active/lens glow beams)
+      const edgeMidBadges = [];
+      const activePulseGeoms = [];
+      const edgeLoopLimit = (renderedWebgl && !activeId && !hasBlastWave && !hasActiveCycleHighlight && !hasPathHighlight) ? 0 : edges.length;
+      for (let i = 0; i < edgeLoopLimit; i++) {
+        const e = edges[i];
+        if (!e.source._inView && !e.target._inView) continue;
+        const sMatch = pgNodeMatchesFilters(e.source);
+        const tMatch = pgNodeMatchesFilters(e.target);
+        let isActiveEdge = Boolean(activeId && (e.source.id === activeId || e.target.id === activeId));
+        const edgePairKey = e.source.id + '->' + e.target.id;
+        let isLensEdge = false;
+        let lensEdgeColor = '';
+
+        if (hasBlastWave) {
+          const sHop = pgState.blastWaveMap.get(e.source.id);
+          const tHop = pgState.blastWaveMap.get(e.target.id);
+          if (sHop !== undefined && tHop !== undefined && sHop !== tHop) {
+            isLensEdge = true;
+            lensEdgeColor = typeof pgGetHopColor === 'function'
+              ? pgGetHopColor(Math.max(sHop, tHop), isLight)
+              : (isLight ? '#ea580c' : '#ff9f0a');
+          }
+        } else if (hasActiveCycleHighlight) {
+          if (activeCycleEdges.has(edgePairKey)) {
+            isLensEdge = true;
+            lensEdgeColor = isLight ? '#dc2626' : '#ff375f';
+          }
+        } else if (hasPathHighlight) {
+          if (pgState.pathEdgeSet.has(edgePairKey)) {
+            isLensEdge = true;
+            lensEdgeColor = isLight ? '#ea580c' : '#0a84ff';
+          }
+        }
+        if (renderedWebgl && !isActiveEdge && !isLensEdge) continue;
+
+        let alpha = 1;
+        if (hasBlastWave || hasActiveCycleHighlight || hasPathHighlight) {
+          if (isLensEdge) {
+            alpha = 0.96;
+            isActiveEdge = true;
+          } else if (isActiveEdge) {
+            alpha *= 0.28;
+          } else {
+            alpha *= 0.11;
+          }
+        } else if (activeId && !isActiveEdge) {
+          alpha *= 0.14;
+        }
+        if (hasQueryOrCluster && (!sMatch || !tMatch)) alpha *= 0.15;
+
+        const sx = e.source.isFolder ? (e.source._sx + (e.target._sx >= e.source._sx ? e.source._bw * 0.45 : -e.source._bw * 0.45)) : e.source._sx;
+        const sy = e.source._sy;
+        const tx = e.target.isFolder ? (e.target._sx + (e.target._sx >= e.source._sx ? -e.target._bw * 0.48 : e.target._bw * 0.48)) : e.target._sx;
+        const ty = e.target._sy;
+
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        if (e.kind === 'doc') {
+          ctx.setLineDash([4, 4]);
+        }
+        const weightWidth = isMacro ? (1.05 + Math.min(2.4, Math.log1p(e.weight || 1) * 0.75)) : 0.9;
+        let edgeStrokeColor;
+        if (isLensEdge && lensEdgeColor) {
+          edgeStrokeColor = lensEdgeColor;
+          ctx.strokeStyle = edgeStrokeColor;
+          ctx.lineWidth = Math.max(2.1, weightWidth + 0.85);
+        } else if (isActiveEdge) {
+          const isIncoming = e.target.id === activeId;
+          edgeStrokeColor = isIncoming
+            ? (isLight ? 'rgba(234, 88, 12, 0.88)' : 'rgba(100, 210, 255, 0.90)')
+            : (isLight ? 'rgba(22, 163, 74, 0.80)' : 'rgba(48, 209, 88, 0.84)');
+          ctx.strokeStyle = edgeStrokeColor;
+          ctx.lineWidth = Math.max(1.7, weightWidth + 0.45);
+        } else {
+          edgeStrokeColor = isLight ? 'rgba(124, 45, 18, 0.19)' : 'rgba(200, 215, 245, 0.18)';
+          ctx.strokeStyle = edgeStrokeColor;
+          ctx.lineWidth = weightWidth;
+        }
+
+        let ux = 1, uy = 0, tipX = tx, tipY = ty;
+        let midX = (sx + tx) * 0.5;
+        let midY = (sy + ty) * 0.5;
+        let pulseGeom = null;
+        const bundledGeom = (typeof pgComputeBundledEdgeGeom === 'function')
+          ? pgComputeBundledEdgeGeom(e, sx, sy, tx, ty, isLayered, isMacro, bundleCentroids, isActiveEdge)
+          : null;
+
+        if (bundledGeom) {
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          if (bundledGeom.isCubic) {
+            ctx.bezierCurveTo(bundledGeom.cp1x, bundledGeom.cp1y, bundledGeom.cp2x, bundledGeom.cp2y, tx, ty);
+          } else if (bundledGeom.isQuad) {
+            ctx.quadraticCurveTo(bundledGeom.cx, bundledGeom.cy, tx, ty);
+          } else {
+            ctx.lineTo(tx, ty);
+          }
+          ctx.stroke();
+          midX = bundledGeom.midX;
+          midY = bundledGeom.midY;
+          ux = bundledGeom.ux;
+          uy = bundledGeom.uy;
+          tipX = bundledGeom.tipX;
+          tipY = bundledGeom.tipY;
+          pulseGeom = {
+            ...bundledGeom,
+            color: edgeStrokeColor,
+            weight: e.weight || 1,
+            phase: e._phase || 0,
+            alpha
+          };
+        } else if (isLayered) {
+          const dxSpan = Math.max(42, Math.abs(tx - sx) * 0.48);
+          const dir = tx >= sx ? 1 : -1;
+          const bidirSign = e._isBidir ? (e.source.id < e.target.id ? -1 : 1) : 0;
+          const bidirShift = bidirSign * 16;
+          const cp1x = sx + dxSpan * dir;
+          const cp1y = sy + bidirShift;
+          const cp2x = tx - dxSpan * dir;
+          const cp2y = ty + bidirShift;
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, tx, ty);
+          ctx.stroke();
+
+          midX = 0.125 * sx + 0.375 * cp1x + 0.375 * cp2x + 0.125 * tx;
+          midY = 0.125 * sy + 0.375 * cp1y + 0.375 * cp2y + 0.125 * ty;
+          const tanX = tx - cp2x;
+          const tanY = ty - cp2y;
+          const tanLen = Math.sqrt(tanX * tanX + tanY * tanY) || 1;
+          ux = tanX / tanLen;
+          uy = tanY / tanLen;
+          const endOffset = e.target.isFolder ? 2 : (e.target._sr + 2.5);
+          tipX = tx - ux * endOffset;
+          tipY = ty - uy * endOffset;
+          pulseGeom = {
+            isCubic: true,
+            sx, sy, cp1x, cp1y, cp2x, cp2y, tx, ty,
+            color: edgeStrokeColor,
+            weight: e.weight || 1,
+            phase: e._phase || 0,
+            alpha
+          };
+        } else if (e._isBidir) {
+          const dx = tx - sx;
+          const dy = ty - sy;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const nx = -dy / dist;
+          const ny = dx / dist;
+          const cx = (sx + tx) * 0.5 + nx * 14;
+          const cy = (sy + ty) * 0.5 + ny * 14;
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.quadraticCurveTo(cx, cy, tx, ty);
+          ctx.stroke();
+
+          midX = 0.25 * sx + 0.5 * cx + 0.25 * tx;
+          midY = 0.25 * sy + 0.5 * cy + 0.25 * ty;
+          const tanX = tx - cx;
+          const tanY = ty - cy;
+          const tanLen = Math.sqrt(tanX * tanX + tanY * tanY) || 1;
+          ux = tanX / tanLen;
+          uy = tanY / tanLen;
+          const endOffset = e.target.isFolder ? 2 : (e.target._sr + 2.5);
+          tipX = tx - ux * endOffset;
+          tipY = ty - uy * endOffset;
+          pulseGeom = {
+            isQuad: true,
+            sx, sy, cx, cy, tx, ty,
+            color: edgeStrokeColor,
+            weight: e.weight || 1,
+            phase: e._phase || 0,
+            alpha
+          };
+        } else {
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(tx, ty);
+          ctx.stroke();
+
+          const dx = tx - sx;
+          const dy = ty - sy;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          ux = dx / dist;
+          uy = dy / dist;
+          const endOffset = e.target.isFolder ? 2 : (e.target._sr + 2.5);
+          tipX = tx - ux * endOffset;
+          tipY = ty - uy * endOffset;
+          pulseGeom = {
+            sx, sy, tx, ty,
+            color: edgeStrokeColor,
+            weight: e.weight || 1,
+            phase: e._phase || 0,
+            alpha
+          };
+        }
+
+        if (isActiveEdge || (lodTier > 0 && scale > 0.72) || isMacro) {
+          const arrowLen = isActiveEdge ? 6.5 : 4.5;
+          ctx.setLineDash([]);
+          ctx.fillStyle = ctx.strokeStyle;
+          ctx.beginPath();
+          ctx.moveTo(tipX, tipY);
+          ctx.lineTo(tipX - ux * arrowLen - uy * arrowLen * 0.45, tipY - uy * arrowLen + ux * arrowLen * 0.45);
+          ctx.lineTo(tipX - ux * arrowLen + uy * arrowLen * 0.45, tipY - uy * arrowLen - ux * arrowLen * 0.45);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.restore();
+
+        if (isActiveEdge && alpha > 0.18 && pulseGeom) {
+          activePulseGeoms.push(pulseGeom);
+        }
+        if (isMacro && isActiveEdge && e.weight > 1) {
+          edgeMidBadges.push({ x: midX, y: midY, text: String(e.weight), color: edgeStrokeColor });
+        }
+      }
+
+      // Draw smooth "fiber-optic" directional signal pulses along active edges
+      if (activePulseGeoms.length > 0 && !pgPrefersReducedMotion()) {
+        const nowSec = (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) * 0.001;
+        const speedPerSec = 0.42;
+        ctx.save();
+        ctx.lineCap = 'round';
+        for (let i = 0; i < activePulseGeoms.length; i++) {
+          const g = activePulseGeoms[i];
+          const packetCount = g.weight >= 10 ? 2 : 1;
+          for (let p = 0; p < packetCount; p++) {
+            const tHead = (nowSec * speedPerSec + g.phase + p * 0.5) % 1;
+            const headPt = pgEvalEdgePoint(g, tHead);
+            const segs = 5;
+            const tailSpan = 0.14;
+            for (let s = 0; s < segs; s++) {
+              const t0 = Math.max(0, tHead - tailSpan * ((segs - s) / segs));
+              const t1 = Math.max(0, tHead - tailSpan * ((segs - s - 1) / segs));
+              if (t1 <= t0) continue;
+              const p0 = pgEvalEdgePoint(g, t0);
+              const p1 = pgEvalEdgePoint(g, t1);
+              const frac = (s + 1) / segs;
+              ctx.globalAlpha = g.alpha * frac * 0.72;
+              ctx.strokeStyle = g.color;
+              ctx.lineWidth = 1.2 + frac * 1.4;
+              ctx.beginPath();
+              ctx.moveTo(p0.x, p0.y);
+              ctx.lineTo(p1.x, p1.y);
+              ctx.stroke();
+            }
+
+            // Soft outer halo + crisp bright core dot
+            ctx.globalAlpha = g.alpha * 0.28;
+            ctx.fillStyle = g.color;
+            ctx.beginPath();
+            ctx.arc(headPt.x, headPt.y, 4.4, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.globalAlpha = g.alpha * 0.96;
+            ctx.fillStyle = isLight ? '#fff7ed' : '#ffffff';
+            ctx.beginPath();
+            ctx.arc(headPt.x, headPt.y, 2.0, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        ctx.restore();
+      }
+
+      // Draw edge weight pills for active macro folder links
+      if (edgeMidBadges.length > 0) {
+        ctx.save();
+        ctx.font = '700 9px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        for (let i = 0; i < edgeMidBadges.length; i++) {
+          const b = edgeMidBadges[i];
+          const bw = Math.max(16, ctx.measureText(b.text).width + 8);
+          pgDrawRoundedRectPath(ctx, b.x - bw * 0.5, b.y - 7.5, bw, 15, 7.5);
+          ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.95)' : 'rgba(12, 16, 28, 0.95)';
+          ctx.fill();
+          ctx.strokeStyle = b.color;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.fillStyle = isLight ? '#2c1e16' : '#f5f5f7';
+          ctx.fillText(b.text, b.x, b.y + 0.5);
+        }
+        ctx.restore();
+      }
+
+      // Draw nodes (folder cards vs file dots) and collect ultra-compact label candidates
+      const showLabels = pgState.showLabels;
+      const labelCandidates = [];
+
+      for (let i = 0; i < nodes.length; i++) {
+        const n = nodes[i];
+        if (!n._inView) continue;
+        const color = pgGetClusterColor(n.clusterId);
+        const isSelected = n.id === pgState.selectedNodeId;
+        const isHovered = n.id === pgState.hoveredNodeId;
+        const isNeighbor = activeId ? activeNeighbors.has(n.id) : true;
+        const matchesFilter = pgNodeMatchesFilters(n);
+        const waveHop = hasBlastWave ? pgState.blastWaveMap.get(n.id) : undefined;
+        const isWaveNode = waveHop !== undefined;
+        const isCycleNode = Boolean(hasCycleLens && activeCycleNodes && activeCycleNodes.has(n.id));
+        const isOrphanNode = Boolean(!n.isFolder && pgState.orphanSet && pgState.orphanSet.has(n.id));
+        const isPathNode = Boolean(hasPathLens && ((pgState.pathNodeSet && pgState.pathNodeSet.has(n.id)) || n.id === pgState.pathFrom || n.id === pgState.pathTo));
+        const isPathEndpoint = Boolean(hasPathLens && (n.id === pgState.pathFrom || n.id === pgState.pathTo));
+        const isCartNode = Boolean(
+          pgState.contextCart && (
+            pgState.contextCart.has(n.id) ||
+            (n.isFolder && Array.isArray(n.fileIds) && n.fileIds.some(function (fid) { return pgState.contextCart.has(fid); }))
+          )
+        );
+        const isDiffNode = Boolean(
+          pgState.gitDiffSet && (
+            pgState.gitDiffSet.has(n.id) ||
+            (n.isFolder && Array.isArray(n.fileIds) && n.fileIds.some(function (fid) { return pgState.gitDiffSet.has(fid); }))
+          )
+        );
+        let hotspotScore = 0;
+        if (hasHotspotsLens) {
+          if (n.isFolder && Array.isArray(n.fileIds)) {
+            for (let k = 0; k < n.fileIds.length; k++) {
+              const hs = pgState.hotspotScoreMap.get(n.fileIds[k]) || 0;
+              if (hs > hotspotScore) hotspotScore = hs;
+            }
+          } else {
+            hotspotScore = pgState.hotspotScoreMap.get(n.isSymbol && n.file ? n.file : n.id) || 0;
+          }
+        }
+        let semanticScore = 0;
+        if (hasSemanticHeat) {
+          if (n.isFolder && Array.isArray(n.fileIds)) {
+            for (let k = 0; k < n.fileIds.length; k++) {
+              const ss = pgState.semanticScores.get(n.fileIds[k]) || 0;
+              if (ss > semanticScore) semanticScore = ss;
+            }
+          } else {
+            semanticScore = pgState.semanticScores.get(n.isSymbol && n.file ? n.file : n.id) || 0;
+          }
+        }
+
+        let alpha = 1;
+        if (hasBlastWave) {
+          if (!isWaveNode) alpha *= 0.16;
+        } else if (hasCycleLens && activeCycleNodes && activeCycleNodes.size > 0) {
+          if (!isCycleNode) alpha *= (isOrphanNode ? 0.55 : 0.15);
+        } else if (hasHotspotsLens) {
+          if (hotspotScore <= 0 && !isSelected && !isHovered) alpha *= 0.24;
+        } else if (hasPathLens && pgState.pathNodeSet && pgState.pathNodeSet.size > 0) {
+          if (!isPathNode) alpha *= 0.15;
+        } else if (activeId && !isNeighbor) {
+          alpha *= 0.22;
+        }
+        if (hasQueryOrCluster && !matchesFilter) alpha *= 0.18;
+
+        if (!renderedWebgl) {
+          ctx.save();
+          ctx.globalAlpha = alpha;
+
+          if (n.isFolder) {
+            const x0 = n._sx - n._bw * 0.5;
+            const y0 = n._sy - n._bh * 0.5;
+            pgDrawRoundedRectPath(ctx, x0, y0, n._bw, n._bh, 9 * cardScale);
+            ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.96)' : 'rgba(20, 26, 44, 0.94)';
+            ctx.fill();
+            let cardBorderColor = color;
+            let cardBorderWidth = 1.1;
+            if (isWaveNode && typeof pgGetHopColor === 'function') {
+              cardBorderColor = pgGetHopColor(waveHop, isLight);
+              cardBorderWidth = waveHop === 0 ? 2.4 : 1.7;
+            } else if (isCycleNode) {
+              cardBorderColor = isLight ? '#dc2626' : '#ff375f';
+              cardBorderWidth = 2.1;
+            } else if (hotspotScore > 0.15 && typeof pgGetHotspotColor === 'function') {
+              cardBorderColor = pgGetHotspotColor(hotspotScore, isLight);
+              cardBorderWidth = hotspotScore >= 0.65 ? 2.3 : 1.7;
+            } else if (semanticScore > 0.15) {
+              cardBorderColor = isLight ? '#0d9488' : '#10b981';
+              cardBorderWidth = 2.1;
+            } else if (isPathNode) {
+              cardBorderColor = isLight ? '#ea580c' : '#0a84ff';
+              cardBorderWidth = isPathEndpoint ? 2.4 : 1.8;
+            } else if (isSelected || isHovered) {
+              cardBorderColor = isLight ? '#2c1e16' : '#ffffff';
+              cardBorderWidth = 2;
+            } else if (n.isFragile) {
+              cardBorderColor = isLight ? '#dc2626' : '#ff453a';
+            }
+            ctx.lineWidth = cardBorderWidth;
+            ctx.strokeStyle = cardBorderColor;
+            ctx.stroke();
+
+            if (isCartNode) {
+              pgDrawRoundedRectPath(ctx, x0 - 2.5, y0 - 2.5, n._bw + 5, n._bh + 5, 11 * cardScale);
+              ctx.strokeStyle = isLight ? '#16a34a' : '#30d158';
+              ctx.lineWidth = 1.6;
+              ctx.stroke();
+            }
+
+            // Left subsystem color stripe
+            ctx.save();
+            pgDrawRoundedRectPath(ctx, x0, y0, n._bw, n._bh, 9 * cardScale);
+            ctx.clip();
+            ctx.fillStyle = color;
+            ctx.fillRect(x0, y0, 4 * cardScale, n._bh);
+            ctx.restore();
+
+            if (isDiffNode) {
+              ctx.beginPath();
+              ctx.arc(x0 + n._bw - 6 * cardScale, y0 + 6 * cardScale, 3.2, 0, Math.PI * 2);
+              ctx.fillStyle = isLight ? '#ea580c' : '#ff9f0a';
+              ctx.fill();
+            }
+
+            if (cardScale >= 0.62) {
+              const titleFont = Math.max(8.5, Math.round(10.5 * cardScale));
+              const subFont = Math.max(7.5, Math.round(9 * cardScale));
+              ctx.textAlign = 'left';
+              ctx.textBaseline = 'middle';
+              ctx.font = '700 ' + titleFont + 'px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
+              ctx.fillStyle = isLight ? '#2c1e16' : '#f5f5f7';
+              let titleTxt = String(n.label || '');
+              if (titleTxt.length > 18) titleTxt = titleTxt.slice(0, 17) + '…';
+              ctx.fillText(titleTxt, x0 + 9 * cardScale, n._sy - 5.5 * cardScale);
+
+              ctx.font = '500 ' + subFont + 'px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
+              ctx.fillStyle = isLight ? 'rgba(92, 52, 34, 0.78)' : 'rgba(235, 235, 245, 0.68)';
+              const metaTxt = L(n.filesCount + ' ф.', n.filesCount + ' f.') +
+                (n.godCount > 0 ? ' · ★' : '') +
+                (n.fragileCount > 0 ? ' · ⚠' : '');
+              ctx.fillText(metaTxt, x0 + 9 * cardScale, n._sy + 7 * cardScale);
+            }
+            ctx.restore();
+            continue;
+          }
+
+          if (isWaveNode && typeof pgGetHopColor === 'function') {
+            ctx.beginPath();
+            ctx.arc(n._sx, n._sy, n._sr + (waveHop === 0 ? 4.4 : 3.2), 0, Math.PI * 2);
+            ctx.strokeStyle = pgGetHopColor(waveHop, isLight);
+            ctx.lineWidth = waveHop === 0 ? 2.4 : 1.7;
+            ctx.stroke();
+          } else if (isCycleNode) {
+            ctx.beginPath();
+            ctx.arc(n._sx, n._sy, n._sr + 3.6, 0, Math.PI * 2);
+            ctx.strokeStyle = isLight ? '#dc2626' : '#ff375f';
+            ctx.lineWidth = 2.0;
+            ctx.stroke();
+          } else if (hasCycleLens && isOrphanNode) {
+            ctx.save();
+            ctx.setLineDash([2.5, 2.5]);
+            ctx.beginPath();
+            ctx.arc(n._sx, n._sy, n._sr + 3.2, 0, Math.PI * 2);
+            ctx.strokeStyle = isLight ? '#64748b' : '#94a3b8';
+            ctx.lineWidth = 1.4;
+            ctx.stroke();
+            ctx.restore();
+          } else if (isPathNode) {
+            ctx.beginPath();
+            ctx.arc(n._sx, n._sy, n._sr + (isPathEndpoint ? 4.5 : 3.2), 0, Math.PI * 2);
+            ctx.strokeStyle = isLight ? '#ea580c' : '#0a84ff';
+            ctx.lineWidth = isPathEndpoint ? 2.4 : 1.7;
+            ctx.stroke();
+          } else if (hotspotScore > 0.12 && typeof pgGetHotspotColor === 'function') {
+            ctx.beginPath();
+            ctx.arc(n._sx, n._sy, n._sr + 2.4 + hotspotScore * 3.2, 0, Math.PI * 2);
+            ctx.strokeStyle = pgGetHotspotColor(hotspotScore, isLight);
+            ctx.lineWidth = hotspotScore >= 0.65 ? 2.3 : 1.5;
+            ctx.stroke();
+          }
+
+          if (semanticScore > 0.12) {
+            ctx.beginPath();
+            ctx.arc(n._sx, n._sy, n._sr + 3.5 + semanticScore * 2.5, 0, Math.PI * 2);
+            ctx.strokeStyle = isLight ? '#0d9488' : '#10b981';
+            ctx.lineWidth = 2.0;
+            ctx.stroke();
+          }
+
+          if (n.isFragile) {
+            ctx.beginPath();
+            ctx.arc(n._sx, n._sy, n._sr + 2.5, 0, Math.PI * 2);
+            ctx.strokeStyle = isLight ? '#dc2626' : '#ff453a';
+            ctx.lineWidth = 1.6;
+            ctx.stroke();
+          }
+
+          if (isCartNode) {
+            ctx.beginPath();
+            ctx.arc(n._sx, n._sy, n._sr + 5.2, 0, Math.PI * 2);
+            ctx.strokeStyle = isLight ? '#16a34a' : '#30d158';
+            ctx.lineWidth = 1.8;
+            ctx.stroke();
+          }
+
+          if (isSelected || isHovered || n.hop === 0) {
+            ctx.beginPath();
+            ctx.arc(n._sx, n._sy, n._sr + (isSelected ? 3.8 : 2.8), 0, Math.PI * 2);
+            ctx.strokeStyle = isLight ? '#2c1e16' : '#ffffff';
+            ctx.lineWidth = isSelected ? 1.9 : 1.4;
+            ctx.stroke();
+          }
+
+          const fillNodeColor = (hotspotScore >= 0.45 && typeof pgGetHotspotColor === 'function')
+            ? pgGetHotspotColor(hotspotScore, isLight)
+            : color;
+          if (n.isSymbol && n.kind === 'class') {
+            const rs = n._sr * 1.12;
+            ctx.beginPath();
+            ctx.moveTo(n._sx, n._sy - rs);
+            ctx.lineTo(n._sx + rs, n._sy);
+            ctx.lineTo(n._sx, n._sy + rs);
+            ctx.lineTo(n._sx - rs, n._sy);
+            ctx.closePath();
+            ctx.fillStyle = fillNodeColor;
+            ctx.fill();
+          } else {
+            ctx.beginPath();
+            ctx.arc(n._sx, n._sy, n._sr, 0, Math.PI * 2);
+            ctx.fillStyle = fillNodeColor;
+            ctx.fill();
+          }
+
+          if (n.isSymbol && n.isExternal) {
+            ctx.save();
+            ctx.setLineDash([2.2, 2.2]);
+            ctx.strokeStyle = isLight ? 'rgba(44, 30, 22, 0.55)' : 'rgba(255, 255, 255, 0.55)';
+            ctx.lineWidth = 1.1;
+            ctx.stroke();
+            ctx.restore();
+          } else if (n.isGod) {
+            ctx.strokeStyle = isLight ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.78)';
+            ctx.lineWidth = 1.1;
+            ctx.stroke();
+          }
+
+          if (isDiffNode) {
+            ctx.beginPath();
+            ctx.arc(n._sx + n._sr * 0.78, n._sy - n._sr * 0.78, 2.7, 0, Math.PI * 2);
+            ctx.fillStyle = isLight ? '#ea580c' : '#ff9f0a';
+            ctx.fill();
+          }
+          ctx.restore();
+        } else if (n.isFolder) {
+          continue;
+        }
+
+        const isLensForceLabel = Boolean(
+          (hasBlastWave && waveHop === 0) ||
+          isPathEndpoint ||
+          (hasCycleLens && isCycleNode) ||
+          (hasHotspotsLens && hotspotScore >= 0.65) ||
+          (hasSemanticHeat && semanticScore >= 0.72)
+        );
+        const isAlwaysLabel = isHovered || isSelected || n.hop === 0 || isLensForceLabel;
+        const isToggleLabel = showLabels && (
+          lodTier >= 1
+            ? (n.isGod || isSymbolsView || (hasSearch && matchesFilter) || isPathNode || (hasBlastWave && waveHop === 1) || semanticScore > 0.25 || hotspotScore > 0.35 || lodTier === 2)
+            : (n.isGod || (hasSearch && matchesFilter) || semanticScore >= 0.5)
+        );
+        if ((isAlwaysLabel || isToggleLabel) && alpha > 0.25) {
+          const priority = isHovered ? 5000
+            : isSelected ? 4000
+            : isPathEndpoint ? 3600
+            : (semanticScore >= 0.7) ? (3450 + Math.round(semanticScore * 100))
+            : (hasBlastWave && waveHop === 0) ? 3400
+            : (hotspotScore >= 0.55) ? (3100 + Math.round(hotspotScore * 100))
+            : n.hop === 0 ? 3000
+            : isCycleNode ? 2500
+            : (hasSearch && matchesFilter) ? (2000 + Number(n.inDeg || 0))
+            : (1000 + Number(n.inDeg || 0));
+          let subCaption = '';
+          if (lodTier === 2) {
+            if (semanticScore > 0.2) subCaption = Math.round(semanticScore * 100) + '% GPU';
+            else if (hotspotScore > 0.2) subCaption = (pgState.churnByFile[n.id] || 0) + 'c';
+            else if (n.isSymbol && n.startLine) subCaption = ':L' + n.startLine;
+            else if (n.lines > 0) subCaption = n.lines + 'L';
+          }
+          labelCandidates.push({
+            node: n,
+            priority,
+            subCaption,
+            force: isHovered || isSelected || n.hop === 0 || isPathEndpoint || (hasBlastWave && waveHop === 0)
+          });
+        }
+      }
+
+      // Draw non-overlapping labels above all dots in crisp 10px screen font
+      if (labelCandidates.length > 0) {
+        labelCandidates.sort(function (a, b) {
+          return b.priority - a.priority;
+        });
+        ctx.save();
+        ctx.font = '600 10px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 3;
+        const outlineColor = isLight ? 'rgba(255, 248, 242, 0.92)' : 'rgba(8, 12, 22, 0.92)';
+        const fillColor = isLight ? 'rgba(44, 30, 22, 0.94)' : 'rgba(245, 245, 247, 0.94)';
+        const placedBoxes = [];
+        const maxLabelsDraw = renderedWebgl ? 160 : labelCandidates.length;
+
+        for (let i = 0; i < labelCandidates.length && placedBoxes.length < maxLabelsDraw; i++) {
+          const item = labelCandidates[i];
+          const n = item.node;
+          const tw = Math.min(180, ctx.measureText(n.label).width);
+          const lx = n._sx;
+          const ly = n._sy + n._sr + 5;
+          const box = {
+            x1: lx - tw * 0.5 - 4,
+            y1: ly - 2,
+            x2: lx + tw * 0.5 + 4,
+            y2: ly + 13
+          };
+
+          let overlaps = false;
+          if (!item.force) {
+            for (let b = 0; b < placedBoxes.length; b++) {
+              const p = placedBoxes[b];
+              if (box.x1 < p.x2 && box.x2 > p.x1 && box.y1 < p.y2 && box.y2 > p.y1) {
+                overlaps = true;
+                break;
+              }
+            }
+          }
+          if (overlaps) continue;
+
+          placedBoxes.push(box);
+          ctx.strokeStyle = outlineColor;
+          ctx.strokeText(n.label, lx, ly);
+          ctx.fillStyle = fillColor;
+          ctx.fillText(n.label, lx, ly);
+          if (item.subCaption) {
+            ctx.save();
+            ctx.font = '500 8.5px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
+            ctx.fillStyle = isLight ? 'rgba(92, 52, 34, 0.78)' : 'rgba(185, 200, 224, 0.78)';
+            ctx.fillText(item.subCaption, lx, ly + 11.5);
+            ctx.restore();
+          }
+        }
+        ctx.restore();
+      }
+
+      if (pgState.showMinimap && typeof pgDrawMinimap === 'function') {
+        pgDrawMinimap(ctx, w, h, isLight);
+      } else {
+        pgState.minimapRect = null;
+      }
+
+      ctx.restore();
+    }
+
+    function pgFindNodeAtScreen(sx, sy) {
+      const scale = pgState.camScale || 1;
+      if (pgState.nodes.length >= 100 && typeof pgFindNodeQuadtree === 'function') {
+        if (!pgState.spatialTree && typeof pgBuildQuadtree === 'function') {
+          pgState.spatialTree = pgBuildQuadtree(pgState.nodes);
+        }
+        if (pgState.spatialTree) {
+          const wPos = pgScreenToWorld(sx, sy);
+          return pgFindNodeQuadtree(pgState.spatialTree, wPos.x, wPos.y, sx, sy, scale);
+        }
+      }
+      let best = null;
+      let bestDist = Infinity;
+      for (let i = pgState.nodes.length - 1; i >= 0; i--) {
+        const n = pgState.nodes[i];
+        const pt = pgWorldToScreen(n.x, n.y);
+        if (n.isFolder && n._bw > 0 && n._bh > 0) {
+          const hw = n._bw * 0.5 + 4;
+          const hh = n._bh * 0.5 + 4;
+          const dx = sx - pt.x;
+          const dy = sy - pt.y;
+          if (Math.abs(dx) <= hw && Math.abs(dy) <= hh) {
+            const d = Math.sqrt(dx * dx + dy * dy);
+            if (d < bestDist) {
+              best = n;
+              bestDist = d;
+            }
+          }
+          continue;
+        }
+        const hitRadius = Math.max(7, pgGetNodeScreenRadius(n, scale) + 5);
+        const dx = sx - pt.x;
+        const dy = sy - pt.y;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d <= hitRadius && d < bestDist) {
+          best = n;
+          bestDist = d;
+        }
+      }
+      return best;
+    }
+
+    function pgUpdateHoverTooltip(node, sx, sy) {
+      const tip = document.getElementById('pgHoverTooltip');
+      if (!tip) return;
+      if (!node) {
+        tip.style.display = 'none';
+        return;
+      }
+      const inCount = Number(node.inDeg || 0);
+      const outCount = Number(node.outDeg || 0);
+      if (node.isFolder) {
+        tip.textContent = node.label + '  · ' + L(node.filesCount + ' файлов', node.filesCount + ' files') + '  (← ' + inCount + ' · → ' + outCount + ')';
+      } else if (node.isSymbol) {
+        tip.textContent = 'ƒ ' + node.label + ' [' + (node.kind || 'fn') + '] · ' + (node.file || '') + ':' + (node.startLine || 1) + '  (← ' + inCount + ' · → ' + outCount + ')';
+      } else {
+        const churnCnt = pgState.churnByFile && pgState.churnByFile[node.id] ? pgState.churnByFile[node.id] : 0;
+        const relStr = node.isFragile ? (' · ⚠️ ' + node.reliabilityPercent + '%') : '';
+        const churnStr = (pgState.lens === 'hotspots' && churnCnt > 0) ? (' · 🔥 ' + churnCnt + 'c') : '';
+        tip.textContent = node.id + '  (← ' + inCount + ' · → ' + outCount + relStr + churnStr + ')';
+      }
+      tip.style.left = '0px';
+      tip.style.top = '0px';
+      tip.style.display = 'block';
+      const stageW = Math.max(200, pgState.width || 400);
+      const stageH = Math.max(160, pgState.height || 300);
+      const tipW = Math.min(stageW - 20, Math.max(80, Number(tip.offsetWidth) || 260));
+      const tipH = Math.max(24, Number(tip.offsetHeight) || 28);
+      let left = sx + 12;
+      if (left + tipW > stageW - 10) {
+        left = sx - tipW - 12;
+      }
+      const maxLeft = Math.max(10, stageW - tipW - 10);
+      const maxTop = Math.max(10, stageH - tipH - 10);
+      let top = sy - tipH - 8;
+      if (top < 10) top = sy + 14;
+      tip.style.left = Math.min(maxLeft, Math.max(10, left)) + 'px';
+      tip.style.top = Math.min(maxTop, Math.max(10, top)) + 'px';
+    }
+
+    function pgRenderToolbarAndStats() {
+      const data = pgState.graphData;
+      const statsEl = document.getElementById('pgStatsPill');
+      const wsBadge = document.getElementById('pgProjectBadge');
+      const foldersBtn = document.getElementById('pgLevelFoldersBtn');
+      const filesBtn = document.getElementById('pgLevelFilesBtn');
+      const symbolsBtn = document.getElementById('pgLevelSymbolsBtn');
+      const layeredBtn = document.getElementById('pgLayoutLayeredBtn');
+      const forceBtn = document.getElementById('pgLayoutForceBtn');
+      const globalBtn = document.getElementById('pgModeGlobalBtn');
+      const localBtn = document.getElementById('pgModeLocalBtn');
+      const testsBtn = document.getElementById('pgToggleTestsBtn');
+      const docsBtn = document.getElementById('pgToggleDocsBtn');
+      const labelsBtn = document.getElementById('pgToggleLabelsBtn');
+      const hullsBtn = document.getElementById('pgToggleHullsBtn');
+      const bundlingBtn = document.getElementById('pgToggleBundlingBtn');
+      const minimapBtn = document.getElementById('pgToggleMinimapBtn');
+      const webglBtn = document.getElementById('pgToggleWebglBtn');
+      const semBtn = document.getElementById('pgSemanticSearchBtn');
+      const limitSel = document.getElementById('pgLimitSelect');
+      const depthSel = document.getElementById('pgDepthSelect');
+
+      if (wsBadge) {
+        wsBadge.textContent = (data && data.workspaceName) ? data.workspaceName : getSelectedWorkspaceDisplayName();
+      }
+      if (statsEl) {
+        if (data && data.ok) {
+          const nCount = Number(data.shownNodes || 0);
+          const eCount = Number(data.shownEdges || 0);
+          if (data.isSymbolsView) {
+            statsEl.textContent = L(nCount + ' символов · ' + eCount + ' вызовов', nCount + ' symbols · ' + eCount + ' calls');
+          } else if (data.isMacro) {
+            statsEl.textContent = L(nCount + ' папок · ' + eCount + ' связей', nCount + ' folders · ' + eCount + ' links');
+          } else {
+            statsEl.textContent = L(nCount + ' узлов · ' + eCount + ' связей', nCount + ' nodes · ' + eCount + ' edges');
+          }
+        } else {
+          statsEl.textContent = L('0 узлов · 0 связей', '0 nodes · 0 edges');
+        }
+      }
+      const isSymbolsView = Boolean(pgState.viewLevel === 'symbols' || data?.isSymbolsView);
+      const isFilesEffective = !isSymbolsView && (pgState.viewLevel === 'files' || pgState.mode === 'local' || Boolean(pgState.drillFolder));
+      if (foldersBtn) {
+        foldersBtn.classList.toggle('active', !isFilesEffective && !isSymbolsView);
+        foldersBtn.disabled = false;
+      }
+      if (filesBtn) filesBtn.classList.toggle('active', isFilesEffective);
+      if (symbolsBtn) {
+        symbolsBtn.classList.toggle('active', isSymbolsView);
+      }
+      if (layeredBtn) layeredBtn.classList.toggle('active', pgState.layoutMode === 'layered');
+      if (forceBtn) forceBtn.classList.toggle('active', pgState.layoutMode === 'force');
+      if (globalBtn) globalBtn.classList.toggle('active', pgState.mode === 'global');
+      if (localBtn) localBtn.classList.toggle('active', pgState.mode === 'local');
+      if (testsBtn) testsBtn.classList.toggle('active', pgState.includeTests);
+      if (docsBtn) docsBtn.classList.toggle('active', pgState.includeDocs);
+      if (labelsBtn) {
+        labelsBtn.classList.toggle('active', pgState.showLabels);
+        labelsBtn.disabled = !isFilesEffective && !isSymbolsView;
+      }
+      if (hullsBtn) {
+        hullsBtn.classList.toggle('active', pgState.showHulls);
+        hullsBtn.disabled = (!isFilesEffective && !isSymbolsView) || pgState.layoutMode !== 'force';
+      }
+      if (bundlingBtn) {
+        bundlingBtn.classList.toggle('active', pgState.edgeBundling);
+      }
+      if (minimapBtn) {
+        minimapBtn.classList.toggle('active', pgState.showMinimap);
+      }
+      if (webglBtn) {
+        const isGlOn = Boolean(pgState.webglActive || pgState.renderMode === 'webgl2');
+        webglBtn.classList.toggle('active', isGlOn);
+      }
+      if (semBtn) {
+        semBtn.classList.toggle('active', pgState.semanticSearchEnabled);
+      }
+      if (limitSel) {
+        limitSel.value = String(pgState.maxNodes || 220);
+        limitSel.disabled = pgState.mode === 'local' || isSymbolsView;
+        limitSel.style.display = isSymbolsView ? 'none' : '';
+      }
+      if (depthSel) {
+        depthSel.value = String(pgState.depth);
+        depthSel.disabled = pgState.mode !== 'local';
+      }
+      if (typeof pgRenderLensToolbarBadges === 'function') {
+        pgRenderLensToolbarBadges();
+      }
+    }
+
+    function pgRenderClusterPills() {
+      const bar = document.getElementById('pgClusterPills');
+      if (!bar) return;
+      const clusters = Array.isArray(pgState.graphData?.clusters) ? pgState.graphData.clusters : [];
+      const isSymbolsView = Boolean(pgState.viewLevel === 'symbols' || pgState.graphData?.isSymbolsView);
+      if (!clusters.length && !pgState.drillFolder && pgState.mode !== 'local' && !isSymbolsView) {
+        bar.innerHTML = '';
+        bar.style.display = 'none';
+        return;
+      }
+      bar.style.display = 'flex';
+      let html = '';
+      if (isSymbolsView) {
+        html += '<button type="button" class="pg-breadcrumb-chip" data-action="pgExitSymbolsLevel" data-arg="folders" title="' + L('Вернуться к уровню папок', 'Back to folders level') + '">' +
+          '← ' + L('Папки', 'Folders') + '</button>';
+        html += '<button type="button" class="pg-breadcrumb-chip" data-action="pgExitSymbolsLevel" data-arg="files" title="' + L('Вернуться к уровню файлов', 'Back to files level') + '">' +
+          '← ' + L('Файлы', 'Files') + '</button>';
+        if (pgState.symbolFile) {
+          html += '<span class="pg-breadcrumb-chip" style="opacity:0.9;cursor:default;">ƒ <strong>' + escapeHtml(pgState.symbolFile) + '</strong></span>';
+        }
+      } else if (pgState.mode === 'local') {
+        html += '<button type="button" class="pg-breadcrumb-chip" data-action="pgExitToMainView" title="' + L('Вернуться к главному слою папок', 'Return to main folders layer') + '">' +
+          '← ' + L('Главный слой (Папки)', 'Main Layer (Folders)') + '</button>';
+        html += '<button type="button" class="pg-cluster-chip" data-action="pgSetGraphMode" data-arg="global" title="' + L('Показать все файлы проекта', 'Show all project files') + '">' +
+          L('Все файлы', 'All files') + '</button>';
+      } else if (pgState.drillFolder) {
+        html += '<button type="button" class="pg-breadcrumb-chip" data-action="pgExitFolderDrill" title="' + L('Вернуться к обзору папок', 'Back to folders overview') + '">' +
+          '← ' + L('Все папки', 'All folders') + ' / <strong>' + escapeHtml(pgState.drillFolder) + '</strong></button>';
+      }
+      html += '<button type="button" class="pg-cluster-chip' + (!pgState.activeClusterId ? ' active' : '') + '" data-action="pgFilterCluster" data-arg="">' +
+        L('Все подсистемы', 'All subsystems') + ' (' + pgState.nodes.length + ')</button>';
+      for (let i = 0; i < clusters.length && i < 12; i++) {
+        const cl = clusters[i];
+        const color = pgGetClusterColor(cl.id);
+        const isActive = pgState.activeClusterId === cl.id;
+        html += '<button type="button" class="pg-cluster-chip' + (isActive ? ' active' : '') + '" data-action="pgFilterCluster" data-arg="' + escapeHtml(cl.id) + '" title="' + escapeHtml(cl.label) + '">' +
+          '<span class="pg-cluster-dot" style="background:' + escapeHtml(color) + ';"></span>' +
+          '<span>' + escapeHtml(cl.label) + '</span>' +
+          '<span class="pg-cluster-cnt">' + Number(cl.shownSize || cl.size || 0) + '</span>' +
+        '</button>';
+      }
+      bar.innerHTML = html;
+    }
+
+    function pgRenderInspector() {
+      const fnEl = document.getElementById('pgInspFilename');
+      const pathEl = document.getElementById('pgInspPath');
+      const badgesEl = document.getElementById('pgInspBadges');
+      const metricsEl = document.getElementById('pgInspMetrics');
+      const tabsEl = document.getElementById('pgInspTabs');
+      const listEl = document.getElementById('pgInspList');
+      const actionsEl = document.getElementById('pgInspActions');
+      const focusBtn = document.getElementById('pgActionFocusBtn');
+      const symbolsBtn = document.getElementById('pgActionSymbolsBtn');
+      const pathBtn = document.getElementById('pgActionPathBtn');
+      const copyBtn = document.getElementById('pgActionCopyBtn');
+      const cartToggleBtn = document.getElementById('pgActionCartToggleBtn');
+      const composerBtn = document.getElementById('pgActionComposerBtn');
+
+      if (typeof pgRenderLensInspectorSection === 'function') {
+        pgRenderLensInspectorSection();
+      }
+      if (typeof pgRenderContextCart === 'function') {
+        pgRenderContextCart();
+      }
+
+      const node = pgState.selectedNodeId ? pgState.nodeById.get(pgState.selectedNodeId) : null;
+      if (!node) {
+        if (fnEl) fnEl.textContent = L('Выберите узел на карте', 'Select a node on the graph');
+        if (pathEl) pathEl.textContent = L('Кликните по папке или файлу, чтобы увидеть зависимости', 'Click a folder or file to inspect dependencies');
+        if (badgesEl) badgesEl.innerHTML = '';
+        if (metricsEl) metricsEl.style.display = 'none';
+        if (tabsEl) tabsEl.style.display = 'none';
+        if (actionsEl) actionsEl.style.display = 'none';
+        if (listEl) {
+          const renderedWave = pgState.lens === 'blast' && typeof pgRenderBlastWaveList === 'function' && pgRenderBlastWaveList(listEl);
+          if (!renderedWave) {
+            listEl.innerHTML = '<div class="pg-insp-placeholder">' + L(
+              'Наведите курсор для подсветки связей. Двойной клик по папке откроет её файлы, по файлу — локальный граф (1–2 хопа).',
+              'Hover to highlight links. Double-click a folder to drill into its files, or a file for its 1–2 hop neighborhood.'
+            ) + '</div>';
+          }
+        }
+        return;
+      }
+
+      if (fnEl) {
+        fnEl.textContent = node.isFolder ? ('📁 ' + node.label) : (node.isSymbol ? ('ƒ ' + node.label) : node.label);
+      }
+      if (pathEl) {
+        pathEl.textContent = node.isFolder
+          ? L('Подсистема · ' + node.filesCount + ' файлов · ' + (node.internalEdges || 0) + ' внутр. связей', 'Subsystem · ' + node.filesCount + ' files · ' + (node.internalEdges || 0) + ' internal links')
+          : (node.isSymbol
+              ? ((node.file || 'external') + ':' + Number(node.startLine || 1) + (node.endLine > node.startLine ? ('–' + node.endLine) : ''))
+              : node.id);
+      }
+
+      const targetCartId = node.isSymbol && node.file ? node.file : node.id;
+      const nodeInCart = Boolean(
+        pgState.contextCart && (
+          pgState.contextCart.has(targetCartId) ||
+          (node.isFolder && Array.isArray(node.fileIds) && node.fileIds.some(function (fid) { return pgState.contextCart.has(fid); }))
+        )
+      );
+
+      if (badgesEl) {
+        const bList = [];
+        const cColor = pgGetClusterColor(node.clusterId);
+        bList.push('<span class="pg-badge-pill"><span class="pg-cluster-dot" style="background:' + escapeHtml(cColor) + ';"></span>' + escapeHtml(node.clusterLabel) + '</span>');
+        if (node.isFolder) {
+          if (node.godCount > 0) bList.push('<span class="pg-badge-pill is-god">★ God ×' + Number(node.godCount) + '</span>');
+          if (node.fragileCount > 0) bList.push('<span class="pg-badge-pill is-fragile">⚠️ ' + L('Хрупких: ', 'Fragile: ') + Number(node.fragileCount) + '</span>');
+        } else if (node.isSymbol) {
+          bList.push('<span class="pg-symbol-kind-pill">' + escapeHtml(node.kind || 'function') + '</span>');
+          if (node.isExternal) bList.push('<span class="pg-badge-pill">' + L('Внешний файл', 'External file') + '</span>');
+          if (node.isGod) bList.push('<span class="pg-badge-pill is-god">★ God Symbol</span>');
+          if (nodeInCart) bList.push('<span class="pg-badge-pill is-cart">✓ ' + L('В пакете', 'In Cart') + '</span>');
+        } else {
+          if (node.isGod) bList.push('<span class="pg-badge-pill is-god">★ God Node</span>');
+          if (node.isFragile) bList.push('<span class="pg-badge-pill is-fragile">⚠️ ' + L('Хрупкий', 'Fragile') + '</span>');
+          if (node.isTest) bList.push('<span class="pg-badge-pill">' + L('Тест', 'Test') + '</span>');
+          const churnCnt = pgState.churnByFile && pgState.churnByFile[node.id] ? Number(pgState.churnByFile[node.id]) : 0;
+          if (churnCnt > 0) bList.push('<span class="pg-badge-pill is-diff">🔥 ' + churnCnt + ' ' + L('правок', 'commits') + '</span>');
+          const semPct = pgState.semanticScores && pgState.semanticScores.get(node.id);
+          if (semPct > 0) bList.push('<span class="pg-sem-pill">GPU ' + Math.round(semPct * 100) + '%</span>');
+          if (pgState.cycleNodeSet && pgState.cycleNodeSet.has(node.id)) bList.push('<span class="pg-badge-pill is-cycle">⟳ ' + L('Цикл', 'Cycle') + '</span>');
+          if (pgState.orphanSet && pgState.orphanSet.has(node.id)) bList.push('<span class="pg-badge-pill is-orphan">○ ' + L('Сирота', 'Orphan') + '</span>');
+          if (pgState.gitDiffSet && pgState.gitDiffSet.has(node.id)) bList.push('<span class="pg-badge-pill is-diff">✎ Diff</span>');
+          if (nodeInCart) bList.push('<span class="pg-badge-pill is-cart">✓ ' + L('В пакете', 'In Cart') + '</span>');
+        }
+        badgesEl.innerHTML = bList.join('');
+      }
+
+      const incoming = pgState.inNeighbors.get(node.id) || [];
+      const outgoing = pgState.outNeighbors.get(node.id) || [];
+
+      if (metricsEl) {
+        metricsEl.style.display = 'grid';
+        const mIn = document.getElementById('pgMetricIn');
+        const mOut = document.getElementById('pgMetricOut');
+        const mLines = document.getElementById('pgMetricLines');
+        const mRel = document.getElementById('pgMetricRel');
+        if (mIn) mIn.textContent = String(Math.max(incoming.length, Number(node.inDeg || 0)));
+        if (mOut) mOut.textContent = String(Math.max(outgoing.length, Number(node.outDeg || 0)));
+        if (mLines) mLines.textContent = String(Number(node.lines || 0));
+        if (mRel) {
+          mRel.textContent = Number(node.reliabilityPercent ?? 100) + '%';
+          mRel.style.color = node.isFragile ? 'var(--status-err)' : '';
+        }
+      }
+
+      if (!node.isFolder && pgState.inspectorTab === 'files') {
+        pgState.inspectorTab = 'blast';
+      }
+
+      if (tabsEl) {
+        tabsEl.style.display = 'flex';
+        const tBlast = document.getElementById('pgTabBlast');
+        const tImp = document.getElementById('pgTabImports');
+        const tOv = document.getElementById('pgTabOverview');
+        if (tBlast) {
+          tBlast.textContent = node.isFolder
+            ? (L('Файлы', 'Files') + ' (' + (node.fileIds ? node.fileIds.length : 0) + ')')
+            : (node.isSymbol ? (L('Кто вызывает', 'Callers') + ' (' + incoming.length + ')') : ('Blast Radius (' + incoming.length + ')'));
+          tBlast.classList.toggle('active', pgState.inspectorTab === 'blast' || (node.isFolder && pgState.inspectorTab === 'files'));
+        }
+        if (tImp) {
+          tImp.textContent = (node.isSymbol ? L('Вызывает', 'Callees') : L('Импорты', 'Imports')) + ' (' + outgoing.length + ')';
+          tImp.classList.toggle('active', pgState.inspectorTab === 'imports');
+        }
+        if (tOv) {
+          tOv.textContent = node.isFolder ? (L('Зависят', 'Dependents') + ' (' + incoming.length + ')') : L('Обзор', 'Overview');
+          tOv.classList.toggle('active', pgState.inspectorTab === 'overview');
+        }
+      }
+
+      if (actionsEl) {
+        actionsEl.style.display = 'flex';
+        if (focusBtn) {
+          if (node.isFolder) {
+            focusBtn.textContent = L('📂 Раскрыть', '📂 Drill in');
+            focusBtn.setAttribute('data-action', 'pgDrillIntoFolder');
+            focusBtn.setAttribute('data-arg', node.folderKey || '');
+            focusBtn.title = L('Открыть файлы этой папки на карте', 'Open files inside this folder');
+          } else if (pgState.mode === 'local' && pgState.focusFile === node.id) {
+            focusBtn.textContent = L('← Главный слой', '← Main layer');
+            focusBtn.setAttribute('data-action', 'pgExitToMainView');
+            focusBtn.removeAttribute('data-arg');
+            focusBtn.title = L('Вернуться на главный слой всех папок', 'Return to main folders layer');
+          } else if (node.isSymbol) {
+            focusBtn.textContent = L('← К файлам', '← Back to files');
+            focusBtn.setAttribute('data-action', 'pgExitSymbolsLevel');
+            focusBtn.setAttribute('data-arg', 'files');
+            focusBtn.title = L('Вернуться к графу файлов', 'Return to files dependency map');
+          } else {
+            focusBtn.textContent = L('🎯 Фокус', '🎯 Focus');
+            focusBtn.setAttribute('data-action', 'pgFocusSelectedNode');
+            focusBtn.removeAttribute('data-arg');
+            focusBtn.title = L('Показать 1–2 хопа вокруг этого файла', 'Focus 1–2 hops around this file');
+          }
+        }
+        if (symbolsBtn) {
+          const canOpenSyms = !node.isFolder && (!node.isSymbol || (node.isExternal && Boolean(node.file)));
+          symbolsBtn.style.display = canOpenSyms ? '' : 'none';
+          symbolsBtn.textContent = node.isSymbol ? L('ƒ Файл', 'ƒ File') : L('ƒ Символы', 'ƒ Symbols');
+        }
+        if (pathBtn) {
+          const isPathStart = pgState.pathFrom && (pgState.pathFrom === node.id || (node.isFolder && pgState.pathFrom === node.topHubFile));
+          pathBtn.textContent = isPathStart ? L('⇄ Старт (A)', '⇄ Start (A)') : L('⇄ Путь', '⇄ Path');
+        }
+        if (copyBtn) copyBtn.style.display = node.isFolder ? 'none' : '';
+        if (cartToggleBtn) {
+          cartToggleBtn.textContent = nodeInCart ? L('✓ В пакете', '✓ In Cart') : L('＋ В пакет', '＋ To Cart');
+        }
+        if (composerBtn) {
+          composerBtn.textContent = node.isFolder
+            ? L('✦ Хаб в Композер', '✦ Hub to Composer')
+            : L('✦ В Композер', '✦ To Composer');
+        }
+      }
+
+      if (listEl) {
+        if (pgState.lens === 'blast' && pgState.inspectorTab === 'blast' && typeof pgRenderBlastWaveList === 'function' && pgRenderBlastWaveList(listEl)) {
+          return;
+        }
+        if (node.isFolder && (pgState.inspectorTab === 'blast' || pgState.inspectorTab === 'files')) {
+          const fList = Array.isArray(node.fileIds) ? node.fileIds : [];
+          if (!fList.length) {
+            listEl.innerHTML = '<div class="pg-insp-placeholder">' + L('Папка пуста.', 'Folder is empty.') + '</div>';
+          } else {
+            listEl.innerHTML = fList.slice(0, 60).map(function (fId) {
+              const isHub = fId === node.topHubFile;
+              return '<button type="button" class="pg-dep-row" data-action="pgOpenFileFromFolder" data-arg="' + escapeHtml(fId) + '" title="' + escapeHtml(fId) + '">' +
+                '<span class="pg-dep-name">' + escapeHtml(fId) + (isHub ? ' ★' : '') + '</span>' +
+                '<span class="pg-dep-kind">' + L('откр.', 'open') + '</span>' +
+              '</button>';
+            }).join('');
+          }
+          return;
+        }
+
+        if (!node.isFolder && pgState.inspectorTab === 'overview') {
+          if (node.isSymbol) {
+            listEl.innerHTML =
+              '<div class="pg-ov-row"><span>' + L('Файл', 'File') + '</span><code>' + escapeHtml(node.file || '—') + '</code></div>' +
+              '<div class="pg-ov-row"><span>' + L('Строки', 'Lines') + '</span><strong>L' + Number(node.startLine || 1) + '–' + Number(node.endLine || node.startLine || 1) + '</strong></div>' +
+              '<div class="pg-ov-row"><span>' + L('Сигнатура', 'Signature') + '</span><code>' + escapeHtml(node.signature || node.label) + '</code></div>' +
+              '<div class="pg-ov-row"><span>' + L('Подсистема', 'Subsystem') + '</span><strong>' + escapeHtml(node.clusterLabel) + '</strong></div>';
+          } else {
+            listEl.innerHTML =
+              '<div class="pg-ov-row"><span>' + L('Папка', 'Directory') + '</span><code>' + escapeHtml(node.dir || '.') + '</code></div>' +
+              '<div class="pg-ov-row"><span>' + L('Подсистема', 'Subsystem') + '</span><strong>' + escapeHtml(node.clusterLabel) + '</strong></div>' +
+              '<div class="pg-ov-row"><span>' + L('Символов AST', 'AST Symbols') + '</span><strong>' + Number(node.symbolsCount || 0) + '</strong></div>' +
+              '<div class="pg-ov-row"><span>' + L('Строк кода', 'Lines') + '</span><strong>' + Number(node.lines || 0) + '</strong></div>' +
+              '<div class="pg-ov-row"><span>' + L('Модульность проекта Q', 'Project Modularity Q') + '</span><strong>' + Number(pgState.graphData?.modularityQ || 0) + '</strong></div>';
+          }
+        } else {
+          const items = pgState.inspectorTab === 'imports' ? outgoing : incoming;
+          if (!items.length) {
+            listEl.innerHTML = '<div class="pg-insp-placeholder">' + (
+              pgState.inspectorTab === 'imports'
+                ? L('Нет видимых исходящих связей среди текущих узлов графа.', 'No visible outgoing dependencies among shown nodes.')
+                : L('Ни один из показанных узлов напрямую не зависит от этого элемента.', 'No shown nodes directly depend on this item.')
+            ) + '</div>';
+          } else {
+            listEl.innerHTML = items.map(function (edgeItem) {
+              const targetNode = pgState.nodeById.get(edgeItem.id);
+              const displayLabel = targetNode && targetNode.isFolder ? ('📁 ' + targetNode.label) : edgeItem.id;
+              const kindBadge = node.isFolder && edgeItem.weight
+                ? (edgeItem.weight + ' ' + (edgeItem.kind === 'doc' ? L('док', 'doc') : L('св.', 'lnk')))
+                : (edgeItem.kind === 'doc' ? L('док', 'doc') : L('имп.', 'imp'));
+              const extraBadge = targetNode && targetNode.isFragile ? ' ⚠️' : (targetNode && targetNode.isGod ? ' ★' : '');
+              return '<button type="button" class="pg-dep-row" data-action="pgSelectNodeById" data-arg="' + escapeHtml(edgeItem.id) + '" title="' + escapeHtml(edgeItem.id) + '">' +
+                '<span class="pg-dep-name">' + escapeHtml(displayLabel) + escapeHtml(extraBadge) + '</span>' +
+                '<span class="pg-dep-kind">' + escapeHtml(kindBadge) + '</span>' +
+              '</button>';
+            }).join('');
+          }
+        }
+      }
+    }
+
+    async function pgLoadGraph(opts) {
+      const seq = ++pgState.fetchSeq;
+      const emptyEl = document.getElementById('pgEmptyState');
+      const emptyTitle = document.getElementById('pgEmptyTitle');
+      const emptySub = document.getElementById('pgEmptySub');
+      pgState.loading = true;
+      if (emptyEl) {
+        emptyEl.style.display = 'flex';
+        if (emptyTitle) emptyTitle.textContent = L('Строим карту проекта…', 'Building project graph…');
+        if (emptySub) emptySub.textContent = L('Читаем связи AST и кластеры из RAM', 'Reading AST edges and clusters from RAM');
+      }
+
+      try {
+        const params = new URLSearchParams();
+        if (pgState.mode === 'local' && pgState.focusFile) {
+          params.set('focus', pgState.focusFile);
+          params.set('depth', String(pgState.depth));
+        }
+        params.set('maxNodes', pgState.mode === 'local' ? '140' : String(pgState.maxNodes || 220));
+        params.set('includeTests', pgState.includeTests ? '1' : '0');
+        params.set('includeDocs', pgState.includeDocs ? '1' : '0');
+        if (opts && opts.refresh) params.set('refresh', '1');
+
+        const res = await panelFetch('/api/project-graph?' + params.toString());
+        const data = await res.json();
+        if (seq !== pgState.fetchSeq || !pgState.open) return;
+
+        if (!data || !data.ok) {
+          if (emptyEl) {
+            emptyEl.style.display = 'flex';
+            if (emptyTitle) emptyTitle.textContent = L('Не удалось загрузить карту', 'Failed to load graph');
+            if (emptySub) emptySub.textContent = (data && data.error) ? data.error : L('Ошибка сервера панели', 'Panel server error');
+          }
+          return;
+        }
+
+        if (!Array.isArray(data.nodes) || data.nodes.length === 0) {
+          pgState.nodes = [];
+          pgState.edges = [];
+          pgState.graphData = data;
+          pgRenderToolbarAndStats();
+          pgRenderClusterPills();
+          pgRenderInspector();
+          pgDrawGraph();
+          if (emptyEl) {
+            emptyEl.style.display = 'flex';
+            if (emptyTitle) emptyTitle.textContent = L('Нет файлов для отображения', 'No files to display');
+            if (emptySub) emptySub.textContent = L('Проверьте выбранный проект или включите отображение тестов', 'Check active project or enable test files');
+          }
+          return;
+        }
+
+        if (emptyEl) emptyEl.style.display = 'none';
+        if (pgState.viewLevel === 'symbols') {
+          pgState.viewLevel = pgState.symbolReturnLevel === 'folders' ? 'folders' : 'files';
+          pgState.symbolFile = '';
+          pgState.symbolGraphData = null;
+        }
+        pgState.rawGraphData = data;
+        pgHydrateSimulation(data);
+        if (pgState.lens === 'blast' && typeof pgLoadGitDiff === 'function' && (!pgState.gitDiffLoaded || (opts && opts.refresh))) {
+          void pgLoadGitDiff(Boolean(opts && opts.refresh));
+        }
+        if (pgState.lens === 'hotspots' && typeof pgLoadGitChurn === 'function' && (!pgState.churnLoaded || (opts && opts.refresh))) {
+          void pgLoadGitChurn(Boolean(opts && opts.refresh));
+        }
+        if (opts && opts.silent !== true) {
+          flashStatus(L('Карта проекта обновлена ✓', 'Project graph updated ✓'));
+        }
+      } catch (err) {
+        if (seq !== pgState.fetchSeq || !pgState.open) return;
+        if (emptyEl) {
+          emptyEl.style.display = 'flex';
+          if (emptyTitle) emptyTitle.textContent = L('Ошибка соединения', 'Connection error');
+          if (emptySub) emptySub.textContent = err && err.message ? err.message : L('Повторите попытку позже', 'Please retry');
+        }
+      } finally {
+        if (seq === pgState.fetchSeq) pgState.loading = false;
+      }
+    }
+
+    function pgBindCanvasEvents() {
+      if (pgState.bound) return;
+      pgState.bound = true;
+      const canvas = document.getElementById('projectGraphCanvas');
+      const stage = document.getElementById('pgCanvasStage');
+      if (!canvas || !stage) return;
+
+      if (typeof ResizeObserver === 'function') {
+        pgState.resizeObserver = new ResizeObserver(function () {
+          if (pgState.open && pgSyncCanvasSize()) {
+            pgDrawGraph();
+          }
+        });
+        pgState.resizeObserver.observe(stage);
+      }
+
+      canvas.addEventListener('pointerdown', function (ev) {
+        if (ev.button !== 0 && ev.pointerType === 'mouse') return;
+        const rect = canvas.getBoundingClientRect();
+        const sx = ev.clientX - rect.left;
+        const sy = ev.clientY - rect.top;
+        pgState.dragMoved = false;
+        pgState.lastClientX = ev.clientX;
+        pgState.lastClientY = ev.clientY;
+        if (pgState.showMinimap && typeof pgHitTestMinimap === 'function' && pgHitTestMinimap(sx, sy)) {
+          pgState.dragMode = 'minimap';
+          pgState.dragNode = null;
+          if (typeof pgPanCameraFromMinimap === 'function') {
+            pgPanCameraFromMinimap(sx, sy);
+          }
+          pgDrawGraph();
+          try {
+            if (canvas.setPointerCapture) canvas.setPointerCapture(ev.pointerId);
+          } catch {}
+          return;
+        }
+        const hit = pgFindNodeAtScreen(sx, sy);
+        if (hit) {
+          pgState.dragMode = 'node';
+          pgState.dragNode = hit;
+          hit.fx = hit.x;
+          hit.fy = hit.y;
+          pgStartLoop(0.18);
+        } else {
+          pgState.dragMode = 'pan';
+          pgState.dragNode = null;
+          stage.classList.add('is-grabbing');
+        }
+        try {
+          if (canvas.setPointerCapture) canvas.setPointerCapture(ev.pointerId);
+        } catch {}
+      });
+
+      canvas.addEventListener('pointermove', function (ev) {
+        const rect = canvas.getBoundingClientRect();
+        const sx = ev.clientX - rect.left;
+        const sy = ev.clientY - rect.top;
+
+        if (pgState.dragMode === 'minimap') {
+          pgState.dragMoved = true;
+          if (typeof pgPanCameraFromMinimap === 'function') {
+            pgPanCameraFromMinimap(sx, sy);
+          }
+          pgDrawGraph();
+          return;
+        }
+
+        if (pgState.dragMode === 'node' && pgState.dragNode) {
+          const dx = ev.clientX - pgState.lastClientX;
+          const dy = ev.clientY - pgState.lastClientY;
+          if (Math.abs(dx) > 2 || Math.abs(dy) > 2) pgState.dragMoved = true;
+          const world = pgScreenToWorld(sx, sy);
+          pgState.dragNode.fx = world.x;
+          pgState.dragNode.fy = world.y;
+          pgState.dragNode.x = world.x;
+          pgState.dragNode.y = world.y;
+          pgUpdateHoverTooltip(pgState.dragNode, sx, sy);
+          pgDrawGraph();
+          return;
+        }
+
+        if (pgState.dragMode === 'pan') {
+          const dx = ev.clientX - pgState.lastClientX;
+          const dy = ev.clientY - pgState.lastClientY;
+          if (Math.abs(dx) > 2 || Math.abs(dy) > 2) pgState.dragMoved = true;
+          pgState.lastClientX = ev.clientX;
+          pgState.lastClientY = ev.clientY;
+          pgState.camX -= dx / pgState.camScale;
+          pgState.camY -= dy / pgState.camScale;
+          pgDrawGraph();
+          return;
+        }
+
+        const hit = pgFindNodeAtScreen(sx, sy);
+        const nextHoverId = hit ? hit.id : '';
+        if (nextHoverId !== pgState.hoveredNodeId) {
+          pgState.hoveredNodeId = nextHoverId;
+          canvas.style.cursor = hit ? 'pointer' : 'grab';
+          pgStartLoop();
+        }
+        pgUpdateHoverTooltip(hit, sx, sy);
+      });
+
+      function endPointerDrag(ev) {
+        if (!pgState.dragMode) return;
+        const rect = canvas.getBoundingClientRect();
+        const sx = ev.clientX - rect.left;
+        const sy = ev.clientY - rect.top;
+        if (pgState.dragMode === 'minimap') {
+          pgState.dragMoved = true;
+          if (typeof pgPanCameraFromMinimap === 'function') {
+            pgPanCameraFromMinimap(sx, sy);
+          }
+          pgDrawGraph();
+          return;
+        }
+
+        if (pgState.dragMode === 'node' && pgState.dragNode) {
+          const clickedNode = pgState.dragNode;
+          clickedNode.fx = null;
+          clickedNode.fy = null;
+          if (!pgState.dragMoved) {
+            if ((ev.ctrlKey || ev.metaKey) && typeof pgToggleNodeInCart === 'function') {
+              pgToggleNodeInCart(clickedNode.id);
+            } else if (ev.shiftKey && typeof pgQueryGraphPath === 'function') {
+              const fromCand = pgState.pathFrom || pgState.selectedNodeId || clickedNode.id;
+              void pgQueryGraphPath(fromCand, clickedNode.id);
+            } else if (pgState.lens === 'path' && pgState.pathFrom && !pgState.pathTo && typeof pgQueryGraphPath === 'function') {
+              const targetCand = typeof pgResolveFileTargetFromNode === 'function' ? pgResolveFileTargetFromNode(clickedNode.id) : clickedNode.id;
+              if (targetCand && targetCand !== pgState.pathFrom) {
+                void pgQueryGraphPath(pgState.pathFrom, clickedNode.id);
+              } else {
+                pgState.selectedNodeId = clickedNode.id;
+                pgRenderInspector();
+                pgStartLoop();
+              }
+            } else {
+              pgState.selectedNodeId = clickedNode.id;
+              if (pgState.lens === 'blast') pgState.blastUseGitDiff = false;
+              if (pgState.lens === 'path' && !pgState.pathFrom && typeof pgResolveFileTargetFromNode === 'function') {
+                pgState.pathFrom = pgResolveFileTargetFromNode(clickedNode.id) || '';
+              }
+              if (typeof pgRefreshLensState === 'function') pgRefreshLensState();
+              pgRenderInspector();
+              pgStartLoop();
+            }
+          }
+        } else if (pgState.dragMode === 'pan' && !pgState.dragMoved) {
+          const hit = pgFindNodeAtScreen(sx, sy);
+          if (!hit) {
+            pgState.selectedNodeId = '';
+            pgRenderInspector();
+            pgStartLoop();
+          }
+        }
+        pgState.dragMode = '';
+        pgState.dragNode = null;
+        stage.classList.remove('is-grabbing');
+      }
+
+      canvas.addEventListener('pointerup', endPointerDrag);
+      canvas.addEventListener('pointercancel', endPointerDrag);
+      canvas.addEventListener('pointerleave', function () {
+        if (!pgState.dragMode && pgState.hoveredNodeId) {
+          pgState.hoveredNodeId = '';
+          pgUpdateHoverTooltip(null, 0, 0);
+          pgStartLoop();
+        }
+      });
+
+      canvas.addEventListener('dblclick', function (ev) {
+        const rect = canvas.getBoundingClientRect();
+        const sx = ev.clientX - rect.left;
+        const sy = ev.clientY - rect.top;
+        const hit = pgFindNodeAtScreen(sx, sy);
+        if (hit) {
+          pgState.selectedNodeId = hit.id;
+          if (hit.isFolder) {
+            pgDrillIntoFolder(hit.folderKey);
+          } else if (hit.isSymbol && hit.isExternal && hit.file && typeof pgOpenFileSymbols === 'function') {
+            void pgOpenFileSymbols(hit.file);
+          } else if (!hit.isSymbol && typeof pgOpenFileSymbols === 'function') {
+            void pgOpenFileSymbols(hit.id);
+          } else {
+            pgFocusSelectedNode();
+          }
+        }
+      });
+
+      canvas.addEventListener('wheel', function (ev) {
+        ev.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const sx = ev.clientX - rect.left;
+        const sy = ev.clientY - rect.top;
+        const before = pgScreenToWorld(sx, sy);
+        const factor = ev.deltaY < 0 ? 1.14 : 0.88;
+        const nextScale = Math.max(0.18, Math.min(8.0, pgState.camScale * factor));
+        pgState.camScale = nextScale;
+        const after = pgScreenToWorld(sx, sy);
+        pgState.camX += before.x - after.x;
+        pgState.camY += before.y - after.y;
+        pgDrawGraph();
+      }, { passive: false });
+
+      document.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Escape' && pgState.open) {
+          ev.preventDefault();
+          closeProjectGraphModal();
+        }
+      });
+
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible' && pgState.open) {
+          pgStartLoop();
+        } else if (document.visibilityState !== 'visible') {
+          pgStopLoop();
+        }
+      });
+    }
+
+    function pgIsStandaloneView() {
+      try {
+        return new URLSearchParams(window.location.search).get('view') === 'graph';
+      } catch {
+        return false;
+      }
+    }
+
+    async function pgSyncStandaloneThemeAndLang() {
+      try {
+        const res = await panelFetch('/api/state', {
+          method: 'POST',
+          body: JSON.stringify({}),
+        });
+        const data = await res.json();
+        const st = data?.state || data || {};
+        if (st && typeof st === 'object') {
+          if (typeof currentState !== 'undefined' && currentState) {
+            Object.assign(currentState, st);
+          }
+          const th = typeof normalizeUiTheme === 'function' ? normalizeUiTheme(st.panelTheme) : (st.panelTheme || 'glass_teal');
+          if (document.body) document.body.setAttribute('data-panel-theme', th);
+          const lang = typeof normalizeUiLanguage === 'function' ? normalizeUiLanguage(st.uiLanguage) : (st.uiLanguage || 'ru');
+          if (typeof applyUiLanguageDom === 'function') applyUiLanguageDom(lang);
+          document.title = lang === 'ru' ? 'Карта проекта · The Tunnel' : 'Project Map · The Tunnel';
+          if (pgState.open) {
+            pgRenderToolbarAndStats();
+            pgRenderClusterPills();
+            pgRenderInspector();
+            pgDrawGraph();
+          }
+        }
+      } catch {}
+    }
+
+    function pgInitStandaloneIfNeeded() {
+      if (!pgIsStandaloneView()) return false;
+      try {
+        const qs = new URLSearchParams(window.location.search);
+        const wsParam = qs.get('rootDir');
+        if (wsParam && typeof _selectedWorkspaceMode !== 'undefined') {
+          _selectedWorkspaceMode = wsParam;
+        }
+      } catch {}
+      if (document.body) {
+        document.body.classList.add('pg-standalone');
+      }
+      void openProjectGraphModal({ inlineOnly: true }).catch(function () {});
+      void pgSyncStandaloneThemeAndLang();
+      return true;
+    }
+
+    async function openProjectGraphModal(opts) {
+      if (!pgIsStandaloneView() && !(opts && opts.inlineOnly)) {
+        try {
+          if (typeof flashStatus === 'function') {
+            flashStatus(L('Открытие карты проекта в отдельном окне…', 'Opening project map in standalone window…'));
+          }
+          const tok = (window.sidecar && window.sidecar.token) ||
+            new URLSearchParams(window.location.search).get('token') ||
+            '';
+          const res = await panelFetch('/api/project-graph/open-window', {
+            method: 'POST',
+            body: JSON.stringify({ token: tok }),
+          });
+          const data = await res.json();
+          if (data && data.ok) {
+            if (typeof flashStatus === 'function') {
+              flashStatus(L('Карта проекта открыта в отдельном окне ✓', 'Project map opened in standalone window ✓'));
+            }
+            return;
+          }
+        } catch {}
+      }
+
+      const modal = document.getElementById('projectGraphModal');
+      if (!modal) return;
+      pgState.open = true;
+      modal.classList.add('visible');
+      pgBindCanvasEvents();
+      pgSyncCanvasSize();
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(function () {
+          if (!pgState.open) return;
+          pgSyncCanvasSize();
+          pgDrawGraph();
+        });
+      }
+      pgRenderToolbarAndStats();
+      pgRenderInspector();
+      if (typeof applyUiLanguageDom === 'function') {
+        applyUiLanguageDom(getUiLanguage());
+      }
+      void pgLoadGraph({ silent: true });
+    }
+
+    function closeProjectGraphModal() {
+      if (pgIsStandaloneView()) {
+        try {
+          window.close();
+        } catch {}
+        return;
+      }
+      const modal = document.getElementById('projectGraphModal');
+      if (modal) modal.classList.remove('visible');
+      pgState.open = false;
+      pgStopLoop();
+      pgUpdateHoverTooltip(null, 0, 0);
+    }
+
+    function pgSetGraphMode(mode) {
+      const next = mode === 'local' ? 'local' : 'global';
+      if (next === 'local') {
+        const selNode = pgState.selectedNodeId ? pgState.nodeById.get(pgState.selectedNodeId) : null;
+        const candidate = (selNode && selNode.isFolder)
+          ? (selNode.topHubFile || (selNode.fileIds && selNode.fileIds[0]) || '')
+          : (pgState.selectedNodeId || pgState.focusFile || (pgState.rawGraphData?.nodes?.[0]?.id || ''));
+        if (!candidate) {
+          flashStatus(L('Сначала выберите файл для локального режима', 'Select a file first for local mode'));
+          return;
+        }
+        pgState.focusFile = candidate;
+        pgState.viewLevel = 'files';
+        pgState.drillFolder = '';
+      } else {
+        pgState.focusFile = '';
+      }
+      pgState.mode = next;
+      pgRenderToolbarAndStats();
+      void pgLoadGraph({ silent: true });
+    }
+
+    function pgSetViewLevel(level) {
+      if (level === 'symbols') {
+        if (typeof pgOpenSymbolsForSelected === 'function') {
+          pgOpenSymbolsForSelected();
+        }
+        return;
+      }
+      const next = level === 'files' ? 'files' : 'folders';
+      if (pgState.viewLevel === 'symbols') {
+        pgState.symbolFile = '';
+        pgState.symbolGraphData = null;
+      }
+      if (pgState.mode === 'local' && next === 'folders') {
+        pgState.mode = 'global';
+        pgState.focusFile = '';
+        pgState.viewLevel = 'folders';
+        pgState.drillFolder = '';
+        pgState.selectedNodeId = '';
+        pgRenderToolbarAndStats();
+        void pgLoadGraph({ silent: true });
+        return;
+      }
+      pgState.viewLevel = next;
+      pgState.drillFolder = '';
+      pgState.activeClusterId = '';
+      pgState.selectedNodeId = '';
+      if (pgState.rawGraphData) {
+        pgHydrateSimulation(pgState.rawGraphData);
+      } else {
+        void pgLoadGraph({ silent: true });
+      }
+    }
+
+    function pgSetLayoutMode(layout) {
+      const next = layout === 'force' ? 'force' : 'layered';
+      if (pgState.layoutMode === next) return;
+      pgState.layoutMode = next;
+      if (pgState.rawGraphData) {
+        pgHydrateSimulation(pgState.rawGraphData);
+      } else {
+        pgRenderToolbarAndStats();
+      }
+    }
+
+    function pgDrillIntoFolder(folderKey) {
+      const key = String(folderKey || '').trim();
+      if (!key) return;
+      pgState.drillFolder = key;
+      pgState.viewLevel = 'files';
+      pgState.activeClusterId = '';
+      pgState.selectedNodeId = '';
+      if (pgState.rawGraphData) {
+        pgHydrateSimulation(pgState.rawGraphData);
+      }
+    }
+
+    function pgExitFolderDrill() {
+      pgState.drillFolder = '';
+      pgState.viewLevel = 'folders';
+      pgState.activeClusterId = '';
+      pgState.selectedNodeId = '';
+      if (pgState.rawGraphData) {
+        pgHydrateSimulation(pgState.rawGraphData);
+      }
+    }
+
+    function pgOpenFileFromFolder(fileId) {
+      const targetId = String(fileId || '').trim();
+      if (!targetId) return;
+      pgState.drillFolder = '';
+      pgState.viewLevel = 'files';
+      pgState.activeClusterId = '';
+      pgState.selectedNodeId = targetId;
+      if (pgState.rawGraphData) {
+        pgHydrateSimulation(pgState.rawGraphData);
+        const node = pgState.nodeById.get(targetId);
+        if (node) {
+          pgState.camX = node.x;
+          pgState.camY = node.y;
+          pgDrawGraph();
+        }
+      }
+    }
+
+    function pgExitToMainView() {
+      pgState.mode = 'global';
+      pgState.focusFile = '';
+      pgState.drillFolder = '';
+      pgState.viewLevel = 'folders';
+      pgState.activeClusterId = '';
+      pgState.selectedNodeId = '';
+      pgRenderToolbarAndStats();
+      void pgLoadGraph({ silent: true });
+    }
+
+    function pgFocusSelectedNode() {
+      if (!pgState.selectedNodeId) return;
+      const selNode = pgState.nodeById.get(pgState.selectedNodeId);
+      if (selNode && selNode.isFolder) {
+        pgDrillIntoFolder(selNode.folderKey);
+        return;
+      }
+      pgState.focusFile = pgState.selectedNodeId;
+      pgState.mode = 'local';
+      pgState.viewLevel = 'files';
+      pgState.drillFolder = '';
+      pgRenderToolbarAndStats();
+      void pgLoadGraph({ silent: true });
+    }
+
+    function pgRefreshGraph() {
+      void pgLoadGraph({ silent: false, refresh: true });
+    }
+
+    function pgToggleFilter(kind) {
+      if (kind === 'tests') {
+        pgState.includeTests = !pgState.includeTests;
+        pgRenderToolbarAndStats();
+        void pgLoadGraph({ silent: true });
+      } else if (kind === 'docs') {
+        pgState.includeDocs = !pgState.includeDocs;
+        pgRenderToolbarAndStats();
+        void pgLoadGraph({ silent: true });
+      } else if (kind === 'labels') {
+        pgState.showLabels = !pgState.showLabels;
+        pgRenderToolbarAndStats();
+        pgDrawGraph();
+      } else if (kind === 'hulls') {
+        pgState.showHulls = !pgState.showHulls;
+        pgRenderToolbarAndStats();
+        pgDrawGraph();
+      } else if (kind === 'bundling') {
+        pgState.edgeBundling = !pgState.edgeBundling;
+        pgRenderToolbarAndStats();
+        pgDrawGraph();
+      } else if (kind === 'minimap') {
+        pgState.showMinimap = !pgState.showMinimap;
+        pgRenderToolbarAndStats();
+        pgDrawGraph();
+      } else if (kind === 'webgl') {
+        if (pgState.renderMode === 'webgl2' || pgState.webglActive) {
+          pgState.renderMode = '2d';
+        } else {
+          pgState.renderMode = 'webgl2';
+        }
+        pgDrawGraph();
+        pgRenderToolbarAndStats();
+      }
+    }
+
+    function pgChangeNodeLimit(val) {
+      const cap = Math.max(50, Math.min(25000, Math.floor(Number(val) || 220)));
+      pgState.maxNodes = cap;
+      pgRenderToolbarAndStats();
+      if (pgState.mode === 'global' && pgState.viewLevel !== 'symbols') {
+        void pgLoadGraph({ silent: true });
+      }
+    }
+
+    function pgChangeDepth(val) {
+      const n = Math.max(1, Math.min(3, Math.floor(Number(val) || 2)));
+      pgState.depth = n;
+      if (pgState.mode === 'local' && pgState.focusFile) {
+        void pgLoadGraph({ silent: true });
+      }
+    }
+
+    function pgFilterCluster(clusterId) {
+      const cid = String(clusterId || '');
+      pgState.activeClusterId = pgState.activeClusterId === cid ? '' : cid;
+      pgRenderClusterPills();
+      pgDrawGraph();
+    }
+
+    function onProjectGraphSearch(val) {
+      pgState.searchQuery = String(val || '');
+      const clearBtn = document.getElementById('pgSearchClearBtn');
+      if (clearBtn) clearBtn.style.display = pgState.searchQuery.trim() ? 'inline-flex' : 'none';
+      const q = pgState.searchQuery.trim().toLowerCase();
+      if (q) {
+        const exact = pgState.nodes.find(function (n) { return n.label.toLowerCase() === q || n.id.toLowerCase() === q; });
+        const firstHit = exact || pgState.nodes.find(function (n) { return n.id.toLowerCase().indexOf(q) !== -1; });
+        if (firstHit) {
+          pgState.selectedNodeId = firstHit.id;
+          pgState.camX = firstHit.x;
+          pgState.camY = firstHit.y;
+          pgState.camScale = Math.max(pgState.camScale, 1.05);
+          pgRenderInspector();
+        }
+      }
+      if (pgState.semanticSearchEnabled && typeof pgScheduleSemanticSearch === 'function') {
+        pgScheduleSemanticSearch(pgState.searchQuery);
+      }
+      pgStartLoop();
+    }
+
+    function pgClearSearch() {
+      const inp = document.getElementById('pgSearchInput');
+      if (inp) inp.value = '';
+      onProjectGraphSearch('');
+    }
+
+    function pgZoomStep(mode) {
+      if (mode === 'fit') {
+        pgFitView();
+        return;
+      }
+      const factor = mode === 'in' ? 1.24 : 0.8;
+      pgState.camScale = Math.max(0.18, Math.min(8.0, pgState.camScale * factor));
+      pgDrawGraph();
+    }
+
+    function pgSetInspectorTab(tab) {
+      pgState.inspectorTab = (tab === 'imports' || tab === 'overview') ? tab : 'blast';
+      pgRenderInspector();
+    }
+
+    function pgSelectNodeById(nodeId) {
+      let node = nodeId ? pgState.nodeById.get(nodeId) : null;
+      if (!node && nodeId && pgState.graphData && pgState.graphData.isMacro && pgState.rawGraphData) {
+        const rawNodes = Array.isArray(pgState.rawGraphData.nodes) ? pgState.rawGraphData.nodes : [];
+        if (rawNodes.some(function (rn) { return rn.id === nodeId; })) {
+          pgState.viewLevel = 'files';
+          pgState.selectedNodeId = nodeId;
+          pgState.blastUseGitDiff = false;
+          pgHydrateSimulation(pgState.rawGraphData);
+          node = pgState.nodeById.get(nodeId);
+          if (node) {
+            pgState.camX = node.x;
+            pgState.camY = node.y;
+            pgDrawGraph();
+          }
+          return;
+        }
+      }
+      if (!node) return;
+      pgState.selectedNodeId = node.id;
+      if (pgState.lens === 'blast') pgState.blastUseGitDiff = false;
+      pgState.camX = node.x;
+      pgState.camY = node.y;
+      if (typeof pgRefreshLensState === 'function') pgRefreshLensState();
+      pgRenderInspector();
+      pgStartLoop();
+    }
+
+    async function pgCopySelectedPath() {
+      const node = pgState.selectedNodeId ? pgState.nodeById.get(pgState.selectedNodeId) : null;
+      if (!node) return;
+      const copyText = node.isSymbol
+        ? ((node.file || '') + (node.startLine ? (':' + node.startLine) : ''))
+        : node.id;
+      if (!copyText) return;
+      try {
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+          await navigator.clipboard.writeText(copyText);
+        }
+        flashStatus(L('Путь скопирован: ', 'Path copied: ') + copyText);
+      } catch {
+        flashStatus(copyText);
+      }
+    }
+
+    function pgSendToComposer() {
+      const node = pgState.selectedNodeId ? pgState.nodeById.get(pgState.selectedNodeId) : null;
+      if (!node) return;
+      const targetFile = node.isFolder
+        ? (node.topHubFile || (node.fileIds && node.fileIds[0]) || '')
+        : (node.isSymbol ? (node.file || '') : node.id);
+      if (!targetFile) return;
+      if (typeof pgInsertFilesIntoComposer === 'function') {
+        pgInsertFilesIntoComposer([targetFile]);
+        return;
+      }
+      const token = '@file:' + targetFile;
+      if (pgIsStandaloneView()) {
+        try {
+          if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            void navigator.clipboard.writeText(token + ' ');
+          }
+        } catch {}
+        flashStatus(L('Скопировано для вставки в чат: ', 'Copied to paste in chat: ') + token);
+        return;
+      }
+      const inputEl = document.getElementById('smartComposerInput');
+      if (inputEl) {
+        const cur = inputEl.value || '';
+        if (cur.indexOf(token) === -1) {
+          const sep = cur && !/\s$/.test(cur) ? ' ' : '';
+          inputEl.value = cur + sep + token + ' ';
+        }
+        if (typeof _smartLastDraft !== 'undefined') {
+          _smartLastDraft = inputEl.value;
+        }
+        if (typeof renderSmartComposerMirror === 'function') {
+          renderSmartComposerMirror();
+        }
+      }
+      closeProjectGraphModal();
+      if (inputEl) {
+        inputEl.focus();
+      }
+      flashStatus(L('Добавлено в Композер: ', 'Added to Composer: ') + token);
+    }

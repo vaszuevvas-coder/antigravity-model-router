@@ -963,6 +963,10 @@
         selectPanelWorkspace(target.value);
       } else if (target.getAttribute('data-change-action') === 'setCompactionThreshold') {
         setCompactionThreshold(target.value);
+      } else if (target.getAttribute('data-change-action') === 'pgChangeDepth') {
+        pgChangeDepth(target.value);
+      } else if (target.getAttribute('data-change-action') === 'pgChangeNodeLimit') {
+        pgChangeNodeLimit(target.value);
       }
     });
 

@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="The Tunnel v3.32.2 — 3D AI Autopilot & Coprocessor for Google Antigravity" width="100%" />
+  <img src="assets/banner.svg" alt="The Tunnel v3.33.0 — 3D AI Autopilot & Coprocessor for Google Antigravity" width="100%" />
 </p>
 
-# The Tunnel `v3.32.2` — 3D AI Autopilot & Model Router
+# The Tunnel `v3.33.0` — 3D AI Autopilot & Model Router
 
 > Intelligent 3D model routing, multi-core CPU coprocessing, adaptive In-RAM project memory (`4–32 GB`), optional local Ollama Int8 GPU acceleration, and 59 safety & verification guardrails for **Google Antigravity** — built with zero external runtime dependencies on **Node.js `>=22` ESM**.
 
@@ -38,6 +38,7 @@
 ### 6. Turn-Level Time-Machine, Shadow Worktrees & Sidecar Control Panel (`EN / RU`)
 - **Atomic Turn Rollback & Git Sandboxes**: `core/shadow-guard.mjs` and `core/shadow-worktree.mjs` bind checkpoints to user turns (`rollbackTurn`) and run risky experiments inside detached git worktrees before promoting changes.
 - **Sidecar Control Panel (`sidecars/panel/`)**: CSP-safe localhost HUD (`server.mjs` + `ui.html`) with live **EN / RU** switching (`00-i18n.js`), dark & studio-light themes, **Smart Composer 2.0** (`@file:`, `@symbol:`, `@git:diff`, `@error:last` chips, Ghost Text, local Vision screenshot audit, optional voice dictation, and `0-token` pre-commit check), live token/cache/CPU/RAM/GPU telemetry, and one-click management of all 12 built-in skills.
+- **Interactive Project Map (`?view=graph` & modal)**: Multi-level architecture map (`Folders / Files / Symbols` via `core/project-graph-builder.mjs` + `07*.js`) featuring Layered (Sugiyama) and Force layouts, 5 engineering lenses (**Architecture**, **Blast & Diff**, **Tarjan SCC Cycles & Orphans**, **Git Hotspots**, **Path A→B**), a Context Cart (`@file:` batching to Smart Composer with token budget), Edge Bundling, interactive Minimap, GPU semantic search, Mermaid/PNG export, and **Barnes-Hut `O(N log N)` + WebGL2 Instanced Renderer** scaling up to 25k nodes.
 
 ---
 
@@ -58,7 +59,7 @@
 
 ```text
 antigravity-model-router/
-├── plugin.json                # Plugin manifest (The Tunnel v3.32.2)
+├── plugin.json                # Plugin manifest (The Tunnel v3.33.0)
 ├── package.json               # ESM scripts (test, audit, lint:skills, pack, version:check)
 ├── router-state.json          # Sanitized default router & guardrail template
 ├── hooks.json                 # SessionStart / PreInvocation / PreToolUse / PostToolUse / Stop hooks
@@ -66,11 +67,11 @@ antigravity-model-router/
 ├── install.js                 # Cross-platform installer & i8bin-v2 cache migrator
 ├── SECURITY.md                # Security policy & local-only architecture guarantees
 ├── CHANGELOG.md               # Release history
-├── core/                      # 54 core ESM modules (62 total with gpu/progress/ram submodules)
+├── core/                      # 55 core ESM modules (63 total with gpu/progress/ram submodules)
 ├── sidecars/panel/            # Localhost Control Panel (server.mjs, ui-src/, ui.html)
 ├── agents/                    # Read-only verifier subagent (router-verifier.md)
 ├── skills/                    # 12 built-in domain skills & deterministic scripts
-├── tests/                     # 36 automated test suites (node:test)
+├── tests/                     # 37 automated test suites (node:test)
 └── rules/                     # Autopilot & routing rules (AGENTS.md)
 ```
 
@@ -88,7 +89,7 @@ node install.js
 Then restart **Google Antigravity** (or reload the sidecar panel) to activate hooks, In-RAM MCP, and **The Tunnel** HUD.
 
 ### Option 2 — Windows 1-Click Installer (`Setup.exe`) & Portable `.zip`
-- Download `The-Tunnel-v3.32.2-Setup.exe` or `The-Tunnel-v3.32.2.zip` from [GitHub Releases](https://github.com/vaszuevvas-coder/antigravity-model-router/releases/latest).
+- Download `The-Tunnel-v3.33.0-Setup.exe` or `The-Tunnel-v3.33.0.zip` from [GitHub Releases](https://github.com/vaszuevvas-coder/antigravity-model-router/releases/latest).
 - `Setup.exe`, `install.js`, and `install.sh` auto-detect your OS locale (`en` / `ru`, overridable via `--lang=en|ru` or `TUNNEL_LANG`), and `Setup.exe` supports both GUI and silent CLI flags (`--silent` / `/S`, `--uninstall`) while keeping a backup of `router-state.json`.
 - In the portable `.zip`, run `install.bat` / `uninstall.bat` (or `Установить плагин.bat` / `Удалить плагин.bat`) on Windows, or `./install.sh` on macOS / Linux. Direct extraction or `git clone` into `~/.gemini/config/plugins/antigravity-model-router` is also supported — `The Tunnel` auto-calibrates hardware limits and MCP paths on first launch.
 

@@ -1093,15 +1093,27 @@
         filterSkillsView(target.value);
       } else if (inputAction === 'onSmartComposerInput') {
         handleSmartComposerInput();
+      } else if (inputAction === 'onProjectGraphSearch') {
+        onProjectGraphSearch(target.value);
       }
     });
+
+    const _isStandaloneGraphView = (function () {
+      try {
+        return new URLSearchParams(window.location.search).get('view') === 'graph';
+      } catch {
+        return false;
+      }
+    })();
 
     document.body.classList.toggle('is-tab-hidden', document.visibilityState !== 'visible');
     document.addEventListener('visibilitychange', function () {
       const isHidden = document.visibilityState !== 'visible';
       document.body.classList.toggle('is-tab-hidden', isHidden);
       if (!isHidden) {
-        pollTelemetryTick();
+        if (!_isStandaloneGraphView) {
+          pollTelemetryTick();
+        }
       } else if (telemetryPollTimer) {
         clearTimeout(telemetryPollTimer);
         telemetryPollTimer = null;
@@ -1109,6 +1121,9 @@
     });
 
     (async function init() {
+      if (_isStandaloneGraphView) {
+        return;
+      }
       ensureBlockMoveControls();
       setupSpoilerPersistence();
       applyAllCollapsedCardsState();

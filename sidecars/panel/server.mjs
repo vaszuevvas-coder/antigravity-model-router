@@ -3,13 +3,21 @@
  * @description Sidecar HTTP server entry, API routes, and public re-exports.
  */
 
+import { execFile, spawn } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 import { safeReadJsonSync } from '../../core/safe-json.mjs';
 import { normalizeLang, pickLang } from '../../core/i18n.mjs';
 import { getPricingPhaseStatus } from '../../core/model-profile.mjs';
+import {
+  buildProjectGraphPayload,
+  buildFileSymbolGraphPayload,
+  parseGitChurnOutput,
+  aggregateSemanticGraphHits,
+} from '../../core/project-graph-builder.mjs';
 import { attachSidecarSecurityMiddleware, isValidWorkspaceDir, startSidecarHostWatchdog, validateRequestOrigin } from './lib/panel-security.mjs';
 import {
   STATE_PATH,
@@ -26,6 +34,7 @@ import {
   getSubscriptionCapabilities,
   getTaskProgressMod,
   handleSidecarExitCleanup,
+  isEphemeralPanelCandidatePath,
   loadState,
   panelRuntime,
   postRamDaemonJson,
@@ -192,7 +201,7 @@ function getPluginVersion() {
     const ver = typeof meta?.version === 'string' ? meta.version.trim() : '';
     if (ver) return ver;
   } catch {}
-  return '3.32.2';
+  return '3.33.0';
 }
 
 function getUiBuildVersion() {
@@ -226,6 +235,7 @@ export async function startSidecarPanel(options = {}) {
     return null;
   }
   let securityMiddlewareActive = false;
+  let activeHttpServer = null;
   const ensurePostReq = (req) => (req && typeof req === 'object' ? (req.method ? req : { ...req, method: 'POST' }) : req);
   const isRouteAuthorized = (req) => (req ? validateRequestOrigin(ensurePostReq(req)) : securityMiddlewareActive);
 
@@ -1207,6 +1217,535 @@ export async function startSidecarPanel(options = {}) {
     }
   }, 'GET');
 
+  const execFileAsync = promisify(execFile);
+  const FALLBACK_GRAPH_TTL_MS = 30_000;
+  const GIT_DIFF_TTL_MS = 15_000;
+  const GIT_CHURN_TTL_MS = 60_000;
+  let fallbackGraphState = { engine: null, wsPath: '', updatedAt: 0 };
+  const gitDiffCache = new Map();
+  const gitChurnCache = new Map();
+
+  const shouldBypassHostDaemonForGraph = (wsPath) =>
+    process.env.TUNNEL_TEST_ISOLATE_INSTALLED === '1' || isEphemeralPanelCandidatePath(wsPath);
+
+  const loadFragileFileMap = async (activeWs) => {
+    const fragileMap = new Map();
+    try {
+      const bayesianSummary = await safeGetBayesianSummary(activeWs);
+      const fList = Array.isArray(bayesianSummary?.fragileFiles) ? bayesianSummary.fragileFiles : [];
+      for (const f of fList) {
+        if (f?.file) {
+          const normFile = String(f.file).replace(/\\/g, '/');
+          fragileMap.set(normFile, {
+            reliabilityPercent: Number(f.reliabilityPercent ?? 100),
+            runs: Number(f.runs || 0),
+            failures: Number(f.failures || 0),
+          });
+        }
+      }
+    } catch {}
+    return fragileMap;
+  };
+
+  const getOrCreateFallbackGraphEngine = async (activeWs, { forceRefresh = false } = {}) => {
+    const { RamMemoryEngine } = await import('../../core/ram-memory-engine.mjs');
+    if (shouldBypassHostDaemonForGraph(activeWs)) {
+      return { engine: new RamMemoryEngine({ budgetMb: 256 }), ephemeral: true };
+    }
+    const now = Date.now();
+    const sameWs = fallbackGraphState.wsPath === activeWs;
+    const isFresh = sameWs && fallbackGraphState.engine && !forceRefresh && (now - fallbackGraphState.updatedAt < FALLBACK_GRAPH_TTL_MS);
+    if (isFresh) {
+      return { engine: fallbackGraphState.engine, ephemeral: false };
+    }
+    try {
+      fallbackGraphState.engine?.evict?.('all');
+    } catch {}
+    const engine = new RamMemoryEngine({ budgetMb: 256 });
+    fallbackGraphState = { engine, wsPath: activeWs, updatedAt: now };
+    return { engine, ephemeral: false };
+  };
+
+  const unquoteGitPath = (rawPath = '') => {
+    let p = String(rawPath || '').trim();
+    if (p.startsWith('"') && p.endsWith('"') && p.length >= 2) {
+      p = p.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '/');
+    }
+    return p.replace(/\\/g, '/').replace(/^\.\//, '');
+  };
+
+  app.api('/api/project-graph', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const focusRaw = typeof data?.focus === 'string' ? data.focus.trim().replace(/\\/g, '/').replace(/^\.\//, '') : '';
+      const depth = Math.max(1, Math.min(3, Math.floor(Number(data?.depth) || 2)));
+      const maxNodes = Math.max(30, Math.min(25000, Math.floor(Number(data?.maxNodes) || 220)));
+      const includeTests = data?.includeTests === true || data?.includeTests === '1' || data?.includeTests === 'true';
+      const includeDocs = data?.includeDocs !== false && data?.includeDocs !== '0' && data?.includeDocs !== 'false';
+      const forceRefresh = data?.refresh === true || data?.refresh === '1' || data?.refresh === 'true';
+
+      const fragileMap = await loadFragileFileMap(activeWs);
+
+      if (!forceRefresh && !shouldBypassHostDaemonForGraph(activeWs)) {
+        const daemonRes = await postRamDaemonJson(
+          '/graph/project-map',
+          { wsPath: activeWs, focus: focusRaw, depth, maxNodes, includeTests, includeDocs },
+          1200
+        );
+        if (daemonRes && daemonRes.ok) {
+          if (Array.isArray(daemonRes.nodes) && fragileMap.size > 0) {
+            for (const n of daemonRes.nodes) {
+              const frag = fragileMap.get(n.id);
+              if (frag) {
+                n.isFragile = Boolean(frag.runs > 0 && frag.reliabilityPercent < 80);
+                n.reliabilityPercent = frag.reliabilityPercent;
+              }
+            }
+          }
+          return daemonRes;
+        }
+      }
+
+      const { engine, ephemeral } = await getOrCreateFallbackGraphEngine(activeWs, { forceRefresh });
+      try {
+        return buildProjectGraphPayload(engine, activeWs, {
+          focus: focusRaw,
+          depth,
+          maxNodes,
+          includeTests,
+          includeDocs,
+          fragileMap,
+          startWatcher: false,
+          source: 'local_cache',
+        });
+      } finally {
+        if (ephemeral) {
+          try { engine.evict('all'); } catch {}
+        }
+      }
+    } catch (err) {
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка построения карты проекта', 'Failed to build project graph') };
+    }
+  }, 'GET');
+
+  app.api('/api/project-graph/path', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      const from = typeof data?.from === 'string' ? data.from.trim().replace(/\\/g, '/').replace(/^\.\//, '') : '';
+      const to = typeof data?.to === 'string' ? data.to.trim().replace(/\\/g, '/').replace(/^\.\//, '') : '';
+      if (!from || !to) {
+        return {
+          ok: false,
+          found: false,
+          error: pickLang(lang, 'Укажите оба узла для поиска пути (from и to)', 'Both "from" and "to" nodes are required'),
+        };
+      }
+      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const maxDepth = Math.max(1, Math.min(8, Math.floor(Number(data?.maxDepth) || 6)));
+      const direction = data?.direction === 'directed' ? 'directed' : 'both';
+
+      if (!shouldBypassHostDaemonForGraph(activeWs)) {
+        const daemonRes = await postRamDaemonJson(
+          '/graph/path',
+          { wsPath: activeWs, from, to, maxDepth, direction },
+          1200
+        );
+        if (daemonRes && typeof daemonRes.found === 'boolean') {
+          return {
+            ok: true,
+            found: daemonRes.found,
+            from,
+            to,
+            hops: Number(daemonRes.hops || 0),
+            mode: daemonRes.mode || 'none',
+            path: Array.isArray(daemonRes.path) ? daemonRes.path : [],
+            edges: Array.isArray(daemonRes.edges) ? daemonRes.edges : [],
+            formattedHint: daemonRes.formattedHint || '',
+            source: 'ram_daemon',
+          };
+        }
+      }
+
+      const { engine, ephemeral } = await getOrCreateFallbackGraphEngine(activeWs, { forceRefresh: false });
+      try {
+        const res = engine.findGraphPath(activeWs, from, to, { maxDepth, direction });
+        return {
+          ok: true,
+          found: Boolean(res?.found),
+          from,
+          to,
+          hops: Number(res?.hops || 0),
+          mode: res?.mode || 'none',
+          path: Array.isArray(res?.path) ? res.path : [],
+          edges: Array.isArray(res?.edges) ? res.edges : [],
+          formattedHint: res?.formattedHint || '',
+          source: 'local_cache',
+        };
+      } finally {
+        if (ephemeral) {
+          try { engine.evict('all'); } catch {}
+        }
+      }
+    } catch (err) {
+      return { ok: false, found: false, error: err?.message || pickLang(lang, 'Ошибка поиска пути в графе', 'Failed to find graph path') };
+    }
+  }, 'GET');
+
+  app.api('/api/project-graph/git-diff', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    try {
+      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const forceRefresh = data?.refresh === true || data?.refresh === '1' || data?.refresh === 'true';
+      const now = Date.now();
+      const cached = gitDiffCache.get(activeWs);
+      if (!forceRefresh && cached && (now - cached.ts < GIT_DIFF_TTL_MS)) {
+        return cached.payload;
+      }
+
+      let payload;
+      try {
+        const { stdout } = await execFileAsync('git', ['status', '--porcelain=v1', '-uall'], {
+          cwd: activeWs,
+          timeout: 1500,
+          windowsHide: true,
+          maxBuffer: 1024 * 1024,
+        });
+        const stagedSet = new Set();
+        const unstagedSet = new Set();
+        const untrackedSet = new Set();
+        const changedSet = new Set();
+
+        const lines = String(stdout || '').split(/\r?\n/);
+        for (const rawLine of lines) {
+          if (!rawLine || rawLine.length < 4) continue;
+          const x = rawLine[0];
+          const y = rawLine[1];
+          let filePart = rawLine.slice(3);
+          if ((x === 'R' || x === 'C' || y === 'R' || y === 'C') && filePart.includes(' -> ')) {
+            const parts = filePart.split(' -> ');
+            filePart = parts[parts.length - 1];
+          }
+          const rel = unquoteGitPath(filePart);
+          if (!rel) continue;
+          changedSet.add(rel);
+          if (x === '?' && y === '?') {
+            untrackedSet.add(rel);
+          } else {
+            if (x !== ' ' && x !== '?') stagedSet.add(rel);
+            if (y !== ' ' && y !== '?') unstagedSet.add(rel);
+          }
+        }
+
+        payload = {
+          ok: true,
+          available: true,
+          workspaceRoot: activeWs,
+          changedFiles: Array.from(changedSet).sort(),
+          stagedFiles: Array.from(stagedSet).sort(),
+          unstagedFiles: Array.from(unstagedSet).sort(),
+          untrackedFiles: Array.from(untrackedSet).sort(),
+        };
+      } catch {
+        payload = {
+          ok: true,
+          available: false,
+          workspaceRoot: activeWs,
+          changedFiles: [],
+          stagedFiles: [],
+          unstagedFiles: [],
+          untrackedFiles: [],
+        };
+      }
+
+      gitDiffCache.set(activeWs, { ts: now, payload });
+      return payload;
+    } catch {
+      return {
+        ok: true,
+        available: false,
+        changedFiles: [],
+        stagedFiles: [],
+        unstagedFiles: [],
+        untrackedFiles: [],
+      };
+    }
+  }, 'GET');
+
+  app.api('/api/project-graph/symbols', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      const file = typeof data?.file === 'string' ? data.file.trim().replace(/\\/g, '/').replace(/^\.\//, '') : '';
+      if (!file) {
+        return {
+          ok: false,
+          isSymbolsView: true,
+          nodes: [],
+          edges: [],
+          error: pickLang(lang, 'Укажите файл для графа символов', 'Target file is required for symbols view'),
+        };
+      }
+      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const maxExternal = Math.max(8, Math.min(60, Math.floor(Number(data?.maxExternal) || 36)));
+
+      if (!shouldBypassHostDaemonForGraph(activeWs)) {
+        const daemonRes = await postRamDaemonJson(
+          '/graph/symbols',
+          { wsPath: activeWs, file, maxExternal },
+          1200
+        );
+        if (daemonRes && daemonRes.ok) {
+          return daemonRes;
+        }
+      }
+
+      const { engine, ephemeral } = await getOrCreateFallbackGraphEngine(activeWs, { forceRefresh: false });
+      try {
+        return buildFileSymbolGraphPayload(engine, activeWs, file, {
+          maxExternal,
+          startWatcher: false,
+          source: 'local_cache',
+        });
+      } finally {
+        if (ephemeral) {
+          try { engine.evict('all'); } catch {}
+        }
+      }
+    } catch (err) {
+      return {
+        ok: false,
+        isSymbolsView: true,
+        nodes: [],
+        edges: [],
+        error: err?.message || pickLang(lang, 'Ошибка построения графа AST-символов', 'Failed to build AST symbol graph'),
+      };
+    }
+  }, 'GET');
+
+  app.api('/api/project-graph/git-churn', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    try {
+      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const days = Math.max(7, Math.min(365, Math.floor(Number(data?.days) || 90)));
+      const forceRefresh = data?.refresh === true || data?.refresh === '1' || data?.refresh === 'true';
+      const cacheKey = `${activeWs}|${days}`;
+      const now = Date.now();
+      const cached = gitChurnCache.get(cacheKey);
+      if (!forceRefresh && cached && (now - cached.ts < GIT_CHURN_TTL_MS)) {
+        return cached.payload;
+      }
+
+      let payload;
+      try {
+        const { stdout } = await execFileAsync('git', ['log', `--since=${days} days ago`, '--name-only', '--pretty=format:'], {
+          cwd: activeWs,
+          timeout: 2500,
+          windowsHide: true,
+          maxBuffer: 4 * 1024 * 1024,
+        });
+        const parsed = parseGitChurnOutput(stdout);
+        payload = {
+          ok: true,
+          available: true,
+          workspaceRoot: activeWs,
+          days,
+          totalTouches: parsed.totalTouches,
+          maxChurn: parsed.maxChurn,
+          churnByFile: parsed.churnByFile,
+        };
+      } catch {
+        payload = {
+          ok: true,
+          available: false,
+          workspaceRoot: activeWs,
+          days,
+          totalTouches: 0,
+          maxChurn: 0,
+          churnByFile: {},
+        };
+      }
+
+      gitChurnCache.set(cacheKey, { ts: now, payload });
+      return payload;
+    } catch {
+      return {
+        ok: true,
+        available: false,
+        days: 90,
+        totalTouches: 0,
+        maxChurn: 0,
+        churnByFile: {},
+      };
+    }
+  }, 'GET');
+
+  app.api('/api/project-graph/semantic-search', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    try {
+      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const q = typeof data?.q === 'string' ? data.q.trim() : '';
+      if (q.length < 2) {
+        return { ok: true, query: q, mode: 'empty', scoresByFile: {}, matches: [] };
+      }
+
+      if (!shouldBypassHostDaemonForGraph(activeWs)) {
+        const daemonRes = await postRamDaemonJson(
+          '/graph/semantic-search',
+          { wsPath: activeWs, query: q, maxResults: 14 },
+          3500
+        );
+        if (daemonRes && daemonRes.ok) {
+          return daemonRes;
+        }
+      }
+
+      const { engine, ephemeral } = await getOrCreateFallbackGraphEngine(activeWs, { forceRefresh: false });
+      try {
+        const semRes = await engine.searchSemantic(activeWs, q, {
+          maxResults: 14,
+          contextLines: 0,
+          reindexMissing: false,
+        });
+        return aggregateSemanticGraphHits(semRes, q, 'local_cache');
+      } finally {
+        if (ephemeral) {
+          try { engine.evict('all'); } catch {}
+        }
+      }
+    } catch (err) {
+      return {
+        ok: false,
+        query: typeof data?.q === 'string' ? data.q : '',
+        mode: 'error',
+        scoresByFile: {},
+        matches: [],
+        error: err?.message || 'Semantic search failed',
+      };
+    }
+  }, 'GET');
+
+  const findStandaloneBrowserExecutable = () => {
+    const candidates = process.platform === 'win32'
+      ? [
+          process.env['ProgramFiles(x86)'] ? join(process.env['ProgramFiles(x86)'], 'Microsoft', 'Edge', 'Application', 'msedge.exe') : '',
+          process.env.ProgramFiles ? join(process.env.ProgramFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe') : '',
+          process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'Microsoft', 'Edge', 'Application', 'msedge.exe') : '',
+          process.env.ProgramFiles ? join(process.env.ProgramFiles, 'Google', 'Chrome', 'Application', 'chrome.exe') : '',
+          process.env['ProgramFiles(x86)'] ? join(process.env['ProgramFiles(x86)'], 'Google', 'Chrome', 'Application', 'chrome.exe') : '',
+          process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe') : '',
+        ]
+      : process.platform === 'darwin'
+        ? [
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+            '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+            '/Applications/Chromium.app/Contents/MacOS/Chromium',
+          ]
+        : [
+            '/usr/bin/google-chrome',
+            '/usr/bin/chromium',
+            '/usr/bin/chromium-browser',
+            '/usr/bin/microsoft-edge',
+          ];
+    for (const exe of candidates) {
+      if (exe && existsSync(exe)) return exe;
+    }
+    return '';
+  };
+
+  const launchStandaloneGraphWindow = (targetUrl) => {
+    const exe = findStandaloneBrowserExecutable();
+    try {
+      if (exe) {
+        const child = spawn(exe, [`--app=${targetUrl}`, '--window-size=1440,900', '--start-maximized'], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+        child.unref();
+        return { ok: true, mode: 'app_window' };
+      }
+      if (process.platform === 'win32') {
+        const child = spawn('cmd', ['/c', 'start', '""', targetUrl], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+        child.unref();
+        return { ok: true, mode: 'browser_tab' };
+      }
+      const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
+      const child = spawn(opener, [targetUrl], { detached: true, stdio: 'ignore' });
+      child.unref();
+      return { ok: true, mode: 'browser_tab' };
+    } catch (err) {
+      return { ok: false, error: err?.message || 'Failed to spawn browser window' };
+    }
+  };
+
+  app.api('/api/project-graph/open-window', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      let port = 0;
+      try {
+        const addr = activeHttpServer && typeof activeHttpServer.address === 'function' ? activeHttpServer.address() : null;
+        if (addr && typeof addr === 'object' && Number.isInteger(addr.port) && addr.port > 0) {
+          port = addr.port;
+        }
+      } catch {}
+      if (!port && req?.headers?.host) {
+        const rawHost = String(req.headers.host).trim();
+        const m = /^(?:127\.0\.0\.1|localhost|\[::1\]):(\d{1,5})$/i.exec(rawHost);
+        if (m) {
+          const p = Number(m[1]);
+          if (p >= 1 && p <= 65535) port = p;
+        }
+      }
+      if (!port) {
+        const envPort = Number(process.env.SIDECAR_PORT || process.env.PORT || 0);
+        if (Number.isInteger(envPort) && envPort >= 1 && envPort <= 65535) port = envPort;
+      }
+      if (!port) {
+        return {
+          ok: false,
+          fallbackModal: true,
+          error: pickLang(lang, 'Локальный порт панели недоступен', 'Panel loopback port unavailable'),
+        };
+      }
+
+      const rawToken =
+        (req?.headers && (req.headers['x-sidecar-token'] || req.headers['x-antigravity-token'])) ||
+        (typeof data?.token === 'string' ? data.token : '') ||
+        process.env.SIDECAR_TOKEN ||
+        '';
+      const urlParams = new URLSearchParams();
+      urlParams.set('view', 'graph');
+      if (activeWs) urlParams.set('rootDir', activeWs);
+      if (rawToken) urlParams.set('token', String(rawToken).trim());
+      const targetUrl = `http://127.0.0.1:${port}/?${urlParams.toString()}`;
+
+      if (data?.dryRun === true) {
+        return { ok: true, url: targetUrl, dryRun: true, mode: 'dry_run' };
+      }
+
+      const launched = launchStandaloneGraphWindow(targetUrl);
+      if (!launched.ok) {
+        return { ok: false, fallbackModal: true, error: launched.error || 'Window launch failed' };
+      }
+      return { ok: true, url: targetUrl, mode: launched.mode };
+    } catch (err) {
+      return {
+        ok: false,
+        fallbackModal: true,
+        error: err?.message || pickLang(lang, 'Не удалось открыть отдельное окно карты', 'Failed to open standalone graph window'),
+      };
+    }
+  }, 'POST');
+
   app.api('/api/debt', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
@@ -2068,12 +2607,17 @@ export async function startSidecarPanel(options = {}) {
 
   const server = await app.run();
   if (server) {
+    activeHttpServer = server;
     attachSidecarSecurityMiddleware(server);
     securityMiddlewareActive = true;
     if (typeof server.once === 'function') {
       server.once('close', () => {
         chatMessageQueue.dispose();
         autocompleteGpuQueue.dispose();
+        try { fallbackGraphState.engine?.evict?.('all'); } catch {}
+        fallbackGraphState = { engine: null, wsPath: '', updatedAt: 0 };
+        gitDiffCache.clear();
+        gitChurnCache.clear();
       });
     }
   }

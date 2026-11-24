@@ -24,7 +24,7 @@ function readPackageVersion() {
       return pkg.version.trim();
     }
   } catch {}
-  return '3.32.2';
+  return '3.33.0';
 }
 
 function readLiveGpuTelemetry() {

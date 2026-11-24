@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%230a84ff'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%23ffffff'/%3E%3C/svg%3E" />
-  <title>The Tunnel v3.32.2</title>
+  <title>The Tunnel v3.33.0</title>
   <script src="/preload.js"></script>
   <style>
 /*__PANEL_STYLES__*/
@@ -42,6 +42,17 @@
           <button type="button" class="theme-dot-btn active" data-theme="glass_teal" style="background: #0a84ff;" data-action="setPanelTheme" data-arg="glass_teal" title="Жидкое стекло iOS (Тёмная)"></button>
           <button type="button" class="theme-dot-btn" data-theme="studio_titanium" style="background: linear-gradient(135deg, #ffe4d1 0%, #ea580c 100%);" data-action="setPanelTheme" data-arg="studio_titanium" title="Персиковый фарфор (Светлая)"></button>
         </div>
+        <button class="lg-icon-btn graph-header-btn" type="button" id="openProjectGraphBtn" data-action="openProjectGraphModal" title="Интерактивная карта зависимостей и связей проекта" aria-label="Открыть карту проекта">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.5" />
+            <circle cx="3" cy="3.5" r="1.6" stroke="currentColor" stroke-width="1.4" />
+            <circle cx="13" cy="4" r="1.6" stroke="currentColor" stroke-width="1.4" />
+            <circle cx="12.5" cy="12.5" r="1.6" stroke="currentColor" stroke-width="1.4" />
+            <circle cx="3.5" cy="12.5" r="1.6" stroke="currentColor" stroke-width="1.4" />
+            <path d="M4.2 4.6L6.4 6.6M11.7 5L9.7 6.8M9.6 9.5L11.4 11.3M6.3 9.5L4.6 11.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+          </svg>
+          <span id="openProjectGraphLabel">Карта</span>
+        </button>
         <button class="lg-icon-btn" type="button" id="resetBlockOrderBtn" data-action="resetPanelBlockOrder" title="Вернуть исходный порядок всех блоков по умолчанию" style="display: none;">↺ Сброс</button>
         <button class="lg-icon-btn round" type="button" data-action="refreshAll" title="Обновить всё (телеметрия обновляется автоматически раз в ~3 сек)">↻</button>
       </div>
@@ -1216,7 +1227,7 @@
 
     <div class="status-bar">
       <div id="statusPill" class="status-pane">Готово · Синхронизировано</div>
-      <div class="status-pane" id="footerPluginVersion">The Tunnel v3.32.2</div>
+      <div class="status-pane" id="footerPluginVersion">The Tunnel v3.33.0</div>
     </div>
     <div style="text-align:center;font-size:10.5px;color:var(--text-sub);opacity:0.7;padding:4px 0 2px;letter-spacing:0.02em;">Created by Vasili Zuev</div>
   </div>
@@ -1227,7 +1238,7 @@
       <div class="wiz-head">
         <div class="lg-brand">
           <span class="lg-brand-orb"></span>
-          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v3.32.2</span>
+          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v3.33.0</span>
           <span class="lg-session-pill" id="wizLaunchBadge">Первый запуск</span>
         </div>
         <button class="lg-icon-btn round" type="button" data-action="closeOnboardingWizard" title="Отложить или закрыть окно настройки (Esc)">×</button>
@@ -1248,6 +1259,162 @@
         <button type="button" class="win-btn" id="wizBackBtn" data-action="wizPrevStep">← Назад</button>
         <button type="button" class="win-btn active" id="wizNextBtn" data-action="wizNextStep">Далее →</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ИНТЕРАКТИВНАЯ КАРТА ПРОЕКТА (OBSIDIAN GRAPH + ИНЖЕНЕРНЫЙ ИНСПЕКТОР) -->
+  <div class="pg-overlay" id="projectGraphModal" role="dialog" aria-modal="true" aria-labelledby="pgModalTitle">
+    <div class="pg-header">
+      <div class="lg-brand">
+        <span class="lg-brand-orb"></span>
+        <span class="lg-brand-title" id="pgModalTitle">Карта проекта</span>
+        <span class="lg-session-pill" id="pgProjectBadge">Проект</span>
+        <span class="pg-stats-pill" id="pgStatsPill">0 узлов · 0 связей</span>
+      </div>
+      <div class="pg-header-controls">
+        <div class="pg-mode-switch" role="group" aria-label="Уровень детализации">
+          <button type="button" class="pg-seg-btn active" id="pgLevelFoldersBtn" data-action="pgSetViewLevel" data-arg="folders" title="Укрупнённая карта по папкам и подсистемам проекта">Папки</button>
+          <button type="button" class="pg-seg-btn" id="pgLevelFilesBtn" data-action="pgSetViewLevel" data-arg="files" title="Подробная карта всех отдельных файлов">Файлы</button>
+          <button type="button" class="pg-seg-btn" id="pgLevelSymbolsBtn" data-action="pgSetViewLevel" data-arg="symbols" title="Граф AST-символов и вызовов выбранного файла">Символы</button>
+        </div>
+        <div class="pg-mode-switch" role="group" aria-label="Тип раскладки">
+          <button type="button" class="pg-seg-btn active" id="pgLayoutLayeredBtn" data-action="pgSetLayoutMode" data-arg="layered" title="Слои архитектуры (слева направо: входы → модули → ядро)">Слои</button>
+          <button type="button" class="pg-seg-btn" id="pgLayoutForceBtn" data-action="pgSetLayoutMode" data-arg="force" title="Силовое облако связей и кластеров">Облако</button>
+        </div>
+        <div class="pg-mode-switch" role="group" aria-label="Режим графа">
+          <button type="button" class="pg-seg-btn active" id="pgModeGlobalBtn" data-action="pgSetGraphMode" data-arg="global" title="Показать архитектурное ядро и главные связи всего проекта">Глобальный</button>
+          <button type="button" class="pg-seg-btn" id="pgModeLocalBtn" data-action="pgSetGraphMode" data-arg="local" title="Показать только связи вокруг выбранного файла (1–2 шага)">Локальный</button>
+        </div>
+        <button class="lg-icon-btn round" type="button" id="pgRefreshBtn" data-action="pgRefreshGraph" title="Перестроить граф проекта из памяти RAM">↻</button>
+        <button class="lg-icon-btn round" type="button" id="pgCloseBtn" data-action="closeProjectGraphModal" title="Закрыть карту проекта (Esc)" aria-label="Закрыть карту проекта">×</button>
+      </div>
+    </div>
+
+    <div class="pg-toolbar">
+      <div class="pg-search-wrap">
+        <input type="text" id="pgSearchInput" class="lg-input pg-search-input" data-input-action="onProjectGraphSearch" placeholder="Найти файл или модуль (напр. server.mjs)..." aria-label="Поиск файла на карте проекта" />
+        <button type="button" class="pg-search-clear" id="pgSearchClearBtn" data-action="pgClearSearch" title="Очистить поиск" aria-label="Очистить поиск" style="display: none;">×</button>
+        <button type="button" class="pg-sem-toggle" id="pgSemanticSearchBtn" data-action="pgToggleSemanticSearch" title="Смысловой GPU-поиск по коду (Ollama / лексический фолбэк)">GPU</button>
+      </div>
+      <div class="pg-mode-switch pg-lens-switch" role="group" aria-label="Инженерная линза">
+        <button type="button" class="pg-seg-btn pg-lens-btn active" id="pgLensArchBtn" data-action="pgSetLens" data-arg="arch" title="Обычная карта структуры и связей">Архитектура</button>
+        <button type="button" class="pg-seg-btn pg-lens-btn" id="pgLensBlastBtn" data-action="pgSetLens" data-arg="blast" title="Транзитивная волна влияния 1–3 хопа от узла или git diff">Blast &amp; Diff</button>
+        <button type="button" class="pg-seg-btn pg-lens-btn" id="pgLensCyclesBtn" data-action="pgSetLens" data-arg="cycles" title="Циклические импорты (Tarjan SCC) и изолированные файлы">Циклы</button>
+        <button type="button" class="pg-seg-btn pg-lens-btn" id="pgLensHotspotsBtn" data-action="pgSetLens" data-arg="hotspots" title="Горячие точки Git: частота правок (churn) × связность">Hotspots</button>
+        <button type="button" class="pg-seg-btn pg-lens-btn" id="pgLensPathBtn" data-action="pgSetLens" data-arg="path" title="Кратчайший путь между двумя узлами (Shift+клик)">Путь A→B</button>
+      </div>
+      <div class="pg-filter-group">
+        <button type="button" class="pg-toggle-pill" id="pgToggleTestsBtn" data-action="pgToggleFilter" data-arg="tests" title="Включить или скрыть тестовые файлы">Тесты</button>
+        <button type="button" class="pg-toggle-pill active" id="pgToggleDocsBtn" data-action="pgToggleFilter" data-arg="docs" title="Показывать ссылки из документации и конфигов">Доки</button>
+        <button type="button" class="pg-toggle-pill active" id="pgToggleLabelsBtn" data-action="pgToggleFilter" data-arg="labels" title="Показывать подписи имён файлов">Подписи</button>
+        <button type="button" class="pg-toggle-pill active" id="pgToggleHullsBtn" data-action="pgToggleFilter" data-arg="hulls" title="Показывать мягкие контуры подсистем в режиме Облака">Острова</button>
+        <button type="button" class="pg-toggle-pill active" id="pgToggleBundlingBtn" data-action="pgToggleFilter" data-arg="bundling" title="Группировать рёбра в плавные пучки подсистем (Edge Bundling)">Пучки</button>
+        <button type="button" class="pg-toggle-pill active" id="pgToggleMinimapBtn" data-action="pgToggleFilter" data-arg="minimap" title="Показывать интерактивную миникарту в правом нижнем углу">Карта</button>
+        <button type="button" class="pg-toggle-pill" id="pgToggleWebglBtn" data-action="pgToggleFilter" data-arg="webgl" title="Аппаратный рендер WebGL2 Instanced (авто при ≥1200 узлов)">WebGL2</button>
+        <select id="pgLimitSelect" class="pg-depth-select" data-change-action="pgChangeNodeLimit" title="Максимум узлов карты (5k–25k через WebGL2)" aria-label="Максимум узлов карты">
+          <option value="220" selected>220 узл.</option>
+          <option value="1500">1.5k</option>
+          <option value="5000">5k</option>
+          <option value="15000">15k</option>
+        </select>
+        <select id="pgDepthSelect" class="pg-depth-select" data-change-action="pgChangeDepth" title="Глубина локального обхода (хопы)" aria-label="Глубина локального обхода">
+          <option value="1">1 хоп</option>
+          <option value="2" selected>2 хопа</option>
+          <option value="3">3 хопа</option>
+        </select>
+      </div>
+      <div class="pg-zoom-group">
+        <button type="button" class="pg-mini-btn pg-export-btn" id="pgExportMermaidBtn" data-action="pgExportMermaid" title="Скопировать текущий граф в формате Mermaid">MMD</button>
+        <button type="button" class="pg-mini-btn pg-export-btn" id="pgExportPngBtn" data-action="pgExportPng" title="Скачать снимок карты в формате PNG">PNG</button>
+        <button type="button" class="pg-mini-btn" data-action="pgZoomStep" data-arg="out" title="Отдалить">−</button>
+        <button type="button" class="pg-mini-btn" data-action="pgZoomStep" data-arg="fit" title="Уместить весь граф в экран">⌖</button>
+        <button type="button" class="pg-mini-btn" data-action="pgZoomStep" data-arg="in" title="Приблизить">+</button>
+      </div>
+    </div>
+
+    <div class="pg-cluster-bar" id="pgClusterPills"></div>
+
+    <div class="pg-split-body">
+      <div class="pg-canvas-stage" id="pgCanvasStage">
+        <canvas id="projectGraphWebglCanvas" class="pg-webgl-canvas" aria-hidden="true"></canvas>
+        <canvas id="projectGraphCanvas"></canvas>
+        <div class="pg-empty-state" id="pgEmptyState" style="display: none;">
+          <div class="pg-empty-title" id="pgEmptyTitle">Карта проекта готовится…</div>
+          <div class="pg-empty-sub" id="pgEmptySub">Сканируем файлы и связи в оперативной памяти</div>
+        </div>
+        <div class="pg-hover-tooltip" id="pgHoverTooltip" style="display: none;"></div>
+        <div class="pg-legend-strip" id="pgLegendStrip">
+          <span class="pg-legend-item"><span class="pg-dot-god"></span><span id="pgLegendGodText">God Node (хаб)</span></span>
+          <span class="pg-legend-item"><span class="pg-dot-fragile"></span><span id="pgLegendFragileText">Хрупкий файл</span></span>
+          <span class="pg-legend-item"><span class="pg-line-imp"></span><span id="pgLegendImportText">Импорт</span></span>
+          <span class="pg-legend-item"><span class="pg-line-doc"></span><span id="pgLegendDocText">Док/конфиг</span></span>
+          <span class="pg-legend-extra" id="pgLegendExtra" style="display: none;"></span>
+        </div>
+      </div>
+
+      <aside class="pg-inspector" id="pgInspector" aria-label="Инспектор выбранного файла">
+        <div class="pg-insp-head">
+          <div class="pg-insp-title-wrap">
+            <div class="pg-insp-filename" id="pgInspFilename">Выберите узел на карте</div>
+            <div class="pg-insp-path" id="pgInspPath">Кликните по точке, чтобы увидеть Blast Radius и зависимости</div>
+          </div>
+          <div class="pg-insp-badges" id="pgInspBadges"></div>
+        </div>
+
+        <div class="pg-insp-metrics" id="pgInspMetrics" style="display: none;">
+          <div class="pg-metric-box">
+            <span class="pg-metric-val" id="pgMetricIn">0</span>
+            <span class="pg-metric-lbl" id="pgMetricInLbl">Входящие</span>
+          </div>
+          <div class="pg-metric-box">
+            <span class="pg-metric-val" id="pgMetricOut">0</span>
+            <span class="pg-metric-lbl" id="pgMetricOutLbl">Импорты</span>
+          </div>
+          <div class="pg-metric-box">
+            <span class="pg-metric-val" id="pgMetricLines">0</span>
+            <span class="pg-metric-lbl" id="pgMetricLinesLbl">Строк</span>
+          </div>
+          <div class="pg-metric-box">
+            <span class="pg-metric-val" id="pgMetricRel">100%</span>
+            <span class="pg-metric-lbl" id="pgMetricRelLbl">Надёжность</span>
+          </div>
+        </div>
+
+        <div class="pg-insp-tabs" id="pgInspTabs" style="display: none;">
+          <button type="button" class="pg-insp-tab active" data-action="pgSetInspectorTab" data-arg="blast" id="pgTabBlast">Blast Radius (0)</button>
+          <button type="button" class="pg-insp-tab" data-action="pgSetInspectorTab" data-arg="imports" id="pgTabImports">Импорты (0)</button>
+          <button type="button" class="pg-insp-tab" data-action="pgSetInspectorTab" data-arg="overview" id="pgTabOverview">Обзор</button>
+        </div>
+
+        <div class="pg-insp-lens-panel" id="pgInspLensPanel" style="display: none;"></div>
+
+        <div class="pg-insp-list" id="pgInspList">
+          <div class="pg-insp-placeholder" id="pgInspPlaceholder">
+            Наведите курсор для подсветки 1-шаговых связей. Двойной клик откроет локальный граф файла (1–2 хопа).
+          </div>
+        </div>
+
+        <div class="pg-context-cart" id="pgContextCart" style="display: none;">
+          <div class="pg-cart-row">
+            <span class="pg-cart-summary" id="pgCartSummary">Пакет: 0 ф. · ~0 ток.</span>
+            <button type="button" class="pg-mini-btn pg-cart-clear-btn" id="pgCartClearBtn" data-action="pgClearContextCart" title="Очистить собранный пакет файлов">×</button>
+          </div>
+          <button type="button" class="win-btn active pg-btn-full" id="pgCartSendBtn" data-action="pgSendCartToComposer" title="Вставить весь собранный пакет @file в Умный Композер">✦ Пакет в Композер</button>
+        </div>
+
+        <div class="pg-insp-actions" id="pgInspActions" style="display: none;">
+          <div class="pg-insp-action-row">
+            <button type="button" class="win-btn pg-btn-half" id="pgActionFocusBtn" data-action="pgFocusSelectedNode" title="Показать 1–2 хопа вокруг этого файла">🎯 Фокус</button>
+            <button type="button" class="win-btn pg-btn-half" id="pgActionSymbolsBtn" data-action="pgOpenSymbolsForSelected" title="Открыть 3-й уровень: граф AST-символов этого файла">ƒ Символы</button>
+            <button type="button" class="win-btn pg-btn-half" id="pgActionPathBtn" data-action="pgStartPathFromSelected" title="Найти путь A→B от выбранного узла (или Shift+клик по цели)">⇄ Путь</button>
+            <button type="button" class="win-btn pg-btn-half" id="pgActionCopyBtn" data-action="pgCopySelectedPath" title="Скопировать относительный путь">📋 Путь</button>
+          </div>
+          <div class="pg-insp-action-row">
+            <button type="button" class="win-btn pg-btn-half" id="pgActionCartToggleBtn" data-action="pgToggleNodeInCart" title="Добавить или убрать файл из пакета контекста (Ctrl+клик)">＋ В пакет</button>
+            <button type="button" class="win-btn active pg-btn-half" id="pgActionComposerBtn" data-action="pgSendToComposer" title="Добавить @file: в Умный Композер">✦ В Композер</button>
+          </div>
+        </div>
+      </aside>
     </div>
   </div>
 

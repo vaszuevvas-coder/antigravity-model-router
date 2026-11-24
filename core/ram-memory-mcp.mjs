@@ -44,6 +44,7 @@ import { getCpuStatusSnapshot } from './cpu-worker-pool.mjs';
 import { canonicalizeJson } from './toon-formatter.mjs';
 import { lspBridge } from './lsp-bridge.mjs';
 import { isEphemeralTestWorkspace } from './session-handoff.mjs';
+import { buildProjectGraphPayload, buildFileSymbolGraphPayload, aggregateSemanticGraphHits } from './project-graph-builder.mjs';
 import { knowledgeHub } from './sqlite-knowledge-hub.mjs';
 import { runAutomatedGitBisect } from './runtime-wiretap.mjs';
 import { runSemanticMutationGuard } from './cpu-mutation-guard.mjs';
@@ -831,6 +832,69 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
       maxGodNodes: Number(body.maxGodNodes) || 6,
     });
     return { status: 200, body: res };
+  }
+
+  if (method === 'POST' && url === '/graph/project-map') {
+    const wsPath = body.wsPath || latestActiveWorkspace || stdioClientWorkspace || process.cwd();
+    if (!st.enabled || !wsPath) return { status: 200, body: { ok: false } };
+    const isEphemeral = isEphemeralOrScratchWorkspace(wsPath) || isEphemeralTestWorkspace(wsPath);
+    if (!isEphemeral) registerDaemonWorkspace(wsPath);
+    const payload = buildProjectGraphPayload(targetEngine, wsPath, {
+      focus: body.focus,
+      depth: body.depth,
+      maxNodes: body.maxNodes,
+      includeTests: body.includeTests,
+      includeDocs: body.includeDocs,
+      startWatcher: !isEphemeral,
+      source: 'ram_daemon',
+    });
+    return { status: 200, body: payload };
+  }
+
+  if (method === 'POST' && url === '/graph/path') {
+    const wsPath = body.wsPath || latestActiveWorkspace || stdioClientWorkspace || process.cwd();
+    if (!st.enabled || !wsPath) return { status: 200, body: { ok: false, found: false } };
+    const isEphemeral = isEphemeralOrScratchWorkspace(wsPath) || isEphemeralTestWorkspace(wsPath);
+    if (!isEphemeral) registerDaemonWorkspace(wsPath);
+    const maxDepth = Math.max(1, Math.min(8, Math.floor(Number(body.maxDepth) || 6)));
+    const direction = body.direction === 'directed' ? 'directed' : 'both';
+    const res = targetEngine.findGraphPath(wsPath, body.from || '', body.to || '', {
+      maxDepth,
+      direction,
+    });
+    return { status: 200, body: res };
+  }
+
+  if (method === 'POST' && url === '/graph/symbols') {
+    const wsPath = body.wsPath || latestActiveWorkspace || stdioClientWorkspace || process.cwd();
+    if (!st.enabled || !wsPath || !body.file) {
+      return { status: 200, body: { ok: false, isSymbolsView: true, nodes: [], edges: [] } };
+    }
+    const isEphemeral = isEphemeralOrScratchWorkspace(wsPath) || isEphemeralTestWorkspace(wsPath);
+    if (!isEphemeral) registerDaemonWorkspace(wsPath);
+    const payload = buildFileSymbolGraphPayload(targetEngine, wsPath, body.file, {
+      startWatcher: !isEphemeral,
+      maxExternal: body.maxExternal,
+      source: 'ram_daemon',
+    });
+    return { status: 200, body: payload };
+  }
+
+  if (method === 'POST' && url === '/graph/semantic-search') {
+    const wsPath = body.wsPath || latestActiveWorkspace || stdioClientWorkspace || process.cwd();
+    const query = String(body.query || '').trim();
+    if (!st.enabled || !wsPath || query.length < 2) {
+      return { status: 200, body: { ok: false, query, scoresByFile: {}, matches: [] } };
+    }
+    const isEphemeral = isEphemeralOrScratchWorkspace(wsPath) || isEphemeralTestWorkspace(wsPath);
+    if (!isEphemeral) registerDaemonWorkspace(wsPath);
+    const maxResults = Math.max(4, Math.min(30, Math.floor(Number(body.maxResults) || 14)));
+    const semRes = await targetEngine.searchSemantic(wsPath, query, {
+      maxResults,
+      contextLines: 0,
+      reindexMissing: false,
+    });
+    return { status: 200, body: aggregateSemanticGraphHits(semRes, query, 'ram_daemon') };
   }
 
   if (method === 'POST' && url === '/hook/pre-invocation') {
