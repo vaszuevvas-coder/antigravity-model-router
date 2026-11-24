@@ -27,6 +27,8 @@ const GPU_LIVE_ACTIVITY_FILE = join(CACHE_DIR, 'gpu-live-activity.json');
 
 export const GPU_PULL_STATUS_FILE = join(CACHE_DIR, 'gpu-pull-status.json');
 
+export const OLLAMA_INSTALL_STATUS_FILE = join(CACHE_DIR, 'ollama-install-status.json');
+
 export const GPU_DISTILL_CACHE_FILE = join(CACHE_DIR, 'gpu-distill-cache.json');
 
 export const DEFAULT_GPU_CONFIG = {
@@ -40,6 +42,8 @@ export const DEFAULT_GPU_CONFIG = {
   gpuEmbedKeepAlive: '90m',
   gpuContextTokens: 12288,
   gpuModelsDir: '',
+  gpuOllamaDir: '',
+  gpuPreferHfMirror: false,
   gpuAutoStart: true,
   gpuAutoDistillLogs: true,
   gpuSemanticSearch: true,
@@ -49,7 +53,7 @@ export const DEFAULT_GPU_CONFIG = {
   gpuWarmHostRamCache: true,
 };
 
-export function resolveDefaultGpuModelsDir(configuredDir = '') {
+export function resolveDefaultGpuModelsDir(configuredDir = '', ollamaDir = '') {
   const configured = String(configuredDir || '').trim();
   const isAccessiblePath = (p) => {
     if (!p) return false;
@@ -61,6 +65,11 @@ export function resolveDefaultGpuModelsDir(configuredDir = '') {
   };
   if (configured && isAccessiblePath(configured)) {
     return configured;
+  }
+  const customOllama = String(ollamaDir || '').trim();
+  if (customOllama && isAccessiblePath(customOllama)) {
+    const derived = join(customOllama, 'models');
+    if (isAccessiblePath(derived)) return derived;
   }
   const envDir = String(process.env.OLLAMA_MODELS || '').trim();
   if (envDir && isAccessiblePath(envDir)) {
@@ -310,7 +319,12 @@ export function loadGpuConfig(override = {}) {
     gpuKeepAlive: String(merged.gpuKeepAlive || DEFAULT_GPU_CONFIG.gpuKeepAlive).trim(),
     gpuEmbedKeepAlive: String(merged.gpuEmbedKeepAlive || DEFAULT_GPU_CONFIG.gpuEmbedKeepAlive).trim(),
     gpuContextTokens: clampInt(merged.gpuContextTokens, 2048, 32768, DEFAULT_GPU_CONFIG.gpuContextTokens),
-    gpuModelsDir: resolveDefaultGpuModelsDir(merged.gpuModelsDir || DEFAULT_GPU_CONFIG.gpuModelsDir),
+    gpuOllamaDir: String(merged.gpuOllamaDir || DEFAULT_GPU_CONFIG.gpuOllamaDir || '').trim(),
+    gpuModelsDir: resolveDefaultGpuModelsDir(
+      merged.gpuModelsDir || DEFAULT_GPU_CONFIG.gpuModelsDir,
+      merged.gpuOllamaDir || DEFAULT_GPU_CONFIG.gpuOllamaDir || ''
+    ),
+    gpuPreferHfMirror: Boolean(merged.gpuPreferHfMirror),
     gpuAutoStart: merged.gpuAutoStart !== false,
     gpuAutoDistillLogs: merged.gpuAutoDistillLogs !== false,
     gpuSemanticSearch: merged.gpuSemanticSearch !== false,

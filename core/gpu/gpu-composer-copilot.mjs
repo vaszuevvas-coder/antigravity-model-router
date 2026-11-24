@@ -242,10 +242,10 @@ export function sanitizeGhostContinuation(draft = '', rawSuggestion = '') {
   }
 
   // Cap continuation length cleanly on a word boundary
-  if (cleaned.length > 96) {
-    const slice = cleaned.slice(0, 96);
+  if (cleaned.length > 200) {
+    const slice = cleaned.slice(0, 200);
     const lastSpace = slice.lastIndexOf(' ');
-    cleaned = lastSpace > 48 ? slice.slice(0, lastSpace) : slice;
+    cleaned = lastSpace > 90 ? slice.slice(0, lastSpace) : slice;
   }
 
   cleaned = cleaned.replace(/\s+$/, '');
@@ -1330,6 +1330,7 @@ export function verifyGhostContinuationGrounding(draft = '', continuation = '', 
 export async function generatePromptContinuation({
   draft = '',
   recentGoals = [],
+  recentMessages = [],
   touchedFiles = [],
   symbolHints = [],
   ragSnippets = [],
@@ -1339,7 +1340,7 @@ export async function generatePromptContinuation({
   repoTechTerms = [],
   allowedSlashCommands = [],
   allowFollowUpSentence = false,
-  maxOutputTokens = 18,
+  maxOutputTokens = 44,
   timeoutMs = 2200,
   signal = null,
   lang = '',
@@ -1349,7 +1350,7 @@ export async function generatePromptContinuation({
   _bypassCache = false,
 } = {}) {
   const rawDraft = String(draft || '');
-  if (rawDraft.trim().length < 3 || rawDraft.length > 600) {
+  if (rawDraft.trim().length < 3 || rawDraft.length > 1200) {
     return { ok: false, continuation: '', error: 'Draft out of range' };
   }
   if (signal?.aborted) {
@@ -1384,6 +1385,16 @@ export async function generatePromptContinuation({
     : [];
   const cleanGoals = Array.isArray(recentGoals)
     ? recentGoals.map((g) => String(g || '').trim()).filter(Boolean).slice(0, 2)
+    : [];
+  const cleanRecentMessages = Array.isArray(recentMessages)
+    ? recentMessages
+        .slice(-4)
+        .map((m) => {
+          const role = m?.role === 'assistant' ? 'assistant' : 'user';
+          const text = String(m?.content || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+          return text ? `${role}: ${text}` : '';
+        })
+        .filter(Boolean)
     : [];
   const ragSnippetFiles = [];
   const ragSnippetSymbols = [];
@@ -1420,11 +1431,17 @@ export async function generatePromptContinuation({
 
   const requestedModel = cfg.gpuChatModel;
   const requestedTag = normalizeOllamaTag(requestedModel);
+  const predictTokens = clampInt(maxOutputTokens, 8, 96, followUpSentence ? 48 : 44);
   const ragHash = cleanRagSnippets.length > 0
     ? createHash('sha1').update(cleanRagSnippets.join('|')).digest('hex').slice(0, 10)
     : '';
+  const chatCtxHash = cleanRecentMessages.length > 0
+    ? createHash('sha1').update(cleanRecentMessages.join('|')).digest('hex').slice(0, 8)
+    : '';
   const cacheKey = createHash('sha1')
-    .update(`v2|${requestedTag}|${cleanFiles.slice(0, 5).join(',')}|${rawDraft}${ragHash ? `|rag:${ragHash}` : ''}`)
+    .update(
+      `v3|${requestedTag}|${followUpSentence ? 'fu' : 'in'}|p${predictTokens}|${cleanFiles.slice(0, 5).join(',')}|${rawDraft}${ragHash ? `|rag:${ragHash}` : ''}${chatCtxHash ? `|chat:${chatCtxHash}` : ''}`
+    )
     .digest('hex');
 
   if (!_bypassCache) {
@@ -1572,29 +1589,29 @@ export async function generatePromptContinuation({
   if (injectedFiles.length > 0) contextLines.push(`FILES: ${injectedFiles.join(', ')}`);
   if (injectedSymbols.length > 0) contextLines.push(`SYMBOLS: ${injectedSymbols.join(', ')}`);
   if (relevantGoals.length > 0) contextLines.push(`RECENT: ${relevantGoals.join(' | ')}`);
+  if (cleanRecentMessages.length > 0) contextLines.push(`CHAT_CONTEXT: ${cleanRecentMessages.join(' | ')}`);
   if (cleanRagSnippets.length > 0) contextLines.push(`RAG_CONTEXT: ${cleanRagSnippets.join(' ; ')}`);
   if (followUpSentence) {
     contextLines.push(`COMPLETED_FIRST_SENTENCE: ${rawDraft}`);
     contextLines.push(
-      'TASK: Write ONE short follow-up requirement, constraint, or example FROM THE HUMAN DEVELOPER to append after COMPLETED_FIRST_SENTENCE (strictly user voice, NEVER answer the question, or output NONE if unsure):'
+      'TASK: Write ONE meaningful follow-up requirement, constraint, or concrete example FROM THE HUMAN DEVELOPER (5 to 20 words) that builds on the full COMPLETED_FIRST_SENTENCE and CHAT_CONTEXT if present (strictly user voice, NEVER answer the question, or output NONE if unsure):'
     );
   } else {
     contextLines.push(`UNFINISHED_USER_PROMPT: ${rawDraft}`);
     contextLines.push(
-      'TASK: Output ONLY the inline suffix that completes UNFINISHED_USER_PROMPT as the human developer (stop at end of current sentence, NEVER answer the prompt, or output NONE if unsure):'
+      'TASK: Output ONLY a natural, informative inline suffix (5 to 20 words) that completes UNFINISHED_USER_PROMPT using all context already typed (and CHAT_CONTEXT if present), as the human developer (stop at end of current sentence, NEVER answer the prompt, or output NONE if unsure):'
     );
   }
 
   const isEnCont = contLang === 'en';
   const systemPrompt = followUpSentence
     ? (isEnCont
-        ? "You are an inline Ghost Text prompt-composer autocomplete writing strictly AS THE HUMAN DEVELOPER composing a request TO an AI coding assistant. The developer just finished one sentence/question and may append ONE short follow-up sentence FROM THEIR OWN PERSPECTIVE to clarify scope, target files, constraints, or an example (e.g. 'For example, ...', 'Preferably without ...', 'Especially for ...'). CRITICAL: You are the HUMAN USER, NEVER the AI assistant! NEVER answer the question, NEVER confirm/deny or explain how to solve it. FORBIDDEN openings: 'Yes', 'No', 'Sure', 'You can', 'This can', 'Let us', 'Let\\'s', 'Here is', 'Да', 'Нет', 'Конечно'. STRICT GROUNDING: NEVER invent file paths, function/variable names, --cli-flags, or /slash commands that are not explicitly listed in FILES, SYMBOLS, or RAG_CONTEXT; if there is no high-confidence grounded continuation, output literally NONE. Output ONLY 1 short user-side sentence (3 to 10 words), no quotes, no line breaks, without repeating COMPLETED_FIRST_SENTENCE. Same language as input (English by default)."
-        : "You are an inline Ghost Text prompt-composer autocomplete writing strictly AS THE HUMAN DEVELOPER composing a request TO an AI coding assistant. The developer just finished one sentence/question and may append ONE short follow-up sentence FROM THEIR OWN PERSPECTIVE to clarify scope, target files, constraints, or an example (e.g. 'Например, ...', 'Желательно без ...', 'Чтобы при этом ...', 'В частности для ...'). CRITICAL: You are the HUMAN USER, NEVER the AI assistant! NEVER answer the question, NEVER confirm/deny or explain how to solve it. FORBIDDEN openings: 'Да', 'Нет', 'Конечно', 'Безусловно', 'Разумеется', 'Это можно', 'Для этого', 'Чтобы это реализовать', 'Я могу', 'Мы можем', 'Давайте', 'Дело в том', 'Yes', 'No', 'Sure', 'You can', 'This can'. STRICT GROUNDING: NEVER invent file paths, function/variable names, --cli-flags, or /slash commands that are not explicitly listed in FILES, SYMBOLS, or RAG_CONTEXT; if there is no high-confidence grounded continuation, output literally NONE. Output ONLY 1 short user-side sentence (3 to 10 words), no quotes, no line breaks, without repeating COMPLETED_FIRST_SENTENCE. Same language as input (Russian by default).")
+        ? "You are an inline Ghost Text prompt-composer autocomplete writing strictly AS THE HUMAN DEVELOPER composing a multi-part request TO an AI coding assistant. The developer just finished a sentence/question and wants ONE rich, context-aware follow-up sentence FROM THEIR OWN PERSPECTIVE to specify scope, acceptance criteria, edge cases, target files, or a concrete example (e.g. 'For example, ...', 'Also make sure ...', 'Preferably without ...'). Use ALL context already typed in COMPLETED_FIRST_SENTENCE (and CHAT_CONTEXT if present) without stopping at just 2 generic words. CRITICAL: You are the HUMAN USER, NEVER the AI assistant! NEVER answer the question, NEVER confirm/deny or explain how to solve it. FORBIDDEN openings: 'Yes', 'No', 'Sure', 'You can', 'This can', 'Let us', 'Let\\'s', 'Here is', 'Да', 'Нет', 'Конечно'. STRICT GROUNDING: NEVER invent file paths, function/variable names, --cli-flags, or /slash commands that are not explicitly listed in FILES, SYMBOLS, or RAG_CONTEXT; if there is no high-confidence grounded continuation, output literally NONE. Output ONLY 1 user-side sentence (5 to 20 words), no quotes, no line breaks, without repeating COMPLETED_FIRST_SENTENCE. Same language as input (English by default)."
+        : "You are an inline Ghost Text prompt-composer autocomplete writing strictly AS THE HUMAN DEVELOPER composing a multi-part request TO an AI coding assistant. The developer just finished a sentence/question and wants ONE rich, context-aware follow-up sentence FROM THEIR OWN PERSPECTIVE to specify scope, acceptance criteria, edge cases, target files, or a concrete example (e.g. 'Например, ...', 'При этом важно, чтобы ...', 'Желательно без ...', 'В частности для ...'). Use ALL context already typed in COMPLETED_FIRST_SENTENCE (and CHAT_CONTEXT if present) without stopping at just 2 generic words. CRITICAL: You are the HUMAN USER, NEVER the AI assistant! NEVER answer the question, NEVER confirm/deny or explain how to solve it. FORBIDDEN openings: 'Да', 'Нет', 'Конечно', 'Безусловно', 'Разумеется', 'Это можно', 'Для этого', 'Чтобы это реализовать', 'Я могу', 'Мы можем', 'Давайте', 'Дело в том', 'Yes', 'No', 'Sure', 'You can', 'This can'. STRICT GROUNDING: NEVER invent file paths, function/variable names, --cli-flags, or /slash commands that are not explicitly listed in FILES, SYMBOLS, or RAG_CONTEXT; if there is no high-confidence grounded continuation, output literally NONE. Output ONLY 1 user-side sentence (5 to 20 words), no quotes, no line breaks, without repeating COMPLETED_FIRST_SENTENCE. Same language as input (Russian by default).")
     : (isEnCont
-        ? "You are an inline Ghost Text prompt-composer autocomplete writing strictly AS THE HUMAN DEVELOPER typing an unfinished prompt TO an AI coding assistant. Output ONLY a natural, concise continuation suffix (2 to 10 words) that finishes the user's current sentence. Stop at the end of the sentence; NEVER start a second sentence and NEVER answer the user's question. FORBIDDEN assistant replies: 'Yes,', 'No,', 'Sure', 'You can', 'Here is', 'Да,', 'Нет,', 'Конечно'. STRICT GROUNDING: NEVER invent file paths, function/variable names, --cli-flags, or /slash commands that are not explicitly listed in FILES, SYMBOLS, or RAG_CONTEXT; if there is no high-confidence grounded continuation, output literally NONE. NEVER repeat the user's words, NEVER wrap in quotes, NEVER add explanations or line breaks. Continue in the same language as the user's input (English by default)."
-        : "You are an inline Ghost Text prompt-composer autocomplete writing strictly AS THE HUMAN DEVELOPER typing an unfinished prompt TO an AI coding assistant. Output ONLY a natural, concise continuation suffix (2 to 10 words) that finishes the user's current sentence. Stop at the end of the sentence; NEVER start a second sentence and NEVER answer the user's question. FORBIDDEN assistant replies: 'Да,', 'Нет,', 'Конечно', 'Безусловно', 'Это можно', 'Для этого', 'Я могу', 'Давайте', 'Yes,', 'No,', 'Sure', 'You can'. STRICT GROUNDING: NEVER invent file paths, function/variable names, --cli-flags, or /slash commands that are not explicitly listed in FILES, SYMBOLS, or RAG_CONTEXT; if there is no high-confidence grounded continuation, output literally NONE. NEVER repeat the user's words, NEVER wrap in quotes, NEVER add explanations or line breaks. Continue in the same language as the user's input (Russian by default).");
+        ? "You are an inline Ghost Text prompt-composer autocomplete writing strictly AS THE HUMAN DEVELOPER typing an unfinished prompt TO an AI coding assistant. Read the ENTIRE UNFINISHED_USER_PROMPT (and CHAT_CONTEXT if present) and output a natural, informative continuation suffix (5 to 20 words) that finishes the developer's thought completely rather than cutting off after 2 generic words. Stop at the end of the sentence; NEVER start a second sentence and NEVER answer the user's question. FORBIDDEN assistant replies: 'Yes,', 'No,', 'Sure', 'You can', 'Here is', 'Да,', 'Нет,', 'Конечно'. STRICT GROUNDING: NEVER invent file paths, function/variable names, --cli-flags, or /slash commands that are not explicitly listed in FILES, SYMBOLS, or RAG_CONTEXT; if there is no high-confidence grounded continuation, output literally NONE. NEVER repeat the user's words, NEVER wrap in quotes, NEVER add explanations or line breaks. Continue in the same language as the user's input (English by default)."
+        : "You are an inline Ghost Text prompt-composer autocomplete writing strictly AS THE HUMAN DEVELOPER typing an unfinished prompt TO an AI coding assistant. Read the ENTIRE UNFINISHED_USER_PROMPT (and CHAT_CONTEXT if present) and output a natural, informative continuation suffix (5 to 20 words) that finishes the developer's thought completely rather than cutting off after 2 generic words. Stop at the end of the sentence; NEVER start a second sentence and NEVER answer the user's question. FORBIDDEN assistant replies: 'Да,', 'Нет,', 'Конечно', 'Безусловно', 'Это можно', 'Для этого', 'Я могу', 'Давайте', 'Yes,', 'No,', 'Sure', 'You can'. STRICT GROUNDING: NEVER invent file paths, function/variable names, --cli-flags, or /slash commands that are not explicitly listed in FILES, SYMBOLS, or RAG_CONTEXT; if there is no high-confidence grounded continuation, output literally NONE. NEVER repeat the user's words, NEVER wrap in quotes, NEVER add explanations or line breaks. Continue in the same language as the user's input (Russian by default).");
 
-  const predictTokens = clampInt(maxOutputTokens, 8, 48, followUpSentence ? 24 : 22);
   const body = {
     model: targetModel,
     stream: false,
@@ -1610,7 +1627,7 @@ export async function generatePromptContinuation({
       },
     ],
     options: {
-      num_ctx: cleanRagSnippets.length > 0 ? 1536 : 1024,
+      num_ctx: (rawDraft.length > 300 || cleanRecentMessages.length > 0) ? 2048 : (cleanRagSnippets.length > 0 ? 1536 : 1024),
       num_predict: predictTokens,
       temperature: 0.2,
       top_p: 0.85,

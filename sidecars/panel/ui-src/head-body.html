@@ -5,7 +5,7 @@
   <meta name="google" content="notranslate" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%230a84ff'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%23ffffff'/%3E%3C/svg%3E" />
-  <title>The Tunnel v3.33.1</title>
+  <title>The Tunnel v3.34.0</title>
   <script src="/preload.js"></script>
   <style>
 /*__PANEL_STYLES__*/
@@ -39,10 +39,15 @@
           <button type="button" class="lang-pill-btn" data-lang="en" data-action="setUiLanguage" data-arg="en" title="English">EN</button>
           <button type="button" class="lang-pill-btn" data-lang="ru" data-action="setUiLanguage" data-arg="ru" title="Русский">RU</button>
         </div>
+        <div class="lang-pills view-mode-pills" id="panelViewModeGroup" title="Режим интерфейса панели: Краткий (Lite) или Полный (Full)">
+          <button type="button" class="lang-pill-btn" data-view="lite" data-action="setPanelViewMode" data-arg="lite" title="Краткий режим: только ключевые блоки и быстрые переключатели">Lite</button>
+          <button type="button" class="lang-pill-btn active" data-view="full" data-action="setPanelViewMode" data-arg="full" title="Полный режим: все панели, телеметрия и экспертные настройки">Full</button>
+        </div>
         <div class="theme-pills" id="panelThemeGroup" title="Тема пульта: Жидкое стекло iOS (Тёмная) / Персиковый фарфор (Светлая)">
           <button type="button" class="theme-dot-btn active" data-theme="glass_teal" style="background: #0a84ff;" data-action="setPanelTheme" data-arg="glass_teal" title="Жидкое стекло iOS (Тёмная)"></button>
           <button type="button" class="theme-dot-btn" data-theme="studio_titanium" style="background: linear-gradient(135deg, #ffe4d1 0%, #ea580c 100%);" data-action="setPanelTheme" data-arg="studio_titanium" title="Персиковый фарфор (Светлая)"></button>
         </div>
+        <button class="lg-icon-btn scale-header-btn" type="button" id="panelUiScaleBtn" data-action="cyclePanelUiScale" title="Масштаб интерфейса под 1080p / 2K / 4K (Авто / 100% / 115% / 130% / 90%)" aria-label="Масштаб интерфейса">Авто</button>
         <button class="lg-icon-btn graph-header-btn" type="button" id="openProjectGraphBtn" data-action="openProjectGraphModal" title="Интерактивная карта зависимостей и связей проекта" aria-label="Открыть карту проекта">
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.5" />
@@ -55,19 +60,55 @@
           <span id="openProjectGraphLabel">Карта</span>
         </button>
         <button class="lg-icon-btn" type="button" id="resetBlockOrderBtn" data-action="resetPanelBlockOrder" title="Вернуть исходный порядок всех блоков по умолчанию" style="display: none;">↺ Сброс</button>
+        <button class="lg-icon-btn update-header-btn" type="button" id="checkPluginUpdateBtn" data-action="checkPluginUpdateManual" title="Проверить обновления расширения на GitHub" aria-label="Проверить обновления расширения">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8 2.2v7.6M5 7l3 3 3-3M3 13h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span id="checkPluginUpdateLabel">Обновить</span>
+          <span class="update-dot" id="headerUpdateDot" style="display: none;" aria-hidden="true"></span>
+        </button>
         <button class="lg-icon-btn round" type="button" data-action="refreshAll" title="Обновить всё (телеметрия обновляется автоматически раз в ~3 сек)">↻</button>
       </div>
     </header>
 
+    <div class="plugin-update-toast" id="pluginUpdateToast" role="status" aria-live="polite" style="display: none;">
+      <span class="plugin-update-toast-dot" aria-hidden="true"></span>
+      <span class="plugin-update-toast-text" id="pluginUpdateToastText">Доступных обновлений нет</span>
+      <button type="button" class="plugin-update-toast-close" id="pluginUpdateToastCloseBtn" data-action="hidePluginUpdateToast" title="Закрыть уведомление" aria-label="Закрыть уведомление">✕</button>
+    </div>
+
     <div class="window-body">
+      <!-- Верхняя плашка доступного обновления плагина с GitHub -->
+      <div class="plugin-update-banner" id="pluginUpdateBanner" style="display: none;">
+        <div class="plugin-update-main">
+          <span class="plugin-update-badge" id="pluginUpdateBadge">Обновление</span>
+          <span class="plugin-update-text" id="pluginUpdateBannerText">Доступна новая версия расширения на GitHub</span>
+          <a class="plugin-update-link" id="pluginUpdateReleaseLink" href="https://github.com/vaszuevvas-coder/antigravity-model-router/releases" target="_blank" rel="noopener noreferrer">Что нового ↗</a>
+        </div>
+        <div class="plugin-update-actions">
+          <button type="button" class="win-btn plugin-update-apply-btn" id="pluginUpdateApplyBtn" data-action="applyPluginUpdateFromPanel" title="Скачать и установить обновление с GitHub с сохранением настроек">⬇ Обновить</button>
+          <button type="button" class="win-btn plugin-update-dismiss-btn" id="pluginUpdateDismissBtn" data-action="dismissPluginUpdateBanner" title="Скрыть уведомление до следующей версии">✕</button>
+        </div>
+      </div>
+
       <!-- Статус-баннер разговорного ИИ-пилота -->
       <div class="smart-banner" id="smartProjectBanner">
-        <div>
-          <span id="smartBannerText"><strong>ИИ-Пилот активен</strong> · Сам анализирует контекст и подключает навыки под задачу</span>
+        <div class="smart-banner-main">
+          <span id="smartBannerText"><strong>ИИ-Пилот активен</strong><span class="smart-banner-sub"> · Сам анализирует контекст и подключает навыки под задачу</span></span>
         </div>
-        <div style="display: flex; gap: 6px; flex-shrink: 0;">
-          <button type="button" class="win-btn" id="smartBannerDoctorBtn" data-action="toggleSetupDoctor" title="Автодиагностика стека проекта, .agentignore, DESIGN.md и GATES.md">🩺 Стек</button>
-          <button type="button" class="win-btn" id="smartBannerSetupBtn" data-action="openOnboardingWizard" data-arg="1" title="Открыть стартовую и быструю настройку ИИ-Пилота в 4 шага">Настройка</button>
+        <div class="smart-banner-controls">
+          <div class="lg-select-wrap ws-switcher-wrap" id="panelWorkspaceSelectWrap">
+            <select id="sel-panelWorkspace" class="lg-select-native" tabindex="-1" aria-hidden="true" data-change-action="selectPanelWorkspace"></select>
+            <button type="button" id="btn-panelWorkspace" class="lg-input lg-select lg-select-trigger ws-switcher-trigger" data-action="toggleCustomSelect" data-arg="sel-panelWorkspace" role="combobox" aria-haspopup="listbox" aria-expanded="false" title="Активный проект: управляет снимками отката, Git-песочницами, Композером, Дозором, граблями и памятью">
+              <span class="lg-select-trigger-text" id="agProgressProjectBadge">🔄 Авто · Проект</span>
+              <svg class="lg-select-chevron" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button type="button" id="btnResetWorkspaceAuto" class="win-btn ws-reset-auto-btn" data-action="resetWorkspaceToAuto" style="display: none;" title="Вернуться к автоопределению активного чата">Авто</button>
+          </div>
+          <div class="smart-banner-btns">
+            <button type="button" class="win-btn" id="smartBannerDoctorBtn" data-action="toggleSetupDoctor" title="Автодиагностика стека проекта, .agentignore, DESIGN.md и GATES.md">🩺 Стек</button>
+            <button type="button" class="win-btn" id="smartBannerSetupBtn" data-action="openOnboardingWizard" data-arg="1" title="Открыть стартовую и быструю настройку ИИ-Пилота в 4 шага">Настройка</button>
+          </div>
         </div>
       </div>
       <div class="sunken-box" id="setupDoctorBox" style="display: none; margin-bottom: 8px; font-size: 11px;"></div>
@@ -77,15 +118,7 @@
         <div class="ag-progress-top-row">
           <div class="ag-progress-header-left">
             <span class="ag-progress-heading" id="agProgressHeadingText">Прогресс задач</span>
-            <div class="lg-select-wrap ws-switcher-wrap" id="panelWorkspaceSelectWrap">
-              <select id="sel-panelWorkspace" class="lg-select-native" tabindex="-1" aria-hidden="true" data-change-action="selectPanelWorkspace"></select>
-              <button type="button" id="btn-panelWorkspace" class="lg-input lg-select lg-select-trigger ws-switcher-trigger" data-action="toggleCustomSelect" data-arg="sel-panelWorkspace" role="combobox" aria-haspopup="listbox" aria-expanded="false" title="Переключатель проекта: управляет снимками отката, Git-песочницами, Композером, Дозором, граблями и памятью">
-                <span class="lg-select-trigger-text" id="agProgressProjectBadge">🔄 Авто · Проект</span>
-                <svg class="lg-select-chevron" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </button>
-              <button type="button" id="btnResetWorkspaceAuto" class="win-btn ws-reset-auto-btn" data-action="resetWorkspaceToAuto" style="display: none;" title="Вернуться к автоопределению активного чата">Авто</button>
-              <button type="button" id="btnResetStaleProgress" class="win-btn ws-reset-auto-btn" data-action="resetStaleProgressChats" style="display: none;" title="Сбросить зависшие или завершённые карточки чатов">✕ Сброс</button>
-            </div>
+            <button type="button" id="btnResetStaleProgress" class="win-btn ws-reset-auto-btn" data-action="resetStaleProgressChats" style="display: none;" title="Сбросить зависшие или завершённые карточки чатов">✕ Сброс</button>
           </div>
           <div id="agRecentProjectsBar" style="display: flex; gap: 4px; flex-wrap: wrap;"></div>
         </div>
@@ -137,7 +170,6 @@
           <span class="lg-card-title">✦ Умный ввод в чат</span>
           <div class="lg-card-head-actions">
             <button type="button" class="win-btn" id="btnToggleComposerGrill" data-action="toggleComposerGrillMe" aria-pressed="false" title="Включить детальный опрос по дереву решений (Grill-Me) перед выполнением следующего запроса" style="padding: 1px 7px; font-size: 10px;">🔥 Опрос</button>
-            <span class="composer-engine-badge" id="composerEngineBadge" title="Двухступенчатое локальное автодополнение (RAM + Ollama GPU) без затрат облачных токенов">RAM + GPU · 0 тк</span>
           </div>
         </div>
         <div id="wiretapAlertBar" class="sunken-box" style="display: none; margin-bottom: 6px; padding: 6px 8px; border-color: rgba(255, 69, 58, 0.45); background: rgba(255, 69, 58, 0.08);">
@@ -194,6 +226,86 @@
             <button type="button" class="win-btn" id="btnClearLocalRag" data-action="clearLocalRagChat" title="Очистить историю локального диалога">Очистить чат</button>
           </div>
           <div class="local-rag-messages" id="localRagMessages" role="log" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <!-- LITE QUICK CARD: главные переключатели краткой версии -->
+      <section class="lg-card reorderable-block lite-quick-card" id="liteQuickCard">
+        <div class="lg-card-head lite-quick-head">
+          <span class="lg-card-title">⚡ Быстрый пульт</span>
+        </div>
+        <div class="lite-quick-rows">
+          <div class="lite-quick-row">
+            <span class="lite-quick-lbl">Порог вопросов:</span>
+            <div class="win-btn-group" id="liteConfirmThresholdGroup">
+              <button type="button" class="win-btn" data-val="ALL" data-action="setConfirmThreshold" data-arg="ALL" title="Перед любой задачей (S, M, L, XL)">Всегда</button>
+              <button type="button" class="win-btn" data-val="M" data-action="setConfirmThreshold" data-arg="M" title="Мелкие задачи S делать сразу, спрашивать начиная со средних M">От M+</button>
+              <button type="button" class="win-btn" data-val="L" data-action="setConfirmThreshold" data-arg="L" title="Задачи S и M делать сразу, спрашивать только на крупных L/XL">Только L/XL</button>
+            </div>
+          </div>
+          <div class="lite-quick-row">
+            <span class="lite-quick-lbl">Превью дизайна (A/B/C):</span>
+            <div class="win-btn-group" id="liteUiDesignGateGroup">
+              <button type="button" class="win-btn active" data-val="on" data-action="setUiDesignGate" data-arg="true" title="Перед изменением внешнего вида ИИ спросит желаемый стиль и покажет 3 примера на выбор">Показывать</button>
+              <button type="button" class="win-btn" data-val="off" data-action="setUiDesignGate" data-arg="false" title="Делать дизайн и анимации сразу в коде без предварительной витрины вариантов">Сразу в код</button>
+            </div>
+          </div>
+          <div class="lite-quick-row">
+            <span class="lite-quick-lbl">Командный Рой:</span>
+            <div class="win-btn-group" id="liteSwarmModeGroup">
+              <button type="button" class="win-btn" data-val="auto_xl" data-action="setSwarmMode" data-arg="auto_xl" title="Бережёт квоту на мелких и средних задачах; предлагает Рой только на масштабных XL-задачах (4+ независимых модулей)">Авто XL</button>
+              <button type="button" class="win-btn" data-val="aggressive_l" data-action="setSwarmMode" data-arg="aggressive_l" title="Разрешить командный Рой начиная со средних многофайловых задач L (3+ независимых файлов)">L+</button>
+              <button type="button" class="win-btn" data-val="always_ask" data-action="setSwarmMode" data-arg="always_ask" title="На крупных задачах L/XL предлагает Рой и ждёт подтверждения перед запуском воркеров">Спрашивать</button>
+              <button type="button" class="win-btn" data-val="manual_only" data-action="setSwarmMode" data-arg="manual_only" title="Сам не предлагает Рой, но включает защиту воркеров и квот, когда вы сами пишете /swarm">Вручную</button>
+              <button type="button" class="win-btn" data-val="off" data-action="setSwarmMode" data-arg="off" title="Работать только одиночным агентом или штатным Оркестратором">Выкл</button>
+            </div>
+          </div>
+          <div class="lite-quick-row">
+            <span class="lite-quick-lbl">Локальные RAM + GPU:</span>
+            <div class="lite-hw-controls">
+              <button type="button" class="win-btn lite-master-btn is-on" id="liteRamGpuMasterBtn" data-action="toggleLiteRamGpuMaster" aria-pressed="true" title="Общий переключатель связки RAM + GPU: ставит на паузу или восстанавливает активные модули">⚡ Активно</button>
+            </div>
+          </div>
+          <div class="lite-quick-row lite-limits-row">
+            <span class="lite-quick-lbl">Лимиты RAM / GPU / CPU:</span>
+            <div class="lite-limits-grid" id="liteLimitsGrid">
+              <div class="lg-select-wrap lite-limit-select-wrap">
+                <select id="sel-liteRamBudget" class="lg-select-native" tabindex="-1" aria-hidden="true" data-change-action="setRamBudget"></select>
+                <button type="button" id="btn-liteRamBudget" class="lg-input lg-select lg-select-trigger hw-limit-trigger" data-action="toggleCustomSelect" data-arg="sel-liteRamBudget" role="combobox" aria-haspopup="listbox" aria-expanded="false" title="Лимит оперативной памяти In-RAM">
+                  <span class="lg-select-trigger-text">RAM · 4 ГБ</span>
+                  <svg class="lg-select-chevron" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+              </div>
+              <div class="lg-select-wrap lite-limit-select-wrap">
+                <select id="sel-liteGpuVramCap" class="lg-select-native" tabindex="-1" aria-hidden="true" data-change-action="setGpuVramCap"></select>
+                <button type="button" id="btn-liteGpuVramCap" class="lg-input lg-select lg-select-trigger hw-limit-trigger" data-action="toggleCustomSelect" data-arg="sel-liteGpuVramCap" role="combobox" aria-haspopup="listbox" aria-expanded="false" title="Лимит видеопамяти GPU (VRAM)">
+                  <span class="lg-select-trigger-text">GPU · 4 ГБ</span>
+                  <svg class="lg-select-chevron" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+              </div>
+              <div class="lg-select-wrap lite-limit-select-wrap">
+                <select id="sel-liteCpuThreadsCap" class="lg-select-native" tabindex="-1" aria-hidden="true" data-change-action="setCpuMaxThreads"></select>
+                <button type="button" id="btn-liteCpuThreadsCap" class="lg-input lg-select lg-select-trigger hw-limit-trigger" data-action="toggleCustomSelect" data-arg="sel-liteCpuThreadsCap" role="combobox" aria-haspopup="listbox" aria-expanded="false" title="Лимит потоков процессора (CPU-пул)">
+                  <span class="lg-select-trigger-text">CPU · 6 пот.</span>
+                  <svg class="lg-select-chevron" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="lite-quick-row lite-sentinel-row" id="liteSentinelRow">
+            <div class="lite-sentinel-head">
+              <div class="lite-sentinel-title-wrap">
+                <span class="lite-quick-lbl">🛡️ Фоновый Дозор:</span>
+                <span class="sentinel-live-badge is-idle lite-sentinel-badge" id="liteSentinelBadge">Ожидание простоя</span>
+              </div>
+              <div class="lite-sentinel-actions">
+                <button type="button" class="win-btn lite-sentinel-check-btn" id="btnLiteSentinelCheck" data-action="runSentinelNow" title="Запустить проверку Фонового Дозора сейчас">↻</button>
+                <button type="button" class="win-btn lite-sentinel-fix-btn" id="btnLiteSentinelFix" data-action="fixLiteSentinelFindings" style="display: none;" title="Сразу отправить найденные ошибки Дозора в активный чат агента на исправление">🛠️ Исправить</button>
+              </div>
+            </div>
+            <div class="lite-sentinel-summary" id="liteSentinelSummary">Контракты: чисто · BugBot: чисто</div>
+            <div class="lite-sentinel-findings" id="liteSentinelFindings" style="display: none;"></div>
+          </div>
         </div>
       </section>
 
@@ -616,19 +728,42 @@
               <div style="font-size: 10.5px; color: var(--text-sub); margin-top: 2px;" id="ramCacheSubLine">
                 Векторный индекс: ожидание прогрева
               </div>
-              <div id="gpuCascadeToolbarRow" style="display: none; align-items: center; gap: 8px; margin-top: 4px;">
+              <div id="gpuCascadeToolbarRow" style="display: none; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px;">
                 <button type="button" class="win-btn" id="btnPullCascadeToolbar" data-action="startGpuCascadePull" data-arg="cascade" title="Скачать дедуплицированный каскад моделей под все лимиты вашей видеокарты (с автофоллбэком на Hugging Face)">⬇️ Каскад моделей</button>
+                <button type="button" class="win-btn" id="btnPullCascadeHfToolbar" data-action="startGpuCascadePullHf" title="Скачать модели напрямую через зеркало Hugging Face (GGUF)">🤗 Через HuggingFace</button>
               </div>
 
               <div id="gpuCascadePullBox" class="gpu-pull-progress-box" role="status" style="display: none;">
                 <div class="gpu-pull-head">
                   <span id="gpuCascadePullTitle">⬇️ Загрузка каскада моделей...</span>
-                  <button type="button" class="win-btn" data-action="cancelGpuCascadePull" style="padding:1px 7px;font-size:10px;">✕ Отмена</button>
+                  <button type="button" class="win-btn" id="btnCancelGpuCascadePull" data-action="cancelGpuCascadePull" style="padding:1px 7px;font-size:10px;">✕ Отмена</button>
                 </div>
-                <div class="gpu-pull-bar-track">
+                <div class="gpu-pull-bar-track" id="gpuCascadePullBarTrack">
                   <div class="gpu-pull-bar-fill" id="gpuCascadePullFill" style="width: 0%;"></div>
                 </div>
                 <div class="gpu-pull-sub" id="gpuCascadePullSub">Подготовка загрузки...</div>
+                <div class="gpu-pull-error-items" id="gpuCascadePullErrorItems" style="display: none;"></div>
+                <div class="gpu-pull-actions" id="gpuCascadePullActions" style="display: none;">
+                  <button type="button" class="win-btn" id="btnRetryGpuCascadePull" data-action="startGpuCascadePull" data-arg="cascade" title="Повторить загрузку моделей через Ollama">↻ Повторить</button>
+                  <button type="button" class="win-btn gpu-hf-mirror-btn" id="btnRetryGpuCascadeHf" data-action="startGpuCascadePullHf" title="Скачать проблемные модели через зеркало Hugging Face (GGUF)">🤗 Зеркало HuggingFace</button>
+                  <button type="button" class="win-btn" id="btnDismissGpuPullError" data-action="dismissGpuPullError" title="Скрыть уведомление об ошибке загрузки">✕ Скрыть</button>
+                </div>
+              </div>
+
+              <div id="gpuOllamaInstallBox" class="gpu-ollama-install-box" role="status" style="display: none;">
+                <div class="gpu-ollama-install-head">
+                  <span id="gpuOllamaInstallTitle">⚠️ Ollama не установлена</span>
+                  <button type="button" class="win-btn" id="btnDismissOllamaInstall" data-action="dismissOllamaInstallStatus" style="display: none; padding: 1px 7px; font-size: 10px;" title="Скрыть уведомление установки Ollama">✕</button>
+                </div>
+                <div class="gpu-pull-bar-track" id="gpuOllamaInstallBarTrack" style="display: none;">
+                  <div class="gpu-pull-bar-fill" id="gpuOllamaInstallFill" style="width: 0%;"></div>
+                </div>
+                <div class="gpu-ollama-install-sub" id="gpuOllamaInstallSub">Установите Ollama в выбранную папку для работы локальных GPU-моделей.</div>
+                <div class="gpu-ollama-install-dir" id="gpuOllamaInstallDirHint" style="display: none;"></div>
+                <div class="gpu-pull-actions" id="gpuOllamaInstallActions">
+                  <button type="button" class="win-btn active" id="btnInstallOllamaPanel" data-action="installOllamaFromPanel" title="Автоматически скачать и установить Ollama в выбранную папку">⬇️ Установить Ollama</button>
+                  <button type="button" class="win-btn" id="btnPickOllamaFolderPanel" data-action="pickGpuFolder" data-arg="ollama" title="Выбрать папку установки Ollama и моделей">📁 Папка…</button>
+                </div>
               </div>
 
               <div id="gpuVramFitAlert" class="gpu-vram-fit-alert" role="alert" style="display: none;">
@@ -636,6 +771,7 @@
                 <div class="gpu-vram-fit-desc" id="gpuVramFitDesc"></div>
                 <div class="gpu-vram-fit-actions">
                   <button type="button" class="win-btn gpu-vram-fit-btn" id="btnVramFitCascadePull" data-action="startGpuCascadePull" data-arg="cascade">⬇️ Скачать каскад под все лимиты</button>
+                  <button type="button" class="win-btn" id="btnVramFitHfPull" data-action="startGpuCascadePullHf" title="Скачать компактные модели через зеркало Hugging Face">🤗 Через HuggingFace</button>
                   <button type="button" class="win-btn" id="btnVramFitPrompt" data-action="sendVramFitModelPrompt">💬 Подобрать в чате</button>
                   <button type="button" class="win-btn" id="btnApplyFallbackGpuModel" data-action="applySuggestedVramModel" data-arg="" style="display: none;"></button>
                 </div>
@@ -643,44 +779,32 @@
 
               <div class="control-row" style="margin-top: 8px;">
                 <span>Лимит VRAM:<span class="hw-cap-hint" id="gpuVramCapHint"></span></span>
-                <div class="win-btn-group" id="gpuVramCapGroup">
-                  <button type="button" class="win-btn" data-val="4096" data-action="setGpuVramCap" data-arg="4096">4 ГБ</button>
-                  <button type="button" class="win-btn" data-val="6144" data-action="setGpuVramCap" data-arg="6144">6 ГБ</button>
-                  <button type="button" class="win-btn" data-val="8192" data-action="setGpuVramCap" data-arg="8192">8 ГБ</button>
-                  <button type="button" class="win-btn" data-val="12288" data-action="setGpuVramCap" data-arg="12288">12 ГБ</button>
-                  <button type="button" class="win-btn" data-val="14336" data-action="setGpuVramCap" data-arg="14336">14 ГБ</button>
-                  <button type="button" class="win-btn" data-val="16384" data-action="setGpuVramCap" data-arg="16384">16 ГБ</button>
-                  <button type="button" class="win-btn" data-val="24576" data-action="setGpuVramCap" data-arg="24576">24 ГБ</button>
-                  <button type="button" class="win-btn" data-val="32768" data-action="setGpuVramCap" data-arg="32768">32 ГБ</button>
+                <div class="lg-select-wrap hw-limit-select-wrap" id="gpuVramCapGroup">
+                  <select id="sel-gpuVramCap" class="lg-select-native" tabindex="-1" aria-hidden="true" data-change-action="setGpuVramCap"></select>
+                  <button type="button" id="btn-gpuVramCap" class="lg-input lg-select lg-select-trigger hw-limit-trigger" data-action="toggleCustomSelect" data-arg="sel-gpuVramCap" role="combobox" aria-haspopup="listbox" aria-expanded="false" title="Лимит видеопамяти GPU (VRAM)">
+                    <span class="lg-select-trigger-text">4 ГБ</span>
+                    <svg class="lg-select-chevron" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
                 </div>
               </div>
               <div class="control-row" style="margin-top: 6px;">
                 <span title="Сколько оперативной памяти выделить под быстрый кэш файлов и индекс проекта (ramMaxBudgetMb)">Лимит In-RAM:<span class="hw-cap-hint" id="ramBudgetCapHint"></span></span>
-                <div class="win-btn-group" id="ramBudgetMainGroup">
-                  <button type="button" class="win-btn" data-val="1024" data-action="setRamBudget" data-arg="1024">1 ГБ</button>
-                  <button type="button" class="win-btn" data-val="2048" data-action="setRamBudget" data-arg="2048">2 ГБ</button>
-                  <button type="button" class="win-btn" data-val="4096" data-action="setRamBudget" data-arg="4096">4 ГБ</button>
-                  <button type="button" class="win-btn" data-val="6144" data-action="setRamBudget" data-arg="6144">6 ГБ</button>
-                  <button type="button" class="win-btn" data-val="8192" data-action="setRamBudget" data-arg="8192">8 ГБ</button>
-                  <button type="button" class="win-btn" data-val="12288" data-action="setRamBudget" data-arg="12288">12 ГБ</button>
-                  <button type="button" class="win-btn" data-val="16384" data-action="setRamBudget" data-arg="16384">16 ГБ</button>
-                  <button type="button" class="win-btn" data-val="24576" data-action="setRamBudget" data-arg="24576">24 ГБ</button>
-                  <button type="button" class="win-btn" data-val="32768" data-action="setRamBudget" data-arg="32768">32 ГБ</button>
+                <div class="lg-select-wrap hw-limit-select-wrap" id="ramBudgetMainGroup">
+                  <select id="sel-ramBudgetMain" class="lg-select-native" tabindex="-1" aria-hidden="true" data-change-action="setRamBudget"></select>
+                  <button type="button" id="btn-ramBudgetMain" class="lg-input lg-select lg-select-trigger hw-limit-trigger" data-action="toggleCustomSelect" data-arg="sel-ramBudgetMain" role="combobox" aria-haspopup="listbox" aria-expanded="false" title="Лимит оперативной памяти In-RAM">
+                    <span class="lg-select-trigger-text">4 ГБ</span>
+                    <svg class="lg-select-chevron" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
                 </div>
               </div>
               <div class="control-row" style="margin-top: 6px;">
                 <span title="Сколько рабочих потоков выделить пулу процессора для параллельного разбора AST, чанков и проверок (cpuMaxThreads)">Потоки CPU-пула:<span class="hw-cap-hint" id="cpuThreadsCapHint"></span></span>
-                <div class="win-btn-group" id="cpuThreadsCapGroup">
-                  <button type="button" class="win-btn" data-val="2" data-action="setCpuMaxThreads" data-arg="2">2</button>
-                  <button type="button" class="win-btn" data-val="4" data-action="setCpuMaxThreads" data-arg="4">4</button>
-                  <button type="button" class="win-btn" data-val="6" data-action="setCpuMaxThreads" data-arg="6">6</button>
-                  <button type="button" class="win-btn" data-val="10" data-action="setCpuMaxThreads" data-arg="10">10</button>
-                  <button type="button" class="win-btn" data-val="12" data-action="setCpuMaxThreads" data-arg="12">12</button>
-                  <button type="button" class="win-btn" data-val="16" data-action="setCpuMaxThreads" data-arg="16">16</button>
-                  <button type="button" class="win-btn" data-val="24" data-action="setCpuMaxThreads" data-arg="24">24</button>
-                  <button type="button" class="win-btn" data-val="32" data-action="setCpuMaxThreads" data-arg="32">32</button>
-                  <button type="button" class="win-btn" data-val="48" data-action="setCpuMaxThreads" data-arg="48">48</button>
-                  <button type="button" class="win-btn" data-val="64" data-action="setCpuMaxThreads" data-arg="64">64</button>
+                <div class="lg-select-wrap hw-limit-select-wrap" id="cpuThreadsCapGroup">
+                  <select id="sel-cpuThreadsCap" class="lg-select-native" tabindex="-1" aria-hidden="true" data-change-action="setCpuMaxThreads"></select>
+                  <button type="button" id="btn-cpuThreadsCap" class="lg-input lg-select lg-select-trigger hw-limit-trigger" data-action="toggleCustomSelect" data-arg="sel-cpuThreadsCap" role="combobox" aria-haspopup="listbox" aria-expanded="false" title="Лимит потоков процессора (CPU-пул)">
+                    <span class="lg-select-trigger-text">6 пот.</span>
+                    <svg class="lg-select-chevron" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
                 </div>
               </div>
 
@@ -700,6 +824,10 @@
                 <label class="toggle-row" title="Сверхбыстрая проверка добавленных строк на необъявленные переменные и опциональный разбор диффа на локальной GPU">
                   <input type="checkbox" id="chk-gpuPostEditCritic" data-action="toggleOption" data-key="gpuPostEditCritic" />
                   <span><strong>Ревизор правок</strong> — ловит забытые переменные и баги в диффах</span>
+                </label>
+                <label class="toggle-row" title="При скачивании моделей сразу использовать зеркало Hugging Face (GGUF), если оно доступно для модели">
+                  <input type="checkbox" id="chk-gpuPreferHfMirror" data-action="toggleOption" data-key="gpuPreferHfMirror" />
+                  <span><strong>Зеркало Hugging Face</strong> — скачивать GGUF-модели напрямую с <code>hf.co</code></span>
                 </label>
               </div>
 
@@ -1178,16 +1306,12 @@
             <div class="divider"></div>
             <div class="control-row">
               <span>Лимит In-RAM (<code>ramMaxBudgetMb</code>):</span>
-              <div class="win-btn-group" id="ramBudgetGroup">
-                <button type="button" class="win-btn" data-val="1024" data-action="setRamBudget" data-arg="1024">1 ГБ</button>
-                <button type="button" class="win-btn" data-val="2048" data-action="setRamBudget" data-arg="2048">2 ГБ</button>
-                <button type="button" class="win-btn" data-val="4096" data-action="setRamBudget" data-arg="4096">4 ГБ</button>
-                <button type="button" class="win-btn" data-val="6144" data-action="setRamBudget" data-arg="6144">6 ГБ</button>
-                <button type="button" class="win-btn" data-val="8192" data-action="setRamBudget" data-arg="8192">8 ГБ</button>
-                <button type="button" class="win-btn" data-val="12288" data-action="setRamBudget" data-arg="12288">12 ГБ</button>
-                <button type="button" class="win-btn" data-val="16384" data-action="setRamBudget" data-arg="16384">16 ГБ</button>
-                <button type="button" class="win-btn" data-val="24576" data-action="setRamBudget" data-arg="24576">24 ГБ</button>
-                <button type="button" class="win-btn" data-val="32768" data-action="setRamBudget" data-arg="32768">32 ГБ</button>
+              <div class="lg-select-wrap hw-limit-select-wrap" id="ramBudgetGroup">
+                <select id="sel-ramBudgetExpert" class="lg-select-native" tabindex="-1" aria-hidden="true" data-change-action="setRamBudget"></select>
+                <button type="button" id="btn-ramBudgetExpert" class="lg-input lg-select lg-select-trigger hw-limit-trigger" data-action="toggleCustomSelect" data-arg="sel-ramBudgetExpert" role="combobox" aria-haspopup="listbox" aria-expanded="false" title="Лимит оперативной памяти In-RAM">
+                  <span class="lg-select-trigger-text">4 ГБ</span>
+                  <svg class="lg-select-chevron" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
               </div>
             </div>
 
@@ -1214,8 +1338,18 @@
                 </div>
               </label>
               <label style="grid-column: 1 / -1; display:flex; flex-direction:column; gap:3px;">
+                <span>Папка программы Ollama (<code>gpuOllamaDir</code>):</span>
+                <div class="expert-dir-row">
+                  <input type="text" id="inp-gpuOllamaDir" class="lg-input" placeholder="По умолчанию (AppData / Program Files / PATH)" />
+                  <button type="button" class="win-btn expert-dir-pick-btn" id="btnPickExpertOllamaDir" data-action="pickGpuFolder" data-arg="ollama" title="Выбрать папку установки Ollama">📁 Папка…</button>
+                </div>
+              </label>
+              <label style="grid-column: 1 / -1; display:flex; flex-direction:column; gap:3px;">
                 <span>Папка моделей Ollama (<code>gpuModelsDir</code>):</span>
-                <input type="text" id="inp-gpuModelsDir" class="lg-input" placeholder="Авто (OLLAMA_MODELS / ~/.ollama/models)" />
+                <div class="expert-dir-row">
+                  <input type="text" id="inp-gpuModelsDir" class="lg-input" placeholder="Авто (OLLAMA_MODELS / ~/.ollama/models)" />
+                  <button type="button" class="win-btn expert-dir-pick-btn" id="btnPickExpertModelsDir" data-action="pickGpuFolder" data-arg="models" title="Выбрать папку хранения моделей Ollama">📁 Папка…</button>
+                </div>
               </label>
             </div>
             <div class="expert-gpu-actions">
@@ -1228,7 +1362,7 @@
 
     <div class="status-bar">
       <div id="statusPill" class="status-pane">Готово · Синхронизировано</div>
-      <div class="status-pane" id="footerPluginVersion">The Tunnel v3.33.1</div>
+      <div class="status-pane" id="footerPluginVersion">The Tunnel v3.34.0</div>
     </div>
     <div style="text-align:center;font-size:10.5px;color:var(--text-sub);opacity:0.7;padding:4px 0 2px;letter-spacing:0.02em;">Created by Vasili Zuev</div>
   </div>
@@ -1239,7 +1373,7 @@
       <div class="wiz-head">
         <div class="lg-brand">
           <span class="lg-brand-orb"></span>
-          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v3.33.1</span>
+          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v3.34.0</span>
           <span class="lg-session-pill" id="wizLaunchBadge">Первый запуск</span>
         </div>
         <button class="lg-icon-btn round" type="button" data-action="closeOnboardingWizard" title="Отложить или закрыть окно настройки (Esc)">×</button>
@@ -1290,6 +1424,7 @@
           <button type="button" class="pg-seg-btn active" id="pgModeGlobalBtn" data-action="pgSetGraphMode" data-arg="global" title="Показать архитектурное ядро и главные связи всего проекта">Глобальный</button>
           <button type="button" class="pg-seg-btn" id="pgModeLocalBtn" data-action="pgSetGraphMode" data-arg="local" title="Показать только связи вокруг выбранного файла (1–2 шага)">Локальный</button>
         </div>
+        <button class="lg-icon-btn scale-header-btn pg-scale-btn" type="button" id="pgUiScaleBtn" data-action="cyclePanelUiScale" title="Масштаб интерфейса и карты под 1080p / 2K / 4K (Авто / 100% / 115% / 130% / 90%)" aria-label="Масштаб интерфейса карты">Авто</button>
         <button class="lg-icon-btn round" type="button" id="pgRefreshBtn" data-action="pgRefreshGraph" title="Перестроить граф проекта из памяти RAM">↻</button>
         <button class="lg-icon-btn round" type="button" id="pgCloseBtn" data-action="closeProjectGraphModal" title="Закрыть карту проекта (Esc)" aria-label="Закрыть карту проекта">×</button>
       </div>
@@ -1333,6 +1468,7 @@
         <button type="button" class="pg-mini-btn pg-export-btn" id="pgExportPngBtn" data-action="pgExportPng" title="Скачать снимок карты в формате PNG">PNG</button>
         <button type="button" class="pg-mini-btn" data-action="pgZoomStep" data-arg="out" title="Отдалить">−</button>
         <button type="button" class="pg-mini-btn" data-action="pgZoomStep" data-arg="fit" title="Уместить весь граф в экран">⌖</button>
+        <button type="button" class="pg-mini-btn" id="pgAlignLayersBtn" data-action="pgResetLayeredPositions" title="Выровнять слои и вернуть сдвинутые узлы в сетку">⊞</button>
         <button type="button" class="pg-mini-btn" data-action="pgZoomStep" data-arg="in" title="Приблизить">+</button>
       </div>
     </div>
@@ -1348,6 +1484,8 @@
           <div class="pg-empty-sub" id="pgEmptySub">Сканируем файлы и связи в оперативной памяти</div>
         </div>
         <div class="pg-hover-tooltip" id="pgHoverTooltip" style="display: none;"></div>
+        <div class="pg-ai-map-callout" id="pgAiMapCallout" role="region" aria-label="Сводка ответа ИИ на карте" hidden></div>
+        <div class="pg-node-ctx-menu" id="pgNodeContextMenu" role="menu" aria-label="Меню действий узла" hidden></div>
         <div class="pg-legend-strip" id="pgLegendStrip">
           <span class="pg-legend-item"><span class="pg-dot-god"></span><span id="pgLegendGodText">God Node (хаб)</span></span>
           <span class="pg-legend-item"><span class="pg-dot-fragile"></span><span id="pgLegendFragileText">Хрупкий файл</span></span>
@@ -1407,7 +1545,37 @@
           <button type="button" class="win-btn active pg-btn-full" id="pgCartSendBtn" data-action="pgSendCartToComposer" title="Вставить весь собранный пакет @file в Умный Композер">✦ Пакет в Композер</button>
         </div>
 
+        <div class="pg-ai-chat-box" id="pgAiChatBox" style="display: none;">
+          <div class="pg-ai-chat-head">
+            <span class="pg-ai-chat-title" id="pgAiChatTitle">🤖 ИИ-разбор файла</span>
+            <div class="pg-ai-chat-controls">
+              <span class="pg-ai-engine-badge" id="pgAiEngineBadge">GPU RAG · 0 тк</span>
+              <button type="button" class="pg-mini-btn" id="pgAiClearBtn" data-action="pgClearAiChat" title="Очистить ответы ИИ по файлу">🧹</button>
+              <button type="button" class="pg-mini-btn" id="pgAiCloseBtn" data-action="pgCloseAiChat" title="Скрыть ИИ-панель">×</button>
+            </div>
+          </div>
+          <div class="pg-ai-chat-messages" id="pgAiChatMessages" role="log" aria-live="polite"></div>
+          <div class="pg-ai-input-row">
+            <input type="text" id="pgAiQuestionInput" class="lg-input pg-ai-input" maxlength="1000" placeholder="Спросить про этот файл…" />
+            <button type="button" class="win-btn" id="pgAiAskSubmitBtn" data-action="pgSubmitCustomAiQuestion" title="Задать вопрос по выбранному файлу" style="padding:3px 7px;font-size:10.5px;">↑</button>
+            <button type="button" class="win-btn active" id="pgAiToComposerBtn" data-action="pgSendAiToComposer" title="Перенести вопрос и @file в Умный Композер" style="padding:3px 7px;font-size:10px;">✦ В Композер</button>
+          </div>
+        </div>
+
         <div class="pg-insp-actions" id="pgInspActions" style="display: none;">
+          <div class="pg-insp-ai-row">
+            <div class="pg-ai-menu-wrap">
+              <button type="button" class="win-btn active pg-btn-full" id="pgActionAskAiBtn" data-action="pgToggleAskAiMenu" aria-haspopup="menu" aria-expanded="false" title="Раскрыть меню ИИ-действий и вопросов по выбранному узлу">🤖 Спросить ИИ о файле ▾</button>
+              <div class="pg-ai-menu" id="pgAskAiMenu" role="menu" hidden>
+                <button type="button" class="pg-ai-menu-item" role="menuitem" data-action="pgRunAiPreset" data-arg="explain">📖 Объяснить, за что отвечает файл</button>
+                <button type="button" class="pg-ai-menu-item" role="menuitem" data-action="pgRunAiPreset" data-arg="risks">🔗 Зависимости и риски (Blast Radius)</button>
+                <button type="button" class="pg-ai-menu-item" role="menuitem" data-action="pgRunAiPreset" data-arg="bugs">🐛 Найти баги и слабые места</button>
+                <button type="button" class="pg-ai-menu-item" role="menuitem" data-action="pgRunAiPreset" data-arg="tests">🧪 Что проверить тестами</button>
+                <button type="button" class="pg-ai-menu-item" role="menuitem" data-action="pgRunAiPreset" data-arg="custom">💬 Задать свой вопрос…</button>
+                <button type="button" class="pg-ai-menu-item" role="menuitem" data-action="pgRunAiPreset" data-arg="composer">✦ Открыть вопрос в Умном Композере</button>
+              </div>
+            </div>
+          </div>
           <div class="pg-insp-action-row">
             <button type="button" class="win-btn pg-btn-half" id="pgActionFocusBtn" data-action="pgFocusSelectedNode" title="Показать 1–2 хопа вокруг этого файла">🎯 Фокус</button>
             <button type="button" class="win-btn pg-btn-half" id="pgActionSymbolsBtn" data-action="pgOpenSymbolsForSelected" title="Открыть 3-й уровень: граф AST-символов этого файла">ƒ Символы</button>

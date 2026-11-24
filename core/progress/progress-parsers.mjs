@@ -9,6 +9,8 @@ import { basename, dirname, join } from 'node:path';
 
 const REGISTRY_TTL_MS = 2 * 60 * 60 * 1000;
 export const MAX_TIMELINE_STEPS = 30;
+export const UNSCOPED_CHAT_PROJECT_RU = 'Без проекта';
+export const UNSCOPED_CHAT_PROJECT_EN = 'No project';
 
 function clampInt(val, min, max, fallback) {
   const n = Number(val);
@@ -81,6 +83,7 @@ export function extractProjectName(workspaceRoot = '', fallbackProjectName = '')
 }
 
 const PROGRESS_EXACT_RU_TO_EN = new Map([
+  ['Без проекта', 'No project'],
   ['В ожидании задач', 'Waiting for tasks'],
   ['Ожидание задачи', 'Waiting for task'],
   ['Выполнение операции', 'Running operation'],
@@ -96,6 +99,8 @@ const PROGRESS_EXACT_RU_TO_EN = new Map([
   ['Ошибка выполнения', 'Execution error'],
   ['Работа субагента', 'Subagent running'],
   ['Запуск субагента', 'Launching subagent'],
+  ['Фоновая задача', 'Background task'],
+  ['Фоновые задачи', 'Background tasks'],
   ['Параллельная работа субагентов', 'Parallel subagents active'],
   ['Параллельная работа агентов', 'Parallel agents active'],
   ['Параллельные агенты', 'Parallel agents'],
@@ -172,6 +177,8 @@ const PROGRESS_PREFIX_RU_TO_EN = [
   [/^Рой:\s*(.+)$/i, (_, rest) => `Swarm: ${localizeProgressLabelToEn(rest)}`],
   [/^Агент:\s*(.+)$/i, (_, rest) => `Agent: ${localizeProgressLabelToEn(rest)}`],
   [/^Субагент:\s*(.+)$/i, (_, rest) => `Subagent: ${localizeProgressLabelToEn(rest)}`],
+  [/^Фон\s*\((\d+)\):\s*(.+)$/i, (_, n, rest) => `Background (${n}): ${localizeProgressLabelToEn(rest)}`],
+  [/^Фон:\s*(.+)$/i, (_, rest) => `Background: ${localizeProgressLabelToEn(rest)}`],
   [/^Вопрос пользователю:\s*(.+)$/i, 'Question for user: $1'],
   [/^Вопрос:\s*(.+)$/i, 'Question: $1'],
   [/^RAM-срез\s+(.+)$/i, 'RAM slice $1'],
@@ -268,9 +275,10 @@ export function buildActiveProjectsSummary(activeChats = []) {
   if (!Array.isArray(activeChats) || activeChats.length === 0) return [];
   const byProj = new Map();
   for (const c of activeChats) {
-    if (!c || !c.projectName) continue;
+    if (!c) continue;
     if (c.status !== 'running' && c.status !== 'waiting_user') continue;
-    const proj = String(c.projectName).trim();
+    const isUnscoped = Boolean(c.isUnscopedChat || (!c.workspaceRoot && (!c.projectName || c.projectName === UNSCOPED_CHAT_PROJECT_RU)));
+    const proj = String(c.projectName || (isUnscoped ? UNSCOPED_CHAT_PROJECT_RU : '')).trim();
     if (!proj) continue;
     let bucket = byProj.get(proj);
     if (!bucket) {
@@ -278,6 +286,8 @@ export function buildActiveProjectsSummary(activeChats = []) {
       const stepRu = c.stepTitle || '';
       bucket = {
         projectName: proj,
+        projectNameEn: isUnscoped ? UNSCOPED_CHAT_PROJECT_EN : (c.projectNameEn || proj),
+        isUnscopedChat: isUnscoped,
         workspaceRoot: c.workspaceRoot || '',
         status: c.status,
         pctSum: 0,
@@ -314,6 +324,8 @@ export function buildActiveProjectsSummary(activeChats = []) {
     .slice(0, 6)
     .map((b) => ({
       projectName: b.projectName,
+      projectNameEn: b.projectNameEn || b.projectName,
+      ...(b.isUnscopedChat ? { isUnscopedChat: true } : {}),
       workspaceRoot: b.workspaceRoot,
       status: b.status,
       percent: Math.round(b.pctSum / Math.max(1, b.activeChatsCount)),
@@ -1028,17 +1040,37 @@ export function inspectTranscriptTurnState(transcriptPath = '', now = Date.now()
   const swarmNameToCids = new Map();
   const killedSubagentCids = new Set();
   const killedSwarmNames = new Set();
+  const activeBackgroundTasks = new Map();
   let killedAllSubagents = false;
   let coordinatorPostedDone = false;
   let allSubagentsStoppedByRestart = false;
 
-  // Cross-turn scan of Swarm / subagent roster, kills, and server-restart stop notices
+  // Cross-turn scan of Swarm / subagent roster, kills, background tasks, and server-restart stop notices
   for (let i = 0; i < parsed.length; i++) {
     const entry = parsed[i];
     if (!entry) continue;
     if (entry.source === 'SYSTEM' && typeof entry.content === 'string') {
       if (/All your subagents and background tasks have been stopped/i.test(entry.content)) {
         allSubagentsStoppedByRestart = true;
+        activeBackgroundTasks.clear();
+      } else {
+        const finIdMatch = /Task id\s+"([^"]+)"\s+(?:finished|completed|failed|killed|cancelled|canceled|stopped|exited|terminated)/i.exec(entry.content);
+        const senderFinMatch = /sender=([^\s]+)[\s\S]*?(?:finished with (?:result|error):|task\s+(?:completed|failed|killed|cancelled|canceled|stopped|exited|terminated))/i.exec(entry.content);
+        if (finIdMatch?.[1]) activeBackgroundTasks.delete(finIdMatch[1].trim());
+        if (senderFinMatch?.[1]) activeBackgroundTasks.delete(senderFinMatch[1].trim());
+        if (!finIdMatch && !senderFinMatch) {
+          const stillRunningMatch = /sender=([^\s]+)[\s\S]*?Background command is still running(?:\s+after\s+\d+s)?:\s*([^\r\n<]*)/i.exec(entry.content);
+          if (stillRunningMatch?.[1]) {
+            const bgId = stillRunningMatch[1].trim();
+            const bgDesc = String(stillRunningMatch[2] || '').replace(/\s+Task logs are available at:.*$/i, '').trim().slice(0, 160);
+            const prevBg = activeBackgroundTasks.get(bgId);
+            if (!prevBg) {
+              activeBackgroundTasks.set(bgId, { taskId: bgId, description: bgDesc });
+            } else if (!prevBg.description && bgDesc) {
+              prevBg.description = bgDesc;
+            }
+          }
+        }
       }
       continue;
     }
@@ -1049,6 +1081,12 @@ export function inspectTranscriptTurnState(transcriptPath = '', now = Date.now()
         if (tName === 'invoke_subagent') {
           allSubagentsStoppedByRestart = false;
           killedAllSubagents = false;
+        } else if (tName === 'manage_task') {
+          const mtAct = String(tArgs.Action || tArgs.action || '').replace(/^["'\s]+|["'\s]+$/g, '').toLowerCase();
+          const mtId = String(tArgs.TaskId || tArgs.taskId || '').replace(/^["'\s]+|["'\s]+$/g, '').trim();
+          if (mtAct === 'kill' && mtId) {
+            activeBackgroundTasks.delete(mtId);
+          }
         } else if (tName === 'swarm') {
           const act = String(tArgs.action || '').replace(/^["'\s]+|["'\s]+$/g, '').toLowerCase();
           const rawMember = String(tArgs.name || '').replace(/^["'\s]+|["'\s]+$/g, '').toLowerCase();
@@ -1094,6 +1132,21 @@ export function inspectTranscriptTurnState(transcriptPath = '', now = Date.now()
         }
       }
     } else if (entry.type === 'GENERIC' && typeof entry.content === 'string') {
+      const bgStartMatch = /Tool is running as a background task with task id:\s*([^\s\r\n]+)/i.exec(entry.content);
+      if (bgStartMatch?.[1]) {
+        const bgTaskId = bgStartMatch[1].trim();
+        const bgDescMatch = /Task Description:\s*([^\r\n]+)/i.exec(entry.content);
+        const bgDesc = String(bgDescMatch?.[1] || '').replace(/\s+Task logs are available at:.*$/i, '').trim().slice(0, 160);
+        activeBackgroundTasks.set(bgTaskId, { taskId: bgTaskId, description: bgDesc });
+      }
+      const bgStatusDoneMatch = /Task:\s*([^\s\r\n]+)\s+Status:\s*(?:COMPLETED|DONE|FAILED|KILLED|CANCELLED|CANCELED|EXITED|STOPPED)\b/i.exec(entry.content);
+      if (bgStatusDoneMatch?.[1]) {
+        activeBackgroundTasks.delete(bgStatusDoneMatch[1].trim());
+      }
+      const bgKilledMatch = /(?:Killed|Stopped|Cancelled|Canceled)\s+task(?:\s+id)?[:\s"]+([^\s"\r\n]+)/i.exec(entry.content);
+      if (bgKilledMatch?.[1]) {
+        activeBackgroundTasks.delete(bgKilledMatch[1].trim());
+      }
       if (entry.content.includes('"added"') && entry.content.includes('"conversation_id"')) {
         const addedMatches = entry.content.matchAll(
           /"status"\s*:\s*"added"[\s\S]*?"name"\s*:\s*"([a-zA-Z0-9_-]{1,48})"[\s\S]*?"conversation_id"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[a-zA-Z0-9_-]{6,64})"/gi
@@ -1236,6 +1289,19 @@ export function inspectTranscriptTurnState(transcriptPath = '', now = Date.now()
     ? lastMeaningful.tool_calls
     : [];
   const lastToolIsExitPlan = lastToolCalls.some((tc) => tc?.name === 'exit_plan_mode');
+  const runningBackgroundTasks = stoppedByServerRestart ? [] : Array.from(activeBackgroundTasks.values());
+  const hasRunningBackgroundTask = runningBackgroundTasks.length > 0;
+  let backgroundTaskLabel = '';
+  if (hasRunningBackgroundTask) {
+    const latestBg = runningBackgroundTasks[runningBackgroundTasks.length - 1];
+    const cmdShort = latestBg?.description
+      ? formatCommandStepLabel(latestBg.description, '', false).title
+      : '';
+    const rawBgLabel = runningBackgroundTasks.length > 1
+      ? `Фон (${runningBackgroundTasks.length}): ${cmdShort || 'Фоновые задачи'}`
+      : `Фон: ${cmdShort || 'Фоновая задача'}`;
+    backgroundTaskLabel = compactTechnicalStepLabel(rawBgLabel, 34).title || rawBgLabel;
+  }
   const baseTelemetry = {
     exists: true,
     mtimeMs: st.mtimeMs,
@@ -1251,6 +1317,9 @@ export function inspectTranscriptTurnState(transcriptPath = '', now = Date.now()
     killedAllSubagents,
     coordinatorPostedDone,
     allSubagentsStoppedByRestart,
+    runningBackgroundTasks,
+    hasRunningBackgroundTask,
+    backgroundTaskLabel,
     extractedPlanSteps,
     checklistSteps: latestChecklistSteps,
     inspectedFiles,
@@ -1291,6 +1360,12 @@ export function inspectTranscriptTurnState(transcriptPath = '', now = Date.now()
       return { ...baseTelemetry, state: 'waiting_user' };
     }
     if (tcs.length === 0 && (statusUpper === 'DONE' || statusUpper === '')) {
+      if (hasRunningBackgroundTask) {
+        return { ...baseTelemetry, state: 'running' };
+      }
+      if (stoppedByServerRestart) {
+        return { ...baseTelemetry, state: 'cancelled' };
+      }
       return { ...baseTelemetry, state: 'completed' };
     }
   }

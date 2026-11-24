@@ -123,13 +123,14 @@
       renderSmartComposerMirror();
     }
 
-    function scheduleSmartAutocomplete(draftVal) {
+    function scheduleSmartAutocomplete(draftVal, opts) {
       _smartReqSeq += 1;
       const seq = _smartReqSeq;
       cancelSmartComposerPendingRequests();
 
       const text = String(draftVal || '');
       const trimmed = text.trim();
+      const afterAccept = Boolean(opts && opts.afterAccept);
       const isDoneSentence = (function (raw) {
         const s = String(raw || '').trimEnd();
         if (!s) return false;
@@ -146,7 +147,7 @@
         if (/\.[A-Za-z][A-Za-z0-9]{0,5}$/.test(lastTok)) return true;
         return false;
       })(text);
-      if (!trimmed || text.length > 600 || isDoneSentence) {
+      if (!trimmed || text.length > 1200) {
         _smartGhostText = '';
         _smartGhostSource = '';
         updateComposerEngineBadge('', L('RAM + GPU · 0 тк', 'RAM + GPU · 0 tok'));
@@ -154,28 +155,37 @@
         return;
       }
 
-      _smartFastTimer = setTimeout(async function () {
-        _smartFastTimer = null;
-        if (seq !== _smartReqSeq) return;
-        try {
-          const res = await panelFetch('/api/autocomplete', {
-            method: 'POST',
-            body: JSON.stringify({ draft: text, stage: 'fast', seq: seq }),
-          });
-          if (!res || !res.ok || seq !== _smartReqSeq) return;
-          const data = await res.json();
-          if (!data || !data.ok || seq !== _smartReqSeq) return;
-          if (Array.isArray(data.chips)) renderSmartComposerChips(data.chips);
-          if (data.continuation && (_smartGhostSource !== 'gpu' || !_smartGhostText)) {
-            _smartGhostText = String(data.continuation);
-            _smartGhostSource = 'ram';
-            updateComposerEngineBadge('ram', L('RAM · <5 мс', 'RAM · <5 ms'));
-            renderSmartComposerMirror();
-          }
-        } catch {}
-      }, 65);
+      if (!isDoneSentence) {
+        _smartFastTimer = setTimeout(async function () {
+          _smartFastTimer = null;
+          if (seq !== _smartReqSeq) return;
+          try {
+            const res = await panelFetch('/api/autocomplete', {
+              method: 'POST',
+              body: JSON.stringify({ draft: text, stage: 'fast', seq: seq }),
+            });
+            if (!res || !res.ok || seq !== _smartReqSeq) return;
+            const data = await res.json();
+            if (!data || !data.ok || seq !== _smartReqSeq) return;
+            if (Array.isArray(data.chips)) renderSmartComposerChips(data.chips);
+            if (data.continuation && (_smartGhostSource !== 'gpu' || !_smartGhostText)) {
+              _smartGhostText = String(data.continuation);
+              _smartGhostSource = 'ram';
+              updateComposerEngineBadge('ram', L('RAM · <5 мс', 'RAM · <5 ms'));
+              renderSmartComposerMirror();
+            }
+          } catch {}
+        }, 65);
+      }
 
       if (trimmed.length >= 3 && currentState && currentState.gpuEnabled !== false) {
+        const gpuDelayMs = afterAccept ? 85 : 210;
+        const recentMessages = _localRagHistory
+          .filter(function (m) { return m && !m.error && (m.role === 'user' || m.role === 'assistant') && m.content; })
+          .slice(-4)
+          .map(function (m) {
+            return { role: m.role, content: String(m.content || '').trim().slice(0, 220) };
+          });
         _smartGpuTimer = setTimeout(async function () {
           _smartGpuTimer = null;
           if (seq !== _smartReqSeq) return;
@@ -185,7 +195,14 @@
           try {
             const fetchOpts = {
               method: 'POST',
-              body: JSON.stringify({ draft: text, stage: 'gpu', seq: seq }),
+              body: JSON.stringify({
+                draft: text,
+                stage: 'gpu',
+                seq: seq,
+                allowFollowUp: true,
+                afterAccept: afterAccept,
+                recentMessages: recentMessages,
+              }),
             };
             if (ac) fetchOpts.signal = ac.signal;
             const res = await panelFetch('/api/autocomplete', fetchOpts);
@@ -218,7 +235,7 @@
               updateComposerEngineBadge('', L('RAM + GPU · 0 тк', 'RAM + GPU · 0 tok'));
             }
           }
-        }, 220);
+        }, gpuDelayMs);
       }
     }
 
@@ -271,8 +288,8 @@
       inputEl.focus();
       try { inputEl.setSelectionRange(endPos, endPos); } catch {}
       renderSmartComposerMirror();
-      if (!_smartGhostText && !wordOnly && /[/.]$/.test(inputEl.value) && !/\.\s*$/.test(inputEl.value.trimEnd().slice(0, -1))) {
-        scheduleSmartAutocomplete(inputEl.value);
+      if (!_smartGhostText && inputEl.value.trim().length >= 3 && inputEl.value.length <= 1200) {
+        scheduleSmartAutocomplete(inputEl.value, { afterAccept: true });
       }
     }
 
@@ -410,6 +427,9 @@
       const endPos = inputEl.value.length;
       try { inputEl.setSelectionRange(endPos, endPos); } catch {}
       renderSmartComposerMirror();
+      if (inputEl.value.trim().length >= 3 && inputEl.value.length <= 1200) {
+        scheduleSmartAutocomplete(inputEl.value, { afterAccept: true });
+      }
     }
 
     function clearLocalRagChat() {
@@ -831,6 +851,9 @@
         inputEl.setSelectionRange(nextBefore.length, nextBefore.length);
       } catch {}
       renderSmartComposerMirror();
+      if (inputEl.value.trim().length >= 3 && inputEl.value.length <= 1200) {
+        scheduleSmartAutocomplete(inputEl.value, { afterAccept: true });
+      }
     }
 
     function clearComposerScreenshot() {
@@ -1095,6 +1118,8 @@
         handleSmartComposerInput();
       } else if (inputAction === 'onProjectGraphSearch') {
         onProjectGraphSearch(target.value);
+      } else if (inputAction === 'wizSetGpuInstallDir' && typeof wizSetGpuInstallDir === 'function') {
+        wizSetGpuInstallDir(target.value);
       }
     });
 
@@ -1124,6 +1149,14 @@
       if (_isStandaloneGraphView) {
         return;
       }
+      try {
+        const savedView = localStorage.getItem(PANEL_VIEW_STORAGE_KEY);
+        if (savedView === 'lite' || savedView === 'full') {
+          applyPanelViewModeDom(savedView, false);
+        }
+        const savedScale = localStorage.getItem(PANEL_UI_SCALE_STORAGE_KEY);
+        applyPanelUiScaleDom(savedScale || 'auto', false);
+      } catch {}
       ensureBlockMoveControls();
       setupSpoilerPersistence();
       applyAllCollapsedCardsState();
@@ -1133,4 +1166,7 @@
       initSmartComposerWidget();
       await refreshAll();
       void loadSmartComposerContext();
+      if (typeof checkPluginUpdate === 'function') {
+        void checkPluginUpdate({ force: false, silent: true });
+      }
     })();

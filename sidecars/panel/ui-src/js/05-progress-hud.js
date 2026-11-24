@@ -25,6 +25,27 @@
       }
     }
 
+    function focusWaitingProgressChat(cid) {
+      const cleanCid = String(cid || '').trim();
+      if (!cleanCid || cleanCid === '__primary_slot__' || cleanCid === 'default') return false;
+      let focused = false;
+      try {
+        if (window.sidecar && window.sidecar.ui && typeof window.sidecar.ui.toggleConversation === 'function') {
+          window.sidecar.ui.toggleConversation(cleanCid);
+          focused = true;
+        }
+      } catch {}
+      if (focused) {
+        flashStatus(L('Переход к чату с вопросом ↗', 'Switching to chat with question ↗'));
+        return true;
+      }
+      if (typeof copyTextToClipboardSafe === 'function') {
+        void copyTextToClipboardSafe(cleanCid);
+      }
+      flashStatus(L('Откройте чат в Antigravity (ID скопирован: ' + cleanCid.slice(0, 8) + ')', 'Open chat in Antigravity (ID copied: ' + cleanCid.slice(0, 8) + ')'));
+      return false;
+    }
+
     function toggleSubagentsList(cid, btnEl) {
       const cleanCid = String(cid || '').trim();
       if (!cleanCid) return;
@@ -132,7 +153,9 @@
         : '';
       const chats = pinnedWsKey
         ? rawChats.filter(function (c) {
-            return c && c.workspaceRoot && normalizeWsClientKey(c.workspaceRoot) === pinnedWsKey;
+            if (!c) return false;
+            if (c.isUnscopedChat || !c.workspaceRoot) return true;
+            return normalizeWsClientKey(c.workspaceRoot) === pinnedWsKey;
           })
         : rawChats;
 
@@ -141,17 +164,21 @@
       const projectGroups = [];
       const projectGroupMap = Object.create(null);
       chats.forEach(function (c) {
-        const cProj = String((c && c.projectName) || projName).trim() || projName;
+        const isUnscoped = Boolean(c && (c.isUnscopedChat || !c.workspaceRoot));
+        const cProj = isUnscoped
+          ? L('Без проекта', 'No project')
+          : (String((c && c.projectName) || projName).trim() || projName);
         let grp = projectGroupMap[cProj];
         if (!grp) {
           grp = {
             projectName: cProj,
-            workspaceRoot: (c && c.workspaceRoot) || '',
+            workspaceRoot: isUnscoped ? '' : ((c && c.workspaceRoot) || ''),
+            isUnscopedChat: isUnscoped,
             chats: [],
           };
           projectGroupMap[cProj] = grp;
           projectGroups.push(grp);
-        } else if (!grp.workspaceRoot && c && c.workspaceRoot) {
+        } else if (!isUnscoped && !grp.workspaceRoot && c && c.workspaceRoot) {
           grp.workspaceRoot = c.workspaceRoot;
         }
         grp.chats.push(c);
@@ -186,6 +213,7 @@
 
       if (recentBarEl) {
         const otherProjects = runningProjects.filter(function (rp) {
+          if (!rp || !rp.workspaceRoot || rp.isUnscopedChat) return false;
           if (pinnedWsKey) {
             if (rp.workspaceRoot) return normalizeWsClientKey(rp.workspaceRoot) !== pinnedWsKey;
             return rp.projectName !== getSelectedWorkspaceDisplayName();
@@ -443,6 +471,16 @@
 
         if (dotEl) dotEl.className = 'ag-bloom-dot idle';
         if (badgeEl) badgeEl.style.display = 'none';
+        mainCap.classList.remove('is-waiting-user');
+        if (mainCap.getAttribute('data-action') === 'focusWaitingProgressChat') {
+          mainCap.removeAttribute('data-action');
+          mainCap.removeAttribute('data-cid');
+          mainCap.removeAttribute('role');
+          mainCap.removeAttribute('tabindex');
+          mainCap.title = '';
+        }
+        const idleJumpBtn = mainCap.querySelector('.ag-waiting-jump-btn');
+        if (idleJumpBtn) idleJumpBtn.style.display = 'none';
         if (titleEl) {
           titleEl.textContent = L('Ожидание задачи', 'Waiting for task');
           titleEl.classList.add('is-idle');
@@ -510,11 +548,50 @@
 
         const chatNumLabel = pickText(c, 'chatLabel', 'chatLabelEn', '') || (L('Чат #', 'Chat #') + (c.chatNumber || (globalIdx + 1)));
         const topic = String(c.topicLabel || '').trim();
-        const cProj = String(c.projectName || projName).trim() || projName;
+        const isUnscopedRow = Boolean(c.isUnscopedChat || !c.workspaceRoot);
+        const cProj = isUnscopedRow
+          ? L('Без проекта', 'No project')
+          : (String(c.projectName || projName).trim() || projName);
         if (badgeEl) {
           badgeEl.style.display = 'inline-flex';
-          badgeEl.textContent = chatNumLabel;
-          badgeEl.title = '📁 ' + cProj + ' · ' + chatNumLabel + (topic ? (': ' + topic) : '');
+          badgeEl.textContent = isUnscopedRow ? ('💬 ' + chatNumLabel) : chatNumLabel;
+          badgeEl.title = (isUnscopedRow ? '💬 ' : '📁 ') + cProj + ' · ' + chatNumLabel + (topic ? (': ' + topic) : '');
+        }
+
+        const isWaitingRow = c.status === 'waiting_user';
+        let jumpBtn = mainCap.querySelector('.ag-waiting-jump-btn');
+        if (isWaitingRow) {
+          mainCap.classList.add('is-waiting-user');
+          mainCap.setAttribute('data-action', 'focusWaitingProgressChat');
+          mainCap.setAttribute('data-cid', cid);
+          mainCap.setAttribute('role', 'button');
+          mainCap.tabIndex = 0;
+          mainCap.title = L('Нажмите, чтобы перейти в чат и ответить на вопрос', 'Click to open this chat and answer the question');
+          if (!jumpBtn) {
+            jumpBtn = document.createElement('button');
+            jumpBtn.type = 'button';
+            jumpBtn.className = 'ag-waiting-jump-btn';
+            jumpBtn.setAttribute('data-action', 'focusWaitingProgressChat');
+            if (pctWrapEl && pctWrapEl.parentNode === mainCap) {
+              mainCap.insertBefore(jumpBtn, pctWrapEl);
+            } else {
+              mainCap.appendChild(jumpBtn);
+            }
+          }
+          jumpBtn.setAttribute('data-cid', cid);
+          jumpBtn.textContent = L('Открыть чат ↗', 'Open chat ↗');
+          jumpBtn.title = L('Перейти в чат с вопросом', 'Jump to chat with pending question');
+          jumpBtn.style.display = 'inline-flex';
+        } else {
+          mainCap.classList.remove('is-waiting-user');
+          if (mainCap.getAttribute('data-action') === 'focusWaitingProgressChat') {
+            mainCap.removeAttribute('data-action');
+            mainCap.removeAttribute('data-cid');
+            mainCap.removeAttribute('role');
+            mainCap.removeAttribute('tabindex');
+            mainCap.title = '';
+          }
+          if (jumpBtn) jumpBtn.style.display = 'none';
         }
 
         const totalSteps = Math.max(1, Number(c.totalSteps || 3));
@@ -577,7 +654,9 @@
             const rawTitle = pickText(st, 'title', 'titleEn', '') || (L('Этап ', 'Step ') + stepNum);
             const rawFull = isRu() ? (st.fullTitle || st.fullTitleEn || '') : (st.fullTitleEn || st.fullTitle || '');
             const tip = rawFull || pickText(st, 'activeDetail', 'activeDetailEn', '') || rawTitle;
-            const fullTip = (prefix || (stepNum + '. ')) + tip + L(' (клик — раскрыть/свернуть)', ' (click to expand/collapse)');
+            const fullTip = (prefix || (stepNum + '. ')) + tip + (isWaitingQ
+              ? L(' (клик — перейти в чат)', ' (click to open chat)')
+              : L(' (клик — раскрыть/свернуть)', ' (click to expand/collapse)'));
             const numText = stepKey;
             const labelText = prefix + rawTitle;
 
@@ -586,7 +665,7 @@
               chipEl = document.createElement('span');
               chipEl.tabIndex = 0;
               chipEl.setAttribute('role', 'button');
-              chipEl.setAttribute('data-action', 'toggleStepChip');
+              chipEl.setAttribute('data-action', isWaitingQ ? 'focusWaitingProgressChat' : 'toggleStepChip');
               const numEl = document.createElement('span');
               numEl.className = 'ag-step-num';
               const lblEl = document.createElement('span');
@@ -596,6 +675,10 @@
               stepsEl.appendChild(chipEl);
             }
             if (chipEl.className !== cls) chipEl.className = cls;
+            const expectedAction = isWaitingQ ? 'focusWaitingProgressChat' : 'toggleStepChip';
+            if (chipEl.getAttribute('data-action') !== expectedAction) {
+              chipEl.setAttribute('data-action', expectedAction);
+            }
             if (chipEl.getAttribute('data-cid') !== cid) chipEl.setAttribute('data-cid', cid);
             if (chipEl.getAttribute('data-step') !== stepKey) chipEl.setAttribute('data-step', stepKey);
             const nextAriaExpanded = isStepExpanded ? 'true' : 'false';
@@ -689,10 +772,12 @@
             !grp.chats.some(function (item) { return item.status === 'running'; });
 
           if (headEl) {
-            headEl.title = L('Проект: ', 'Project: ') + (grpWs || grp.projectName);
+            headEl.title = grp.isUnscopedChat
+              ? L('Обычные чаты без открытого проекта', 'Regular chats without an open project')
+              : (L('Проект: ', 'Project: ') + (grpWs || grp.projectName));
           }
           if (nameEl) {
-            nameEl.textContent = '📁 ' + grp.projectName;
+            nameEl.textContent = (grp.isUnscopedChat ? '💬 ' : '📁 ') + grp.projectName;
           }
           if (countEl) {
             countEl.textContent = formatChatsWord(grp.chats.length);
@@ -758,6 +843,8 @@
       }
     });
 
+    let _suppressBlockClickUntil = 0;
+
     document.addEventListener('click', function (ev) {
       const optBtn = ev.target && ev.target.closest ? ev.target.closest('#lgCustomSelectMenu .lg-select-option') : null;
       if (optBtn && _openCustomSelectId) {
@@ -774,6 +861,13 @@
         ev.preventDefault();
         ev.stopPropagation();
         return;
+      } else if (Date.now() < _suppressBlockClickUntil && ev.target && ev.target.closest) {
+        const inDragHeader = ev.target.closest('.lg-card-head, summary, .ag-progress-top-row, .smart-banner, #expertCircuitHeadRow, #expertPitfallsHeadRow, #expertKnowledgeHeadRow');
+        if (inDragHeader) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          return;
+        }
       }
       const target = ev.target && ev.target.closest ? ev.target.closest('[data-action]') : null;
       if (!target) return;
@@ -784,39 +878,96 @@
     (function setupBlockPointerDragAndDrop() {
       let dragState = null;
 
+      function resolveBlockDragTrigger(target) {
+        if (!target || typeof target.closest !== 'function') return null;
+        const explicitHandle = target.closest('[data-role="drag-handle"]');
+        if (explicitHandle) {
+          const explicitBlock = explicitHandle.closest('.reorderable-block');
+          if (!explicitBlock || !explicitBlock.parentElement) return null;
+          return { handle: explicitHandle, blockEl: explicitBlock, immediate: true };
+        }
+
+        const headerEl = target.closest('.lg-card-head, summary, .ag-progress-top-row, #smartProjectBanner, #expertCircuitHeadRow, #expertPitfallsHeadRow, #expertKnowledgeHeadRow');
+        if (!headerEl) return null;
+        const blockEl = headerEl.closest('.reorderable-block');
+        if (!blockEl || !blockEl.parentElement) return null;
+        if (headerEl !== blockEl && headerEl.parentElement !== blockEl) return null;
+
+        const interactive = target.closest('button, a, input, select, textarea, label, [role="combobox"], .lg-card-collapse-btn, .lg-select-wrap, .win-btn, .lg-icon-btn, .lang-pill-btn, .theme-dot-btn, .ag-project-pill, .smart-badge-btn');
+        if (interactive && headerEl.contains(interactive)) return null;
+
+        return { handle: headerEl, blockEl: blockEl, immediate: false };
+      }
+
       document.addEventListener('pointerdown', function (ev) {
         if (ev.button !== 0 && ev.pointerType === 'mouse') return;
-        const handle = ev.target && ev.target.closest ? ev.target.closest('[data-role="drag-handle"]') : null;
-        if (!handle) return;
-        const blockEl = handle.closest('.reorderable-block');
-        if (!blockEl || !blockEl.parentElement) return;
-
-        ev.preventDefault();
-        ev.stopPropagation();
-        _suppressSummaryClickUntil = Date.now() + 450;
-
+        const trigger = resolveBlockDragTrigger(ev.target);
+        if (!trigger) return;
+        const handle = trigger.handle;
+        const blockEl = trigger.blockEl;
         const parentEl = blockEl.parentElement;
-        blockEl.classList.add('is-dragging-lift');
-        try {
-          if (handle.setPointerCapture) handle.setPointerCapture(ev.pointerId);
-        } catch {}
+        const pointerId = ev.pointerId !== undefined ? ev.pointerId : 0;
+
+        if (trigger.immediate) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          _suppressSummaryClickUntil = Date.now() + 450;
+          _suppressBlockClickUntil = Date.now() + 450;
+          blockEl.classList.add('is-dragging-lift');
+          try {
+            if (handle.setPointerCapture && ev.pointerId !== undefined) handle.setPointerCapture(ev.pointerId);
+          } catch {}
+        }
 
         dragState = {
-          pointerId: ev.pointerId,
+          pointerId: pointerId,
           handle: handle,
           blockEl: blockEl,
           parentEl: parentEl,
-          moved: false
+          started: trigger.immediate,
+          moved: false,
+          startX: Number(ev.clientX || 0),
+          startY: Number(ev.clientY || 0),
+          threshold: 5
         };
       });
 
       window.addEventListener('pointermove', function (ev) {
-        if (!dragState || ev.pointerId !== dragState.pointerId) return;
-        _suppressSummaryClickUntil = Date.now() + 450;
+        if (!dragState) return;
+        const pid = ev.pointerId !== undefined ? ev.pointerId : 0;
+        if (pid !== dragState.pointerId) return;
+
         const blockEl = dragState.blockEl;
         const parentEl = dragState.parentEl;
+
+        if (!dragState.started) {
+          const dist = Math.hypot(Number(ev.clientX || 0) - dragState.startX, Number(ev.clientY || 0) - dragState.startY);
+          if (dist < dragState.threshold) return;
+          dragState.started = true;
+          blockEl.classList.add('is-dragging-lift');
+          try {
+            if (dragState.handle && dragState.handle.setPointerCapture && ev.pointerId !== undefined) {
+              dragState.handle.setPointerCapture(ev.pointerId);
+            }
+          } catch {}
+          try {
+            if (window.getSelection) {
+              const sel = window.getSelection();
+              if (sel && sel.removeAllRanges) sel.removeAllRanges();
+            }
+          } catch {}
+        }
+
+        _suppressSummaryClickUntil = Date.now() + 450;
+        _suppressBlockClickUntil = Date.now() + 450;
+
         const siblings = Array.from(parentEl.children).filter(function (node) {
-          return node.classList && node.classList.contains('reorderable-block');
+          if (!node.classList || !node.classList.contains('reorderable-block')) return false;
+          try {
+            const st = window.getComputedStyle ? window.getComputedStyle(node) : null;
+            if (st && st.display === 'none') return false;
+          } catch {}
+          return true;
         });
         const idx = siblings.indexOf(blockEl);
         if (idx === -1) return;
@@ -841,7 +992,7 @@
           const nextMid = nextRect.top + nextRect.height * 0.5;
           if (clientY > nextMid) {
             const rects = recordFlipRects(siblings);
-            parentEl.insertBefore(nextEl, blockEl);
+            parentEl.insertBefore(blockEl, nextEl.nextSibling);
             playFlipAnimation(siblings, rects, blockEl);
             dragState.moved = true;
             updateBlockControlsStatus();
@@ -850,12 +1001,16 @@
       });
 
       function finishPointerDrag(ev) {
-        if (!dragState || (ev && ev.pointerId !== undefined && ev.pointerId !== dragState.pointerId)) return;
+        if (!dragState) return;
+        if (ev && ev.pointerId !== undefined && ev.pointerId !== dragState.pointerId) return;
         const st = dragState;
         dragState = null;
-        _suppressSummaryClickUntil = Date.now() + 320;
+        if (!st.started) return;
+
+        _suppressSummaryClickUntil = Date.now() + 350;
+        _suppressBlockClickUntil = Date.now() + 350;
         try {
-          if (st.handle && st.handle.releasePointerCapture) {
+          if (st.handle && st.handle.releasePointerCapture && ev && ev.pointerId !== undefined) {
             st.handle.releasePointerCapture(st.pointerId);
           }
         } catch {}
@@ -869,6 +1024,7 @@
 
       window.addEventListener('pointerup', finishPointerDrag);
       window.addEventListener('pointercancel', finishPointerDrag);
+      window.addEventListener('blur', function () { finishPointerDrag(null); });
     })();
 
     document.addEventListener('keydown', function (ev) {
@@ -939,8 +1095,20 @@
       dispatchPanelAction(target, ev);
     });
 
+    let _uiScaleResizeTimer = 0;
+
     window.addEventListener('resize', function () {
       if (_openCustomSelectId) closeCustomSelectMenu(false);
+      if (_uiScaleResizeTimer) clearTimeout(_uiScaleResizeTimer);
+      _uiScaleResizeTimer = setTimeout(function () {
+        _uiScaleResizeTimer = 0;
+        const activeMode = typeof normalizePanelUiScale === 'function'
+          ? normalizePanelUiScale((typeof currentState !== 'undefined' && currentState && currentState.panelUiScale) || (typeof _activePanelUiScaleMode !== 'undefined' ? _activePanelUiScaleMode : 'auto'))
+          : 'auto';
+        if (activeMode === 'auto' && typeof applyPanelUiScaleDom === 'function') {
+          applyPanelUiScaleDom('auto', false);
+        }
+      }, 180);
     });
 
     window.addEventListener('scroll', function (ev) {
@@ -963,6 +1131,12 @@
         selectPanelWorkspace(target.value);
       } else if (target.getAttribute('data-change-action') === 'setCompactionThreshold') {
         setCompactionThreshold(target.value);
+      } else if (target.getAttribute('data-change-action') === 'setGpuVramCap') {
+        setGpuVramCap(Number(target.value));
+      } else if (target.getAttribute('data-change-action') === 'setRamBudget') {
+        setRamBudget(Number(target.value));
+      } else if (target.getAttribute('data-change-action') === 'setCpuMaxThreads') {
+        setCpuMaxThreads(Number(target.value));
       } else if (target.getAttribute('data-change-action') === 'pgChangeDepth') {
         pgChangeDepth(target.value);
       } else if (target.getAttribute('data-change-action') === 'pgChangeNodeLimit') {

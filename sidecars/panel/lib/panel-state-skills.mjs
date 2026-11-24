@@ -35,6 +35,7 @@ export const DEFAULT_PANEL_BLOCK_ORDER = [
   'smartProjectBanner',
   'agLiveProgressWrap',
   'smartComposerCard',
+  'liteQuickCard',
   'skillsSectionCard',
   'agentModeCard',
   'skillProfilesFieldset',
@@ -164,6 +165,13 @@ export function sanitizePanelBlockOrder(rawOrder) {
           continue;
         }
       }
+      if (defId === 'liteQuickCard') {
+        const anchorIdx = out.indexOf('smartComposerCard');
+        if (anchorIdx >= 0) {
+          out.splice(anchorIdx + 1, 0, defId);
+          continue;
+        }
+      }
       if (defId === 'sentinelSectionCard') {
         const anchorIdx = out.indexOf('gpuRamCard');
         if (anchorIdx >= 0) {
@@ -234,20 +242,27 @@ export function resolvePanelFetchSections(queryData = {}, state = {}, options = 
       }
     }
   } else if (adaptive) {
-    const snapshotsOpen = Boolean(openSpoilers.snapshotsBayesianSpoiler);
-    const expertOpen = Boolean(openSpoilers.expertDetailsBox);
-    flags.core = true;
-    flags.skills = !collapsedCards.skillsSectionCard;
-    flags.swarm = !collapsedCards.swarmTelemetryCard;
-    flags.hw =
-      !collapsedCards.gpuRamCard ||
-      !collapsedCards.sentinelSectionCard ||
-      (expertOpen && !collapsedCards.expertRamGpuFieldset);
-    flags.checkpoints = snapshotsOpen && !collapsedCards.checkpointsCard;
-    flags.bayesian = snapshotsOpen && !collapsedCards.intelligenceBayesianCard;
-    flags.circuit = expertOpen || !collapsedCards.agentModeCard;
-    flags.compaction = expertOpen;
-    flags.pitfalls = expertOpen;
+    const isLiteView = normalizePanelViewModeValue(state?.panelViewMode) === 'lite';
+    if (isLiteView) {
+      flags.core = true;
+      flags.swarm = true;
+      flags.hw = true;
+    } else {
+      const snapshotsOpen = Boolean(openSpoilers.snapshotsBayesianSpoiler);
+      const expertOpen = Boolean(openSpoilers.expertDetailsBox);
+      flags.core = true;
+      flags.skills = !collapsedCards.skillsSectionCard;
+      flags.swarm = !collapsedCards.swarmTelemetryCard;
+      flags.hw =
+        !collapsedCards.gpuRamCard ||
+        !collapsedCards.sentinelSectionCard ||
+        (expertOpen && !collapsedCards.expertRamGpuFieldset);
+      flags.checkpoints = snapshotsOpen && !collapsedCards.checkpointsCard;
+      flags.bayesian = snapshotsOpen && !collapsedCards.intelligenceBayesianCard;
+      flags.circuit = expertOpen || !collapsedCards.agentModeCard;
+      flags.compaction = expertOpen;
+      flags.pitfalls = expertOpen;
+    }
   } else if (!defaultNone) {
     flags.all = true;
     for (const sec of VALID_PANEL_SECTIONS) {
@@ -284,6 +299,8 @@ export const DEFAULT_STATE = {
   swarmAutoVerifier: true,
   swarmQuotaFailover: true,
   panelTheme: 'glass_teal',
+  panelViewMode: 'full',
+  panelUiScale: 'auto',
   uiLanguage: 'en',
   panelBlockOrder: [...DEFAULT_PANEL_BLOCK_ORDER],
   panelCollapsedCards: { ...DEFAULT_COLLAPSED_PANEL_CARDS },
@@ -336,6 +353,8 @@ export const DEFAULT_STATE = {
   gpuEmbedKeepAlive: '90m',
   gpuContextTokens: 4096,
   gpuModelsDir: '',
+  gpuOllamaDir: '',
+  gpuPreferHfMirror: false,
   gpuAutoStart: true,
   gpuAutoDistillLogs: true,
   gpuSemanticSearch: true,
@@ -377,7 +396,23 @@ const VALID_SWARM_MODES = new Set(['auto_xl', 'aggressive_l', 'manual_only', 'of
 const VALID_SWARM_TIERS = new Set(['hydrogen_auto', 'neon_auto', 'inherit', 'argon_auto', 'carbon_auto']);
 
 const VALID_THEMES = new Set(['glass_teal', 'studio_titanium']);
+const VALID_PANEL_VIEW_MODES = new Set(['full', 'lite']);
+const VALID_PANEL_UI_SCALES = new Set(['auto', '90', '100', '115', '130']);
 const VALID_UI_LANGUAGES = new Set(['en', 'ru']);
+
+export function normalizePanelViewModeValue(rawMode, fallback = null) {
+  const s = typeof rawMode === 'string' ? rawMode.trim().toLowerCase() : '';
+  if (VALID_PANEL_VIEW_MODES.has(s)) return s;
+  return fallback;
+}
+
+export function normalizePanelUiScaleValue(rawScale, fallback = null) {
+  const s = typeof rawScale === 'string' || typeof rawScale === 'number'
+    ? String(rawScale).trim().toLowerCase()
+    : '';
+  if (VALID_PANEL_UI_SCALES.has(s)) return s;
+  return fallback;
+}
 
 export function normalizeUiLanguageValue(rawLang, fallback = null) {
   const s = typeof rawLang === 'string' ? rawLang.trim().toLowerCase() : '';
@@ -470,6 +505,16 @@ export function sanitizeStatePatch(patch = {}, options = {}) {
         if (normTheme) out[key] = normTheme;
         break;
       }
+      case 'panelViewMode': {
+        const normView = normalizePanelViewModeValue(val);
+        if (normView) out[key] = normView;
+        break;
+      }
+      case 'panelUiScale': {
+        const normScale = normalizePanelUiScaleValue(val);
+        if (normScale) out[key] = normScale;
+        break;
+      }
       case 'uiLanguage': {
         const normLang = normalizeUiLanguageValue(val);
         if (normLang) out[key] = normLang;
@@ -538,7 +583,8 @@ export function sanitizeStatePatch(patch = {}, options = {}) {
         }
         break;
       }
-      case 'gpuModelsDir': {
+      case 'gpuModelsDir':
+      case 'gpuOllamaDir': {
         if (typeof val === 'string') {
           const clean = val.trim();
           if (clean.length <= 512 && !/[\r\n\0]/.test(clean)) out[key] = clean;
@@ -629,6 +675,7 @@ const SKILL_EN_TITLES = {
   'ui-plugin-navigation': '🪟 Side-Pane UI Plugin Quick Navigation',
   'migrate-workflows': '🔄 Legacy Workflow-to-Skill Migrator',
   'migrate-agent-settings': '📥 Import Settings from Other AI Agents',
+  'conversations': '💬 Local Conversation Manager (HTTP API)',
   'generative_ui': '✨ Interactive HTML Widgets & Diagrams in Chat',
   'mcp-app-development': '🪟 Interactive MCP App & Side-Pane Builder',
   'permissioned-github': '🐙 Permissioned GitHub Workflow Helper',
@@ -684,6 +731,7 @@ const SKILL_EN_HINTS = {
   'ui-plugin-navigation': 'Surfaces one-click pills in chat to open relevant side-pane plugin dashboards',
   'migrate-workflows': 'Migrates legacy workflow files into modular SKILL.md skills safely',
   'migrate-agent-settings': 'Imports MCP servers, skills, slash commands, and rules from Cursor, Claude Code, Codex, or Gemini CLI',
+  'conversations': 'Lists, creates, renames, pins, archives, tags, or deletes local Antigravity conversations programmatically',
   'generative_ui': 'Activates when interactive HTML charts, diagrams, or widgets explain concepts better than plain text',
   'mcp-app-development': 'Activates when building or theming interactive MCP App UIs for chat or side panes',
   'permissioned-github': 'Handles restricted GitHub operations cleanly with least-privilege permission prompts',
@@ -739,6 +787,7 @@ const SKILL_RU_TITLES = {
   'ui-plugin-navigation': '🪟 Быстрое открытие боковых панелей',
   'migrate-workflows': '🔄 Обновление старых сценариев',
   'migrate-agent-settings': '📥 Импорт настроек из других ИИ-агентов',
+  'conversations': '💬 Управление локальными диалогами (API)',
   'generative_ui': '✨ Живые HTML-виджеты и схемы прямо в чате',
   'mcp-app-development': '🪟 Разработка интерактивных UI-приложений для MCP',
   'permissioned-github': '🐙 Безопасная работа с GitHub и запросом прав',
@@ -794,6 +843,7 @@ const SKILL_RU_HINTS = {
   'ui-plugin-navigation': 'Показывает удобные кнопки для открытия боковых пультов в чате',
   'migrate-workflows': 'Помогает перенести старые шаблоны в новый формат навыков',
   'migrate-agent-settings': 'Переносит MCP-серверы, навыки, команды и правила из Cursor, Claude Code, Codex или Gemini CLI в единый плагин',
+  'conversations': 'Программно создаёт, переименовывает, закрепляет, архивирует и удаляет локальные чаты Antigravity',
   'generative_ui': 'Включается сам, когда полезно показать в чате интерактивную схему, график, диаграмму или HTML-виджет',
   'mcp-app-development': 'Включается сам при создании и отладке интерактивных интерфейсов (Apps / side panes) для MCP-инструментов',
   'permissioned-github': 'Помогает корректно работать с GitHub и запрашивать нужные разрешения при ограничениях доступа',
@@ -1129,6 +1179,7 @@ export function loadState(options = {}) {
   merged.swarmWorkerTier = sanitizeSwarmWorkerTierForSubscription(merged.subscriptionTier, merged.swarmWorkerTier);
   const migratedCollapsed = migrateLegacyPanelCollapsedCards(src);
   merged.panelTheme = normalizePanelThemeValue(merged.panelTheme) || 'glass_teal';
+  merged.panelViewMode = normalizePanelViewModeValue(merged.panelViewMode) || 'full';
   const explicitLang = normalizeUiLanguageValue(src.uiLanguage);
   if (explicitLang) {
     merged.uiLanguage = explicitLang;
@@ -1160,6 +1211,7 @@ export function saveState(patch, options = {}) {
         ...currentRaw,
         uiLanguage: normalizeUiLanguageValue(currentRaw.uiLanguage)
           || ((currentRaw.onboardingCompleted === true || currentRaw.hardwareProfiled === true) ? 'ru' : 'en'),
+        panelViewMode: normalizePanelViewModeValue(currentRaw.panelViewMode) || 'full',
         skillModes: sanitizeSkillModes(currentRaw.skillModes),
       };
       const mergedModes = replaceSkillModes ? {} : { ...(current.skillModes || {}) };
@@ -1491,13 +1543,44 @@ export function readRamDaemonCandidates() {
   return candidates;
 }
 
-export async function postRamDaemonJson(endpoint, body = {}, timeoutMs = 60000) {
+export async function postRamDaemonJson(endpoint, body = {}, timeoutMs = 60000, opts = {}) {
+  const extSignal = opts?.signal && typeof opts.signal.addEventListener === 'function' ? opts.signal : null;
+  const stopOnResponse = Boolean(opts?.stopOnResponse);
+  if (extSignal?.aborted) {
+    return { ok: false, aborted: true, error: 'Request aborted' };
+  }
   const payload = JSON.stringify(body || {});
-  const candidates = readRamDaemonCandidates();
+  const candidates = Array.isArray(opts?.candidates) ? opts.candidates : readRamDaemonCandidates();
   for (const inst of candidates) {
+    if (extSignal?.aborted) {
+      return { ok: false, aborted: true, error: 'Request aborted' };
+    }
     if (inst.pid !== undefined && inst.pid !== null && !isPidAlive(inst.pid)) continue;
     const res = await new Promise((resolveReq) => {
-      const req = http.request(
+      let settled = false;
+      let req = null;
+      const onAbort = () => {
+        try { req?.destroy(); } catch {}
+        finish({ ok: false, aborted: true, error: 'Request aborted' });
+      };
+      const finish = (val) => {
+        if (settled) return;
+        settled = true;
+        if (extSignal) {
+          try { extSignal.removeEventListener('abort', onAbort); } catch {}
+        }
+        resolveReq(val);
+      };
+
+      if (extSignal) {
+        if (extSignal.aborted) {
+          finish({ ok: false, aborted: true, error: 'Request aborted' });
+          return;
+        }
+        extSignal.addEventListener('abort', onAbort, { once: true });
+      }
+
+      req = http.request(
         {
           hostname: '127.0.0.1',
           port: Number(inst.port),
@@ -1516,21 +1599,32 @@ export async function postRamDaemonJson(endpoint, body = {}, timeoutMs = 60000) 
           r.on('data', (c) => { raw += c; });
           r.on('end', () => {
             try {
-              resolveReq(JSON.parse(raw));
+              finish(JSON.parse(raw));
             } catch {
-              resolveReq(null);
+              finish(null);
             }
           });
         }
       );
       req.on('timeout', () => {
         try { req.destroy(); } catch {}
-        resolveReq(null);
+        finish({ __daemonTimedOut: true });
       });
-      req.on('error', () => resolveReq(null));
+      req.on('error', () => finish(extSignal?.aborted ? { ok: false, aborted: true, error: 'Request aborted' } : null));
       req.end(payload);
     });
+
+    if (extSignal?.aborted || res?.aborted) {
+      return { ok: false, aborted: true, error: 'Request aborted' };
+    }
+    if (res?.__daemonTimedOut) {
+      if (stopOnResponse) {
+        return { ok: false, timedOut: true, error: 'RAM daemon request timed out' };
+      }
+      continue;
+    }
     if (res && res.ok) return res;
+    if (stopOnResponse && res && typeof res.ok === 'boolean') return res;
   }
   return null;
 }

@@ -81,6 +81,7 @@ export async function safeGetGpuStatus({ force = false } = {}) {
         hardware: liveHardware,
         thermalGuard,
         pullStatus: mod?.getGpuPullJobStatus ? mod.getGpuPullJobStatus() : gpuStatusPanelCache.value.pullStatus,
+        ollamaInstallStatus: mod?.getOllamaInstallJobStatus ? mod.getOllamaInstallJobStatus() : gpuStatusPanelCache.value.ollamaInstallStatus,
         telemetry: mod?.getGpuTelemetry ? mod.getGpuTelemetry() : gpuStatusPanelCache.value.telemetry,
         liveActivity,
       };
@@ -1068,9 +1069,92 @@ export async function resolveActiveWorkspaceForPanel(requestedRoot = '', options
   return process.cwd();
 }
 
+export function parseWorkspaceUriToPath(rawUri = '') {
+  if (!rawUri || typeof rawUri !== 'string') return '';
+  const trimmed = rawUri.trim();
+  if (!trimmed || trimmed === '__all__' || trimmed === '__auto__') return '';
+  if (/^file:\/\//i.test(trimmed)) {
+    try {
+      return resolve(fileURLToPath(trimmed));
+    } catch {
+      try {
+        let decoded = decodeURIComponent(trimmed.replace(/^file:\/\//i, ''));
+        if (process.platform === 'win32' && /^\/[a-zA-Z]:/.test(decoded)) {
+          decoded = decoded.slice(1);
+        }
+        return decoded ? resolve(decoded) : '';
+      } catch {
+        return '';
+      }
+    }
+  }
+  return trimmed;
+}
+
+export function discoverAntigravityOpenWorkspaces({ storagePaths = null, allowInTests = false } = {}) {
+  if (process.env.NODE_TEST_CONTEXT && !allowInTests && !Array.isArray(storagePaths)) {
+    return [];
+  }
+  const candidates = Array.isArray(storagePaths) ? storagePaths : (() => {
+    const home = homedir();
+    const out = [];
+    if (process.platform === 'win32') {
+      const appData = process.env.APPDATA || join(home, 'AppData', 'Roaming');
+      out.push(join(appData, 'Antigravity', 'User', 'globalStorage', 'storage.json'));
+      out.push(join(appData, 'Google Antigravity', 'User', 'globalStorage', 'storage.json'));
+    } else if (process.platform === 'darwin') {
+      out.push(join(home, 'Library', 'Application Support', 'Antigravity', 'User', 'globalStorage', 'storage.json'));
+    } else {
+      const xdg = process.env.XDG_CONFIG_HOME || join(home, '.config');
+      out.push(join(xdg, 'Antigravity', 'User', 'globalStorage', 'storage.json'));
+    }
+    return out;
+  })();
+
+  const found = [];
+  const seen = new Set();
+  const pushUri = (u) => {
+    if (!u || typeof u !== 'string') return;
+    const p = parseWorkspaceUriToPath(u);
+    if (!p || !isValidWorkspaceDir(p)) return;
+    const key = normalizeWorkspaceUriKey(p);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    found.push(resolve(p));
+  };
+
+  for (const sp of candidates) {
+    if (!sp || !existsSync(sp)) continue;
+    try {
+      const data = safeReadJsonSync(sp, null, { selfHeal: false });
+      if (!data || typeof data !== 'object') continue;
+      const wsState = data.windowsState || {};
+      if (wsState.lastActiveWindow?.folder) pushUri(wsState.lastActiveWindow.folder);
+      if (Array.isArray(wsState.openedWindows)) {
+        for (const win of wsState.openedWindows) {
+          if (win?.folder) pushUri(win.folder);
+          if (win?.workspaceIdentifier?.configPath) {
+            const cfgPath = parseWorkspaceUriToPath(win.workspaceIdentifier.configPath);
+            if (cfgPath) pushUri(dirname(cfgPath));
+          }
+        }
+      }
+      const backupPaths = data.backupWorkspaces?.folders;
+      if (Array.isArray(backupPaths)) {
+        for (const f of backupPaths) {
+          if (f?.folderUri) pushUri(f.folderUri);
+        }
+      }
+      if (found.length >= 24) break;
+    } catch {}
+  }
+  return found.slice(0, 24);
+}
+
 export async function collectKnownWorkspacesForPanel({
   activeWs = '',
   autoWs = '',
+  openWorkspaces = [],
   taskProgress = null,
   ramCache = null,
 } = {}) {
@@ -1081,8 +1165,9 @@ export async function collectKnownWorkspacesForPanel({
   const byKey = new Map();
 
   const upsert = (rawPath, patch = {}) => {
-    if (!rawPath || typeof rawPath !== 'string') return;
-    const trimmed = rawPath.trim();
+    const parsedPath = parseWorkspaceUriToPath(rawPath);
+    if (!parsedPath || typeof parsedPath !== 'string') return;
+    const trimmed = parsedPath.trim();
     if (!trimmed || trimmed === '__all__' || trimmed === '__auto__') return;
     if (!isValidWorkspaceDir(trimmed) || isEphemeralPanelCandidatePath(trimmed, hMod)) return;
     const abs = resolve(trimmed);
@@ -1100,8 +1185,12 @@ export async function collectKnownWorkspacesForPanel({
         status: 'idle',
         activeChatsCount: 0,
         percent: 0,
+        isOpenInIde: false,
       };
       byKey.set(key, rec);
+    }
+    if (patch.isOpenInIde) {
+      rec.isOpenInIde = true;
     }
     if (typeof patch.checkpointsCount === 'number') {
       rec.checkpointsCount = Math.max(rec.checkpointsCount, patch.checkpointsCount);
@@ -1183,6 +1272,14 @@ export async function collectKnownWorkspacesForPanel({
     }
   }
 
+  const ideOpenDirs = [
+    ...(Array.isArray(openWorkspaces) ? openWorkspaces : []),
+    ...discoverAntigravityOpenWorkspaces(),
+  ];
+  for (const ow of ideOpenDirs) {
+    if (ow) upsert(ow, { isOpenInIde: true });
+  }
+
   for (const rw of ramCache?.workspaces || []) {
     const cand = rw?.workspace || rw?.absRoot || rw?.root;
     if (cand) upsert(cand, {});
@@ -1194,7 +1291,7 @@ export async function collectKnownWorkspacesForPanel({
   const activeKey = activeWs ? normalizeWorkspaceUriKey(activeWs) : '';
   const items = Array.from(byKey.values()).filter((item) => {
     const key = normalizeWorkspaceUriKey(item.workspaceRoot);
-    if (key === activeKey) return true;
+    if (key === activeKey || item.isOpenInIde) return true;
     const isRunning = item.status === 'running' || item.status === 'waiting_user';
     if (isUmbrellaDirWithoutMarkers(item.workspaceRoot) && item.checkpointsCount === 0 && !isRunning) {
       return false;
@@ -1216,6 +1313,9 @@ export async function collectKnownWorkspacesForPanel({
     const aLive = (a.status === 'running' || a.status === 'waiting_user') ? 0 : 1;
     const bLive = (b.status === 'running' || b.status === 'waiting_user') ? 0 : 1;
     if (aLive !== bLive) return aLive - bLive;
+    const aOpen = a.isOpenInIde ? 0 : 1;
+    const bOpen = b.isOpenInIde ? 0 : 1;
+    if (aOpen !== bOpen) return aOpen - bOpen;
     const ta = a.lastTimestamp ? (new Date(a.lastTimestamp).getTime() || 0) : 0;
     const tb = b.lastTimestamp ? (new Date(b.lastTimestamp).getTime() || 0) : 0;
     if (ta !== tb) return tb - ta;
@@ -1275,12 +1375,13 @@ export async function discoverUserProjectsForGraph({
   activeWs = '',
   autoWs = '',
   extraRoots = [],
+  openWorkspaces = [],
   taskProgress = null,
   ramCache = null,
   allowActiveEphemeral = false,
 } = {}) {
   const [known, hMod, khMod] = await Promise.all([
-    collectKnownWorkspacesForPanel({ activeWs, autoWs, taskProgress, ramCache }),
+    collectKnownWorkspacesForPanel({ activeWs, autoWs, openWorkspaces, taskProgress, ramCache }),
     getSessionHandoffMod().catch(() => null),
     getKnowledgeHubMod().catch(() => null),
   ]);
@@ -1289,16 +1390,18 @@ export async function discoverUserProjectsForGraph({
   const activeKey = activeWs ? normalizeWorkspaceUriKey(activeWs) : '';
   const activeParentKey = activeWs ? normalizeWorkspaceUriKey(dirname(resolve(activeWs))) : '';
 
-  const upsertProject = (rawPath, { source = 'discovered', seed = null, allowEphemeral = false } = {}) => {
-    if (!rawPath || typeof rawPath !== 'string') return;
-    const trimmed = rawPath.trim();
+  const upsertProject = (rawPath, { source = 'discovered', seed = null, allowEphemeral = false, isOpenInIde = false } = {}) => {
+    const parsedPath = parseWorkspaceUriToPath(rawPath);
+    if (!parsedPath || typeof parsedPath !== 'string') return;
+    const trimmed = parsedPath.trim();
     if (!trimmed || trimmed === '__all__' || trimmed === '__auto__') return;
     if (!isValidWorkspaceDir(trimmed)) return;
     if (!allowEphemeral && isEphemeralPanelCandidatePath(trimmed, hMod)) return;
     const abs = resolve(trimmed);
     const key = normalizeWorkspaceUriKey(abs);
     if (!key) return;
-    if (!byKey.has(key)) {
+    const existing = byKey.get(key);
+    if (!existing) {
       byKey.set(key, {
         workspaceRoot: abs,
         projectName: seed?.projectName || basename(abs) || abs,
@@ -1309,8 +1412,12 @@ export async function discoverUserProjectsForGraph({
         status: seed?.status || 'idle',
         activeChatsCount: Number(seed?.activeChatsCount || 0),
         percent: Number(seed?.percent || 0),
-        source: seed?.source || source,
+        source: (isOpenInIde || seed?.isOpenInIde) ? 'open_ide' : (seed?.source || source),
+        isOpenInIde: Boolean(isOpenInIde || seed?.isOpenInIde),
       });
+    } else if (isOpenInIde) {
+      existing.isOpenInIde = true;
+      existing.source = 'open_ide';
     }
   };
 
@@ -1329,6 +1436,12 @@ export async function discoverUserProjectsForGraph({
   }
   if (autoWs) {
     upsertProject(autoWs, { source: 'known', allowEphemeral: false });
+  }
+
+  if (Array.isArray(openWorkspaces)) {
+    for (const raw of openWorkspaces) {
+      upsertProject(raw, { source: 'open_ide', isOpenInIde: true, allowEphemeral: allowActiveEphemeral });
+    }
   }
 
   if (Array.isArray(extraRoots)) {
@@ -1412,6 +1525,9 @@ export async function discoverUserProjectsForGraph({
     const aLive = (a.status === 'running' || a.status === 'waiting_user') ? 0 : 1;
     const bLive = (b.status === 'running' || b.status === 'waiting_user') ? 0 : 1;
     if (aLive !== bLive) return aLive - bLive;
+    const aOpen = (a.isOpenInIde || a.source === 'open_ide') ? 0 : 1;
+    const bOpen = (b.isOpenInIde || b.source === 'open_ide') ? 0 : 1;
+    if (aOpen !== bOpen) return aOpen - bOpen;
     const aKnown = a.source === 'known' ? 0 : 1;
     const bKnown = b.source === 'known' ? 0 : 1;
     if (aKnown !== bKnown) return aKnown - bKnown;

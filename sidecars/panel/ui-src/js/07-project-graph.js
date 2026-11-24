@@ -39,6 +39,11 @@
       outNeighbors: new Map(),
       clusterColors: new Map(),
       layeredColumns: [],
+      activeLayerTier: null,
+      hoveredLayerTier: null,
+      layerHeaderRects: [],
+      dragLayerTier: null,
+      dragLayerOrigin: null,
       alpha: 0,
       rafId: 0,
       width: 0,
@@ -115,7 +120,26 @@
       knownWorkspaces: [],
       autoWorkspace: '',
       workspacesLoaded: false,
-      workspacesSeq: 0
+      workspacesSeq: 0,
+      activePointerId: null,
+      dragOriginPos: null,
+      undoStack: [],
+      redoStack: [],
+      aiMenuOpen: false,
+      aiBoxOpen: false,
+      aiBusy: false,
+      aiReqSeq: 0,
+      aiNodeId: '',
+      aiHistory: [],
+      aiLastPrompt: '',
+      aiAbortCtrl: null,
+      aiRequestId: '',
+      aiStartedAt: 0,
+      aiElapsedTimer: 0,
+      aiSpotlightMap: new Map(),
+      aiCalloutOpen: false,
+      aiCalloutNodeId: '',
+      aiCalloutData: null
     };
 
     const PG_RECENT_WORKSPACES_STORAGE_KEY = 'ag_tunnel_pg_recent_workspaces_v1';
@@ -311,6 +335,163 @@
       };
     }
 
+    function pgGetUiScale() {
+      let factor = 1;
+      try {
+        const mode = typeof normalizePanelUiScale === 'function'
+          ? normalizePanelUiScale((typeof currentState === 'object' && currentState && currentState.panelUiScale) || (typeof _activePanelUiScaleMode !== 'undefined' ? _activePanelUiScaleMode : 'auto'))
+          : 'auto';
+        if (mode === 'auto') {
+          factor = typeof computeAutoUiScale === 'function' ? computeAutoUiScale() : 1;
+        } else {
+          factor = (Number(mode) || 100) / 100;
+        }
+      } catch {}
+      if (!Number.isFinite(factor) || factor <= 0) factor = 1;
+      return Math.max(0.85, Math.min(1.45, factor));
+    }
+
+    function pgGetLayerRolePalette(role, colIndex, isLight) {
+      if (role === 'entry') {
+        return isLight
+          ? { accentRgb: '2, 132, 199', accentHex: '#0284c7', laneEvenAlpha: 0.045, laneOddAlpha: 0.045 }
+          : { accentRgb: '56, 189, 248', accentHex: '#38bdf8', laneEvenAlpha: 0.055, laneOddAlpha: 0.055 };
+      }
+      if (role === 'core') {
+        return isLight
+          ? { accentRgb: '194, 65, 12', accentHex: '#c2410c', laneEvenAlpha: 0.048, laneOddAlpha: 0.048 }
+          : { accentRgb: '245, 158, 11', accentHex: '#f59e0b', laneEvenAlpha: 0.055, laneOddAlpha: 0.055 };
+      }
+      if (role === 'single') {
+        return isLight
+          ? { accentRgb: '2, 132, 199', accentHex: '#0284c7', laneEvenAlpha: 0.04, laneOddAlpha: 0.04 }
+          : { accentRgb: '96, 165, 250', accentHex: '#60a5fa', laneEvenAlpha: 0.045, laneOddAlpha: 0.045 };
+      }
+      const even = (Number(colIndex) || 0) % 2 === 0;
+      if (isLight) {
+        return even
+          ? { accentRgb: '124, 45, 18', accentHex: '#7c2d12', laneEvenAlpha: 0.032, laneOddAlpha: 0.014 }
+          : { accentRgb: '100, 116, 139', accentHex: '#64748b', laneEvenAlpha: 0.032, laneOddAlpha: 0.014 };
+      }
+      return even
+        ? { accentRgb: '129, 140, 248', accentHex: '#818cf8', laneEvenAlpha: 0.036, laneOddAlpha: 0.016 }
+        : { accentRgb: '148, 163, 184', accentHex: '#94a3b8', laneEvenAlpha: 0.036, laneOddAlpha: 0.016 };
+    }
+
+    function pgFindLayerHeaderAtScreen(sx, sy) {
+      const rects = Array.isArray(pgState.layerHeaderRects) ? pgState.layerHeaderRects : [];
+      for (let i = rects.length - 1; i >= 0; i--) {
+        const r = rects[i];
+        if (sx >= r.x && sx <= r.x + r.w && sy >= r.y && sy <= r.y + r.h) {
+          return r;
+        }
+      }
+      return null;
+    }
+
+    function pgToggleLayerFilter(tier) {
+      if (tier === null || tier === undefined || tier === '') {
+        if (pgState.activeLayerTier === null) return;
+        pgState.activeLayerTier = null;
+        pgRenderClusterPills();
+        pgDrawGraph();
+        if (typeof flashStatus === 'function') {
+          flashStatus(L('Фильтр по слою сброшен', 'Layer filter cleared'));
+        }
+        return;
+      }
+      const numTier = Number(tier);
+      if (!Number.isFinite(numTier)) return;
+      const next = pgState.activeLayerTier === numTier ? null : numTier;
+      pgState.activeLayerTier = next;
+      pgRenderClusterPills();
+      pgDrawGraph();
+      if (typeof flashStatus === 'function') {
+        if (next === null) {
+          flashStatus(L('Фильтр по слою сброшен', 'Layer filter cleared'));
+        } else {
+          const col = (pgState.layeredColumns || []).find(function (c) { return c.tier === next; });
+          const lbl = col ? (isRu() ? col.labelRu : col.labelEn) : (L('Слой ', 'Layer ') + (next + 1));
+          flashStatus(L('Слой: ', 'Layer: ') + lbl + (col ? (' · ' + col.count) : ''));
+        }
+      }
+    }
+
+    function pgSyncNodeLayerDetachment(node) {
+      if (!node || pgState.layoutMode !== 'layered' || typeof node._tier !== 'number') {
+        if (node) node._detachedFromLayer = false;
+        return false;
+      }
+      const cols = Array.isArray(pgState.layeredColumns) ? pgState.layeredColumns : [];
+      const col = cols.find(function (c) { return c.tier === node._tier; });
+      if (!col) {
+        node._detachedFromLayer = false;
+        return false;
+      }
+      const gap = Number(col.colGap) || 210;
+      const detachDist = Math.max(gap * 0.62, 130);
+      const reattachDist = Math.max(gap * 0.48, 96);
+      const dx = Math.abs(Number(node.x || 0) - Number(col.x || 0));
+      if (node._detachedFromLayer) {
+        if (dx <= reattachDist) node._detachedFromLayer = false;
+      } else if (dx > detachDist) {
+        node._detachedFromLayer = true;
+      }
+      return Boolean(node._detachedFromLayer);
+    }
+
+    function pgResetLayeredPositions() {
+      if (pgState.layoutMode !== 'layered' || !Array.isArray(pgState.layeredColumns) || !pgState.layeredColumns.length || !Array.isArray(pgState.nodes) || !pgState.nodes.length) {
+        return false;
+      }
+      const colChanges = [];
+      for (let c = 0; c < pgState.layeredColumns.length; c++) {
+        const col = pgState.layeredColumns[c];
+        const origX = Number.isFinite(col.origX) ? col.origX : col.x;
+        if (Math.abs(col.x - origX) > 0.5) {
+          colChanges.push({ tier: col.tier, prevX: col.x, nextX: origX });
+        }
+      }
+      const nodeChanges = [];
+      for (let i = 0; i < pgState.nodes.length; i++) {
+        const n = pgState.nodes[i];
+        const ox = Number.isFinite(n._origX) ? n._origX : n.x;
+        const oy = Number.isFinite(n._origY) ? n._origY : n.y;
+        if (Math.abs(n.x - ox) > 0.5 || Math.abs(n.y - oy) > 0.5 || n._detachedFromLayer) {
+          nodeChanges.push({ id: n.id, prevX: n.x, prevY: n.y, nextX: ox, nextY: oy });
+        }
+      }
+      if (colChanges.length === 0 && nodeChanges.length === 0) {
+        pgFitView();
+        return false;
+      }
+      if (!Array.isArray(pgState.undoStack)) pgState.undoStack = [];
+      pgState.undoStack.push({ kind: 'batch', cols: colChanges, nodes: nodeChanges });
+      if (pgState.undoStack.length > 80) pgState.undoStack.shift();
+      pgState.redoStack = [];
+
+      for (let c = 0; c < pgState.layeredColumns.length; c++) {
+        const col = pgState.layeredColumns[c];
+        if (Number.isFinite(col.origX)) col.x = col.origX;
+      }
+      for (let i = 0; i < pgState.nodes.length; i++) {
+        const n = pgState.nodes[i];
+        if (Number.isFinite(n._origX)) n.x = n._origX;
+        if (Number.isFinite(n._origY)) n.y = n._origY;
+        n.vx = 0;
+        n.vy = 0;
+        n.fx = null;
+        n.fy = null;
+        n._detachedFromLayer = false;
+      }
+      pgState.spatialTree = null;
+      pgFitView();
+      if (typeof flashStatus === 'function') {
+        flashStatus(L('Слои выровнены ↺', 'Layers realigned ↺'));
+      }
+      return true;
+    }
+
     function pgFitView() {
       const nodes = pgState.nodes;
       if (!nodes.length) {
@@ -327,13 +508,15 @@
         if (n.y < minY) minY = n.y;
         if (n.y > maxY) maxY = n.y;
       }
+      const uiScale = pgGetUiScale();
+      const headerPad = pgState.layoutMode === 'layered' ? Math.round(38 * uiScale) : 0;
       const spanX = Math.max(140, (maxX - minX) + 90);
       const spanY = Math.max(120, (maxY - minY) + 90);
       const w = Math.max(240, pgState.width || 600);
-      const h = Math.max(200, pgState.height || 420);
+      const h = Math.max(180, (pgState.height || 420) - headerPad);
       const scale = Math.max(0.28, Math.min(2.1, Math.min(w / spanX, h / spanY) * 0.88));
       pgState.camX = (minX + maxX) * 0.5;
-      pgState.camY = (minY + maxY) * 0.5;
+      pgState.camY = (minY + maxY) * 0.5 - (headerPad * 0.5) / scale;
       pgState.camScale = scale;
       pgDrawGraph();
     }
@@ -348,9 +531,15 @@
     }
 
     function pgBuildSubsystemMap(rawNodes) {
+      const resolveRelPath = function (n) {
+        const rawId = String((n && n.id) || '');
+        if (n && n.file) return String(n.file);
+        if (rawId.indexOf('sym:') === 0) return rawId.slice(4).split('#')[0];
+        return rawId;
+      };
       const subdirsBySeg0 = new Map();
       for (let i = 0; i < rawNodes.length; i++) {
-        const rel = String(rawNodes[i].id || '');
+        const rel = resolveRelPath(rawNodes[i]);
         const parts = rel.split('/');
         if (parts.length >= 3) {
           const seg0 = parts[0];
@@ -366,7 +555,8 @@
 
       const fileToSubsystem = new Map();
       for (let i = 0; i < rawNodes.length; i++) {
-        const rel = String(rawNodes[i].id || '');
+        const rawId = String(rawNodes[i].id || '');
+        const rel = resolveRelPath(rawNodes[i]);
         const parts = rel.split('/');
         let key = 'root';
         if (parts.length === 2) {
@@ -376,7 +566,7 @@
           const subSet = subdirsBySeg0.get(seg0);
           key = (subSet && subSet.size >= 1 && subSet.size <= 5) ? (seg0 + '/' + parts[1]) : seg0;
         }
-        fileToSubsystem.set(rel, key);
+        fileToSubsystem.set(rawId, key);
       }
       return fileToSubsystem;
     }
@@ -500,12 +690,15 @@
       };
     }
 
-    function pgComputeLayeredLayout(simNodes, simEdges, isMacro) {
+    function pgComputeLayeredLayout(simNodes, simEdges, isMacro, isSymbolsView) {
       const len = simNodes.length;
       if (len === 0) {
         pgState.layeredColumns = [];
         return;
       }
+      const isSymbols = typeof isSymbolsView === 'boolean'
+        ? isSymbolsView
+        : simNodes.some(function (n) { return Boolean(n && n.isSymbol); });
 
       const adjOut = new Map();
       const adjIn = new Map();
@@ -744,25 +937,67 @@
         const colNodes = tiers.get(tierId);
         const colX = startX + k * colGap;
         const startY = -((colNodes.length - 1) * rowGap) * 0.5;
+        let minY = Infinity;
+        let maxY = -Infinity;
         for (let r = 0; r < colNodes.length; r++) {
+          const ny = startY + r * rowGap;
           colNodes[r].x = colX;
-          colNodes[r].y = startY + r * rowGap;
+          colNodes[r].y = ny;
+          colNodes[r]._origX = colX;
+          colNodes[r]._origY = ny;
+          colNodes[r]._detachedFromLayer = false;
           colNodes[r].vx = 0;
           colNodes[r].vy = 0;
+          if (ny < minY) minY = ny;
+          if (ny > maxY) maxY = ny;
         }
+        if (!Number.isFinite(minY)) minY = 0;
+        if (!Number.isFinite(maxY)) maxY = 0;
+
+        let role = 'mid';
         let labelRu = 'Слой ' + (k + 1);
         let labelEn = 'Layer ' + (k + 1);
-        if (k === 0 && colCount > 1) {
-          labelRu = 'Входы / UI';
-          labelEn = 'Entries / UI';
-        } else if (k === colCount - 1 && colCount > 1) {
-          labelRu = 'Ядро / Хабы';
-          labelEn = 'Core / Hubs';
-        } else if (colCount === 1) {
-          labelRu = 'Модули';
-          labelEn = 'Modules';
+        let shortRu = 'С' + (k + 1);
+        let shortEn = 'L' + (k + 1);
+
+        if (colCount === 1) {
+          role = 'single';
+          labelRu = isSymbols ? 'Символы' : 'Модули';
+          labelEn = isSymbols ? 'Symbols' : 'Modules';
+          shortRu = labelRu;
+          shortEn = labelEn;
+        } else if (k === 0) {
+          role = 'entry';
+          labelRu = isSymbols ? 'Точки входа' : 'Входы / UI';
+          labelEn = isSymbols ? 'Entry Points' : 'Entries / UI';
+          shortRu = 'Входы';
+          shortEn = isSymbols ? 'Entry' : 'Entries';
+        } else if (k === colCount - 1) {
+          role = 'core';
+          labelRu = isSymbols ? 'База / Утилиты' : 'Ядро / Хабы';
+          labelEn = isSymbols ? 'Core / Utils' : 'Core / Hubs';
+          shortRu = isSymbols ? 'База' : 'Ядро';
+          shortEn = 'Core';
+        } else if (isSymbols) {
+          labelRu = 'Логика · Слой ' + (k + 1);
+          labelEn = 'Logic · Layer ' + (k + 1);
         }
-        columns.push({ x: colX, count: colNodes.length, labelRu, labelEn });
+
+        columns.push({
+          tier: tierId,
+          index: k,
+          role,
+          x: colX,
+          origX: colX,
+          colGap,
+          minY,
+          maxY,
+          count: colNodes.length,
+          labelRu,
+          labelEn,
+          shortRu,
+          shortEn
+        });
       }
       pgState.layeredColumns = columns;
 
@@ -972,6 +1207,9 @@
       pgState.inNeighbors = inNeighbors;
       pgState.outNeighbors = outNeighbors;
       pgState.hoveredNodeId = '';
+      pgState.dragOriginPos = null;
+      pgState.undoStack = [];
+      pgState.redoStack = [];
 
       if (pgState.activeClusterId && !clusters.some(function (c) { return c.id === pgState.activeClusterId; })) {
         pgState.activeClusterId = '';
@@ -989,10 +1227,16 @@
       }
 
       if (pgState.layoutMode === 'layered') {
-        pgComputeLayeredLayout(simNodes, simEdges, Boolean(data?.isMacro));
+        pgComputeLayeredLayout(simNodes, simEdges, Boolean(data?.isMacro), Boolean(data?.isSymbolsView));
+        if (pgState.activeLayerTier !== null && !pgState.layeredColumns.some(function (c) { return c.tier === pgState.activeLayerTier; })) {
+          pgState.activeLayerTier = null;
+        }
         pgState.alpha = 0;
         pgStopLoop();
       } else {
+        pgState.activeLayerTier = null;
+        pgState.hoveredLayerTier = null;
+        pgState.layerHeaderRects = [];
         const preSteps = simNodes.length >= 1000
           ? Math.min(80, Math.max(24, Math.round(92 - simNodes.length * 0.012)))
           : Math.min(110, Math.max(45, Math.round(130 - simNodes.length * 0.2)));
@@ -1150,6 +1394,9 @@
     }
 
     function pgNodeMatchesFilters(node) {
+      if (pgState.layoutMode === 'layered' && pgState.activeLayerTier !== null && node._tier !== pgState.activeLayerTier) {
+        return false;
+      }
       if (pgState.activeClusterId && node.clusterId !== pgState.activeClusterId) {
         return false;
       }
@@ -1204,6 +1451,7 @@
       const h = pgState.height || 420;
       const dpr = pgState.dpr || 1;
       const scale = pgState.camScale || 1;
+      const uiScale = pgGetUiScale();
       const isLight = pgIsLightTheme();
       const isLayered = pgState.layoutMode === 'layered';
       const isMacro = Boolean(pgState.graphData?.isMacro);
@@ -1231,10 +1479,11 @@
 
       const rawQuery = pgState.searchQuery.trim();
       const hasSearch = Boolean(rawQuery);
-      const hasQueryOrCluster = Boolean(rawQuery || pgState.activeClusterId);
+      const hasQueryOrCluster = Boolean(rawQuery || pgState.activeClusterId || (isLayered && pgState.activeLayerTier !== null));
       const lens = pgState.lens || 'arch';
       const hasBlastWave = lens === 'blast' && pgState.blastWaveMap && pgState.blastWaveMap.size > 0;
       const hasCycleLens = lens === 'cycles';
+      const hasAiSpotlight = Boolean(pgState.aiSpotlightMap && pgState.aiSpotlightMap.size > 0);
       const activeCycleNodes = hasCycleLens
         ? (pgState.activeCycleIdx >= 0 && pgState.activeCycleNodeSet && pgState.activeCycleNodeSet.size > 0
             ? pgState.activeCycleNodeSet
@@ -1261,107 +1510,336 @@
       const halfH = h * 0.5;
 
       // Project nodes into screen space once per frame
-      const cardScale = scale < 0.7 ? Math.max(0.58, scale / 0.7) : (scale > 2.0 ? Math.max(0.76, 1 / (1 + (scale - 2) * 0.12)) : 1);
+      const baseCardScale = scale < 0.7 ? Math.max(0.58, scale / 0.7) : (scale > 2.0 ? Math.max(0.76, 1 / (1 + (scale - 2) * 0.12)) : 1);
+      const cardScale = baseCardScale * uiScale;
+      const folderTitleFontPx = Math.max(9, Math.round(10.5 * cardScale));
+      const tierBounds = isLayered ? new Map() : null;
+      const detachedNodesByTier = isLayered ? new Map() : null;
       for (let i = 0; i < nodes.length; i++) {
         const n = nodes[i];
         n._sx = (n.x - pgState.camX) * scale + halfW;
         n._sy = (n.y - pgState.camY) * scale + halfH;
         if (n.isFolder) {
           const textW = Math.min(138, Math.max(82, String(n.label || '').length * 6.3 + 28));
-          n._bw = Math.round(textW * cardScale);
+          const minTitleW = Math.min(18, String(n.label || '').length) * (folderTitleFontPx * 0.62) + 20 * uiScale;
+          n._bw = Math.round(Math.max(textW * cardScale, minTitleW));
           n._bh = Math.round(36 * cardScale);
           n._sr = n._bw * 0.5;
           n._inView = n._sx >= -120 && n._sx <= w + 120 && n._sy >= -90 && n._sy <= h + 90;
         } else {
           n._bw = 0;
           n._bh = 0;
-          n._sr = pgGetNodeScreenRadius(n, scale);
+          n._sr = pgGetNodeScreenRadius(n, scale) * Math.min(1.25, Math.max(0.92, uiScale));
           n._inView = n._sx >= -90 && n._sx <= w + 90 && n._sy >= -90 && n._sy <= h + 90;
+        }
+        if (isLayered && typeof n._tier === 'number') {
+          if (n._detachedFromLayer) {
+            let dArr = detachedNodesByTier.get(n._tier);
+            if (!dArr) {
+              dArr = [];
+              detachedNodesByTier.set(n._tier, dArr);
+            }
+            dArr.push(n);
+          } else if (tierBounds) {
+            const hw = n.isFolder ? (n._bw * 0.5) : n._sr;
+            const hh = n.isFolder ? (n._bh * 0.5) : n._sr;
+            let tb = tierBounds.get(n._tier);
+            if (!tb) {
+              tb = { minSx: n._sx - hw, maxSx: n._sx + hw, minSy: n._sy - hh, maxSy: n._sy + hh, count: 1 };
+              tierBounds.set(n._tier, tb);
+            } else {
+              if (n._sx - hw < tb.minSx) tb.minSx = n._sx - hw;
+              if (n._sx + hw > tb.maxSx) tb.maxSx = n._sx + hw;
+              if (n._sy - hh < tb.minSy) tb.minSy = n._sy - hh;
+              if (n._sy + hh > tb.maxSy) tb.maxSy = n._sy + hh;
+              tb.count += 1;
+            }
+          }
         }
       }
 
-      // Draw vertical layer columns & non-overlapping header chips when in Layered DAG mode
+      // Draw Combo Swimlanes (1) + Focus Lane Highlight (2) + Node-Bounding Layer Frames (3) + Sticky Clickable Headers
+      pgState.layerHeaderRects = [];
       if (isLayered && pgState.layeredColumns.length > 0) {
         const cols = pgState.layeredColumns;
         ctx.save();
-        ctx.font = '700 9.5px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
+        const headerH = Math.round(24 * uiScale);
+        const headerY = 6;
+        const laneTop = headerY + headerH + 6;
+        const laneBottom = Math.max(laneTop + 40, h - 10);
+        const laneHeight = laneBottom - laneTop;
+
+        const activeNodeObj = activeId ? pgState.nodeById.get(activeId) : null;
+        const hasLockedLayer = pgState.activeLayerTier !== null;
+        const focusTier = hasLockedLayer
+          ? pgState.activeLayerTier
+          : (pgState.hoveredLayerTier !== null
+              ? pgState.hoveredLayerTier
+              : (activeNodeObj && typeof activeNodeObj._tier === 'number' ? activeNodeObj._tier : null));
 
         const colScreenXs = [];
         for (let c = 0; c < cols.length; c++) {
-          const colScreenX = (cols[c].x - pgState.camX) * scale + halfW;
-          colScreenXs.push(colScreenX);
-          if (colScreenX < -100 || colScreenX > w + 100) continue;
-          ctx.strokeStyle = isLight ? 'rgba(124, 45, 18, 0.08)' : 'rgba(255, 255, 255, 0.05)';
-          ctx.lineWidth = 1;
-          ctx.setLineDash([3, 5]);
-          ctx.beginPath();
-          ctx.moveTo(colScreenX, 26);
-          ctx.lineTo(colScreenX, h - 12);
-          ctx.stroke();
-          ctx.setLineDash([]);
+          colScreenXs.push((cols[c].x - pgState.camX) * scale + halfW);
+        }
+        const sortedOrder = [];
+        for (let c = 0; c < cols.length; c++) sortedOrder.push(c);
+        sortedOrder.sort(function (a, b) {
+          return (colScreenXs[a] - colScreenXs[b]) || (a - b);
+        });
+
+        let minPositiveGap = Infinity;
+        for (let pos = 1; pos < sortedOrder.length; pos++) {
+          const g = Math.abs(colScreenXs[sortedOrder[pos]] - colScreenXs[sortedOrder[pos - 1]]);
+          if (g > 1 && g < minPositiveGap) minPositiveGap = g;
+        }
+        const fallbackStep = Math.min(w * 0.72, 260 * Math.max(0.7, scale) * uiScale);
+        const colStepScreen = sortedOrder.length > 1
+          ? (Number.isFinite(minPositiveGap) ? minPositiveGap : 0)
+          : fallbackStep;
+        const outerHalfStep = Math.max(
+          (sortedOrder.length > 1 ? Math.max(colStepScreen, 110 * Math.max(0.65, scale) * uiScale) * 0.5 : Math.min(w * 0.42, 140 * Math.max(0.7, scale) * uiScale)),
+          68 * uiScale
+        );
+
+        const laneBounds = new Array(cols.length);
+        for (let pos = 0; pos < sortedOrder.length; pos++) {
+          const c = sortedOrder[pos];
+          const cx = colScreenXs[c];
+          const left = pos === 0 ? (cx - outerHalfStep) : ((colScreenXs[sortedOrder[pos - 1]] + cx) * 0.5);
+          const right = pos === sortedOrder.length - 1 ? (cx + outerHalfStep) : ((cx + colScreenXs[sortedOrder[pos + 1]]) * 0.5);
+          laneBounds[c] = { left, right, width: Math.max(12, right - left) };
         }
 
-        const colStepScreen = cols.length > 1 ? Math.abs(colScreenXs[1] - colScreenXs[0]) : 999;
-        if (cols.length > 1 && colStepScreen < 30) {
-          const midX = (colScreenXs[0] + colScreenXs[cols.length - 1]) * 0.5;
-          const summaryTxt = isRu() ? 'Входы / UI  →  Ядро / Хабы' : 'Entries / UI  →  Core / Hubs';
-          const chipW = Math.min(200, ctx.measureText(summaryTxt).width + 18);
-          pgDrawRoundedRectPath(ctx, midX - chipW * 0.5, 6, chipW, 18, 9);
-          ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.92)' : 'rgba(18, 24, 40, 0.90)';
+        // Pass 1: Vertical swimlane stripes + separators + focus wash
+        for (let pos = 0; pos < sortedOrder.length; pos++) {
+          const c = sortedOrder[pos];
+          const col = cols[c];
+          const lb = laneBounds[c];
+          if (lb.right < -80 || lb.left > w + 80) continue;
+          const pal = pgGetLayerRolePalette(col.role, c, isLight);
+          const tb = tierBounds ? tierBounds.get(col.tier) : null;
+          const hasAttached = Boolean(tb && tb.count > 0);
+          const isFocused = focusTier === col.tier;
+          const isDimmed = hasLockedLayer && pgState.activeLayerTier !== col.tier;
+
+          if (isFocused) {
+            ctx.fillStyle = 'rgba(' + pal.accentRgb + ', ' + (isLight ? '0.09' : '0.115') + ')';
+          } else if (isDimmed) {
+            ctx.fillStyle = isLight ? 'rgba(124, 45, 18, 0.014)' : 'rgba(6, 10, 20, 0.24)';
+          } else {
+            const baseAlpha = (c % 2 === 0) ? pal.laneEvenAlpha : pal.laneOddAlpha;
+            const bgAlpha = hasAttached ? baseAlpha : (baseAlpha * 0.45);
+            ctx.fillStyle = 'rgba(' + pal.accentRgb + ', ' + bgAlpha + ')';
+          }
+          pgDrawRoundedRectPath(ctx, lb.left + 2, laneTop, Math.max(8, lb.width - 4), laneHeight, Math.round(10 * uiScale));
           ctx.fill();
-          ctx.strokeStyle = isLight ? 'rgba(124, 45, 18, 0.18)' : 'rgba(255, 255, 255, 0.14)';
-          ctx.lineWidth = 1;
-          ctx.stroke();
-          ctx.fillStyle = isLight ? '#7c2d12' : 'rgba(235, 235, 245, 0.85)';
-          ctx.fillText(summaryTxt, midX, 15.5);
-        } else {
-          // Prioritize first & last layer pills, then intermediates, rejecting any overlap
-          const colOrder = [];
-          if (cols.length >= 1) colOrder.push(0);
-          if (cols.length > 1) colOrder.push(cols.length - 1);
-          for (let c = 1; c < cols.length - 1; c++) colOrder.push(c);
 
-          const placedHeaderSpans = [];
-          for (let idx = 0; idx < colOrder.length; idx++) {
-            const c = colOrder[idx];
-            const col = cols[c];
-            const colScreenX = colScreenXs[c];
-            if (colScreenX < -60 || colScreenX > w + 60) continue;
+          if (pos > 0 && lb.left >= -20 && lb.left <= w + 20) {
+            const prevFocus = focusTier === cols[sortedOrder[pos - 1]].tier;
+            ctx.strokeStyle = (isFocused || prevFocus)
+              ? ('rgba(' + pal.accentRgb + ', ' + (isLight ? '0.28' : '0.28') + ')')
+              : (isLight ? 'rgba(124, 45, 18, 0.11)' : 'rgba(255, 255, 255, 0.07)');
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(lb.left, laneTop + 4);
+            ctx.lineTo(lb.left, laneBottom - 4);
+            ctx.stroke();
+          }
 
-            let lblText;
-            if (colStepScreen < 105) {
-              if (cols.length === 1) lblText = isRu() ? 'Модули' : 'Modules';
-              else if (c === 0) lblText = isRu() ? 'Входы' : 'Entries';
-              else if (c === cols.length - 1) lblText = isRu() ? 'Ядро' : 'Core';
-              else lblText = String(c + 1);
-            } else {
-              lblText = (isRu() ? col.labelRu : col.labelEn) + ' · ' + col.count;
-            }
+          if (isFocused && colScreenXs[c] >= -40 && colScreenXs[c] <= w + 40) {
+            ctx.save();
+            ctx.strokeStyle = 'rgba(' + pal.accentRgb + ', ' + (isLight ? '0.22' : '0.22') + ')';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 5]);
+            ctx.beginPath();
+            ctx.moveTo(colScreenXs[c], laneTop + 4);
+            ctx.lineTo(colScreenXs[c], laneBottom - 4);
+            ctx.stroke();
+            ctx.restore();
+          }
+        }
 
-            const chipW = Math.min(126, ctx.measureText(lblText).width + 14);
-            const leftEdge = colScreenX - chipW * 0.5;
-            const rightEdge = colScreenX + chipW * 0.5;
-            let overlaps = false;
-            for (let p = 0; p < placedHeaderSpans.length; p++) {
-              const span = placedHeaderSpans[p];
-              if (leftEdge - 6 < span.right && rightEdge + 6 > span.left) {
-                overlaps = true;
-                break;
-              }
-            }
-            if (overlaps) continue;
+        // Pass 2: Compact rounded frames wrapping attached nodes only (zero ghost boxes when empty)
+        const padX = Math.round((isMacro ? 18 : 22) * uiScale);
+        const padTop = Math.round(16 * uiScale);
+        const padBot = Math.round(22 * uiScale);
+        const cornerFontPx = Math.max(8.5, Math.round(9.2 * uiScale));
+        for (let c = 0; c < cols.length; c++) {
+          const col = cols[c];
+          const lb = laneBounds[c];
+          const tb = tierBounds ? tierBounds.get(col.tier) : null;
+          if (!tb || tb.count === 0) continue;
+          const pal = pgGetLayerRolePalette(col.role, c, isLight);
+          const isFocused = focusTier === col.tier;
+          const isDimmed = hasLockedLayer && pgState.activeLayerTier !== col.tier;
 
-            placedHeaderSpans.push({ left: leftEdge, right: rightEdge });
-            pgDrawRoundedRectPath(ctx, leftEdge, 6, chipW, 18, 9);
-            ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.90)' : 'rgba(18, 24, 40, 0.88)';
+          const rawLeft = Math.min(colScreenXs[c] - 28 * uiScale, tb.minSx - padX);
+          const rawRight = Math.max(colScreenXs[c] + 28 * uiScale, tb.maxSx + padX);
+          const fLeft = lb.width > 34 ? Math.max(lb.left + 4, rawLeft) : rawLeft;
+          const fRight = lb.width > 34 ? Math.min(lb.right - 4, rawRight) : rawRight;
+          const fW = Math.max(22, fRight - fLeft);
+          const fTop = Math.max(laneTop + 2, tb.minSy - padTop);
+          const fBot = Math.min(laneBottom - 2, tb.maxSy + padBot);
+          const fH = fBot - fTop;
+          if (fH <= 14 || fRight < -60 || fLeft > w + 60) continue;
+
+          pgDrawRoundedRectPath(ctx, fLeft, fTop, fW, fH, Math.round(12 * uiScale));
+          if (isFocused) {
+            ctx.fillStyle = 'rgba(' + pal.accentRgb + ', ' + (isLight ? '0.075' : '0.095') + ')';
             ctx.fill();
-            ctx.strokeStyle = isLight ? 'rgba(124, 45, 18, 0.16)' : 'rgba(255, 255, 255, 0.12)';
+            ctx.strokeStyle = 'rgba(' + pal.accentRgb + ', ' + (isLight ? '0.62' : '0.68') + ')';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+          } else {
+            ctx.fillStyle = isDimmed
+              ? (isLight ? 'rgba(255, 252, 249, 0.16)' : 'rgba(12, 16, 28, 0.18)')
+              : (isLight ? 'rgba(255, 252, 249, 0.44)' : 'rgba(14, 20, 36, 0.38)');
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(' + pal.accentRgb + ', ' + (isDimmed ? '0.09' : (isLight ? '0.24' : '0.26')) + ')';
             ctx.lineWidth = 1;
             ctx.stroke();
-            ctx.fillStyle = isLight ? '#7c2d12' : 'rgba(235, 235, 245, 0.82)';
-            ctx.fillText(lblText, colScreenX, 15.5);
+          }
+
+          if (fTop > laneTop + 18 * uiScale && fW >= 68 * uiScale) {
+            const cornerTxt = (isRu() ? col.shortRu : col.shortEn) + ' · ' + tb.count;
+            ctx.save();
+            ctx.font = '700 ' + cornerFontPx + 'px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
+            const badgeW = Math.min(fW - 12, ctx.measureText(cornerTxt).width + 12 * uiScale);
+            const badgeH = Math.round(15 * uiScale);
+            const bx = fLeft + 8;
+            const by = fTop - badgeH * 0.5;
+            pgDrawRoundedRectPath(ctx, bx, by, badgeW, badgeH, badgeH * 0.5);
+            ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.94)' : 'rgba(15, 22, 38, 0.92)';
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(' + pal.accentRgb + ', ' + (isFocused ? '0.62' : '0.32') + ')';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = isFocused ? pal.accentHex : (isLight ? '#5c3422' : 'rgba(226, 232, 240, 0.85)');
+            ctx.fillText(cornerTxt, bx + badgeW * 0.5, by + badgeH * 0.5 + 0.5);
+            ctx.restore();
+          }
+        }
+
+        // Subtle focus tether from hovered/filtered layer header to detached nodes of that layer
+        if (focusTier !== null && detachedNodesByTier && detachedNodesByTier.has(focusTier)) {
+          const focusColIdx = cols.findIndex(function (c) { return c.tier === focusTier; });
+          if (focusColIdx >= 0) {
+            const fCol = cols[focusColIdx];
+            const fPal = pgGetLayerRolePalette(fCol.role, focusColIdx, isLight);
+            const fHdrX = Math.max(12, Math.min(w - 12, colScreenXs[focusColIdx]));
+            const fHdrY = headerY + headerH;
+            const dNodes = detachedNodesByTier.get(focusTier) || [];
+            ctx.save();
+            ctx.strokeStyle = 'rgba(' + fPal.accentRgb + ', ' + (isLight ? '0.38' : '0.42') + ')';
+            ctx.lineWidth = 1.1;
+            ctx.setLineDash([4, 4]);
+            for (let di = 0; di < dNodes.length; di++) {
+              const dn = dNodes[di];
+              ctx.beginPath();
+              ctx.moveTo(fHdrX, fHdrY);
+              ctx.quadraticCurveTo(fHdrX, (fHdrY + dn._sy) * 0.5, dn._sx, dn._sy);
+              ctx.stroke();
+            }
+            ctx.restore();
+          }
+        }
+
+        // Pass 3: Sticky clickable/draggable header rail
+        const hdrFontPx = Math.max(9.5, Math.round(10 * uiScale));
+        ctx.font = '700 ' + hdrFontPx + 'px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        if (cols.length > 1 && colStepScreen < 28) {
+          const firstCx = colScreenXs[sortedOrder[0]];
+          const lastCx = colScreenXs[sortedOrder[sortedOrder.length - 1]];
+          const midX = (firstCx + lastCx) * 0.5;
+          const summaryTxt = isRu() ? 'Входы / UI  →  Ядро / Хабы' : 'Entries / UI  →  Core / Hubs';
+          const chipW = Math.min(220 * uiScale, ctx.measureText(summaryTxt).width + 20 * uiScale);
+          pgDrawRoundedRectPath(ctx, midX - chipW * 0.5, headerY, chipW, headerH, headerH * 0.5);
+          ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.92)' : 'rgba(18, 24, 40, 0.90)';
+          ctx.fill();
+          ctx.strokeStyle = isLight ? 'rgba(124, 45, 18, 0.22)' : 'rgba(255, 255, 255, 0.16)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.fillStyle = isLight ? '#7c2d12' : 'rgba(235, 235, 245, 0.88)';
+          ctx.fillText(summaryTxt, midX, headerY + headerH * 0.5 + 0.5);
+        } else {
+          for (let pos = 0; pos < sortedOrder.length; pos++) {
+            const c = sortedOrder[pos];
+            const col = cols[c];
+            const lb = laneBounds[c];
+            if (lb.right < -20 || lb.left > w + 20) continue;
+            const pal = pgGetLayerRolePalette(col.role, c, isLight);
+            const isActiveFilter = pgState.activeLayerTier === col.tier;
+            const isFocused = focusTier === col.tier;
+            const maxPillW = Math.max(26, lb.width - 8);
+            const dotExtra = Math.round(12 * uiScale);
+            const clearExtra = isActiveFilter ? Math.round(12 * uiScale) : 0;
+
+            const fullLbl = (isRu() ? col.labelRu : col.labelEn) + ' · ' + col.count;
+            const shortLbl = (isRu() ? col.shortRu : col.shortEn) + ' · ' + col.count;
+            const microLbl = (col.role === 'mid') ? String(c + 1) : (isRu() ? col.shortRu : col.shortEn);
+            const padText = Math.round(16 * uiScale) + dotExtra + clearExtra;
+
+            let lblText = fullLbl;
+            if (ctx.measureText(fullLbl).width + padText > maxPillW) {
+              lblText = shortLbl;
+              if (ctx.measureText(shortLbl).width + padText > maxPillW) {
+                lblText = microLbl;
+              }
+            }
+
+            const measuredW = ctx.measureText(lblText).width + padText;
+            const pillW = Math.min(maxPillW, Math.max(28, measuredW));
+            const minX = Math.max(4, lb.left + 4);
+            const maxX = Math.min(w - pillW - 4, lb.right - pillW - 4);
+            const pillX = minX <= maxX
+              ? Math.max(minX, Math.min(maxX, colScreenXs[c] - pillW * 0.5))
+              : Math.max(4, Math.min(w - pillW - 4, colScreenXs[c] - pillW * 0.5));
+
+            pgDrawRoundedRectPath(ctx, pillX, headerY, pillW, headerH, headerH * 0.5);
+            if (isActiveFilter) {
+              ctx.fillStyle = 'rgba(' + pal.accentRgb + ', ' + (isLight ? '0.20' : '0.26') + ')';
+            } else if (isFocused) {
+              ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.98)' : 'rgba(26, 35, 58, 0.96)';
+            } else {
+              ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.92)' : 'rgba(18, 24, 40, 0.90)';
+            }
+            ctx.fill();
+            ctx.strokeStyle = (isActiveFilter || isFocused)
+              ? ('rgba(' + pal.accentRgb + ', ' + (isLight ? '0.72' : '0.78') + ')')
+              : ('rgba(' + pal.accentRgb + ', ' + (isLight ? '0.32' : '0.28') + ')');
+            ctx.lineWidth = isActiveFilter ? 1.5 : 1;
+            ctx.stroke();
+
+            const cy = headerY + headerH * 0.5;
+            if (pillW >= 40) {
+              ctx.beginPath();
+              ctx.arc(pillX + Math.round(9 * uiScale), cy, Math.max(2.6, 3 * uiScale), 0, Math.PI * 2);
+              ctx.fillStyle = pal.accentHex;
+              ctx.fill();
+            }
+            const textCenterX = pillX + (pillW >= 40 ? (dotExtra * 0.45) : 0) + (pillW - clearExtra) * 0.5;
+            ctx.fillStyle = isActiveFilter
+              ? (isLight ? '#2c1e16' : '#ffffff')
+              : (isFocused ? (isLight ? '#2c1e16' : '#f8fafc') : (isLight ? '#5c3422' : 'rgba(235, 235, 245, 0.88)'));
+            ctx.fillText(lblText + (isActiveFilter ? ' ×' : ''), textCenterX, cy + 0.5);
+
+            pgState.layerHeaderRects.push({
+              tier: col.tier,
+              index: col.index,
+              x: pillX,
+              y: headerY,
+              w: pillW,
+              h: headerH,
+              labelRu: col.labelRu,
+              labelEn: col.labelEn,
+              count: col.count,
+              role: col.role
+            });
           }
         }
         ctx.restore();
@@ -1774,7 +2252,7 @@
       // Draw edge weight pills for active macro folder links
       if (edgeMidBadges.length > 0) {
         ctx.save();
-        ctx.font = '700 9px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
+        ctx.font = '700 ' + Math.max(8.5, Math.round(9 * uiScale)) + 'px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         for (let i = 0; i < edgeMidBadges.length; i++) {
@@ -1845,6 +2323,8 @@
           }
         }
 
+        const aiRank = hasAiSpotlight ? (pgState.aiSpotlightMap.get(n.id) || 0) : 0;
+
         let alpha = 1;
         if (hasBlastWave) {
           if (!isWaveNode) alpha *= 0.16;
@@ -1854,6 +2334,8 @@
           if (hotspotScore <= 0 && !isSelected && !isHovered) alpha *= 0.24;
         } else if (hasPathLens && pgState.pathNodeSet && pgState.pathNodeSet.size > 0) {
           if (!isPathNode) alpha *= 0.15;
+        } else if (hasAiSpotlight) {
+          if (!aiRank && !isSelected && !isHovered) alpha *= 0.24;
         } else if (activeId && !isNeighbor) {
           alpha *= 0.22;
         }
@@ -1903,13 +2385,22 @@
               ctx.stroke();
             }
 
+            if (aiRank > 0) {
+              pgDrawRoundedRectPath(ctx, x0 - 3, y0 - 3, n._bw + 6, n._bh + 6, 11 * cardScale);
+              ctx.strokeStyle = isLight ? '#7c3aed' : '#a855f7';
+              ctx.lineWidth = 2.1;
+              ctx.stroke();
+            }
+
             // Left subsystem color stripe
-            ctx.save();
-            pgDrawRoundedRectPath(ctx, x0, y0, n._bw, n._bh, 9 * cardScale);
-            ctx.clip();
-            ctx.fillStyle = color;
-            ctx.fillRect(x0, y0, 4 * cardScale, n._bh);
-            ctx.restore();
+            if (typeof ctx.clip === 'function') {
+              ctx.save();
+              pgDrawRoundedRectPath(ctx, x0, y0, n._bw, n._bh, 9 * cardScale);
+              ctx.clip();
+              ctx.fillStyle = color;
+              ctx.fillRect(x0, y0, 4 * cardScale, n._bh);
+              ctx.restore();
+            }
 
             if (isDiffNode) {
               ctx.beginPath();
@@ -1918,15 +2409,21 @@
               ctx.fill();
             }
 
-            if (cardScale >= 0.62) {
-              const titleFont = Math.max(8.5, Math.round(10.5 * cardScale));
-              const subFont = Math.max(7.5, Math.round(9 * cardScale));
+            if (cardScale >= 0.56) {
+              const titleFont = Math.max(9, Math.round(10.5 * cardScale));
+              const subFont = Math.max(8, Math.round(9 * cardScale));
               ctx.textAlign = 'left';
               ctx.textBaseline = 'middle';
               ctx.font = '700 ' + titleFont + 'px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
               ctx.fillStyle = isLight ? '#2c1e16' : '#f5f5f7';
               let titleTxt = String(n.label || '');
-              if (titleTxt.length > 18) titleTxt = titleTxt.slice(0, 17) + '…';
+              const maxTextW = Math.max(24, n._bw - 15 * cardScale);
+              if (ctx.measureText(titleTxt).width > maxTextW) {
+                while (titleTxt.length > 3 && ctx.measureText(titleTxt + '…').width > maxTextW) {
+                  titleTxt = titleTxt.slice(0, -1);
+                }
+                titleTxt += '…';
+              }
               ctx.fillText(titleTxt, x0 + 9 * cardScale, n._sy - 5.5 * cardScale);
 
               ctx.font = '500 ' + subFont + 'px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
@@ -1935,6 +2432,31 @@
                 (n.godCount > 0 ? ' · ★' : '') +
                 (n.fragileCount > 0 ? ' · ⚠' : '');
               ctx.fillText(metaTxt, x0 + 9 * cardScale, n._sy + 7 * cardScale);
+            }
+            if (isLayered && n._detachedFromLayer && typeof n._tier === 'number') {
+              const dCol = (pgState.layeredColumns || []).find(function (c) { return c.tier === n._tier; });
+              if (dCol) {
+                const dPal = pgGetLayerRolePalette(dCol.role, dCol.index, isLight);
+                const dTxt = isRu() ? dCol.shortRu : dCol.shortEn;
+                const dFont = Math.max(8, Math.round(8.5 * uiScale));
+                ctx.save();
+                ctx.font = '700 ' + dFont + 'px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
+                const dW = Math.max(22, ctx.measureText(dTxt).width + 10 * uiScale);
+                const dH = Math.round(13 * uiScale);
+                const dX = x0 + n._bw - dW + 4;
+                const dY = y0 - dH * 0.65;
+                pgDrawRoundedRectPath(ctx, dX, dY, dW, dH, dH * 0.5);
+                ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.96)' : 'rgba(13, 19, 34, 0.95)';
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(' + dPal.accentRgb + ', 0.72)';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                ctx.fillStyle = dPal.accentHex;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(dTxt, dX + dW * 0.5, dY + dH * 0.5 + 0.4);
+                ctx.restore();
+              }
             }
             ctx.restore();
             continue;
@@ -2010,22 +2532,30 @@
           const fillNodeColor = (hotspotScore >= 0.45 && typeof pgGetHotspotColor === 'function')
             ? pgGetHotspotColor(hotspotScore, isLight)
             : color;
-          if (n.isSymbol && n.kind === 'class') {
-            const rs = n._sr * 1.12;
-            ctx.beginPath();
-            ctx.moveTo(n._sx, n._sy - rs);
-            ctx.lineTo(n._sx + rs, n._sy);
-            ctx.lineTo(n._sx, n._sy + rs);
-            ctx.lineTo(n._sx - rs, n._sy);
-            ctx.closePath();
-            ctx.fillStyle = fillNodeColor;
-            ctx.fill();
-          } else {
-            ctx.beginPath();
-            ctx.arc(n._sx, n._sy, n._sr, 0, Math.PI * 2);
-            ctx.fillStyle = fillNodeColor;
-            ctx.fill();
-          }
+              if (n.isSymbol && n.kind === 'class') {
+              const rs = n._sr * 1.12;
+              ctx.beginPath();
+              ctx.moveTo(n._sx, n._sy - rs);
+              ctx.lineTo(n._sx + rs, n._sy);
+              ctx.lineTo(n._sx, n._sy + rs);
+              ctx.lineTo(n._sx - rs, n._sy);
+              ctx.closePath();
+              ctx.fillStyle = fillNodeColor;
+              ctx.fill();
+            } else {
+              ctx.beginPath();
+              ctx.arc(n._sx, n._sy, n._sr, 0, Math.PI * 2);
+              ctx.fillStyle = fillNodeColor;
+              ctx.fill();
+            }
+
+            if (aiRank > 0) {
+              ctx.beginPath();
+              ctx.arc(n._sx, n._sy, n._sr + 4.8, 0, Math.PI * 2);
+              ctx.strokeStyle = isLight ? '#7c3aed' : '#a855f7';
+              ctx.lineWidth = 2.1;
+              ctx.stroke();
+            }
 
           if (n.isSymbol && n.isExternal) {
             ctx.save();
@@ -2046,12 +2576,62 @@
             ctx.fillStyle = isLight ? '#ea580c' : '#ff9f0a';
             ctx.fill();
           }
+          if (isLayered && n._detachedFromLayer && typeof n._tier === 'number') {
+            const dCol = (pgState.layeredColumns || []).find(function (c) { return c.tier === n._tier; });
+            if (dCol) {
+              const dPal = pgGetLayerRolePalette(dCol.role, dCol.index, isLight);
+              const dTxt = isRu() ? dCol.shortRu : dCol.shortEn;
+              const dFont = Math.max(7.5, Math.round(8 * uiScale));
+              ctx.font = '700 ' + dFont + 'px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
+              const dW = Math.max(18, ctx.measureText(dTxt).width + 8 * uiScale);
+              const dH = Math.round(12 * uiScale);
+              const dX = n._sx - dW * 0.5;
+              const dY = n._sy - n._sr - dH - 3;
+              pgDrawRoundedRectPath(ctx, dX, dY, dW, dH, dH * 0.5);
+              ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.94)' : 'rgba(13, 19, 34, 0.94)';
+              ctx.fill();
+              ctx.strokeStyle = 'rgba(' + dPal.accentRgb + ', 0.70)';
+              ctx.lineWidth = 1;
+              ctx.stroke();
+              ctx.fillStyle = dPal.accentHex;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(dTxt, n._sx, dY + dH * 0.5 + 0.4);
+            }
+          }
           ctx.restore();
         } else if (n.isFolder) {
           continue;
         }
 
+        if (aiRank > 0) {
+          ctx.save();
+          if (renderedWebgl) {
+            ctx.beginPath();
+            ctx.arc(n._sx, n._sy, n._sr + 4.8, 0, Math.PI * 2);
+            ctx.strokeStyle = isLight ? '#7c3aed' : '#a855f7';
+            ctx.lineWidth = 2.1;
+            ctx.stroke();
+          }
+          const bx = n._sx + n._sr * 0.85;
+          const by = n._sy - n._sr * 0.85;
+          ctx.beginPath();
+          ctx.arc(bx, by, 6.2, 0, Math.PI * 2);
+          ctx.fillStyle = isLight ? '#7c3aed' : '#9333ea';
+          ctx.fill();
+          ctx.strokeStyle = isLight ? '#ffffff' : '#0b1020';
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+          ctx.font = '700 8.5px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
+          ctx.fillStyle = '#ffffff';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(String(aiRank), bx, by + 0.4);
+          ctx.restore();
+        }
+
         const isLensForceLabel = Boolean(
+          aiRank > 0 ||
           (hasBlastWave && waveHop === 0) ||
           isPathEndpoint ||
           (hasCycleLens && isCycleNode) ||
@@ -2091,13 +2671,16 @@
         }
       }
 
-      // Draw non-overlapping labels above all dots in crisp 10px screen font
+      // Draw non-overlapping labels above all dots in crisp scaled screen font
       if (labelCandidates.length > 0) {
         labelCandidates.sort(function (a, b) {
           return b.priority - a.priority;
         });
+        const lblFontPx = Math.max(9.5, Math.round(10.5 * uiScale));
+        const subFontPx = Math.max(8, Math.round(8.8 * uiScale));
+        const lblLineH = Math.round(13 * uiScale);
         ctx.save();
-        ctx.font = '600 10px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
+        ctx.font = '600 ' + lblFontPx + 'px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
         ctx.lineJoin = 'round';
@@ -2110,14 +2693,14 @@
         for (let i = 0; i < labelCandidates.length && placedBoxes.length < maxLabelsDraw; i++) {
           const item = labelCandidates[i];
           const n = item.node;
-          const tw = Math.min(180, ctx.measureText(n.label).width);
+          const tw = Math.min(200 * uiScale, ctx.measureText(n.label).width);
           const lx = n._sx;
           const ly = n._sy + n._sr + 5;
           const box = {
             x1: lx - tw * 0.5 - 4,
             y1: ly - 2,
             x2: lx + tw * 0.5 + 4,
-            y2: ly + 13
+            y2: ly + lblLineH
           };
 
           let overlaps = false;
@@ -2133,15 +2716,17 @@
           if (overlaps) continue;
 
           placedBoxes.push(box);
-          ctx.strokeStyle = outlineColor;
-          ctx.strokeText(n.label, lx, ly);
+          if (typeof ctx.strokeText === 'function') {
+            ctx.strokeStyle = outlineColor;
+            ctx.strokeText(n.label, lx, ly);
+          }
           ctx.fillStyle = fillColor;
           ctx.fillText(n.label, lx, ly);
           if (item.subCaption) {
             ctx.save();
-            ctx.font = '500 8.5px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
+            ctx.font = '500 ' + subFontPx + 'px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
             ctx.fillStyle = isLight ? 'rgba(92, 52, 34, 0.78)' : 'rgba(185, 200, 224, 0.78)';
-            ctx.fillText(item.subCaption, lx, ly + 11.5);
+            ctx.fillText(item.subCaption, lx, ly + Math.round(11.5 * uiScale));
             ctx.restore();
           }
         }
@@ -2152,6 +2737,10 @@
         pgDrawMinimap(ctx, w, h, isLight);
       } else {
         pgState.minimapRect = null;
+      }
+
+      if (typeof pgPositionAiMapCallout === 'function') {
+        pgPositionAiMapCallout();
       }
 
       ctx.restore();
@@ -2326,6 +2915,10 @@
         depthSel.value = String(pgState.depth);
         depthSel.disabled = pgState.mode !== 'local';
       }
+      const alignBtn = document.getElementById('pgAlignLayersBtn');
+      if (alignBtn) {
+        alignBtn.disabled = pgState.layoutMode !== 'layered';
+      }
       if (typeof pgRenderLensToolbarBadges === 'function') {
         pgRenderLensToolbarBadges();
       }
@@ -2336,7 +2929,8 @@
       if (!bar) return;
       const clusters = Array.isArray(pgState.graphData?.clusters) ? pgState.graphData.clusters : [];
       const isSymbolsView = Boolean(pgState.viewLevel === 'symbols' || pgState.graphData?.isSymbolsView);
-      if (!clusters.length && !pgState.drillFolder && pgState.mode !== 'local' && !isSymbolsView) {
+      const hasLayerFilter = pgState.layoutMode === 'layered' && pgState.activeLayerTier !== null;
+      if (!clusters.length && !pgState.drillFolder && pgState.mode !== 'local' && !isSymbolsView && !hasLayerFilter) {
         bar.innerHTML = '';
         bar.style.display = 'none';
         return;
@@ -2359,6 +2953,13 @@
       } else if (pgState.drillFolder) {
         html += '<button type="button" class="pg-breadcrumb-chip" data-action="pgExitFolderDrill" title="' + L('Вернуться к обзору папок', 'Back to folders overview') + '">' +
           '← ' + L('Все папки', 'All folders') + ' / <strong>' + escapeHtml(pgState.drillFolder) + '</strong></button>';
+      }
+      if (hasLayerFilter) {
+        const activeCol = (pgState.layeredColumns || []).find(function (c) { return c.tier === pgState.activeLayerTier; });
+        const layerTitle = activeCol ? (isRu() ? activeCol.labelRu : activeCol.labelEn) : (L('Слой ', 'Layer ') + (pgState.activeLayerTier + 1));
+        const layerCnt = activeCol ? (' · ' + activeCol.count) : '';
+        html += '<button type="button" class="pg-breadcrumb-chip pg-layer-filter-chip" data-action="pgClearLayerFilter" title="' + escapeHtml(L('Сбросить фильтр по слою', 'Clear layer filter')) + '">' +
+          escapeHtml(L('Слой: ', 'Layer: ') + layerTitle + layerCnt) + ' ×</button>';
       }
       html += '<button type="button" class="pg-cluster-chip' + (!pgState.activeClusterId ? ' active' : '') + '" data-action="pgFilterCluster" data-arg="">' +
         L('Все подсистемы', 'All subsystems') + ' (' + pgState.nodes.length + ')</button>';
@@ -2398,6 +2999,24 @@
       }
 
       const node = pgState.selectedNodeId ? pgState.nodeById.get(pgState.selectedNodeId) : null;
+      const askAiBtn = document.getElementById('pgActionAskAiBtn');
+      const askAiMenu = document.getElementById('pgAskAiMenu');
+      const aiChatBox = document.getElementById('pgAiChatBox');
+      if (!node || pgState.aiNodeId !== node.id) {
+        pgAbortActiveAiRequest({ clearHistory: true });
+        pgClearAiMapOverlay();
+        pgState.aiMenuOpen = false;
+        pgState.aiBoxOpen = false;
+        pgState.aiNodeId = node ? node.id : '';
+        if (askAiMenu) askAiMenu.hidden = true;
+        if (askAiBtn) askAiBtn.setAttribute('aria-expanded', 'false');
+        if (aiChatBox) aiChatBox.style.display = 'none';
+      }
+      if (askAiBtn && node) {
+        askAiBtn.textContent = node.isFolder
+          ? L('🤖 Спросить ИИ о папке ▾', '🤖 Ask AI about folder ▾')
+          : (node.isSymbol ? L('🤖 Спросить ИИ о символе ▾', '🤖 Ask AI about symbol ▾') : L('🤖 Спросить ИИ о файле ▾', '🤖 Ask AI about file ▾'));
+      }
       if (!node) {
         if (fnEl) fnEl.textContent = L('Выберите узел на карте', 'Select a node on the graph');
         if (pathEl) pathEl.textContent = L('Кликните по папке или файлу, чтобы увидеть зависимости', 'Click a folder or file to inspect dependencies');
@@ -2699,6 +3318,103 @@
       }
     }
 
+    function pgApplyNodeMoveSnapshot(entry, direction) {
+      if (!entry) return false;
+      if (entry.kind === 'batch') {
+        if (Array.isArray(entry.cols) && Array.isArray(pgState.layeredColumns)) {
+          for (let i = 0; i < entry.cols.length; i++) {
+            const cSnap = entry.cols[i];
+            const col = pgState.layeredColumns.find(function (c) { return c.tier === cSnap.tier; });
+            if (col) {
+              const tx = direction === 'redo' ? cSnap.nextX : cSnap.prevX;
+              if (Number.isFinite(tx)) col.x = tx;
+            }
+          }
+        }
+        if (Array.isArray(entry.nodes)) {
+          for (let i = 0; i < entry.nodes.length; i++) {
+            const nSnap = entry.nodes[i];
+            const node = pgState.nodeById && typeof pgState.nodeById.get === 'function'
+              ? pgState.nodeById.get(nSnap.id)
+              : (Array.isArray(pgState.nodes) ? pgState.nodes.find(function (n) { return n && n.id === nSnap.id; }) : null);
+            if (!node) continue;
+            const targetX = direction === 'redo' ? nSnap.nextX : nSnap.prevX;
+            const targetY = direction === 'redo' ? nSnap.nextY : nSnap.prevY;
+            if (Number.isFinite(targetX)) node.x = targetX;
+            if (Number.isFinite(targetY)) node.y = targetY;
+            node.vx = 0;
+            node.vy = 0;
+            node.fx = null;
+            node.fy = null;
+            pgSyncNodeLayerDetachment(node);
+          }
+        }
+        pgState.alpha = 0;
+        pgStopLoop();
+        if (typeof pgBuildQuadtree === 'function' && Array.isArray(pgState.nodes)) {
+          pgState.spatialTree = pgBuildQuadtree(pgState.nodes);
+        }
+        pgDrawGraph();
+        return true;
+      }
+      if (!entry.id) return false;
+      const node = pgState.nodeById && typeof pgState.nodeById.get === 'function'
+        ? pgState.nodeById.get(entry.id)
+        : (Array.isArray(pgState.nodes) ? pgState.nodes.find(function (n) { return n && n.id === entry.id; }) : null);
+      if (!node) return false;
+      const targetX = direction === 'redo' ? entry.nextX : entry.prevX;
+      const targetY = direction === 'redo' ? entry.nextY : entry.prevY;
+      if (!Number.isFinite(targetX) || !Number.isFinite(targetY)) return false;
+      node.x = targetX;
+      node.y = targetY;
+      node.vx = 0;
+      node.vy = 0;
+      node.fx = null;
+      node.fy = null;
+      pgSyncNodeLayerDetachment(node);
+      pgState.alpha = 0;
+      pgStopLoop();
+      if (typeof pgBuildQuadtree === 'function' && Array.isArray(pgState.nodes)) {
+        pgState.spatialTree = pgBuildQuadtree(pgState.nodes);
+      }
+      pgDrawGraph();
+      return true;
+    }
+
+    function pgUndoNodeMove() {
+      if (!Array.isArray(pgState.undoStack) || pgState.undoStack.length === 0) return false;
+      while (pgState.undoStack.length > 0) {
+        const entry = pgState.undoStack.pop();
+        if (pgApplyNodeMoveSnapshot(entry, 'undo')) {
+          if (!Array.isArray(pgState.redoStack)) pgState.redoStack = [];
+          pgState.redoStack.push(entry);
+          if (pgState.redoStack.length > 80) pgState.redoStack.shift();
+          if (typeof flashStatus === 'function') {
+            flashStatus(L('Отмена переноса узла ↺', 'Undid node move ↺'));
+          }
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function pgRedoNodeMove() {
+      if (!Array.isArray(pgState.redoStack) || pgState.redoStack.length === 0) return false;
+      while (pgState.redoStack.length > 0) {
+        const entry = pgState.redoStack.pop();
+        if (pgApplyNodeMoveSnapshot(entry, 'redo')) {
+          if (!Array.isArray(pgState.undoStack)) pgState.undoStack = [];
+          pgState.undoStack.push(entry);
+          if (pgState.undoStack.length > 80) pgState.undoStack.shift();
+          if (typeof flashStatus === 'function') {
+            flashStatus(L('Возврат переноса узла ↻', 'Redid node move ↻'));
+          }
+          return true;
+        }
+      }
+      return false;
+    }
+
     function pgBindCanvasEvents() {
       if (pgState.bound) return;
       pgState.bound = true;
@@ -2716,6 +3432,7 @@
       }
 
       canvas.addEventListener('pointerdown', function (ev) {
+        if (pgState.ctxMenuOpen) pgCloseNodeContextMenu();
         if (ev.button !== 0 && ev.pointerType === 'mouse') return;
         const rect = canvas.getBoundingClientRect();
         const sx = ev.clientX - rect.left;
@@ -2723,6 +3440,8 @@
         pgState.dragMoved = false;
         pgState.lastClientX = ev.clientX;
         pgState.lastClientY = ev.clientY;
+        pgState.activePointerId = ev.pointerId !== undefined ? ev.pointerId : null;
+        pgState.dragOriginPos = null;
         if (pgState.showMinimap && typeof pgHitTestMinimap === 'function' && pgHitTestMinimap(sx, sy)) {
           pgState.dragMode = 'minimap';
           pgState.dragNode = null;
@@ -2731,7 +3450,26 @@
           }
           pgDrawGraph();
           try {
-            if (canvas.setPointerCapture) canvas.setPointerCapture(ev.pointerId);
+            if (canvas.setPointerCapture && ev.pointerId !== undefined) canvas.setPointerCapture(ev.pointerId);
+          } catch {}
+          return;
+        }
+        const hdrHit = pgFindLayerHeaderAtScreen(sx, sy);
+        if (hdrHit) {
+          pgState.dragMode = 'layer-header';
+          pgState.dragNode = null;
+          pgState.dragLayerTier = hdrHit.tier;
+          const colObj = (pgState.layeredColumns || []).find(function (c) { return c.tier === hdrHit.tier; });
+          pgState.dragLayerOrigin = colObj ? {
+            tier: hdrHit.tier,
+            colOrigX: colObj.x,
+            startClientX: ev.clientX,
+            nodes: pgState.nodes
+              .filter(function (n) { return n._tier === hdrHit.tier && !n._detachedFromLayer; })
+              .map(function (n) { return { id: n.id, x: n.x, y: n.y }; })
+          } : null;
+          try {
+            if (canvas.setPointerCapture && ev.pointerId !== undefined) canvas.setPointerCapture(ev.pointerId);
           } catch {}
           return;
         }
@@ -2739,6 +3477,7 @@
         if (hit) {
           pgState.dragMode = 'node';
           pgState.dragNode = hit;
+          pgState.dragOriginPos = { id: hit.id, x: hit.x, y: hit.y };
           hit.fx = hit.x;
           hit.fy = hit.y;
           pgStartLoop(0.18);
@@ -2748,11 +3487,15 @@
           stage.classList.add('is-grabbing');
         }
         try {
-          if (canvas.setPointerCapture) canvas.setPointerCapture(ev.pointerId);
+          if (canvas.setPointerCapture && ev.pointerId !== undefined) canvas.setPointerCapture(ev.pointerId);
         } catch {}
       });
 
       canvas.addEventListener('pointermove', function (ev) {
+        if (pgState.dragMode && ev.pointerType === 'mouse' && typeof ev.buttons === 'number' && ev.buttons === 0) {
+          endPointerDrag(ev);
+          return;
+        }
         const rect = canvas.getBoundingClientRect();
         const sx = ev.clientX - rect.left;
         const sy = ev.clientY - rect.top;
@@ -2766,6 +3509,27 @@
           return;
         }
 
+        if (pgState.dragMode === 'layer-header' && pgState.dragLayerOrigin) {
+          const dx = ev.clientX - pgState.lastClientX;
+          const totalDx = Math.abs(ev.clientX - pgState.dragLayerOrigin.startClientX);
+          if (totalDx > 4) pgState.dragMoved = true;
+          if (pgState.dragMoved) {
+            const dWorldX = dx / (pgState.camScale || 1);
+            const colObj = (pgState.layeredColumns || []).find(function (c) { return c.tier === pgState.dragLayerOrigin.tier; });
+            if (colObj) colObj.x += dWorldX;
+            const movedRefs = pgState.dragLayerOrigin.nodes || [];
+            for (let i = 0; i < movedRefs.length; i++) {
+              const mn = pgState.nodeById.get(movedRefs[i].id);
+              if (mn) mn.x += dWorldX;
+            }
+            pgState.lastClientX = ev.clientX;
+            pgState.spatialTree = null;
+            canvas.style.cursor = 'ew-resize';
+            pgDrawGraph();
+          }
+          return;
+        }
+
         if (pgState.dragMode === 'node' && pgState.dragNode) {
           const dx = ev.clientX - pgState.lastClientX;
           const dy = ev.clientY - pgState.lastClientY;
@@ -2775,6 +3539,8 @@
           pgState.dragNode.fy = world.y;
           pgState.dragNode.x = world.x;
           pgState.dragNode.y = world.y;
+          pgSyncNodeLayerDetachment(pgState.dragNode);
+          pgState.spatialTree = null;
           pgUpdateHoverTooltip(pgState.dragNode, sx, sy);
           pgDrawGraph();
           return;
@@ -2792,6 +3558,24 @@
           return;
         }
 
+        const hdrHit = pgFindLayerHeaderAtScreen(sx, sy);
+        if (hdrHit) {
+          const prevLayerHover = pgState.hoveredLayerTier;
+          const prevNodeHover = pgState.hoveredNodeId;
+          pgState.hoveredLayerTier = hdrHit.tier;
+          pgState.hoveredNodeId = '';
+          canvas.style.cursor = 'pointer';
+          pgUpdateHoverTooltip(null, 0, 0);
+          if (prevLayerHover !== hdrHit.tier || prevNodeHover) {
+            pgDrawGraph();
+          }
+          return;
+        }
+        if (pgState.hoveredLayerTier !== null) {
+          pgState.hoveredLayerTier = null;
+          pgDrawGraph();
+        }
+
         const hit = pgFindNodeAtScreen(sx, sy);
         const nextHoverId = hit ? hit.id : '';
         if (nextHoverId !== pgState.hoveredNodeId) {
@@ -2804,23 +3588,73 @@
 
       function endPointerDrag(ev) {
         if (!pgState.dragMode) return;
-        const rect = canvas.getBoundingClientRect();
-        const sx = ev.clientX - rect.left;
-        const sy = ev.clientY - rect.top;
+        const pid = (ev && ev.pointerId !== undefined) ? ev.pointerId : pgState.activePointerId;
+        try {
+          if (pid !== null && pid !== undefined && canvas.releasePointerCapture) {
+            canvas.releasePointerCapture(pid);
+          }
+        } catch {}
+
+        const hasCoords = Boolean(ev && typeof ev.clientX === 'number' && typeof ev.clientY === 'number');
+        const rect = hasCoords ? canvas.getBoundingClientRect() : null;
+        const sx = hasCoords && rect ? (ev.clientX - rect.left) : 0;
+        const sy = hasCoords && rect ? (ev.clientY - rect.top) : 0;
+
         if (pgState.dragMode === 'minimap') {
           pgState.dragMoved = true;
-          if (typeof pgPanCameraFromMinimap === 'function') {
+          if (hasCoords && typeof pgPanCameraFromMinimap === 'function') {
             pgPanCameraFromMinimap(sx, sy);
           }
           pgDrawGraph();
-          return;
-        }
-
-        if (pgState.dragMode === 'node' && pgState.dragNode) {
+        } else if (pgState.dragMode === 'layer-header') {
+          if (!pgState.dragMoved && pgState.dragLayerTier !== null) {
+            pgToggleLayerFilter(pgState.dragLayerTier);
+          } else if (pgState.dragMoved && pgState.dragLayerOrigin) {
+            const origin = pgState.dragLayerOrigin;
+            const colObj = (pgState.layeredColumns || []).find(function (c) { return c.tier === origin.tier; });
+            if (colObj && Math.abs(colObj.x - origin.colOrigX) > 1) {
+              const nodeSnapshots = [];
+              const refs = origin.nodes || [];
+              for (let i = 0; i < refs.length; i++) {
+                const mn = pgState.nodeById.get(refs[i].id);
+                if (mn) {
+                  nodeSnapshots.push({ id: mn.id, prevX: refs[i].x, prevY: refs[i].y, nextX: mn.x, nextY: mn.y });
+                }
+              }
+              if (!Array.isArray(pgState.undoStack)) pgState.undoStack = [];
+              pgState.undoStack.push({
+                kind: 'batch',
+                cols: [{ tier: colObj.tier, prevX: origin.colOrigX, nextX: colObj.x }],
+                nodes: nodeSnapshots
+              });
+              if (pgState.undoStack.length > 80) pgState.undoStack.shift();
+              pgState.redoStack = [];
+            }
+            canvas.style.cursor = 'pointer';
+          }
+        } else if (pgState.dragMode === 'node' && pgState.dragNode) {
           const clickedNode = pgState.dragNode;
           clickedNode.fx = null;
           clickedNode.fy = null;
-          if (!pgState.dragMoved) {
+          if (pgState.dragMoved) {
+            pgSyncNodeLayerDetachment(clickedNode);
+            pgState.spatialTree = null;
+            const orig = pgState.dragOriginPos;
+            if (orig && orig.id === clickedNode.id && Math.hypot(clickedNode.x - orig.x, clickedNode.y - orig.y) > 1) {
+              if (!Array.isArray(pgState.undoStack)) pgState.undoStack = [];
+              pgState.undoStack.push({
+                id: clickedNode.id,
+                prevX: orig.x,
+                prevY: orig.y,
+                nextX: clickedNode.x,
+                nextY: clickedNode.y,
+              });
+              if (pgState.undoStack.length > 80) {
+                pgState.undoStack.shift();
+              }
+              pgState.redoStack = [];
+            }
+          } else if (hasCoords) {
             if ((ev.ctrlKey || ev.metaKey) && typeof pgToggleNodeInCart === 'function') {
               pgToggleNodeInCart(clickedNode.id);
             } else if (ev.shiftKey && typeof pgQueryGraphPath === 'function') {
@@ -2846,7 +3680,7 @@
               pgStartLoop();
             }
           }
-        } else if (pgState.dragMode === 'pan' && !pgState.dragMoved) {
+        } else if (pgState.dragMode === 'pan' && !pgState.dragMoved && hasCoords) {
           const hit = pgFindNodeAtScreen(sx, sy);
           if (!hit) {
             pgState.selectedNodeId = '';
@@ -2856,13 +3690,26 @@
         }
         pgState.dragMode = '';
         pgState.dragNode = null;
+        pgState.dragLayerTier = null;
+        pgState.dragLayerOrigin = null;
+        pgState.activePointerId = null;
+        pgState.dragOriginPos = null;
         stage.classList.remove('is-grabbing');
       }
 
       canvas.addEventListener('pointerup', endPointerDrag);
       canvas.addEventListener('pointercancel', endPointerDrag);
+      if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('pointerup', endPointerDrag);
+        window.addEventListener('pointercancel', endPointerDrag);
+        window.addEventListener('blur', function () {
+          endPointerDrag(null);
+        });
+      }
       canvas.addEventListener('pointerleave', function () {
-        if (!pgState.dragMode && pgState.hoveredNodeId) {
+        const hadLayerHover = pgState.hoveredLayerTier !== null;
+        pgState.hoveredLayerTier = null;
+        if (!pgState.dragMode && (pgState.hoveredNodeId || hadLayerHover)) {
           pgState.hoveredNodeId = '';
           pgUpdateHoverTooltip(null, 0, 0);
           pgStartLoop();
@@ -2888,7 +3735,21 @@
         }
       });
 
+      canvas.addEventListener('contextmenu', function (ev) {
+        if (typeof ev.preventDefault === 'function') ev.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const sx = ev.clientX - rect.left;
+        const sy = ev.clientY - rect.top;
+        const hit = pgFindNodeAtScreen(sx, sy);
+        if (hit) {
+          pgOpenNodeContextMenu(hit, sx, sy);
+        } else {
+          pgCloseNodeContextMenu();
+        }
+      });
+
       canvas.addEventListener('wheel', function (ev) {
+        if (pgState.ctxMenuOpen) pgCloseNodeContextMenu();
         ev.preventDefault();
         const rect = canvas.getBoundingClientRect();
         const sx = ev.clientX - rect.left;
@@ -2904,9 +3765,43 @@
       }, { passive: false });
 
       document.addEventListener('keydown', function (ev) {
-        if (ev.key === 'Escape' && pgState.open) {
+        if (!pgState.open) return;
+        if (ev.key === 'Escape') {
+          if (ev.defaultPrevented) return;
           ev.preventDefault();
+          if (pgState.ctxMenuOpen) {
+            pgCloseNodeContextMenu();
+            return;
+          }
+          if (pgState.aiMenuOpen) {
+            pgToggleAskAiMenu(false);
+            return;
+          }
           closeProjectGraphModal();
+          return;
+        }
+        if ((ev.ctrlKey || ev.metaKey) && !ev.altKey) {
+          const activeEl = document.activeElement;
+          const activeTag = activeEl && activeEl.tagName ? String(activeEl.tagName).toUpperCase() : '';
+          const isEditable = Boolean(
+            activeTag === 'INPUT' ||
+            activeTag === 'TEXTAREA' ||
+            activeTag === 'SELECT' ||
+            (activeEl && activeEl.isContentEditable)
+          );
+          if (isEditable) return;
+          const keyLow = ev.key ? String(ev.key).toLowerCase() : '';
+          if (ev.code === 'KeyZ' || keyLow === 'z') {
+            ev.preventDefault();
+            if (ev.shiftKey) {
+              pgRedoNodeMove();
+            } else {
+              pgUndoNodeMove();
+            }
+          } else if (ev.code === 'KeyY' || keyLow === 'y') {
+            ev.preventDefault();
+            pgRedoNodeMove();
+          }
         }
       });
 
@@ -2943,6 +3838,7 @@
           if (document.body) document.body.setAttribute('data-panel-theme', th);
           const lang = typeof normalizeUiLanguage === 'function' ? normalizeUiLanguage(st.uiLanguage) : (st.uiLanguage || 'ru');
           if (typeof applyUiLanguageDom === 'function') applyUiLanguageDom(lang);
+          if (typeof applyPanelUiScaleDom === 'function') applyPanelUiScaleDom(st.panelUiScale || 'auto', false);
           document.title = lang === 'ru' ? 'Карта проекта · The Tunnel' : 'Project Map · The Tunnel';
           if (pgState.open) {
             pgRenderToolbarAndStats();
@@ -2980,6 +3876,7 @@
             displayLabel: raw.displayLabel || raw.projectName || base,
             status: raw.status || 'idle',
             source: raw.source || 'known',
+            isOpenInIde: Boolean(raw.isOpenInIde || raw.source === 'open_ide'),
           });
         }
       };
@@ -3047,8 +3944,9 @@
           opt.value = item.workspaceRoot;
           const lbl = item.displayLabel || item.projectName || pgWsBasename(item.workspaceRoot);
           const isLive = item.status === 'running' || item.status === 'waiting_user';
-          opt.textContent = (isLive ? '● ' : '📁 ') + lbl;
-          opt.title = item.workspaceRoot;
+          const isOpenIde = Boolean(item.isOpenInIde || item.source === 'open_ide');
+          opt.textContent = (isLive ? '● ' : (isOpenIde ? '🟢 ' : '📁 ')) + lbl;
+          opt.title = item.workspaceRoot + (isOpenIde ? L(' (открыт в Antigravity)', ' (open in Antigravity)') : '');
           sel.appendChild(opt);
         }
       }
@@ -3069,6 +3967,12 @@
         const recent = pgLoadRecentWorkspaces();
         if (recent.length > 0) {
           params.set('extraRoots', recent.join('|'));
+        }
+        if (typeof refreshSidecarOpenWorkspacesFast === 'function') {
+          const openUris = await refreshSidecarOpenWorkspacesFast(true);
+          if (Array.isArray(openUris) && openUris.length > 0) {
+            params.set('openWorkspaces', openUris.join('|'));
+          }
         }
         const q = params.toString();
         const res = await panelFetch('/api/project-graph/workspaces' + (q ? '?' + q : ''));
@@ -3093,6 +3997,7 @@
 
     function pgResetProjectTransientState() {
       pgStopLoop();
+      pgCloseNodeContextMenu();
       pgUpdateHoverTooltip(null, 0, 0);
       if (typeof pgHideWebglCanvas === 'function') pgHideWebglCanvas();
       pgState.mode = 'global';
@@ -3116,6 +4021,11 @@
       pgState.outNeighbors = new Map();
       pgState.clusterColors = new Map();
       pgState.layeredColumns = [];
+      pgState.activeLayerTier = null;
+      pgState.hoveredLayerTier = null;
+      pgState.layerHeaderRects = [];
+      pgState.dragLayerTier = null;
+      pgState.dragLayerOrigin = null;
       pgState.spatialTree = null;
       pgState.symbolFile = '';
       pgState.symbolGraphData = null;
@@ -3304,11 +4214,16 @@
       if (typeof applyUiLanguageDom === 'function') {
         applyUiLanguageDom(getUiLanguage());
       }
+      if (typeof applyPanelUiScaleDom === 'function') {
+        applyPanelUiScaleDom((typeof currentState === 'object' && currentState && currentState.panelUiScale) || (typeof _activePanelUiScaleMode !== 'undefined' ? _activePanelUiScaleMode : 'auto'), false);
+      }
       void pgLoadWorkspaces();
       void pgLoadGraph({ silent: true });
     }
 
     function closeProjectGraphModal() {
+      pgAbortActiveAiRequest();
+      pgClearAiMapOverlay();
       if (pgIsStandaloneView()) {
         try {
           window.close();
@@ -3319,6 +4234,7 @@
       if (modal) modal.classList.remove('visible');
       pgState.open = false;
       pgStopLoop();
+      pgCloseNodeContextMenu();
       pgUpdateHoverTooltip(null, 0, 0);
     }
 
@@ -3369,6 +4285,9 @@
       pgState.viewLevel = next;
       pgState.drillFolder = '';
       pgState.activeClusterId = '';
+      pgState.activeLayerTier = null;
+      pgState.hoveredLayerTier = null;
+      pgState.layerHeaderRects = [];
       pgState.selectedNodeId = '';
       if (pgState.rawGraphData) {
         pgHydrateSimulation(pgState.rawGraphData);
@@ -3381,6 +4300,9 @@
       const next = layout === 'force' ? 'force' : 'layered';
       if (pgState.layoutMode === next) return;
       pgState.layoutMode = next;
+      pgState.activeLayerTier = null;
+      pgState.hoveredLayerTier = null;
+      pgState.layerHeaderRects = [];
       if (pgState.rawGraphData) {
         pgHydrateSimulation(pgState.rawGraphData);
       } else {
@@ -3394,6 +4316,9 @@
       pgState.drillFolder = key;
       pgState.viewLevel = 'files';
       pgState.activeClusterId = '';
+      pgState.activeLayerTier = null;
+      pgState.hoveredLayerTier = null;
+      pgState.layerHeaderRects = [];
       pgState.selectedNodeId = '';
       if (pgState.rawGraphData) {
         pgHydrateSimulation(pgState.rawGraphData);
@@ -3404,6 +4329,9 @@
       pgState.drillFolder = '';
       pgState.viewLevel = 'folders';
       pgState.activeClusterId = '';
+      pgState.activeLayerTier = null;
+      pgState.hoveredLayerTier = null;
+      pgState.layerHeaderRects = [];
       pgState.selectedNodeId = '';
       if (pgState.rawGraphData) {
         pgHydrateSimulation(pgState.rawGraphData);
@@ -3416,6 +4344,9 @@
       pgState.drillFolder = '';
       pgState.viewLevel = 'files';
       pgState.activeClusterId = '';
+      pgState.activeLayerTier = null;
+      pgState.hoveredLayerTier = null;
+      pgState.layerHeaderRects = [];
       pgState.selectedNodeId = targetId;
       if (pgState.rawGraphData) {
         pgHydrateSimulation(pgState.rawGraphData);
@@ -3434,6 +4365,9 @@
       pgState.drillFolder = '';
       pgState.viewLevel = 'folders';
       pgState.activeClusterId = '';
+      pgState.activeLayerTier = null;
+      pgState.hoveredLayerTier = null;
+      pgState.layerHeaderRects = [];
       pgState.selectedNodeId = '';
       pgRenderToolbarAndStats();
       void pgLoadGraph({ silent: true });
@@ -3647,3 +4581,969 @@
       }
       flashStatus(L('Добавлено в Композер: ', 'Added to Composer: ') + token);
     }
+
+    let _pgAiListenersAttached = false;
+
+    function pgEnsureAiListeners() {
+      if (_pgAiListenersAttached || typeof document === 'undefined' || typeof document.addEventListener !== 'function') {
+        return;
+      }
+      _pgAiListenersAttached = true;
+      document.addEventListener('click', function (ev) {
+        const target = ev.target;
+        if (pgState.ctxMenuOpen) {
+          if (!(target && target.closest && target.closest('#pgNodeContextMenu'))) {
+            pgCloseNodeContextMenu();
+          }
+        }
+        if (!pgState.aiMenuOpen) return;
+        if (target && target.closest && (target.closest('#pgAskAiMenu') || target.closest('#pgActionAskAiBtn'))) {
+          return;
+        }
+        pgToggleAskAiMenu(false);
+      });
+      document.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Escape' && pgState.ctxMenuOpen) {
+          if (typeof ev.preventDefault === 'function') ev.preventDefault();
+          if (typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
+          if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
+          pgCloseNodeContextMenu();
+          return;
+        }
+        if (ev.key === 'Escape' && pgState.aiMenuOpen) {
+          if (typeof ev.preventDefault === 'function') ev.preventDefault();
+          if (typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
+          if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
+          pgToggleAskAiMenu(false);
+          return;
+        }
+        if (ev.key === 'Enter' && !ev.shiftKey && ev.target && ev.target.id === 'pgAiQuestionInput') {
+          if (typeof ev.preventDefault === 'function') ev.preventDefault();
+          void pgSubmitCustomAiQuestion();
+        }
+      });
+      if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('pagehide', function () {
+          pgAbortActiveAiRequest();
+        });
+      }
+    }
+
+    function pgCloseNodeContextMenu() {
+      pgState.ctxMenuOpen = false;
+      pgState.ctxMenuNodeId = '';
+      const menuEl = document.getElementById('pgNodeContextMenu');
+      if (menuEl) menuEl.hidden = true;
+    }
+
+    function pgOpenNodeContextMenu(node, sx, sy) {
+      if (!node) return;
+      pgEnsureAiListeners();
+      pgToggleAskAiMenu(false);
+      pgUpdateHoverTooltip(null, 0, 0);
+
+      pgState.selectedNodeId = node.id;
+      if (pgState.lens === 'blast') pgState.blastUseGitDiff = false;
+      if (typeof pgRefreshLensState === 'function') pgRefreshLensState();
+      pgRenderInspector();
+      pgStartLoop();
+
+      const menuEl = document.getElementById('pgNodeContextMenu');
+      const stageEl = document.getElementById('pgCanvasStage');
+      if (!menuEl) return;
+
+      const icon = node.isFolder ? '📁' : (node.isSymbol ? 'ƒ' : '📄');
+      const title = node.label || node.id;
+      const targetCartId = node.isSymbol && node.file ? node.file : node.id;
+      const inCart = Boolean(pgState.contextCart && pgState.contextCart.has(targetCartId));
+
+      const nodeItems = [];
+      if (node.isFolder) {
+        nodeItems.push({ arg: 'drill', label: L('📂 Раскрыть папку', '📂 Open folder') });
+        nodeItems.push({ arg: 'focus', label: L('🎯 Фокус (1–2 хопа)', '🎯 Focus (1–2 hops)') });
+      } else if (node.isSymbol) {
+        nodeItems.push({ arg: 'focus', label: L('🎯 Фокус', '🎯 Focus') });
+      } else {
+        nodeItems.push({ arg: 'focus', label: L('🎯 Фокус (1–2 хопа)', '🎯 Focus (1–2 hops)') });
+        nodeItems.push({ arg: 'symbols', label: L('ƒ Символы файла', 'ƒ File symbols') });
+      }
+      nodeItems.push({ arg: 'path', label: L('⇄ Найти путь A→B', '⇄ Find path A→B') });
+      nodeItems.push({
+        arg: 'cart',
+        label: inCart
+          ? L('✓ Убрать из пакета', '✓ Remove from bundle')
+          : L('＋ Добавить в пакет', '＋ Add to bundle'),
+      });
+      nodeItems.push({ arg: 'composer', label: L('✦ Добавить @file в Композер', '✦ Add @file to Composer') });
+      nodeItems.push({ arg: 'copy', label: L('📋 Копировать путь', '📋 Copy path') });
+
+      const explainLbl = node.isFolder
+        ? L('📖 Объяснить, за что отвечает папка', '📖 Explain what this folder does')
+        : (node.isSymbol
+            ? L('📖 Объяснить, за что отвечает символ', '📖 Explain what this symbol does')
+            : L('📖 Объяснить, за что отвечает файл', '📖 Explain what this file does'));
+
+      const aiItems = [
+        { arg: 'ai:explain', label: explainLbl },
+        { arg: 'ai:risks', label: L('🔗 Зависимости и риски (Blast Radius)', '🔗 Dependencies & risks (Blast Radius)') },
+        { arg: 'ai:bugs', label: L('🐛 Найти баги и слабые места', '🐛 Find bugs & weak spots') },
+        { arg: 'ai:tests', label: L('🧪 Что проверить тестами', '🧪 What to cover with tests') },
+        { arg: 'ai:custom', label: L('💬 Задать свой вопрос…', '💬 Ask a custom question…') },
+        { arg: 'ai:composer', label: L('✦ Открыть вопрос в Умном Композере', '✦ Open question in Smart Composer') },
+      ];
+
+      const renderBtn = function (item) {
+        return '<button type="button" class="pg-ai-menu-item" role="menuitem" data-action="pgCtxAction" data-arg="' +
+          escapeHtml(item.arg) + '">' + escapeHtml(item.label) + '</button>';
+      };
+
+      menuEl.innerHTML =
+        '<div class="pg-ctx-header" title="' + escapeHtml(node.id) + '">' + icon + ' ' + escapeHtml(title) + '</div>' +
+        nodeItems.map(renderBtn).join('') +
+        '<div class="pg-ctx-sep" role="separator"></div>' +
+        '<div class="pg-ctx-section-lbl">' + escapeHtml(L('🤖 Спросить ИИ', '🤖 Ask AI')) + '</div>' +
+        aiItems.map(renderBtn).join('');
+
+      menuEl.hidden = false;
+      pgState.ctxMenuOpen = true;
+      pgState.ctxMenuNodeId = node.id;
+
+      const stageW = (stageEl && stageEl.clientWidth) ? stageEl.clientWidth : (pgState.width || 900);
+      const stageH = (stageEl && stageEl.clientHeight) ? stageEl.clientHeight : (pgState.height || 600);
+      const menuW = menuEl.offsetWidth || 256;
+      const menuH = menuEl.offsetHeight || 340;
+      const pad = 8;
+      const left = Math.max(pad, Math.min(Math.round(sx), Math.max(pad, stageW - menuW - pad)));
+      const top = Math.max(pad, Math.min(Math.round(sy), Math.max(pad, stageH - menuH - pad)));
+      menuEl.style.left = left + 'px';
+      menuEl.style.top = top + 'px';
+    }
+
+    function pgRunNodeContextAction(actionKey) {
+      const targetId = pgState.ctxMenuNodeId || pgState.selectedNodeId;
+      const node = targetId ? pgState.nodeById.get(targetId) : null;
+      pgCloseNodeContextMenu();
+      if (!node) return;
+      pgState.selectedNodeId = node.id;
+
+      const key = String(actionKey || '');
+      if (key === 'drill') {
+        if (node.isFolder) pgDrillIntoFolder(node.folderKey);
+        return;
+      }
+      if (key === 'focus') {
+        pgFocusSelectedNode();
+        return;
+      }
+      if (key === 'symbols') {
+        pgOpenSymbolsForSelected();
+        return;
+      }
+      if (key === 'path') {
+        pgStartPathFromSelected();
+        return;
+      }
+      if (key === 'cart') {
+        pgToggleNodeInCart(node.id);
+        return;
+      }
+      if (key === 'composer') {
+        pgSendToComposer();
+        return;
+      }
+      if (key === 'copy') {
+        void pgCopySelectedPath();
+        return;
+      }
+      if (key.indexOf('ai:') === 0) {
+        void pgRunAiPreset(key.slice(3));
+      }
+    }
+
+    function pgToggleAskAiMenu(forceState) {
+      pgEnsureAiListeners();
+      const menuEl = document.getElementById('pgAskAiMenu');
+      const btnEl = document.getElementById('pgActionAskAiBtn');
+      const node = pgState.selectedNodeId ? pgState.nodeById.get(pgState.selectedNodeId) : null;
+      const nextOpen = typeof forceState === 'boolean' ? forceState : !pgState.aiMenuOpen;
+      if (nextOpen && !node) {
+        flashStatus(L('Сначала выберите файл или папку на карте', 'Select a file or folder on the graph first'));
+        return;
+      }
+      pgState.aiMenuOpen = nextOpen;
+      if (menuEl) menuEl.hidden = !nextOpen;
+      if (btnEl) btnEl.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+    }
+
+    function pgBuildNodeAiContext(node) {
+      if (!node) return null;
+      const incoming = (pgState.inNeighbors && pgState.inNeighbors.get(node.id)) || [];
+      const outgoing = (pgState.outNeighbors && pgState.outNeighbors.get(node.id)) || [];
+      const targetFile = node.isFolder
+        ? (node.topHubFile || (node.fileIds && node.fileIds[0]) || node.id)
+        : (node.isSymbol ? (node.file || node.id) : node.id);
+      const topIncoming = incoming.slice(0, 5).map(function (e) { return e.id; }).filter(Boolean);
+      const topOutgoing = outgoing.slice(0, 5).map(function (e) { return e.id; }).filter(Boolean);
+      return {
+        nodeId: node.id,
+        targetFile: targetFile,
+        nodeLabel: node.label || node.id,
+        isFolder: Boolean(node.isFolder),
+        isSymbol: Boolean(node.isSymbol),
+        symbolName: node.isSymbol ? (node.label || '') : '',
+        lines: Number(node.lines || 0),
+        inCount: Math.max(incoming.length, Number(node.inDeg || 0)),
+        outCount: Math.max(outgoing.length, Number(node.outDeg || 0)),
+        topIncoming: topIncoming,
+        topOutgoing: topOutgoing,
+        isGod: Boolean(node.isGod || (node.godCount || 0) > 0),
+        isFragile: Boolean(node.isFragile || (node.fragileCount || 0) > 0),
+        reliabilityPct: Number(node.reliabilityPercent !== undefined ? node.reliabilityPercent : 100),
+        clusterLabel: node.clusterLabel || '',
+      };
+    }
+
+    function pgBuildAiPresetPrompt(preset, ctx) {
+      if (!ctx) return '';
+      const subject = ctx.isSymbol
+        ? (ctx.symbolName + ' (' + ctx.targetFile + ')')
+        : (ctx.isFolder ? (ctx.nodeLabel + ' (хаб: ' + ctx.targetFile + ')') : ctx.targetFile);
+      if (preset === 'explain') {
+        return L(
+          'Кратко объясни, за что отвечает ' + subject + ', какие ключевые функции/экспорты он предоставляет и как встроен в проект.',
+          'Briefly explain the responsibility of ' + subject + ', its key exports/functions, and how it fits into the project.'
+        );
+      }
+      if (preset === 'risks') {
+        return L(
+          'Оцени зависимости и риски изменений (Blast Radius) для ' + subject + '. Кто от него зависит и что может сломаться при правке?',
+          'Analyze dependencies and change risks (Blast Radius) for ' + subject + '. What depends on it and what can break on edit?'
+        );
+      }
+      if (preset === 'bugs') {
+        return L(
+          'Найди потенциальные баги, гонки, утечки или слабые места обработки ошибок в ' + subject + '.',
+          'Find potential bugs, race conditions, leaks, or weak error handling in ' + subject + '.'
+        );
+      }
+      if (preset === 'tests') {
+        return L(
+          'Какие сценарии и краевые случаи стоит проверить тестами при изменении ' + subject + '?',
+          'What scenarios and edge cases should be covered by tests when changing ' + subject + '?'
+        );
+      }
+      return L(
+        'Проанализируй ' + subject + ' и предложи ключевые улучшения.',
+        'Analyze ' + subject + ' and suggest key improvements.'
+      );
+    }
+
+    function pgFormatNodeRef(rawId) {
+      const raw = String(rawId || '').trim();
+      const symMatch = /^sym:([^#]+)#([^:]+)(?::(\d+))?$/.exec(raw);
+      if (symMatch) {
+        const filePath = symMatch[1];
+        const symName = symMatch[2];
+        const line = symMatch[3] || '';
+        const slashIdx = filePath.lastIndexOf('/');
+        const baseFile = slashIdx >= 0 ? filePath.slice(slashIdx + 1) : filePath;
+        return {
+          raw: raw,
+          primary: symName,
+          secondary: baseFile + (line ? (':' + line) : ''),
+          file: filePath,
+          line: line,
+          isSymbol: true,
+        };
+      }
+      const clean = raw.replace(/\\/g, '/');
+      const slashIdx = clean.lastIndexOf('/');
+      const base = slashIdx >= 0 ? clean.slice(slashIdx + 1) : clean;
+      return {
+        raw: raw,
+        primary: base,
+        secondary: slashIdx >= 0 ? clean : '',
+        file: clean,
+        line: '',
+        isSymbol: false,
+      };
+    }
+
+    function pgBuildStaticSummaryCard(ctx, warningText) {
+      if (!ctx) return null;
+      const refInfo = pgFormatNodeRef(ctx.targetFile || ctx.nodeId);
+      const title = ctx.isSymbol
+        ? (ctx.symbolName || refInfo.primary)
+        : (ctx.isFolder ? ctx.nodeLabel : (refInfo.primary || ctx.targetFile));
+      const subtitle = ctx.isSymbol
+        ? (ctx.targetFile || '')
+        : (ctx.isFolder ? (ctx.targetFile || '') : (refInfo.secondary || ctx.targetFile || ''));
+      return {
+        title: title,
+        subtitle: subtitle,
+        clusterLabel: ctx.clusterLabel || '',
+        isSymbol: Boolean(ctx.isSymbol),
+        isFolder: Boolean(ctx.isFolder),
+        isGod: Boolean(ctx.isGod),
+        isFragile: Boolean(ctx.isFragile),
+        reliabilityPct: Number(ctx.reliabilityPct !== undefined ? ctx.reliabilityPct : 100),
+        inCount: Number(ctx.inCount || 0),
+        outCount: Number(ctx.outCount || 0),
+        lines: Number(ctx.lines || 0),
+        incoming: (Array.isArray(ctx.topIncoming) ? ctx.topIncoming : []).map(pgFormatNodeRef),
+        outgoing: (Array.isArray(ctx.topOutgoing) ? ctx.topOutgoing : []).map(pgFormatNodeRef),
+        warningText: String(warningText || '').trim(),
+      };
+    }
+
+    function pgExtractAiTldr(msg, ctx) {
+      if (msg && msg.summaryCard) {
+        const card = msg.summaryCard;
+        const incNames = card.incoming.slice(0, 3).map(function (r) { return r.primary; }).join(', ');
+        const outNames = card.outgoing.slice(0, 2).map(function (r) { return r.primary; }).join(', ');
+        const parts = [];
+        if (incNames) parts.push(L('Зависимые: ', 'Dependents: ') + incNames);
+        if (outNames) parts.push(L('Импорты: ', 'Imports: ') + outNames);
+        if (parts.length > 0) return parts.join(' · ');
+        return card.warningText || (L('Метрики: ↙ ', 'Metrics: ↙ ') + card.inCount + ' · ↗ ' + card.outCount);
+      }
+      let clean = String((msg && msg.content) || '')
+        .replace(/```[\s\S]*?```/g, ' ')
+        .replace(/^#{1,4}\s+/gm, '')
+        .replace(/^\s*[-*•]\s+/gm, '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/`([^`]+)`/g, '$1')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!clean) {
+        return ctx
+          ? (L('Узел: ', 'Node: ') + (ctx.nodeLabel || ctx.targetFile))
+          : '';
+      }
+      if (clean.length > 175) {
+        clean = clean.slice(0, 172).replace(/\s+\S*$/, '') + '…';
+      }
+      return clean;
+    }
+
+    function pgResolveGraphNodeForRef(refStr) {
+      const raw = String(refStr || '').trim();
+      if (!raw || !pgState.nodeById) return null;
+      if (pgState.nodeById.has(raw)) return pgState.nodeById.get(raw);
+      const symMatch = /^sym:([^#]+)#([^:]+)(?::\d+)?$/.exec(raw);
+      if (symMatch) {
+        const symFile = symMatch[1];
+        const symName = symMatch[2];
+        if (pgState.nodeById.has(symFile)) return pgState.nodeById.get(symFile);
+        if (Array.isArray(pgState.nodes)) {
+          for (let i = 0; i < pgState.nodes.length; i++) {
+            const n = pgState.nodes[i];
+            if (n.isSymbol && n.file === symFile && n.label === symName) return n;
+          }
+        }
+      }
+      const norm = raw.replace(/\\/g, '/').replace(/^\.\//, '').replace(/:L?\d+(?:-L?\d+)?$/i, '');
+      if (pgState.nodeById.has(norm)) return pgState.nodeById.get(norm);
+      if (Array.isArray(pgState.nodes)) {
+        for (let i = 0; i < pgState.nodes.length; i++) {
+          const n = pgState.nodes[i];
+          if (n.id === norm || n.file === norm || n.label === norm) return n;
+          if (typeof n.id === 'string' && norm.indexOf('/') === -1 && n.id.endsWith('/' + norm)) return n;
+        }
+      }
+      return null;
+    }
+
+    function pgClearAiMapOverlay() {
+      if (pgState.aiSpotlightMap && typeof pgState.aiSpotlightMap.clear === 'function') {
+        pgState.aiSpotlightMap.clear();
+      } else {
+        pgState.aiSpotlightMap = new Map();
+      }
+      pgState.aiCalloutOpen = false;
+      pgState.aiCalloutNodeId = '';
+      pgState.aiCalloutData = null;
+      const el = document.getElementById('pgAiMapCallout');
+      if (el) el.hidden = true;
+      if (typeof pgStartLoop === 'function') pgStartLoop();
+    }
+
+    function pgRenderAiMapCallout() {
+      const el = document.getElementById('pgAiMapCallout');
+      if (!el) return;
+      const d = pgState.aiCalloutData;
+      if (!pgState.aiCalloutOpen || !d) {
+        el.hidden = true;
+        return;
+      }
+      const pills = [
+        '<span class="pg-ai-metric-pill">↙ ' + Number(d.inCount || 0) + '</span>',
+        '<span class="pg-ai-metric-pill">↗ ' + Number(d.outCount || 0) + '</span>',
+      ];
+      if (d.lines > 0) {
+        pills.push('<span class="pg-ai-metric-pill">' + Number(d.lines) + ' ' + escapeHtml(L('стр.', 'L')) + '</span>');
+      }
+      if (d.spotlightCount > 1) {
+        pills.push('<span class="pg-ai-metric-pill is-god">✦ ' + d.spotlightCount + ' ' + escapeHtml(L('на карте', 'on map')) + '</span>');
+      }
+      el.innerHTML =
+        '<div class="pg-ai-callout-head">' +
+          '<span class="pg-ai-callout-title">🤖 ' + escapeHtml(d.title || '') + '</span>' +
+          '<button type="button" class="pg-mini-btn" style="width:20px;height:20px;font-size:11px;" data-action="pgDismissAiMapCallout" title="' + escapeHtml(L('Скрыть выноску с карты', 'Hide map callout')) + '">×</button>' +
+        '</div>' +
+        '<div class="pg-ai-callout-tldr">' + escapeHtml(d.tldr || '') + '</div>' +
+        '<div class="pg-ai-callout-meta">' + pills.join('') + '</div>' +
+        '<div class="pg-ai-callout-actions">' +
+          '<button type="button" class="win-btn" style="padding:2px 7px;font-size:9.5px;" data-action="pgExpandAiFromCallout">' + escapeHtml(L('Полный ответ', 'Full reply')) + '</button>' +
+          '<button type="button" class="win-btn active" style="padding:2px 7px;font-size:9.5px;" data-action="pgSendAiToComposer">' + escapeHtml(L('✦ В Композер', '✦ To Composer')) + '</button>' +
+        '</div>';
+      el.hidden = false;
+    }
+
+    function pgPositionAiMapCallout() {
+      const el = document.getElementById('pgAiMapCallout');
+      if (!el) return;
+      if (!pgState.aiCalloutOpen || !pgState.aiCalloutNodeId || !pgState.open) {
+        el.hidden = true;
+        return;
+      }
+      const node = pgState.nodeById ? pgState.nodeById.get(pgState.aiCalloutNodeId) : null;
+      if (!node) {
+        el.hidden = true;
+        return;
+      }
+      const pt = pgWorldToScreen(node.x, node.y);
+      const w = pgState.width || 600;
+      const h = pgState.height || 420;
+      const boxW = Math.min(264, Math.max(180, w - 24));
+      const boxH = el.offsetHeight || 116;
+      const sr = Number(node._sr || (node.isFolder ? (node._bh || 26) * 0.5 : 10));
+      const left = Math.max(12, Math.min(w - boxW - 12, Math.round(pt.x - boxW * 0.5)));
+      let top = Math.round(pt.y - sr - boxH - 14);
+      if (top < 12) {
+        top = Math.round(pt.y + sr + 14);
+      }
+      top = Math.max(12, Math.min(Math.max(12, h - boxH - 42), top));
+      el.hidden = false;
+      if (el.style) {
+        el.style.left = left + 'px';
+        el.style.top = top + 'px';
+      }
+    }
+
+    function pgSyncAiMapOverlay(msg, ctx) {
+      if (!pgState.aiSpotlightMap || typeof pgState.aiSpotlightMap.clear !== 'function') {
+        pgState.aiSpotlightMap = new Map();
+      } else {
+        pgState.aiSpotlightMap.clear();
+      }
+      const addSpot = function (refOrNode) {
+        if (pgState.aiSpotlightMap.size >= 8) return;
+        const n = (refOrNode && typeof refOrNode === 'object' && refOrNode.id)
+          ? refOrNode
+          : pgResolveGraphNodeForRef(refOrNode);
+        if (n && !pgState.aiSpotlightMap.has(n.id)) {
+          pgState.aiSpotlightMap.set(n.id, pgState.aiSpotlightMap.size + 1);
+        }
+      };
+      if (ctx && ctx.nodeId) addSpot(ctx.nodeId);
+      if (msg && msg.summaryCard) {
+        const card = msg.summaryCard;
+        for (let i = 0; i < card.incoming.length; i++) addSpot(card.incoming[i].raw);
+        for (let i = 0; i < card.outgoing.length; i++) addSpot(card.outgoing[i].raw);
+      }
+      if (msg && Array.isArray(msg.sources)) {
+        for (let i = 0; i < msg.sources.length; i++) {
+          if (msg.sources[i] && msg.sources[i].file) addSpot(msg.sources[i].file);
+        }
+      }
+      if (msg && msg.content && Array.isArray(pgState.nodes) && pgState.aiSpotlightMap.size < 8) {
+        const textLower = String(msg.content).toLowerCase();
+        for (let i = 0; i < pgState.nodes.length && pgState.aiSpotlightMap.size < 8; i++) {
+          const n = pgState.nodes[i];
+          if (!n || !n.id || pgState.aiSpotlightMap.has(n.id)) continue;
+          const idLow = String(n.id).toLowerCase();
+          const lblLow = String(n.label || '').toLowerCase();
+          if ((idLow.length >= 5 && textLower.indexOf(idLow) !== -1) ||
+              (lblLow.length >= 5 && textLower.indexOf(lblLow) !== -1)) {
+            addSpot(n);
+          }
+        }
+      }
+
+      const anchorId = (ctx && ctx.nodeId) || '';
+      const anchorNode = anchorId && pgState.nodeById ? pgState.nodeById.get(anchorId) : null;
+      if (anchorNode && ctx) {
+        pgState.aiCalloutNodeId = anchorNode.id;
+        pgState.aiCalloutOpen = true;
+        pgState.aiCalloutData = {
+          title: (ctx.isSymbol ? ctx.symbolName : ctx.nodeLabel) || ctx.targetFile || anchorNode.label,
+          tldr: pgExtractAiTldr(msg, ctx),
+          inCount: ctx.inCount || 0,
+          outCount: ctx.outCount || 0,
+          lines: ctx.lines || 0,
+          spotlightCount: pgState.aiSpotlightMap.size,
+        };
+        pgRenderAiMapCallout();
+        pgPositionAiMapCallout();
+      }
+      if (typeof pgStartLoop === 'function') pgStartLoop();
+    }
+
+    function pgFocusAiMention(refStr) {
+      const n = pgResolveGraphNodeForRef(refStr);
+      if (!n) {
+        flashStatus(L('Узел не отображается на текущем уровне карты', 'Node is not visible at current graph level'));
+        return;
+      }
+      pgState.camX = n.x;
+      pgState.camY = n.y;
+      pgState.hoveredNodeId = n.id;
+      if (typeof pgStartLoop === 'function') pgStartLoop();
+    }
+
+    function pgDismissAiMapCallout() {
+      pgClearAiMapOverlay();
+    }
+
+    function pgExpandAiFromCallout() {
+      pgState.aiBoxOpen = true;
+      pgRenderAiChatBox();
+      const boxEl = document.getElementById('pgAiChatBox');
+      if (boxEl && typeof boxEl.scrollIntoView === 'function') {
+        try { boxEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch {}
+      }
+    }
+
+    function pgBuildStaticGraphSummary(ctx) {
+      if (!ctx) return '';
+      const header = ctx.isSymbol
+        ? L('Символ: ', 'Symbol: ') + ctx.symbolName + ' (' + ctx.targetFile + ')'
+        : (ctx.isFolder ? L('Подсистема: ', 'Subsystem: ') + ctx.nodeLabel : L('Файл: ', 'File: ') + ctx.targetFile);
+      const flags = [];
+      if (ctx.isGod) flags.push('★ God Node');
+      if (ctx.isFragile) flags.push(L('⚠️ Хрупкий (', '⚠️ Fragile (') + ctx.reliabilityPct + '%)');
+      const lines = [
+        header + (ctx.clusterLabel ? (' · [' + ctx.clusterLabel + ']') : ''),
+        L('Метрики: ', 'Metrics: ') +
+          L('входящих ', 'incoming ') + ctx.inCount +
+          ' · ' + L('импортов ', 'imports ') + ctx.outCount +
+          (ctx.lines > 0 ? (' · ' + ctx.lines + L(' строк', ' lines')) : '') +
+          (flags.length > 0 ? (' · ' + flags.join(', ')) : ''),
+      ];
+      if (ctx.topIncoming.length > 0) {
+        lines.push(L('Зависимые (Blast Radius): ', 'Dependents (Blast Radius): ') + ctx.topIncoming.join(', '));
+      }
+      if (ctx.topOutgoing.length > 0) {
+        lines.push(L('Импортирует: ', 'Imports: ') + ctx.topOutgoing.join(', '));
+      }
+      return lines.join('\n');
+    }
+
+    function pgGetAiElapsedSec() {
+      if (!pgState.aiBusy || !pgState.aiStartedAt) return 0;
+      return Math.max(0, Math.floor((Date.now() - pgState.aiStartedAt) / 1000));
+    }
+
+    function pgUpdateAiElapsedIndicators() {
+      if (!pgState.aiBusy) return;
+      const sec = pgGetAiElapsedSec();
+      const unit = L('с', 's');
+      const badgeEl = document.getElementById('pgAiEngineBadge');
+      if (badgeEl) {
+        badgeEl.textContent = L('GPU RAG · анализ…', 'GPU RAG · thinking…') + (sec > 0 ? (' ' + sec + unit) : '');
+      }
+      const secEl = document.getElementById('pgAiThinkingSec');
+      if (secEl) {
+        secEl.textContent = sec + unit;
+      }
+    }
+
+    function pgAbortActiveAiRequest(opts) {
+      const o = opts && typeof opts === 'object' ? opts : {};
+      if (pgState.aiElapsedTimer) {
+        try { clearInterval(pgState.aiElapsedTimer); } catch {}
+        pgState.aiElapsedTimer = 0;
+      }
+      pgState.aiStartedAt = 0;
+      pgState.aiReqSeq += 1;
+      const reqId = pgState.aiRequestId;
+      pgState.aiRequestId = '';
+      if (pgState.aiAbortCtrl && typeof pgState.aiAbortCtrl.abort === 'function') {
+        try { pgState.aiAbortCtrl.abort(); } catch {}
+      }
+      pgState.aiAbortCtrl = null;
+      pgState.aiBusy = false;
+      if (o.clearHistory) {
+        pgState.aiHistory = [];
+        pgState.aiLastPrompt = '';
+      }
+      if (reqId && o.notifyServer !== false && typeof panelFetch === 'function') {
+        try {
+          Promise.resolve(
+            panelFetch('/api/local-chat/abort', {
+              method: 'POST',
+              body: JSON.stringify({ requestId: reqId }),
+              keepalive: true,
+            })
+          ).catch(function () {});
+        } catch {}
+      }
+    }
+
+    function pgStopAiRequest() {
+      if (!pgState.aiBusy) return;
+      pgAbortActiveAiRequest();
+      pgState.aiHistory.push({
+        role: 'assistant',
+        error: true,
+        content: L('⏹ Генерация остановлена пользователем.', '⏹ Generation stopped by user.'),
+      });
+      pgRenderAiChatBox();
+    }
+
+    function pgRenderAiChatBox() {
+      const boxEl = document.getElementById('pgAiChatBox');
+      const msgEl = document.getElementById('pgAiChatMessages');
+      const badgeEl = document.getElementById('pgAiEngineBadge');
+      const titleEl = document.getElementById('pgAiChatTitle');
+      const submitBtn = document.getElementById('pgAiAskSubmitBtn');
+      const node = pgState.selectedNodeId ? pgState.nodeById.get(pgState.selectedNodeId) : null;
+      const ctx = pgBuildNodeAiContext(node);
+      const gpuOn = Boolean(typeof currentState !== 'undefined' && currentState && currentState.gpuEnabled);
+      const elapsedSec = pgGetAiElapsedSec();
+      const secSuffix = elapsedSec > 0 ? (' ' + elapsedSec + L('с', 's')) : '';
+
+      if (boxEl) boxEl.style.display = pgState.aiBoxOpen && node ? 'flex' : 'none';
+      if (titleEl && ctx) {
+        titleEl.textContent = '🤖 ' + (ctx.nodeLabel || ctx.targetFile);
+      }
+      if (badgeEl) {
+        if (badgeEl.classList && typeof badgeEl.classList.toggle === 'function') {
+          badgeEl.classList.toggle('is-busy', Boolean(pgState.aiBusy));
+        }
+        if (pgState.aiBusy) {
+          badgeEl.textContent = L('GPU RAG · анализ…', 'GPU RAG · thinking…') + secSuffix;
+        } else if (gpuOn) {
+          badgeEl.textContent = L('GPU RAG · 0 тк', 'GPU RAG · 0 tok');
+        } else {
+          badgeEl.textContent = L('Граф + Композер', 'Graph + Composer');
+        }
+      }
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = pgState.aiBusy ? '■' : '↑';
+        submitBtn.setAttribute('data-action', pgState.aiBusy ? 'pgStopAiRequest' : 'pgSubmitCustomAiQuestion');
+        submitBtn.title = pgState.aiBusy
+          ? L('Остановить генерацию на GPU', 'Stop GPU generation')
+          : L('Задать вопрос по выбранному файлу', 'Ask a question about selected file');
+        if (submitBtn.classList && typeof submitBtn.classList.toggle === 'function') {
+          submitBtn.classList.toggle('is-stop', Boolean(pgState.aiBusy));
+        }
+      }
+      if (!msgEl) return;
+
+      if ((!Array.isArray(pgState.aiHistory) || pgState.aiHistory.length === 0) && !pgState.aiBusy) {
+        msgEl.innerHTML = '<div class="pg-insp-placeholder">' + escapeHtml(
+          gpuOn
+            ? L('Задайте вопрос по файлу — локальный GPU ответит прямо здесь (0% квоты).', 'Ask a question about this file — local GPU answers right here (0% quota).')
+            : L('GPU выключен: доступен мгновенный разбор связей и перенос вопроса с @file в Умный Композер.', 'GPU is off: instant dependency summary & @file handoff to Smart Composer available.')
+        ) + '</div>';
+        return;
+      }
+
+      const renderRefChips = function (refs, groupLabel) {
+        if (!Array.isArray(refs) || refs.length === 0) return '';
+        return '<div class="pg-ai-chip-group">' +
+          '<div class="pg-ai-chip-label">' + escapeHtml(groupLabel) + '</div>' +
+          '<div class="pg-ai-chips-wrap">' + refs.map(function (r) {
+            const targetNode = pgResolveGraphNodeForRef(r.raw);
+            const rank = (targetNode && pgState.aiSpotlightMap) ? (pgState.aiSpotlightMap.get(targetNode.id) || 0) : 0;
+            const rankHtml = rank > 0 ? ('<span class="pg-ai-rank-badge">' + rank + '</span>') : '';
+            const tip = r.file + (r.line ? (':' + r.line) : '');
+            return '<button type="button" class="pg-ai-ref-chip" data-action="pgFocusAiMention" data-arg="' + escapeHtml(r.raw) + '" title="' + escapeHtml(tip) + '">' +
+              rankHtml +
+              '<span class="pg-ai-ref-primary">' + escapeHtml(r.primary) + '</span>' +
+              (r.secondary ? '<span class="pg-ai-ref-sub">' + escapeHtml(r.secondary) + '</span>' : '') +
+            '</button>';
+          }).join('') + '</div>' +
+        '</div>';
+      };
+
+      const messagesHtml = (Array.isArray(pgState.aiHistory) ? pgState.aiHistory : []).map(function (m) {
+        const cls = 'pg-ai-msg ' + (m.role === 'user' ? 'is-user' : 'is-assistant') + (m.error ? ' is-error' : '');
+        let bodyHtml = '';
+        if (m.role === 'assistant' && m.summaryCard) {
+          const card = m.summaryCard;
+          const pills = [
+            '<span class="pg-ai-metric-pill">↙ ' + card.inCount + '</span>',
+            '<span class="pg-ai-metric-pill">↗ ' + card.outCount + '</span>',
+          ];
+          if (card.lines > 0) {
+            pills.push('<span class="pg-ai-metric-pill">' + card.lines + ' ' + escapeHtml(L('стр.', 'L')) + '</span>');
+          }
+          if (card.isGod) pills.push('<span class="pg-ai-metric-pill is-god">★ God</span>');
+          if (card.isFragile) pills.push('<span class="pg-ai-metric-pill is-fragile">⚠ ' + card.reliabilityPct + '%</span>');
+          bodyHtml =
+            '<div class="pg-ai-card">' +
+              '<div class="pg-ai-card-head">' +
+                '<span class="pg-ai-card-title">' + escapeHtml(card.title) + '</span>' +
+                (card.clusterLabel ? '<span class="pg-ai-metric-pill">' + escapeHtml(card.clusterLabel) + '</span>' : '') +
+              '</div>' +
+              (card.subtitle ? '<div class="pg-ai-card-sub">' + escapeHtml(card.subtitle) + '</div>' : '') +
+              '<div class="pg-ai-card-metrics">' + pills.join('') + '</div>' +
+              renderRefChips(card.incoming, L('Зависимые (Blast Radius):', 'Dependents (Blast Radius):')) +
+              renderRefChips(card.outgoing, L('Импортирует:', 'Imports:')) +
+              (card.warningText ? '<div class="pg-ai-warn-callout">⚠ ' + escapeHtml(card.warningText) + '</div>' : '') +
+            '</div>';
+        } else if (m.role === 'assistant') {
+          const mdHtml = typeof formatSafeLocalRagMarkdown === 'function'
+            ? formatSafeLocalRagMarkdown(m.content || '')
+            : '<div class="pg-ai-msg-plain">' + escapeHtml(m.content || '') + '</div>';
+          bodyHtml = '<div class="pg-ai-md-body">' + mdHtml + '</div>';
+        } else {
+          bodyHtml = escapeHtml(m.content || '');
+        }
+        const srcs = Array.isArray(m.sources) && m.sources.length > 0
+          ? '<div class="pg-ai-sources-row">' + m.sources.slice(0, 4).map(function (s) {
+              const lbl = s.file + (s.startLine ? (':L' + s.startLine) : '');
+              const sNode = pgResolveGraphNodeForRef(s.file);
+              const sRank = (sNode && pgState.aiSpotlightMap) ? (pgState.aiSpotlightMap.get(sNode.id) || 0) : 0;
+              const sRankHtml = sRank > 0 ? ('<span class="pg-ai-rank-badge">' + sRank + '</span>') : '';
+              return '<button type="button" class="pg-ai-source-chip" data-action="pgFocusAiMention" data-arg="' + escapeHtml(s.file) + '" title="' + escapeHtml(lbl) + '">' + sRankHtml + escapeHtml(lbl) + '</button>';
+            }).join('') + '</div>'
+          : '';
+        return '<div class="' + cls + '">' + bodyHtml + srcs + '</div>';
+      }).join('');
+      const thinkingHtml = pgState.aiBusy
+        ? '<div class="pg-ai-msg is-assistant is-thinking" id="pgAiThinkingBubble">' +
+            '<span class="pg-ai-thinking-dot" aria-hidden="true"></span>' +
+            '<span class="pg-ai-thinking-text">' +
+              escapeHtml(L('GPU генерирует ответ… ', 'GPU is generating answer… ')) +
+              '<strong id="pgAiThinkingSec">' + elapsedSec + escapeHtml(L('с', 's')) + '</strong>' +
+            '</span>' +
+            '<button type="button" class="pg-mini-btn pg-ai-stop-inline" data-action="pgStopAiRequest" title="' +
+              escapeHtml(L('Остановить генерацию на GPU', 'Stop GPU generation')) + '">' +
+              escapeHtml(L('■ Стоп', '■ Stop')) +
+            '</button>' +
+          '</div>'
+        : '';
+      msgEl.innerHTML = messagesHtml + thinkingHtml;
+      msgEl.scrollTop = msgEl.scrollHeight;
+    }
+
+    async function pgExecuteFileAiQuestion(promptText, displayLabel) {
+      pgEnsureAiListeners();
+      const node = pgState.selectedNodeId ? pgState.nodeById.get(pgState.selectedNodeId) : null;
+      const ctx = pgBuildNodeAiContext(node);
+      if (!node || !ctx) return;
+
+      const cleanPrompt = String(promptText || '').trim();
+      if (!cleanPrompt) return;
+      pgAbortActiveAiRequest();
+      pgState.aiNodeId = node.id;
+      pgState.aiBoxOpen = true;
+      pgState.aiLastPrompt = cleanPrompt;
+
+      const gpuOn = Boolean(typeof currentState !== 'undefined' && currentState && currentState.gpuEnabled);
+      const userVisible = String(displayLabel || cleanPrompt).trim();
+      pgState.aiHistory.push({ role: 'user', content: userVisible });
+
+      if (!gpuOn) {
+        const staticSummary = pgBuildStaticGraphSummary(ctx);
+        const hintLine = L(
+          'Локальный GPU сейчас выключен — нажмите «✦ В Композер», чтобы отправить готовый вопрос с @file:' + ctx.targetFile + ' агенту.',
+          'Local GPU is currently disabled — click "✦ To Composer" to send this question with @file:' + ctx.targetFile + ' to the agent.'
+        );
+        const offMsg = {
+          role: 'assistant',
+          content: staticSummary + '\n\n' + hintLine,
+          summaryCard: pgBuildStaticSummaryCard(ctx, hintLine),
+          sources: ctx.targetFile ? [{ file: ctx.targetFile, startLine: 1 }] : [],
+        };
+        pgState.aiHistory.push(offMsg);
+        pgState.aiBusy = false;
+        pgSyncAiMapOverlay(offMsg, ctx);
+        pgRenderAiChatBox();
+        return;
+      }
+
+      const seq = ++pgState.aiReqSeq;
+      const requestId = 'pg-' + Date.now() + '-' + seq;
+      const priorTurns = pgState.aiHistory
+        .slice(0, -1)
+        .filter(function (m) { return !m.error && (m.role === 'user' || m.role === 'assistant'); })
+        .slice(-6)
+        .map(function (m) { return { role: m.role, content: m.content }; });
+      const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+      pgState.aiAbortCtrl = ctrl;
+      pgState.aiRequestId = requestId;
+      pgState.aiBusy = true;
+      pgState.aiStartedAt = Date.now();
+      if (typeof setInterval === 'function') {
+        pgState.aiElapsedTimer = setInterval(pgUpdateAiElapsedIndicators, 1000);
+      }
+      pgRenderAiChatBox();
+
+      try {
+        const wsRoot = pgGetEffectiveWorkspaceRoot() ||
+          pgState.autoWorkspace ||
+          (typeof _activeWorkspaceResolved === 'string' ? _activeWorkspaceResolved : '') ||
+          '';
+        const res = await panelFetch('/api/local-chat', {
+          method: 'POST',
+          body: JSON.stringify({
+            requestId: requestId,
+            message: cleanPrompt,
+            messages: priorTurns,
+            rootDir: wsRoot,
+            focusFile: ctx.targetFile,
+          }),
+          signal: ctrl ? ctrl.signal : undefined,
+        });
+        const data = await res.json();
+        if (seq !== pgState.aiReqSeq || pgState.aiNodeId !== node.id) return;
+
+        if (data && data.ok && data.answer) {
+          const okMsg = {
+            role: 'assistant',
+            content: String(data.answer).trim(),
+            sources: Array.isArray(data.sources) ? data.sources : [],
+            model: data.model || '',
+            grounding: data.grounding || null,
+          };
+          pgState.aiHistory.push(okMsg);
+          pgSyncAiMapOverlay(okMsg, ctx);
+        } else if (data && data.aborted) {
+          return;
+        } else {
+          const fallbackErr = (data && data.error) || L('Локальный GPU недоступен', 'Local GPU unavailable');
+          const warnMsg = fallbackErr + ' — ' +
+            L('нажмите «✦ В Композер» для отправки в чат.', 'click "✦ To Composer" to send to agent chat.');
+          const errMsg = {
+            role: 'assistant',
+            error: true,
+            content: pgBuildStaticGraphSummary(ctx) + '\n\n⚠️ ' + warnMsg,
+            summaryCard: pgBuildStaticSummaryCard(ctx, warnMsg),
+            sources: ctx.targetFile ? [{ file: ctx.targetFile, startLine: 1 }] : [],
+          };
+          pgState.aiHistory.push(errMsg);
+          pgSyncAiMapOverlay(errMsg, ctx);
+        }
+      } catch (err) {
+        if (err && err.name === 'AbortError') return;
+        if (seq !== pgState.aiReqSeq || pgState.aiNodeId !== node.id) return;
+        const netWarn = (err && err.message) || L('Ошибка связи с сервером панели', 'Panel server connection error');
+        const catchMsg = {
+          role: 'assistant',
+          error: true,
+          content: pgBuildStaticGraphSummary(ctx) + '\n\n⚠️ ' + netWarn,
+          summaryCard: pgBuildStaticSummaryCard(ctx, netWarn),
+        };
+        pgState.aiHistory.push(catchMsg);
+        pgSyncAiMapOverlay(catchMsg, ctx);
+      } finally {
+        if (seq === pgState.aiReqSeq) {
+          if (pgState.aiElapsedTimer) {
+            try { clearInterval(pgState.aiElapsedTimer); } catch {}
+            pgState.aiElapsedTimer = 0;
+          }
+          pgState.aiStartedAt = 0;
+          pgState.aiRequestId = '';
+          pgState.aiBusy = false;
+          pgState.aiAbortCtrl = null;
+          pgRenderAiChatBox();
+        }
+      }
+    }
+
+    async function pgRunAiPreset(preset) {
+      pgToggleAskAiMenu(false);
+      const node = pgState.selectedNodeId ? pgState.nodeById.get(pgState.selectedNodeId) : null;
+      const ctx = pgBuildNodeAiContext(node);
+      if (!node || !ctx) {
+        flashStatus(L('Сначала выберите файл на карте', 'Select a file on the graph first'));
+        return;
+      }
+      pgState.aiNodeId = node.id;
+      if (preset === 'custom') {
+        pgState.aiBoxOpen = true;
+        pgRenderAiChatBox();
+        const inp = document.getElementById('pgAiQuestionInput');
+        if (inp) inp.focus();
+        return;
+      }
+      const prompt = pgBuildAiPresetPrompt(preset, ctx);
+      if (preset === 'composer') {
+        pgState.aiLastPrompt = prompt;
+        pgSendAiToComposer(prompt);
+        return;
+      }
+      await pgExecuteFileAiQuestion(prompt, prompt);
+    }
+
+    async function pgSubmitCustomAiQuestion() {
+      const inp = document.getElementById('pgAiQuestionInput');
+      const q = inp ? String(inp.value || '').trim() : '';
+      if (!q) {
+        if (inp) inp.focus();
+        return;
+      }
+      if (inp) inp.value = '';
+      await pgExecuteFileAiQuestion(q, q);
+    }
+
+    function pgClearAiChat() {
+      pgState.aiHistory = [];
+      pgState.aiLastPrompt = '';
+      pgClearAiMapOverlay();
+      pgRenderAiChatBox();
+    }
+
+    function pgCloseAiChat() {
+      pgAbortActiveAiRequest();
+      pgClearAiMapOverlay();
+      pgState.aiBoxOpen = false;
+      const boxEl = document.getElementById('pgAiChatBox');
+      if (boxEl) boxEl.style.display = 'none';
+    }
+
+    function pgSendAiToComposer(explicitPrompt) {
+      const node = pgState.selectedNodeId ? pgState.nodeById.get(pgState.selectedNodeId) : null;
+      const ctx = pgBuildNodeAiContext(node);
+      if (!ctx || !ctx.targetFile) return;
+      const token = '@file:' + ctx.targetFile;
+      const inpEl = document.getElementById('pgAiQuestionInput');
+      const draftQ = String(explicitPrompt || (inpEl && inpEl.value) || pgState.aiLastPrompt || '').trim();
+      const fullText = draftQ ? (token + ' ' + draftQ) : (token + ' ');
+
+      if (pgIsStandaloneView()) {
+        try {
+          if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            void navigator.clipboard.writeText(fullText);
+          }
+        } catch {}
+        flashStatus(L('Скопировано для вставки в чат: ', 'Copied for chat: ') + token);
+        return;
+      }
+
+      const compInput = document.getElementById('smartComposerInput');
+      if (compInput) {
+        const cur = compInput.value || '';
+        const sep = cur && !/\s$/.test(cur) ? '\n' : '';
+        compInput.value = cur.indexOf(token) !== -1
+          ? (draftQ && cur.indexOf(draftQ) === -1 ? (cur + sep + draftQ) : cur)
+          : (cur + sep + fullText);
+        if (typeof _smartLastDraft !== 'undefined') {
+          _smartLastDraft = compInput.value;
+        }
+        if (typeof renderSmartComposerMirror === 'function') {
+          renderSmartComposerMirror();
+        }
+      }
+      closeProjectGraphModal();
+      if (compInput) compInput.focus();
+      flashStatus(L('Вопрос и @file добавлены в Композер ✓', 'Question & @file sent to Composer ✓'));
+    }
+
+    pgEnsureAiListeners();

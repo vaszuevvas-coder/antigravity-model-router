@@ -44,10 +44,14 @@ export {
   getGpuStatusSnapshot,
   getGpuPullJobStatus,
   cancelGpuPullJob,
+  clearGpuPullErrorStatus,
   formatCompactPullError,
   isTransientPullError,
   pullSingleOllamaModelWithFallback,
   startGpuCascadePull,
+  getOllamaInstallJobStatus,
+  clearOllamaInstallJobStatus,
+  startOllamaInstallJob,
 } from './gpu/gpu-vram-runtime.mjs';
 
 export {

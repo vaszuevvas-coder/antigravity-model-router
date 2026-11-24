@@ -90,7 +90,7 @@
   <text x="44" y="39" font-family="Consolas, 'Courier New', monospace" font-size="12" font-weight="700" fill="#e0f2fe" text-anchor="middle">T</text>
 
   <text x="64" y="39" font-family="Consolas, 'Courier New', monospace" font-size="12.5" font-weight="700" fill="#f8fafc" letter-spacing="0.8">
-    THE TUNNEL · v3.33.1
+    THE TUNNEL · v3.34.0
   </text>
   <text x="235" y="39" font-family="Segoe UI, Inter, Arial, sans-serif" font-size="11.5" fill="#94a3b8" letter-spacing="0.4">
     3D AI AUTOPILOT &amp; COPROCESSOR FOR GOOGLE ANTIGRAVITY
@@ -107,7 +107,7 @@
   <!-- LEFT COLUMN: Title + 3D Gemini 4 Routing Schematic -->
   <g transform="translate(36, 70)">
     <text x="0" y="26" font-family="Segoe UI, Inter, Arial, sans-serif" font-size="27" font-weight="700" fill="#f8fafc" letter-spacing="-0.3">
-      The Tunnel <tspan fill="#38bdf8">v3.33.1</tspan>
+      The Tunnel <tspan fill="#38bdf8">v3.34.0</tspan>
     </text>
     <text x="0" y="48" font-family="Segoe UI, Inter, Arial, sans-serif" font-size="12.5" fill="#cbd5e1">
       Breadth × Depth × Risk triage across Gemini 4, In-RAM MCP, CPU Pool &amp; Ollama GPU

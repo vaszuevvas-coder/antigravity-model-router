@@ -141,55 +141,63 @@
       return resolved;
     }
 
-    function applyButtonGroupCeiling(groupSelector, maxVal, activeVal) {
+    const VRAM_LIMIT_PRESETS = [4096, 6144, 8192, 12288, 14336, 16384, 24576, 32768];
+    const RAM_LIMIT_PRESETS = [1024, 2048, 4096, 6144, 8192, 12288, 16384, 24576, 32768];
+    const CPU_THREAD_PRESETS = [2, 4, 6, 10, 12, 16, 24, 32, 48, 64];
+
+    function syncHwLimitSelect(selId, presets, maxVal, activeVal, formatLabel, includeExactCap) {
+      const sel = document.getElementById(selId);
+      if (!sel) return;
       const hasCap = Number.isFinite(maxVal) && maxVal > 0;
-      document.querySelectorAll(groupSelector + ' button:not(.hw-dynamic-cap-btn)').forEach((btn) => {
-        const val = Number(btn.dataset.val);
-        const overCap = hasCap && val > maxVal;
-        btn.classList.toggle('hw-cap-hidden', overCap);
-        btn.hidden = overCap;
-        btn.disabled = overCap;
-        btn.classList.toggle('active', !overCap && val === activeVal);
-      });
+      const vals = [];
+      for (let i = 0; i < presets.length; i++) {
+        const v = presets[i];
+        if (!hasCap || v <= maxVal) vals.push(v);
+      }
+      if (includeExactCap && hasCap && vals.indexOf(maxVal) === -1) {
+        vals.push(maxVal);
+      }
+      if (Number.isFinite(activeVal) && activeVal > 0 && (!hasCap || activeVal <= maxVal) && vals.indexOf(activeVal) === -1) {
+        vals.push(activeVal);
+      }
+      if (vals.length === 0 && presets.length > 0) {
+        vals.push(presets[0]);
+      }
+      vals.sort(function (a, b) { return a - b; });
+      const effectiveVal = vals.indexOf(activeVal) !== -1 ? activeVal : vals[vals.length - 1];
+      const nextSig = vals.map(function (v) { return v + ':' + formatLabel(v); }).join('|');
+      if (sel.dataset.limitOptsSig !== nextSig) {
+        sel.innerHTML = '';
+        for (let i = 0; i < vals.length; i++) {
+          const v = vals[i];
+          const opt = document.createElement('option');
+          opt.value = String(v);
+          opt.textContent = formatLabel(v);
+          sel.appendChild(opt);
+        }
+        sel.dataset.limitOptsSig = nextSig;
+      }
+      sel.value = String(effectiveVal);
+      syncCustomSelectTrigger(selId);
     }
 
-    function applyCpuThreadsGroupCeiling(maxThreads, activeVal) {
-      const group = document.getElementById('cpuThreadsCapGroup');
-      if (!group) return;
-      const hasCap = Number.isFinite(maxThreads) && maxThreads > 0;
-      const staticBtns = Array.from(group.querySelectorAll('button:not(.hw-dynamic-cap-btn)'));
-      let hasExactCapBtn = false;
+    function syncAllHwLimitSelects(ceilings, capMb, ramBudgetMb, cpuMaxThreads) {
+      const maxVram = ceilings ? ceilings.maxVramMb : null;
+      const maxRam = ceilings ? ceilings.maxRamBudgetMb : null;
+      const maxCpu = ceilings ? ceilings.maxCpuThreads : null;
+      const fmtGb = function (v) { return Math.round(v / 1024) + L(' ГБ', ' GB'); };
+      const fmtLiteRam = function (v) { return 'RAM · ' + Math.round(v / 1024) + L(' ГБ', ' GB'); };
+      const fmtLiteGpu = function (v) { return 'GPU · ' + Math.round(v / 1024) + L(' ГБ', ' GB'); };
+      const fmtCpu = function (v) { return v + L(' пот.', ' thr.'); };
+      const fmtLiteCpu = function (v) { return 'CPU · ' + v + L(' пот.', ' thr.'); };
 
-      staticBtns.forEach((btn) => {
-        const val = Number(btn.dataset.val);
-        const overCap = hasCap && val > maxThreads;
-        btn.classList.toggle('hw-cap-hidden', overCap);
-        btn.hidden = overCap;
-        btn.disabled = overCap;
-        if (!overCap && val === maxThreads) hasExactCapBtn = true;
-        btn.classList.toggle('active', !overCap && val === activeVal);
-      });
-
-      let dynBtn = group.querySelector('.hw-dynamic-cap-btn');
-      if (hasCap && !hasExactCapBtn) {
-        if (!dynBtn) {
-          dynBtn = document.createElement('button');
-          dynBtn.type = 'button';
-          dynBtn.className = 'win-btn hw-dynamic-cap-btn';
-          dynBtn.setAttribute('data-action', 'setCpuMaxThreads');
-          group.appendChild(dynBtn);
-        }
-        const capStr = String(maxThreads);
-        dynBtn.dataset.val = capStr;
-        dynBtn.setAttribute('data-arg', capStr);
-        dynBtn.textContent = capStr;
-        dynBtn.hidden = false;
-        dynBtn.disabled = false;
-        dynBtn.classList.remove('hw-cap-hidden');
-        dynBtn.classList.toggle('active', activeVal === maxThreads);
-      } else if (dynBtn) {
-        dynBtn.remove();
-      }
+      syncHwLimitSelect('sel-gpuVramCap', VRAM_LIMIT_PRESETS, maxVram, capMb, fmtGb, false);
+      syncHwLimitSelect('sel-liteGpuVramCap', VRAM_LIMIT_PRESETS, maxVram, capMb, fmtLiteGpu, false);
+      syncHwLimitSelect('sel-ramBudgetMain', RAM_LIMIT_PRESETS, maxRam, ramBudgetMb, fmtGb, false);
+      syncHwLimitSelect('sel-ramBudgetExpert', RAM_LIMIT_PRESETS, maxRam, ramBudgetMb, fmtGb, false);
+      syncHwLimitSelect('sel-liteRamBudget', RAM_LIMIT_PRESETS, maxRam, ramBudgetMb, fmtLiteRam, false);
+      syncHwLimitSelect('sel-cpuThreadsCap', CPU_THREAD_PRESETS, maxCpu, cpuMaxThreads, fmtCpu, true);
+      syncHwLimitSelect('sel-liteCpuThreadsCap', CPU_THREAD_PRESETS, maxCpu, cpuMaxThreads, fmtLiteCpu, true);
     }
 
     function renderGpuAndRam(gpu, ramCache, s, cpu) {
@@ -212,6 +220,8 @@
       if (chkLog) chkLog.checked = s.gpuAutoDistillLogs !== false;
       const chkCritic = document.getElementById('chk-gpuPostEditCritic');
       if (chkCritic) chkCritic.checked = s.gpuPostEditCritic !== false;
+      const chkHfMirror = document.getElementById('chk-gpuPreferHfMirror');
+      if (chkHfMirror) chkHfMirror.checked = Boolean(s && s.gpuPreferHfMirror);
 
       const chkCpuPool = document.getElementById('chk-cpuMulticoreEnabled');
       if (chkCpuPool) chkCpuPool.checked = s.cpuMulticoreEnabled !== false;
@@ -231,8 +241,6 @@
       syncSentinelCheckboxes(s);
       renderSentinelStatus(lastPayloadCache ? lastPayloadCache.sentinel : null, s);
 
-      applyCpuThreadsGroupCeiling(ceilings ? ceilings.maxCpuThreads : null, cpuMaxThreads);
-
       const chkRam = document.getElementById('chk-ramCacheEnabled');
       if (chkRam) chkRam.checked = s.ramCacheEnabled !== false;
       const chkWarm = document.getElementById('chk-ramAutoWarmOnSessionStart');
@@ -244,9 +252,7 @@
       const chkUnloadExit = document.getElementById('chk-gpuUnloadOnExit');
       if (chkUnloadExit) chkUnloadExit.checked = s.gpuUnloadOnExit !== false;
 
-      applyButtonGroupCeiling('#gpuVramCapGroup', ceilings ? ceilings.maxVramMb : null, capMb);
-      applyButtonGroupCeiling('#ramBudgetMainGroup', ceilings ? ceilings.maxRamBudgetMb : null, ramBudgetMb);
-      applyButtonGroupCeiling('#ramBudgetGroup', ceilings ? ceilings.maxRamBudgetMb : null, ramBudgetMb);
+      syncAllHwLimitSelects(ceilings, capMb, ramBudgetMb, cpuMaxThreads);
 
       const vramHintEl = document.getElementById('gpuVramCapHint');
       if (vramHintEl) {
@@ -278,6 +284,7 @@
       syncExpertInput('inp-gpuEmbedKeepAlive', (s && s.gpuEmbedKeepAlive) || cfg.gpuEmbedKeepAlive || '90m');
       syncExpertInput('inp-gpuContextTokens', (s && s.gpuContextTokens) || cfg.gpuContextTokens || 4096);
       syncExpertInput('inp-gpuModelsDir', (s && s.gpuModelsDir !== undefined) ? s.gpuModelsDir : (cfg.gpuModelsDir || ''));
+      syncExpertInput('inp-gpuOllamaDir', (s && s.gpuOllamaDir !== undefined) ? s.gpuOllamaDir : (cfg.gpuOllamaDir || ''));
 
       const ramSubEl = document.getElementById('ramCacheSubLine');
 
@@ -300,6 +307,7 @@
       syncGpuModelSelects(s, cfg, oll, ollResolved, vramFit);
       renderGpuVramFitAlert(s, vramFit);
       renderGpuCascadePullStatus(gpu ? gpu.pullStatus : null, gpu, s);
+      renderGpuOllamaInstallStatus(gpu ? gpu.ollamaInstallStatus : null, gpu, s);
 
       if (ramSubEl) {
         const instSuffix = ramCache && ramCache.active && Number(ramCache.instancesCount || 1) > 1
@@ -456,7 +464,9 @@
     function updateLiveHardwareOpticalUi(gpu, ollResolved, ramCache, s, capGb, ramBudgetMb, cpu) {
       _lastHwRenderCtx = { gpu, ollResolved, ramCache, s, capGb, ramBudgetMb, cpu };
       const now = Date.now();
-      const ramEnabled = !(s && s.ramCacheEnabled === false) && !(ramCache && ramCache.enabled === false);
+      const ramEnabled = (s && typeof s.ramCacheEnabled === 'boolean')
+        ? s.ramCacheEnabled
+        : !(ramCache && ramCache.enabled === false);
       const ramWarm = Boolean(ramEnabled && ramCache && ramCache.active);
       const ramLive = (ramCache && ramCache.liveActivity) || {};
 
@@ -552,43 +562,56 @@
       _hwHasLiveActivity = ramWorking || gpuWorking || cpuWorking || _gpuPullActiveUi;
       syncHwHeaderSummaryBadge(s, gpu, ramCache, ramWorking || gpuWorking || cpuWorking);
 
-      // 1. Верхние мини-пилюли в шапке прогресса
+      // 1. Верхние мини-пилюли в шапке прогресса и переключатели Lite
+      let ramPillCls = 'is-off';
+      let ramPillText = L('RAM · Ожидание', 'RAM · Idle');
+      if (!ramEnabled) {
+        ramPillCls = 'is-off';
+        ramPillText = L('RAM · Выкл', 'RAM · Off');
+      } else if (ramWorking) {
+        const shortOp = ramLive.lastOp === 'ram_slice' ? L('Срез кода', 'Slice') : (ramLive.lastOp === 'ram_search' ? L('Поиск', 'Search') : L('Чтение', 'Read'));
+        ramPillCls = 'is-working-ram';
+        ramPillText = 'RAM · ⚡ ' + shortOp;
+      } else if (ramWarm) {
+        ramPillCls = 'is-standby';
+        ramPillText = L('RAM · В фоне (', 'RAM · Standby (') + Math.round(ramCache.cacheUsedMb || 0) + L(' МБ)', ' MB)');
+      }
+
       const topRamPill = document.getElementById('topRamLivePill');
       const topRamTxt = document.getElementById('topRamLiveText');
       if (topRamPill && topRamTxt) {
-        if (!ramEnabled) {
-          topRamPill.className = 'hw-live-pill is-off';
-          topRamTxt.textContent = L('RAM · Выкл', 'RAM · Off');
-        } else if (ramWorking) {
-          const shortOp = ramLive.lastOp === 'ram_slice' ? L('Срез кода', 'Slice') : (ramLive.lastOp === 'ram_search' ? L('Поиск', 'Search') : L('Чтение', 'Read'));
-          topRamPill.className = 'hw-live-pill is-working-ram';
-          topRamTxt.textContent = 'RAM · ⚡ ' + shortOp;
-        } else if (ramWarm) {
-          topRamPill.className = 'hw-live-pill is-standby';
-          topRamTxt.textContent = L('RAM · В фоне (', 'RAM · Standby (') + Math.round(ramCache.cacheUsedMb || 0) + L(' МБ)', ' MB)');
-        } else {
-          topRamPill.className = 'hw-live-pill is-off';
-          topRamTxt.textContent = L('RAM · Ожидание', 'RAM · Idle');
-        }
+        topRamPill.className = 'hw-live-pill ' + ramPillCls;
+        topRamTxt.textContent = ramPillText;
+      }
+
+      let gpuPillCls = 'is-off';
+      let gpuPillText = oll.running ? L('GPU · Выгружена', 'GPU · Unloaded') : L('GPU · Сон', 'GPU · Sleep');
+      if (!gpuEnabled) {
+        gpuPillCls = 'is-off';
+        gpuPillText = L('GPU · Выкл', 'GPU · Off');
+      } else if (gpuWorking) {
+        const activeModShort = String(gpuLive.currentModel || (s && s.gpuChatModel) || 'Ollama').split(':')[0];
+        gpuPillCls = 'is-working-gpu';
+        gpuPillText = 'GPU · 🔥 ' + activeModShort;
+      } else if (gpuWarmInVram) {
+        gpuPillCls = 'is-standby';
+        gpuPillText = L('GPU · В фоне (', 'GPU · Standby (') + (loadedVramMb / 1024).toFixed(1) + L(' ГБ)', ' GB)');
       }
 
       const topGpuPill = document.getElementById('topGpuLivePill');
       const topGpuTxt = document.getElementById('topGpuLiveText');
       if (topGpuPill && topGpuTxt) {
-        if (!gpuEnabled) {
-          topGpuPill.className = 'hw-live-pill is-off';
-          topGpuTxt.textContent = L('GPU · Выкл', 'GPU · Off');
-        } else if (gpuWorking) {
-          const activeModShort = String(gpuLive.currentModel || (s && s.gpuChatModel) || 'Ollama').split(':')[0];
-          topGpuPill.className = 'hw-live-pill is-working-gpu';
-          topGpuTxt.textContent = 'GPU · 🔥 ' + activeModShort;
-        } else if (gpuWarmInVram) {
-          topGpuPill.className = 'hw-live-pill is-standby';
-          topGpuTxt.textContent = L('GPU · В фоне (', 'GPU · Standby (') + (loadedVramMb / 1024).toFixed(1) + L(' ГБ)', ' GB)');
-        } else {
-          topGpuPill.className = 'hw-live-pill is-off';
-          topGpuTxt.textContent = oll.running ? L('GPU · Выгружена', 'GPU · Unloaded') : L('GPU · Сон', 'GPU · Sleep');
-        }
+        topGpuPill.className = 'hw-live-pill ' + gpuPillCls;
+        topGpuTxt.textContent = gpuPillText;
+      }
+
+      const liteMasterBtn = document.getElementById('liteRamGpuMasterBtn');
+      if (liteMasterBtn) {
+        const anyHwOn = ramEnabled || gpuEnabled;
+        liteMasterBtn.classList.toggle('is-on', anyHwOn);
+        liteMasterBtn.classList.toggle('is-off', !anyHwOn);
+        liteMasterBtn.setAttribute('aria-pressed', anyHwOn ? 'true' : 'false');
+        liteMasterBtn.textContent = anyHwOn ? L('⚡ Активно', '⚡ Active') : L('⏸ Пауза', '⏸ Paused');
       }
 
       const topCpuPill = document.getElementById('topCpuLivePill');
@@ -950,6 +973,7 @@
         gpuKeepAlive: String((document.getElementById('inp-gpuKeepAlive') || {}).value || '15m').trim(),
         gpuEmbedKeepAlive: String((document.getElementById('inp-gpuEmbedKeepAlive') || {}).value || '90m').trim(),
         gpuContextTokens: Number((document.getElementById('inp-gpuContextTokens') || {}).value || 4096),
+        gpuOllamaDir: String((document.getElementById('inp-gpuOllamaDir') || {}).value || '').trim(),
         gpuModelsDir: String((document.getElementById('inp-gpuModelsDir') || {}).value || '').trim(),
       };
       if (ep) patch.gpuEndpoint = ep;
@@ -1057,9 +1081,10 @@
     let _openCustomSelectFocusIdx = -1;
 
     function getCustomSelectTrigger(selId) {
-      if (selId === 'sel-panelWorkspace') return document.getElementById('btn-panelWorkspace');
-      if (selId === 'sel-gpuChatModel') return document.getElementById('btn-gpuChatModel');
-      if (selId === 'sel-gpuEmbedModel') return document.getElementById('btn-gpuEmbedModel');
+      if (!selId || typeof selId !== 'string') return null;
+      if (selId.indexOf('sel-') === 0) {
+        return document.getElementById('btn-' + selId.slice(4));
+      }
       return null;
     }
 
@@ -1211,7 +1236,8 @@
 
       const rect = trigger.getBoundingClientRect();
       const maxViewportW = Math.max(180, window.innerWidth - 16);
-      const desiredW = Math.min(maxViewportW, Math.max(rect.width, 238));
+      const isCompactLimitSel = selId.indexOf('VramCap') !== -1 || selId.indexOf('RamBudget') !== -1 || selId.indexOf('CpuThreads') !== -1;
+      const desiredW = Math.min(maxViewportW, Math.max(rect.width, isCompactLimitSel ? 136 : 238));
       const left = Math.max(8, Math.min(rect.left, window.innerWidth - desiredW - 8));
       menu.style.width = Math.round(desiredW) + 'px';
       menu.style.left = Math.round(left) + 'px';
@@ -1415,6 +1441,7 @@
     }
 
     let _gpuPullActiveUi = false;
+    let _lastClientPullError = null;
 
     function formatGpuPullStatusText(pullStatus) {
       if (!pullStatus || typeof pullStatus !== 'object') {
@@ -1435,12 +1462,23 @@
     function renderGpuCascadePullStatus(pullStatus, gpu, s) {
       const box = document.getElementById('gpuCascadePullBox');
       const titleEl = document.getElementById('gpuCascadePullTitle');
+      const trackEl = document.getElementById('gpuCascadePullBarTrack');
       const fillEl = document.getElementById('gpuCascadePullFill');
       const subEl = document.getElementById('gpuCascadePullSub');
+      const errItemsEl = document.getElementById('gpuCascadePullErrorItems');
+      const actionsEl = document.getElementById('gpuCascadePullActions');
+      const cancelBtn = document.getElementById('btnCancelGpuCascadePull');
+      const retryHfBtn = document.getElementById('btnRetryGpuCascadeHf');
       const toolbarRow = document.getElementById('gpuCascadeToolbarRow');
       const toolbarBtn = document.getElementById('btnPullCascadeToolbar');
+      const toolbarHfBtn = document.getElementById('btnPullCascadeHfToolbar');
+
+      const effectiveStatus = (pullStatus && (pullStatus.active || pullStatus.error || (pullStatus.finishedAt && !pullStatus.dismissed)))
+        ? pullStatus
+        : (_lastClientPullError || pullStatus);
+
       const wasActive = _gpuPullActiveUi;
-      const isActive = Boolean(pullStatus && pullStatus.active);
+      const isActive = Boolean(effectiveStatus && effectiveStatus.active);
       _gpuPullActiveUi = isActive;
 
       if (wasActive && !isActive) {
@@ -1469,58 +1507,101 @@
             : L('Скачать недостающие модели каскада под все лимиты вашей видеокарты (с автофоллбэком на Hugging Face)', 'Download missing cascade models for your VRAM limits (with Hugging Face fallback)');
         }
       }
+      if (toolbarHfBtn) {
+        toolbarHfBtn.disabled = isActive;
+      }
       if (!box) return;
 
+      const failedItems = Array.isArray(effectiveStatus && effectiveStatus.items)
+        ? effectiveStatus.items.filter(function (it) { return it && it.status === 'error'; })
+        : [];
+      const hasError = Boolean(effectiveStatus && !effectiveStatus.dismissed && (effectiveStatus.error || failedItems.length > 0));
       const recentlyFinished = Boolean(
         !isActive &&
-        pullStatus &&
-        pullStatus.finishedAt &&
-        (Date.now() - Number(pullStatus.finishedAt || 0)) < 12000 &&
-        (pullStatus.statusText || pullStatus.statusTextEn)
+        effectiveStatus &&
+        !effectiveStatus.dismissed &&
+        effectiveStatus.finishedAt &&
+        (Date.now() - Number(effectiveStatus.finishedAt || 0)) < 12000 &&
+        (effectiveStatus.statusText || effectiveStatus.statusTextEn)
       );
-      if (!isActive && !recentlyFinished) {
+      if (!isActive && !hasError && !recentlyFinished) {
         box.style.display = 'none';
+        box.classList.remove('is-error');
         return;
       }
 
       box.style.display = 'flex';
-      const total = Math.max(1, Number(pullStatus.totalCount || 1));
-      const done = Math.max(0, Number(pullStatus.completedCount || 0));
-      const curPct = Math.max(0, Math.min(100, Number(pullStatus.currentPercent || 0)));
+      box.classList.toggle('is-error', Boolean(!isActive && hasError));
+      const total = Math.max(1, Number((effectiveStatus && effectiveStatus.totalCount) || 1));
+      const done = Math.max(0, Number((effectiveStatus && effectiveStatus.completedCount) || 0));
+      const curPct = Math.max(0, Math.min(100, Number((effectiveStatus && effectiveStatus.currentPercent) || 0)));
       const overallPct = isActive
         ? Math.min(99, Math.round(((done + curPct / 100) / total) * 100))
-        : 100;
+        : (hasError ? Math.round((done / total) * 100) : 100);
 
       if (titleEl) {
         titleEl.textContent = isActive
           ? (L('⬇️ Загрузка каскада моделей (', '⬇️ Downloading model cascade (') + Math.min(done + 1, total) + '/' + total + ')')
-          : (pullStatus.error ? L('⚠️ Загрузка каскада завершена с ошибками', '⚠️ Model cascade finished with errors') : L('✓ Каскад моделей готов', '✓ Model cascade ready'));
+          : (hasError ? L('⚠️ Ошибка скачивания моделей Ollama', '⚠️ Ollama model download error') : L('✓ Каскад моделей готов', '✓ Model cascade ready'));
       }
+      if (cancelBtn) cancelBtn.style.display = isActive ? 'inline-flex' : 'none';
+      if (trackEl) trackEl.style.display = (hasError && !isActive && done === 0) ? 'none' : '';
       if (fillEl) {
         fillEl.style.width = overallPct + '%';
       }
       if (subEl) {
-        const srcBadge = pullStatus.source === 'huggingface' ? ' [Hugging Face]' : (pullStatus.source === 'ollama' ? ' [Ollama]' : '');
-        const stText = formatGpuPullStatusText(pullStatus);
-        subEl.textContent = stText + srcBadge + (pullStatus.error && !isActive ? (' · ' + pullStatus.error) : '');
+        const srcBadge = effectiveStatus.source === 'huggingface' ? ' [Hugging Face]' : (effectiveStatus.source === 'ollama' ? ' [Ollama]' : '');
+        const stText = formatGpuPullStatusText(effectiveStatus);
+        subEl.textContent = stText + srcBadge + (effectiveStatus.error && !isActive && failedItems.length === 0 ? (' · ' + effectiveStatus.error) : '');
+      }
+      if (errItemsEl) {
+        if (!isActive && hasError && failedItems.length > 0) {
+          errItemsEl.style.display = 'flex';
+          errItemsEl.innerHTML = failedItems.map(function (it) {
+            const hfHint = it.hfAvailable === false
+              ? L(' [нет GGUF-зеркала HF]', ' [no HF GGUF mirror]')
+              : L(' [доступно HF-зеркало]', ' [HF mirror available]');
+            return '<div>• <strong>' + escapeHtml(it.name) + '</strong>: ' + escapeHtml(it.error || L('сбой загрузки', 'download error')) + '<span style="opacity:0.78;">' + escapeHtml(hfHint) + '</span></div>';
+          }).join('');
+        } else if (!isActive && hasError && effectiveStatus.error) {
+          errItemsEl.style.display = 'flex';
+          errItemsEl.innerHTML = '<div>• ' + escapeHtml(effectiveStatus.error) + '</div>';
+        } else {
+          errItemsEl.style.display = 'none';
+          errItemsEl.innerHTML = '';
+        }
+      }
+      if (actionsEl) {
+        actionsEl.style.display = (!isActive && hasError) ? 'flex' : 'none';
+      }
+      if (retryHfBtn) {
+        const anyHf = failedItems.length === 0 || failedItems.some(function (it) { return it.hfAvailable !== false; });
+        retryHfBtn.style.display = anyHf ? 'inline-flex' : 'none';
       }
     }
 
-    async function startGpuCascadePull(mode, selectedCapMb) {
+    async function startGpuCascadePull(mode, selectedCapMb, mirrorMode) {
       try {
+        _lastClientPullError = null;
         const pullMode = mode === 'active_only' ? 'active_only' : 'cascade';
-        flashStatus(L('Запуск загрузки каскада моделей...', 'Starting model cascade download...'));
+        const effectiveMirror = mirrorMode === 'huggingface' || mirrorMode === 'auto'
+          ? mirrorMode
+          : ((currentState && currentState.gpuPreferHfMirror) ? 'huggingface' : 'auto');
+        flashStatus(effectiveMirror === 'huggingface'
+          ? L('Запуск загрузки моделей через зеркало Hugging Face...', 'Starting model download via Hugging Face mirror...')
+          : L('Запуск загрузки каскада моделей...', 'Starting model cascade download...'));
         const res = await panelFetch('/api/gpu', {
           method: 'POST',
           body: JSON.stringify({
             action: 'pull_cascade',
             mode: pullMode,
+            mirrorMode: effectiveMirror,
             selectedCapMb: Number(selectedCapMb || (currentState && currentState.gpuMaxVramMb) || 4096),
           }),
         });
         const data = await res.json();
         if (data && data.ok) {
-          renderGpuCascadePullStatus(data.pullStatus);
+          renderGpuCascadePullStatus(data.pullStatus, data.gpu, currentState);
           if (data.pullStatus && data.pullStatus.active) {
             flashStatus(L('Каскад моделей качается в фоне...', 'Model cascade downloading in background...'));
             scheduleTelemetryPoll();
@@ -1528,10 +1609,62 @@
             flashStatus(formatGpuPullStatusText(data.pullStatus));
           }
         } else {
-          flashStatus(L('Ошибка запуска загрузки: ', 'Download start failed: ') + (data && data.error ? data.error : L('неизвестно', 'unknown')));
+          const errMsg = (data && data.error) ? data.error : L('неизвестная ошибка', 'unknown error');
+          _lastClientPullError = {
+            active: false,
+            error: errMsg,
+            dismissed: false,
+            finishedAt: Date.now(),
+            totalCount: 1,
+            completedCount: 0,
+            source: effectiveMirror === 'huggingface' ? 'huggingface' : 'ollama',
+            statusTextRu: errMsg,
+            statusTextEn: errMsg,
+            items: [],
+          };
+          renderGpuCascadePullStatus(_lastClientPullError, data && data.gpu, currentState);
+          if (data && data.code === 'OLLAMA_NOT_INSTALLED') {
+            renderGpuOllamaInstallStatus(null, data.gpu, currentState);
+          }
+          flashStatus(L('Ошибка запуска загрузки: ', 'Download start failed: ') + errMsg);
         }
       } catch (e) {
+        const connMsg = L('Ошибка связи с сервером панели при запуске загрузки', 'Panel server connection error starting model download');
+        _lastClientPullError = {
+          active: false,
+          error: connMsg,
+          dismissed: false,
+          finishedAt: Date.now(),
+          totalCount: 1,
+          completedCount: 0,
+          statusTextRu: connMsg,
+          statusTextEn: connMsg,
+          items: [],
+        };
+        renderGpuCascadePullStatus(_lastClientPullError);
         flashStatus(L('Ошибка связи с сервером панели', 'Panel server connection error'));
+      }
+    }
+
+    function startGpuCascadePullHf() {
+      return startGpuCascadePull('cascade', (currentState && currentState.gpuMaxVramMb) || 4096, 'huggingface');
+    }
+
+    async function dismissGpuPullError() {
+      _lastClientPullError = null;
+      try {
+        const res = await panelFetch('/api/gpu', {
+          method: 'POST',
+          body: JSON.stringify({ action: 'pull_dismiss_error' }),
+        });
+        const data = await res.json();
+        renderGpuCascadePullStatus(data && data.pullStatus ? data.pullStatus : { active: false, dismissed: true, items: [] });
+      } catch {
+        const box = document.getElementById('gpuCascadePullBox');
+        if (box) {
+          box.style.display = 'none';
+          box.classList.remove('is-error');
+        }
       }
     }
 
@@ -1547,6 +1680,211 @@
           flashStatus(L('Загрузка каскада отменена', 'Cascade download cancelled'));
         }
       } catch {}
+    }
+
+    let _gpuInstallActiveUi = false;
+
+    function renderGpuOllamaInstallStatus(installStatus, gpu, s) {
+      const box = document.getElementById('gpuOllamaInstallBox');
+      if (!box) return;
+      const titleEl = document.getElementById('gpuOllamaInstallTitle');
+      const subEl = document.getElementById('gpuOllamaInstallSub');
+      const dirEl = document.getElementById('gpuOllamaInstallDirHint');
+      const trackEl = document.getElementById('gpuOllamaInstallBarTrack');
+      const fillEl = document.getElementById('gpuOllamaInstallFill');
+      const instBtn = document.getElementById('btnInstallOllamaPanel');
+      const pickBtn = document.getElementById('btnPickOllamaFolderPanel');
+      const dismissBtn = document.getElementById('btnDismissOllamaInstall');
+      const actionsEl = document.getElementById('gpuOllamaInstallActions');
+
+      const st = s || currentState || {};
+      const gpuSnap = gpu || (lastPayloadCache && lastPayloadCache.gpu) || null;
+      const oll = (gpuSnap && gpuSnap.ollama) || {};
+      const inst = (installStatus && typeof installStatus === 'object') ? installStatus : null;
+
+      const isActive = Boolean(inst && inst.active);
+      const wasActive = _gpuInstallActiveUi;
+      _gpuInstallActiveUi = isActive;
+      if (wasActive && !isActive) {
+        setTimeout(function () { refreshAll(); }, 300);
+      }
+
+      const hasErr = Boolean(!isActive && inst && inst.phase === 'error' && inst.error && !inst.dismissed);
+      const recentlyDone = Boolean(
+        !isActive &&
+        inst &&
+        inst.phase === 'done' &&
+        !inst.dismissed &&
+        inst.finishedAt &&
+        (Date.now() - Number(inst.finishedAt || 0)) < 12000
+      );
+      const gpuOn = Boolean(st && st.gpuEnabled);
+      const needsInstallPrompt = Boolean(gpuOn && !isActive && !hasErr && !recentlyDone && !oll.installed && !oll.running);
+
+      if (!isActive && !hasErr && !recentlyDone && !needsInstallPrompt) {
+        box.style.display = 'none';
+        box.classList.remove('is-installing', 'is-error');
+        return;
+      }
+
+      box.style.display = 'flex';
+      box.classList.toggle('is-installing', isActive);
+      box.classList.toggle('is-error', hasErr);
+
+      const curInstallDir = String((inst && inst.installDir) || st.gpuOllamaDir || '').trim();
+      const curModelsDir = String((inst && inst.modelsDir) || st.gpuModelsDir || '').trim();
+
+      if (titleEl) {
+        if (isActive) {
+          titleEl.textContent = L('⚙️ Установка Ollama...', '⚙️ Installing Ollama...');
+        } else if (hasErr) {
+          titleEl.textContent = L('⚠️ Ошибка установки Ollama', '⚠️ Ollama setup error');
+        } else if (recentlyDone) {
+          titleEl.textContent = L('✓ Ollama готова к работе', '✓ Ollama ready');
+        } else {
+          titleEl.textContent = L('⚠️ Ollama не найдена в системе', '⚠️ Ollama not detected');
+        }
+      }
+
+      if (trackEl) trackEl.style.display = isActive ? 'block' : 'none';
+      if (fillEl) fillEl.style.width = (inst ? Math.max(0, Math.min(100, Number(inst.percent || 0))) : 0) + '%';
+
+      if (subEl) {
+        if (isActive || hasErr || recentlyDone) {
+          subEl.textContent = pickText(inst, 'statusTextRu', 'statusTextEn', inst.statusText || inst.error || '');
+        } else {
+          subEl.textContent = L(
+            'Нажмите «Установить Ollama», чтобы скачать и развернуть её в выбранную папку, либо выберите папку вручную.',
+            'Click "Install Ollama" to download and install into your chosen folder, or pick a folder first.'
+          );
+        }
+      }
+
+      if (dirEl) {
+        if (curInstallDir || curModelsDir) {
+          dirEl.style.display = 'block';
+          const parts = [];
+          if (curInstallDir) parts.push(L('Программа: ', 'App: ') + curInstallDir);
+          if (curModelsDir) parts.push(L('Модели: ', 'Models: ') + curModelsDir);
+          dirEl.textContent = parts.join(' · ');
+        } else {
+          dirEl.style.display = 'none';
+          dirEl.textContent = '';
+        }
+      }
+
+      if (dismissBtn) dismissBtn.style.display = (!isActive && (hasErr || recentlyDone)) ? 'inline-flex' : 'none';
+      if (actionsEl) actionsEl.style.display = recentlyDone ? 'none' : 'flex';
+      if (instBtn) {
+        instBtn.disabled = isActive;
+        instBtn.textContent = hasErr ? L('↻ Повторить установку', '↻ Retry install') : L('⬇️ Установить Ollama', '⬇️ Install Ollama');
+      }
+      if (pickBtn) pickBtn.disabled = isActive;
+    }
+
+    async function startOllamaInstall(opts) {
+      const o = (opts && typeof opts === 'object') ? opts : {};
+      try {
+        flashStatus(L('Запуск загрузки и установки Ollama...', 'Starting Ollama download and setup...'));
+        const res = await panelFetch('/api/gpu', {
+          method: 'POST',
+          body: JSON.stringify({
+            action: 'install_ollama',
+            installDir: String(o.installDir !== undefined ? o.installDir : ((currentState && currentState.gpuOllamaDir) || '')).trim(),
+            modelsDir: String(o.modelsDir !== undefined ? o.modelsDir : ((currentState && currentState.gpuModelsDir) || '')).trim(),
+            pullModeAfter: o.pullModeAfter || '',
+            selectedCapMb: Number(o.selectedCapMb || (currentState && currentState.gpuMaxVramMb) || 4096),
+            mirrorMode: o.mirrorMode || ((currentState && currentState.gpuPreferHfMirror) ? 'huggingface' : 'auto'),
+          }),
+        });
+        const data = await res.json();
+        if (data && data.state) currentState = data.state;
+        renderGpuOllamaInstallStatus(data && data.installStatus ? data.installStatus : null, data && data.gpu, currentState);
+        if (data && data.ok) {
+          scheduleTelemetryPoll();
+        } else {
+          flashStatus(L('Установка Ollama: ', 'Ollama install: ') + ((data && data.error) || L('ошибка', 'failed')));
+        }
+      } catch {
+        flashStatus(L('Ошибка связи при запуске установки Ollama', 'Connection error starting Ollama install'));
+      }
+    }
+
+    function installOllamaFromPanel() {
+      return startOllamaInstall({
+        installDir: (currentState && currentState.gpuOllamaDir) || '',
+        modelsDir: (currentState && currentState.gpuModelsDir) || '',
+        pullModeAfter: 'cascade',
+        selectedCapMb: (currentState && currentState.gpuMaxVramMb) || 4096,
+      });
+    }
+
+    async function dismissOllamaInstallStatus() {
+      try {
+        const res = await panelFetch('/api/gpu', {
+          method: 'POST',
+          body: JSON.stringify({ action: 'install_dismiss' }),
+        });
+        const data = await res.json();
+        renderGpuOllamaInstallStatus(data && data.installStatus ? data.installStatus : { active: false, phase: 'idle', dismissed: true });
+      } catch {
+        const box = document.getElementById('gpuOllamaInstallBox');
+        if (box) box.style.display = 'none';
+      }
+    }
+
+    async function pickGpuFolder(mode) {
+      const cleanMode = mode === 'models' ? 'models' : 'ollama';
+      const inpId = cleanMode === 'models' ? 'inp-gpuModelsDir' : 'inp-gpuOllamaDir';
+      const inpEl = document.getElementById(inpId);
+      const initDir = (inpEl && inpEl.value ? inpEl.value.trim() : '') ||
+        (cleanMode === 'models' ? (currentState && currentState.gpuModelsDir) : (currentState && currentState.gpuOllamaDir)) ||
+        '';
+      try {
+        flashStatus(L('Открываем выбор папки…', 'Opening folder picker…'));
+        const res = await panelFetch('/api/gpu/pick-folder', {
+          method: 'POST',
+          body: JSON.stringify({ mode: cleanMode, initialDir: initDir }),
+        });
+        const data = await res.json();
+        if (!data || !data.ok) {
+          flashStatus((data && data.error) || L('Не удалось выбрать папку', 'Failed to pick folder'));
+          return;
+        }
+        const chosen = data.dir || data.workspaceRoot || '';
+        if (data.cancelled || !chosen) return;
+        const patch = {};
+        if (cleanMode === 'models') {
+          patch.gpuModelsDir = chosen;
+          const mInp = document.getElementById('inp-gpuModelsDir');
+          if (mInp) {
+            mInp.value = chosen;
+            mInp.removeAttribute('data-dirty');
+          }
+        } else {
+          patch.gpuOllamaDir = chosen;
+          const oInp = document.getElementById('inp-gpuOllamaDir');
+          if (oInp) {
+            oInp.value = chosen;
+            oInp.removeAttribute('data-dirty');
+          }
+          const modelsInp = document.getElementById('inp-gpuModelsDir');
+          const curModels = String((modelsInp && modelsInp.value) || (currentState && currentState.gpuModelsDir) || '').trim();
+          const sep = chosen.indexOf('/') !== -1 && chosen.indexOf('\\') === -1 ? '/' : '\\';
+          const derivedModels = chosen.replace(/[\\/]+$/, '') + sep + 'models';
+          if (!curModels || curModels.toLowerCase().endsWith('\\models') || curModels.toLowerCase().endsWith('/models')) {
+            patch.gpuModelsDir = derivedModels;
+            if (modelsInp) {
+              modelsInp.value = derivedModels;
+              modelsInp.removeAttribute('data-dirty');
+            }
+          }
+        }
+        await updateState(patch);
+        flashStatus(L('Папка сохранена ✓', 'Folder saved ✓'));
+      } catch {
+        flashStatus(L('Ошибка выбора папки', 'Folder picker error'));
+      }
     }
 
     function syncGpuModelSelects(s, cfg, oll, ollResolved, vramFit) {

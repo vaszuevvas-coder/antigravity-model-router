@@ -1322,6 +1322,10 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
   }
 
   if (method === 'POST' && url === '/gpu/chat') {
+    const signal = opts.signal || null;
+    const abortedBody = () => ({ status: 200, body: { ok: false, aborted: true, answer: '', error: 'Request aborted' } });
+    if (signal?.aborted) return abortedBody();
+
     const query = String(body.query || '').trim();
     if (!query) {
       return { status: 200, body: { ok: false, answer: '', error: 'Empty query' } };
@@ -1330,9 +1334,11 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
     registerDaemonWorkspace(wsPath);
     activeChatIpcCount += 1;
     try {
+      if (signal?.aborted) return abortedBody();
       let ws = targetEngine.getOrCreateWorkspace(wsPath);
       if (!ws || !ws.files || ws.files.size === 0) {
         const warmRes = await targetEngine.warmWorkspaceAsync(wsPath);
+        if (signal?.aborted) return abortedBody();
         if (warmRes?.ok) {
           ws = targetEngine.ensureWarm(wsPath);
         }
@@ -1342,27 +1348,34 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
       }
 
       const cleanMessages = Array.isArray(body.messages) ? body.messages : [];
-      const effectiveQuery = enrichMultiTurnChatQuery(query, cleanMessages, { maxExtraTerms: 6 });
+      const focusFile = typeof body.focusFile === 'string' ? body.focusFile.trim().slice(0, 512) : '';
+      const queryWithFocus = focusFile && !query.toLowerCase().includes(focusFile.toLowerCase())
+        ? `${query} ${focusFile}`
+        : query;
+      const effectiveQuery = enrichMultiTurnChatQuery(queryWithFocus, cleanMessages, { maxExtraTerms: 6 });
 
-      if (!opts.runLocalProjectChatFn) {
+      if (!opts.runLocalProjectChatFn && !signal?.aborted && !isLocalChatActive()) {
         const gpuCfg = loadGpuConfig();
         if (gpuCfg.gpuEnabled && gpuCfg.gpuSemanticSearch) {
           await indexWorkspaceVectors(ws.absRoot, ws.files, { maxNewFiles: 20 }).catch(() => null);
         }
       }
+      if (signal?.aborted) return abortedBody();
 
       const semRes = await targetEngine.searchSemantic(ws.absRoot, effectiveQuery, {
         maxResults: 6,
         contextLines: 3,
         reindexMissing: false,
       });
+      if (signal?.aborted) return abortedBody();
       const hits = Array.isArray(semRes?.results) ? semRes.results : [];
       const maxContextChars = Math.max(1600, Math.min(16000, Number(body.maxContextChars) || 8400));
       const packRes = typeof targetEngine.buildGroundedChatPack === 'function'
-        ? targetEngine.buildGroundedChatPack(ws.absRoot, query, {
+        ? targetEngine.buildGroundedChatPack(ws.absRoot, queryWithFocus, {
             messages: cleanMessages,
             maxChars: maxContextChars,
             warmSemanticHits: hits,
+            focusFile,
           })
         : targetEngine.getContextPack(ws.absRoot, effectiveQuery, {
             maxChars: maxContextChars,
@@ -1397,6 +1410,7 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
       const chatRunner = typeof opts.runLocalProjectChatFn === 'function'
         ? opts.runLocalProjectChatFn
         : (typeof localGpuNs.runLocalProjectChat === 'function' ? localGpuNs.runLocalProjectChat : runLocalProjectChat);
+      if (signal?.aborted) return abortedBody();
       const chatOut = await chatRunner({
         query,
         messages: cleanMessages,
@@ -1412,6 +1426,8 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
         workspaceName: path.basename(ws.absRoot),
         maxOutputTokens: body.maxOutputTokens,
         timeoutMs: body.timeoutMs,
+        signal,
+        lang: typeof body.lang === 'string' ? body.lang : '',
       });
       return { status: 200, body: chatOut };
     } finally {
@@ -1449,20 +1465,52 @@ export async function handleIpcHttpRequest(req, res, opts = {}) {
     return;
   }
 
+  const reqAbort = new AbortController();
+  const onResClose = () => {
+    if (!res.writableEnded && !reqAbort.signal.aborted) {
+      reqAbort.abort('ipc_client_disconnected');
+    }
+  };
+  if (typeof res.on === 'function') {
+    res.on('close', onResClose);
+  }
+  const extSignal = opts.signal && typeof opts.signal.addEventListener === 'function' ? opts.signal : null;
+  const onExtAbort = () => {
+    if (!reqAbort.signal.aborted) reqAbort.abort(extSignal?.reason || 'external_abort');
+  };
+  if (extSignal) {
+    if (extSignal.aborted) {
+      onExtAbort();
+    } else {
+      extSignal.addEventListener('abort', onExtAbort, { once: true });
+    }
+  }
+
   const sendJson = (code, data) => {
-    if (res.headersSent) return;
+    if (reqAbort.signal.aborted || res.destroyed || res.headersSent) return;
     res.writeHead(code, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(data));
   };
 
-  let body = {};
-  if (req.method === 'POST') {
-    body = await readHttpJson(req, res);
-    if (body === null) return;
-  }
+  try {
+    let body = {};
+    if (req.method === 'POST') {
+      body = await readHttpJson(req, res);
+      if (body === null || reqAbort.signal.aborted) return;
+    }
 
-  const out = await dispatchIpcRoute(req.method, req.url, body, opts);
-  return sendJson(out.status, out.body);
+    const out = await dispatchIpcRoute(req.method, req.url, body, { ...opts, signal: reqAbort.signal });
+    return sendJson(out.status, out.body);
+  } finally {
+    if (typeof res.off === 'function') {
+      res.off('close', onResClose);
+    } else if (typeof res.removeListener === 'function') {
+      res.removeListener('close', onResClose);
+    }
+    if (extSignal) {
+      try { extSignal.removeEventListener('abort', onExtAbort); } catch {}
+    }
+  }
 }
 
 const ipcServer = http.createServer((req, res) => handleIpcHttpRequest(req, res));

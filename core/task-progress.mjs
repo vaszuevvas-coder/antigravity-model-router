@@ -47,7 +47,7 @@ function clampInt(val, min, max, fallback) {
 export function createDefaultProgressState() {
   const now = Date.now();
   return {
-    version: '3.33.1',
+    version: '3.34.0',
     activeConversationId: 'default',
     projectName: 'antigravity-model-router',
     workspaceRoot: '',
@@ -110,12 +110,17 @@ import {
   inspectTranscriptTurnState,
   buildDefaultStepsForGrade,
   MAX_TIMELINE_STEPS,
+  UNSCOPED_CHAT_PROJECT_RU,
+  UNSCOPED_CHAT_PROJECT_EN,
+  isBrainOrTempWorkspacePath,
   extractPrimarySymbolFromSnippet,
   extractTargetFilesFromText,
 } from './progress/progress-parsers.mjs';
 
 export {
   MAX_TIMELINE_STEPS,
+  UNSCOPED_CHAT_PROJECT_RU,
+  UNSCOPED_CHAT_PROJECT_EN,
   sanitizeWorkspaceRoot,
   normalizeConversationId,
   extractProjectName,
@@ -576,7 +581,9 @@ function buildPublicChatView(chat, subagents = []) {
     displayHeader: topic ? `${chatLabel} · ${topic}` : chatLabel,
     displayHeaderEn: topic ? `${chatLabelEn} · ${topic}` : chatLabelEn,
     topicLabel: topic,
-    projectName: chat.projectName || 'antigravity-model-router',
+    projectName: chat.projectName || (chat.isUnscopedChat ? UNSCOPED_CHAT_PROJECT_RU : 'antigravity-model-router'),
+    projectNameEn: chat.projectNameEn || (chat.isUnscopedChat ? UNSCOPED_CHAT_PROJECT_EN : (chat.projectName || 'antigravity-model-router')),
+    ...(chat.isUnscopedChat || (!chat.workspaceRoot && chat.projectName === UNSCOPED_CHAT_PROJECT_RU) ? { isUnscopedChat: true } : {}),
     workspaceRoot: chat.workspaceRoot || '',
     status: chat.status || 'running',
     grade: chat.grade || 'M',
@@ -595,6 +602,8 @@ function buildPublicChatView(chat, subagents = []) {
     subagents: subs,
     subagentsCount: subs.length,
     runningSubagentsCount,
+    hasRunningBackgroundTask: Boolean(chat.hasRunningBackgroundTask),
+    backgroundTasksCount: Math.max(0, Math.round(Number(chat.backgroundTasksCount || 0))),
     completedAt: chat.completedAt || 0,
     updatedAt: chat.updatedAt || 0,
   };
@@ -942,6 +951,9 @@ function expireChatToIdle(chat, stepKey = '') {
   const next = {
     ...chat,
     status: 'idle',
+    hasRunningBackgroundTask: false,
+    backgroundTasksCount: 0,
+    bgInFlight: false,
     inFlightTool: false,
     inFlightToolName: '',
   };
@@ -1254,10 +1266,20 @@ export function getTaskProgressSnapshot(opts = {}) {
         if (parentEval?.reason) continue;
 
         const parentRecord = (rootPid && chatsMap[rootPid]) || (cleanParentCid ? chatsMap[cleanParentCid] : null);
-        const inferredWs = sanitizeWorkspaceRoot(
-          tInfo.detectedWorkspace || existing?.workspaceRoot || parentRecord?.workspaceRoot || cleanWs || state.workspaceRoot || ''
+        const hasTranscriptFileOps =
+          (Array.isArray(tInfo.inspectedFiles) && tInfo.inspectedFiles.length > 0) ||
+          (Array.isArray(tInfo.editedFiles) && tInfo.editedFiles.length > 0);
+        const rawDetectedWs = sanitizeWorkspaceRoot(
+          tInfo.detectedWorkspace ||
+            existing?.workspaceRoot ||
+            parentRecord?.workspaceRoot ||
+            (hasTranscriptFileOps ? (cleanWs || state.workspaceRoot || '') : '')
         );
-        const projName = extractProjectName(inferredWs, parentRecord?.projectName || defaultProj);
+        const inferredWs = rawDetectedWs && !isBrainOrTempWorkspacePath(rawDetectedWs) ? rawDetectedWs : '';
+        const isUnscopedChat = !inferredWs && !parentRecord?.workspaceRoot;
+        const projName = inferredWs
+          ? extractProjectName(inferredWs, parentRecord?.projectName || defaultProj || UNSCOPED_CHAT_PROJECT_RU)
+          : (parentRecord?.projectName || UNSCOPED_CHAT_PROJECT_RU);
 
         let chatNumber = existing?.chatNumber || 1;
         if (!subMeta.isSubagent) {
@@ -1312,9 +1334,12 @@ export function getTaskProgressSnapshot(opts = {}) {
         const curPct = hasEdits
           ? Math.min(86, Math.max(20, 16 + tInfo.plannerToolSteps * 9))
           : Math.min(MAX_PRE_EDIT_PERCENT, Math.max(18, 16 + tInfo.plannerToolSteps * 4));
+        const hasDiscoveredBgTask = Boolean(!isWaiting && tInfo.hasRunningBackgroundTask);
         const curTitle = isWaiting
           ? 'Ожидание ответа пользователя'
-          : (tInfo.latestToolSubtitle || freshSteps[curStep - 1]?.title || (subMeta.isSubagent ? 'Работа субагента' : 'Выполнение задачи'));
+          : (hasDiscoveredBgTask && tInfo.backgroundTaskLabel
+              ? tInfo.backgroundTaskLabel
+              : (tInfo.latestToolSubtitle || freshSteps[curStep - 1]?.title || (subMeta.isSubagent ? 'Работа субагента' : 'Выполнение задачи')));
         const chatStatus = isWaiting ? 'waiting_user' : 'running';
 
         const discoveredChat = {
@@ -1327,6 +1352,8 @@ export function getTaskProgressSnapshot(opts = {}) {
           agentKind: subMeta.agentKind || '',
           spawnedSubagentRoles: tInfo.spawnedSubagentRoles || existing?.spawnedSubagentRoles || {},
           projectName: projName,
+          projectNameEn: isUnscopedChat ? UNSCOPED_CHAT_PROJECT_EN : projName,
+          ...(isUnscopedChat ? { isUnscopedChat: true } : {}),
           workspaceRoot: inferredWs,
           transcriptPath: tPath,
           baselineDoneStepKey: '',
@@ -1344,7 +1371,11 @@ export function getTaskProgressSnapshot(opts = {}) {
           stageLabel: `Этап ${curStep} из ${freshSteps.length}`,
           formattedText: buildFormattedProgressText({ status: chatStatus, currentStep: curStep, totalSteps: freshSteps.length, stepTitle: curTitle }),
           steps: syncStepsArray(freshSteps, curStep, chatStatus),
-          inFlightTool: false,
+          hasRunningBackgroundTask: hasDiscoveredBgTask,
+          backgroundTasksCount: hasDiscoveredBgTask && Array.isArray(tInfo.runningBackgroundTasks) ? tInfo.runningBackgroundTasks.length : 0,
+          inFlightTool: hasDiscoveredBgTask,
+          inFlightToolName: hasDiscoveredBgTask ? 'run_command' : '',
+          bgInFlight: hasDiscoveredBgTask,
           lastPostToolAt: 0,
           completedAt: 0,
           startedAt: Math.round(st.birthtimeMs || now),
@@ -1449,6 +1480,9 @@ export function getTaskProgressSnapshot(opts = {}) {
           chat.stepTitle = 'Завершено ✓';
           chat.steps = syncStepsArray(chat.steps || [], total, 'completed');
           chat.formattedText = `Завершено ✓ · Этап ${total} из ${total}`;
+          chat.hasRunningBackgroundTask = false;
+          chat.backgroundTasksCount = 0;
+          chat.bgInFlight = false;
           chat.inFlightTool = false;
           chat.inFlightToolName = '';
           chat.lastHandledStepKey = tInfo.stepKey;
@@ -1517,11 +1551,45 @@ export function getTaskProgressSnapshot(opts = {}) {
             if (toolAge > STALE_NON_POST_TOOL_MS) {
               chat.inFlightTool = false;
               chat.inFlightToolName = '';
+              chat.bgInFlight = false;
               dirty = true;
             }
           }
           if (applyTranscriptLiveSignalsToChat(chat, tInfo)) {
             chat.updatedAt = now;
+            dirty = true;
+          }
+          const hasBgTask = Boolean(tInfo.hasRunningBackgroundTask);
+          const bgCount = hasBgTask && Array.isArray(tInfo.runningBackgroundTasks) ? tInfo.runningBackgroundTasks.length : 0;
+          if (hasBgTask) {
+            const canSwapBg = !chat.inFlightTool || chat.inFlightToolName === 'run_command' || chat.bgInFlight;
+            if (!chat.hasRunningBackgroundTask || chat.backgroundTasksCount !== bgCount) {
+              chat.hasRunningBackgroundTask = true;
+              chat.backgroundTasksCount = bgCount;
+              dirty = true;
+            }
+            if (canSwapBg) {
+              if (!chat.inFlightTool || chat.inFlightToolName !== 'run_command' || !chat.bgInFlight) {
+                chat.inFlightTool = true;
+                chat.inFlightToolName = 'run_command';
+                chat.bgInFlight = true;
+                dirty = true;
+              }
+              if (tInfo.backgroundTaskLabel && chat.stepTitle !== tInfo.backgroundTaskLabel) {
+                chat.stepTitle = tInfo.backgroundTaskLabel;
+                chat.formattedText = buildFormattedProgressText(chat);
+                chat.updatedAt = now;
+                dirty = true;
+              }
+            }
+          } else if (chat.hasRunningBackgroundTask || chat.bgInFlight) {
+            chat.hasRunningBackgroundTask = false;
+            chat.backgroundTasksCount = 0;
+            if (chat.bgInFlight) {
+              chat.bgInFlight = false;
+              chat.inFlightTool = false;
+              chat.inFlightToolName = '';
+            }
             dirty = true;
           }
           if (tInfo.plannerToolSteps > 0 && !chat.checklistStepsApplied) {
@@ -1684,7 +1752,15 @@ export function initTaskProgressFromPrompt({
     let parentCid = normalizeConversationId(subMeta.parentConversationId || existingChat?.parentConversationId || '');
     if (parentCid === 'default' || parentCid === cid) parentCid = '';
 
-    const projName = extractProjectName(cleanWs || existingChat?.workspaceRoot || state.workspaceRoot || '');
+    const tailSnapshot = resolvedTranscript ? inspectTranscriptTurnState(resolvedTranscript) : { exists: false };
+    const effectiveInitWsRaw = sanitizeWorkspaceRoot(
+      cleanWs || existingChat?.workspaceRoot || tailSnapshot?.detectedWorkspace || ''
+    );
+    const effectiveInitWs = effectiveInitWsRaw && !isBrainOrTempWorkspacePath(effectiveInitWsRaw) ? effectiveInitWsRaw : '';
+    const isUnscopedInit = !effectiveInitWs && !isSub;
+    const projName = effectiveInitWs
+      ? extractProjectName(effectiveInitWs)
+      : (isSub ? extractProjectName(state.workspaceRoot || '') : UNSCOPED_CHAT_PROJECT_RU);
     let chatNumber = existingChat?.chatNumber || 1;
     let registry = state.chatRegistry;
     if (!isSub) {
@@ -1693,7 +1769,6 @@ export function initTaskProgressFromPrompt({
       registry = assigned.registry;
     }
 
-    const tailSnapshot = resolvedTranscript ? inspectTranscriptTurnState(resolvedTranscript) : { exists: false };
     const baselineDoneStepKey =
       tailSnapshot.exists && (tailSnapshot.state === 'completed' || tailSnapshot.state === 'waiting_user' || tailSnapshot.state === 'cancelled')
         ? tailSnapshot.stepKey
@@ -1851,7 +1926,9 @@ export function initTaskProgressFromPrompt({
       agentKind: isSub ? (subMeta.agentKind || existingChat?.agentKind || 'subagent') : '',
       spawnedSubagentRoles: existingChat?.spawnedSubagentRoles || {},
       projectName: projName,
-      workspaceRoot: sanitizeWorkspaceRoot(cleanWs || existingChat?.workspaceRoot || state.workspaceRoot || ''),
+      projectNameEn: isUnscopedInit ? UNSCOPED_CHAT_PROJECT_EN : projName,
+      ...(isUnscopedInit ? { isUnscopedChat: true } : {}),
+      workspaceRoot: effectiveInitWs,
       transcriptPath: resolvedTranscript,
       baselineDoneStepKey,
       status: 'running',
@@ -2557,6 +2634,7 @@ export function advanceTaskProgressOnPreTool({
       steps: updatedSteps,
       inFlightTool: hasPostHook,
       inFlightToolName: hasPostHook ? toolName : '',
+      bgInFlight: false,
       lastPreToolAt: now,
       toolOpsCount: ops,
       completedAt: 0,
@@ -2826,6 +2904,7 @@ export function recordTaskProgressOnPostTool({
       steps: updatedSteps,
       inFlightTool: false,
       inFlightToolName: '',
+      bgInFlight: false,
       lastPostToolAt: now,
       editedFilesCount,
       updatedAt: now,
@@ -2996,11 +3075,58 @@ export function finalizeTaskProgressOnStop({
     const termStr = String(terminationReason || '').trim();
     const isErr = Boolean(hasError) || /^ERROR$/i.test(termStr);
     const isCanceled = /^(?:USER_CANCELED|USER_CANCELLED|ABORTED)$/i.test(termStr);
-    const isTerminalHandoff = !isErr && !isCanceled && (
+    const stopTranscript = (!isErr && !isCanceled)
+      ? resolveTranscriptPathForChat(cid, transcriptPath || existing.transcriptPath || '', brainDirs)
+      : '';
+    const stopTurnInfo = stopTranscript ? inspectTranscriptTurnState(stopTranscript, now) : { exists: false };
+    const hasBgRunning = Boolean(!isErr && !isCanceled && stopTurnInfo?.hasRunningBackgroundTask);
+    const isTerminalHandoff = !isErr && !isCanceled && !hasBgRunning && (
       isPendingPlanHandoffActive(existing, now) ||
       /^TERMINAL_STEP_TYPE$/i.test(termStr) ||
       fullyIdle === false
     );
+
+    if (hasBgRunning) {
+      const curStep = clampInt(existing.currentStep || 1, 1, totalSteps, 1);
+      const bgTitle = stopTurnInfo.backgroundTaskLabel || existing.stepTitle || 'Фоновая задача';
+      const bgCount = Array.isArray(stopTurnInfo.runningBackgroundTasks) ? stopTurnInfo.runningBackgroundTasks.length : 1;
+      const baseSteps = Array.isArray(existing.steps) && existing.steps.length > 0
+        ? existing.steps
+        : buildDefaultStepsForGrade(existing.grade || 'M', false);
+      const rawPrevPct = Number(existing.percent || 0) >= 100
+        ? (Number(existing.preStopPercent || 0) || Number(existing.highWaterPercent || 0) || 65)
+        : (Number(existing.percent || 0) || Number(existing.highWaterPercent || 0) || 25);
+      const nextPct = clampInt(rawPrevPct, 15, MAX_RUNNING_PERCENT, 25);
+      chatsMap[cid] = {
+        ...existing,
+        transcriptPath: stopTranscript || transcriptPath || existing.transcriptPath || '',
+        workspaceRoot: sanitizeWorkspaceRoot(cleanWs || existing.workspaceRoot || state.workspaceRoot || ''),
+        status: 'running',
+        currentStep: curStep,
+        totalSteps,
+        percent: nextPct,
+        hasRunningBackgroundTask: true,
+        backgroundTasksCount: bgCount,
+        stepTitle: bgTitle,
+        stageLabel: `Этап ${curStep} из ${totalSteps}`,
+        formattedText: buildFormattedProgressText({
+          status: 'running',
+          currentStep: curStep,
+          totalSteps,
+          stepTitle: bgTitle,
+        }),
+        steps: syncStepsArray(baseSteps, curStep, 'running'),
+        inFlightTool: true,
+        inFlightToolName: 'run_command',
+        bgInFlight: true,
+        lastStopReason: termStr,
+        fullyIdle: false,
+        updatedAt: now,
+      };
+      state.chats = chatsMap;
+      const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, cleanWs);
+      return hydrateStateWithPrimary(state, visible, projName, cleanWs);
+    }
 
     if (isTerminalHandoff) {
       chatsMap[cid] = {
@@ -3064,6 +3190,9 @@ export function finalizeTaskProgressOnStop({
         stepTitle: doneTitle,
       }),
       steps: finalizedSteps,
+      hasRunningBackgroundTask: false,
+      backgroundTasksCount: 0,
+      bgInFlight: false,
       inFlightTool: false,
       inFlightToolName: '',
       lastStopReason: termStr,

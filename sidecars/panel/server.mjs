@@ -13,6 +13,12 @@ import { safeReadJsonSync } from '../../core/safe-json.mjs';
 import { normalizeLang, pickLang } from '../../core/i18n.mjs';
 import { getPricingPhaseStatus } from '../../core/model-profile.mjs';
 import {
+  applyPluginUpdate,
+  checkForPluginUpdate,
+  clearPluginUpdateStatus,
+  getPluginUpdateStatus,
+} from '../../core/plugin-updater.mjs';
+import {
   buildProjectGraphPayload,
   buildFileSymbolGraphPayload,
   parseGitChurnOutput,
@@ -203,7 +209,7 @@ function getPluginVersion() {
     const ver = typeof meta?.version === 'string' ? meta.version.trim() : '';
     if (ver) return ver;
   } catch {}
-  return '3.33.1';
+  return '3.34.0';
 }
 
 function getUiBuildVersion() {
@@ -257,8 +263,31 @@ export async function startSidecarPanel(options = {}) {
     });
   });
 
+  function parseOpenWorkspacesFromRequest(data, req) {
+    const out = [];
+    const seen = new Set();
+    const pushItem = (raw) => {
+      const s = String(raw || '').trim();
+      if (!s || seen.has(s)) return;
+      seen.add(s);
+      out.push(s);
+    };
+    if (Array.isArray(data?.openWorkspaces)) {
+      for (const item of data.openWorkspaces) pushItem(item);
+    } else if (typeof data?.openWorkspaces === 'string' && data.openWorkspaces.trim()) {
+      for (const item of data.openWorkspaces.split('|')) pushItem(item);
+    }
+    const hdr = req?.headers?.['x-open-workspaces'] || req?.headers?.['X-Open-Workspaces'] || '';
+    if (typeof hdr === 'string' && hdr.trim()) {
+      let decoded = hdr;
+      try { decoded = decodeURIComponent(hdr); } catch {}
+      for (const item of decoded.split('|')) pushItem(item);
+    }
+    return out.slice(0, 24);
+  }
+
   let mcpStartupSynced = false;
-  app.api('/api/state', async (data) => {
+  app.api('/api/state', async (data, req) => {
     let state = loadState();
     const panelPluginRoot = join(__dirname, '..', '..');
     if (state.onboardingCompleted === false && state.hardwareProfiled !== true && panelRuntime.hardwareProfilerSync?.ensureHardwareCalibratedOnce) {
@@ -315,9 +344,11 @@ export async function startSidecarPanel(options = {}) {
       fetchSentinelPanelStatus(activeWs, state),
       sec.pitfalls ? safeGetKnowledgeSnapshot(activeWs, state) : Promise.resolve(undefined),
     ]);
+    const openWorkspaces = parseOpenWorkspacesFromRequest(data, req);
     const knownWorkspaces = await collectKnownWorkspacesForPanel({
       activeWs,
       autoWs,
+      openWorkspaces,
       taskProgress: hudPack.progress,
       ramCache,
     });
@@ -360,7 +391,7 @@ export async function startSidecarPanel(options = {}) {
     };
   }, 'GET');
 
-  app.api('/api/telemetry', async (data) => {
+  app.api('/api/telemetry', async (data, req) => {
     const state = loadState();
     const rawReqRoot = typeof data?.rootDir === 'string' ? data.rootDir.trim() : '';
     const isAllScope = data?.workspaceScope === 'all' || rawReqRoot === '__all__';
@@ -382,9 +413,11 @@ export async function startSidecarPanel(options = {}) {
       safeGetWiretapFaults(activeWs, state),
       safeGetQuotaForecast(state),
     ]);
+    const openWorkspaces = parseOpenWorkspacesFromRequest(data, req);
     const knownWorkspaces = await collectKnownWorkspacesForPanel({
       activeWs,
       autoWs,
+      openWorkspaces,
       taskProgress: hudPack.progress,
       ramCache,
     });
@@ -582,9 +615,11 @@ export async function startSidecarPanel(options = {}) {
       fetchSentinelPanelStatus(activeWs, next, { force: hasSentinelPatch }),
       safeGetKnowledgeSnapshot(activeWs, next),
     ]);
+    const openWorkspaces = parseOpenWorkspacesFromRequest(data, req);
     const knownWorkspaces = await collectKnownWorkspacesForPanel({
       activeWs,
       autoWs,
+      openWorkspaces,
       taskProgress: hudPack.progress,
       ramCache,
     });
@@ -1776,10 +1811,12 @@ export async function startSidecarPanel(options = {}) {
       const extraRoots = Array.isArray(data?.extraRoots)
         ? data.extraRoots
         : (typeof data?.extraRoots === 'string' ? data.extraRoots.split('|').filter(Boolean) : []);
+      const openWorkspaces = parseOpenWorkspacesFromRequest(data, req);
       const workspaces = await discoverUserProjectsForGraph({
         activeWs,
         autoWs,
         extraRoots,
+        openWorkspaces,
         taskProgress: hudPack?.progress || null,
         ramCache,
         allowActiveEphemeral: isPinnedReq,
@@ -1799,138 +1836,202 @@ export async function startSidecarPanel(options = {}) {
     }
   }, 'GET');
 
-  app.api('/api/project-graph/pick-folder', async (data, req) => {
-    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
-    try {
-      if (data && Object.prototype.hasOwnProperty.call(data, 'path') && typeof data.path === 'string') {
-        if (!isValidWorkspaceDir(data.path)) {
+  async function openNativeFolderPicker({
+    rawPath = undefined,
+    dryRun = false,
+    initialDir = '',
+    title = '',
+    allowNewFolder = false,
+    allowCreatablePath = false,
+    lang = 'en',
+  } = {}) {
+    if (typeof rawPath === 'string') {
+      const clean = rawPath.trim();
+      if (allowCreatablePath) {
+        if (!clean || clean.length > 512 || /[\r\n\0<>|"?*]/.test(clean.replace(/^[A-Za-z]:/, ''))) {
           return {
             ok: false,
-            error: pickLang(lang, 'Указанная папка не существует или недоступна', 'Specified folder does not exist or is inaccessible'),
+            error: pickLang(lang, 'Указан некорректный путь к папке', 'Specified folder path is invalid'),
           };
         }
-        const abs = resolve(data.path.trim());
-        return {
-          ok: true,
-          cancelled: false,
-          workspaceRoot: abs,
-          projectName: basename(abs) || abs,
-        };
-      }
-
-      if (data?.dryRun === true) {
-        return { ok: true, cancelled: true, dryRun: true, workspaceRoot: '' };
-      }
-
-      const rawInit = typeof data?.initialDir === 'string' ? data.initialDir.trim() : '';
-      const safeInitDir = rawInit && isValidWorkspaceDir(rawInit) ? resolve(rawInit) : '';
-      const pickerTitle = pickLang(lang, 'Выберите папку проекта для карты', 'Select project folder for map');
-      const pickerEnv = {
-        ...process.env,
-        AG_PICKER_INITIAL_DIR: safeInitDir,
-        AG_PICKER_TITLE: pickerTitle,
-      };
-
-      let picked = '';
-      if (process.platform === 'win32') {
-        const psScript = [
-          '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
-          'Add-Type -AssemblyName System.Windows.Forms',
-          '[System.Windows.Forms.Application]::EnableVisualStyles()',
-          '$dlg = New-Object System.Windows.Forms.FolderBrowserDialog',
-          "$dlg.Description = if ($env:AG_PICKER_TITLE) { $env:AG_PICKER_TITLE } else { 'Select project folder' }",
-          '$dlg.ShowNewFolderButton = $false',
-          'if ($env:AG_PICKER_INITIAL_DIR -and (Test-Path -LiteralPath $env:AG_PICKER_INITIAL_DIR -PathType Container)) { $dlg.SelectedPath = $env:AG_PICKER_INITIAL_DIR }',
-          "$owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true; ShowInTaskbar = $false; FormBorderStyle = 'None'; Opacity = 0; Width = 1; Height = 1; StartPosition = 'CenterScreen' }",
-          '$owner.Show()',
-          '$owner.Activate()',
-          '$res = $dlg.ShowDialog($owner)',
-          '$owner.Close()',
-          '$owner.Dispose()',
-          'if ($res -eq [System.Windows.Forms.DialogResult]::OK -and $dlg.SelectedPath) { [Console]::Out.Write($dlg.SelectedPath) }',
-        ].join('; ');
-        const { stdout } = await execFileAsync(
-          'powershell.exe',
-          ['-NoProfile', '-NonInteractive', '-STA', '-Command', psScript],
-          { timeout: 120000, windowsHide: true, env: pickerEnv, maxBuffer: 1024 * 1024 }
-        );
-        picked = String(stdout || '').trim();
-      } else if (process.platform === 'darwin') {
-        const osaScript = [
-          'set initDir to system attribute "AG_PICKER_INITIAL_DIR"',
-          'set dlgTitle to system attribute "AG_PICKER_TITLE"',
-          'if initDir is not "" then',
-          '  POSIX path of (choose folder with prompt dlgTitle default location (POSIX file initDir))',
-          'else',
-          '  POSIX path of (choose folder with prompt dlgTitle)',
-          'end if',
-        ].join('\n');
-        try {
-          const { stdout } = await execFileAsync('osascript', ['-e', osaScript], {
-            timeout: 120000,
-            env: pickerEnv,
-            maxBuffer: 1024 * 1024,
-          });
-          picked = String(stdout || '').trim();
-        } catch (err) {
-          const msg = String(err?.stderr || err?.message || '');
-          if (err?.code === 1 || /user canceled|-128/i.test(msg)) {
-            return { ok: true, cancelled: true, workspaceRoot: '' };
-          }
-          throw err;
-        }
-      } else {
-        const zenityArgs = ['--file-selection', '--directory', `--title=${pickerTitle}`];
-        if (safeInitDir) zenityArgs.push(`--filename=${safeInitDir.replace(/\/+$/, '')}/`);
-        try {
-          const { stdout } = await execFileAsync('zenity', zenityArgs, {
-            timeout: 120000,
-            env: pickerEnv,
-            maxBuffer: 1024 * 1024,
-          });
-          picked = String(stdout || '').trim();
-        } catch (zenErr) {
-          if (zenErr?.code === 1) {
-            return { ok: true, cancelled: true, workspaceRoot: '' };
-          }
-          if (zenErr?.code === 'ENOENT') {
-            const kdArgs = ['--getexistingdirectory', safeInitDir || homedir(), '--title', pickerTitle];
-            try {
-              const { stdout } = await execFileAsync('kdialog', kdArgs, {
-                timeout: 120000,
-                env: pickerEnv,
-                maxBuffer: 1024 * 1024,
-              });
-              picked = String(stdout || '').trim();
-            } catch (kdErr) {
-              if (kdErr?.code === 1) {
-                return { ok: true, cancelled: true, workspaceRoot: '' };
-              }
-              throw kdErr;
-            }
-          } else {
-            throw zenErr;
+        if (process.platform === 'win32') {
+          const drv = /^([A-Za-z]):/.exec(clean);
+          if (drv && !existsSync(`${drv[1]}:\\`)) {
+            return {
+              ok: false,
+              error: pickLang(lang, `Диск ${drv[1]}: не найден`, `Drive ${drv[1]}: not found`),
+            };
           }
         }
-      }
-
-      if (!picked) {
-        return { ok: true, cancelled: true, workspaceRoot: '' };
-      }
-      if (!isValidWorkspaceDir(picked)) {
+      } else if (!isValidWorkspaceDir(clean)) {
         return {
           ok: false,
-          error: pickLang(lang, 'Выбранная папка недоступна', 'Selected folder is inaccessible'),
+          error: pickLang(lang, 'Указанная папка не существует или недоступна', 'Specified folder does not exist or is inaccessible'),
         };
       }
-      const abs = resolve(picked);
+      const abs = resolve(clean);
       return {
         ok: true,
         cancelled: false,
         workspaceRoot: abs,
+        dir: abs,
         projectName: basename(abs) || abs,
       };
+    }
+
+    if (dryRun === true) {
+      return { ok: true, cancelled: true, dryRun: true, workspaceRoot: '', dir: '' };
+    }
+
+    const rawInit = typeof initialDir === 'string' ? initialDir.trim() : '';
+    const safeInitDir = rawInit && isValidWorkspaceDir(rawInit) ? resolve(rawInit) : '';
+    const pickerTitle = title || pickLang(lang, 'Выберите папку', 'Select folder');
+    const pickerEnv = {
+      ...process.env,
+      AG_PICKER_INITIAL_DIR: safeInitDir,
+      AG_PICKER_TITLE: pickerTitle,
+    };
+
+    let picked = '';
+    if (process.platform === 'win32') {
+      const psScript = [
+        '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+        'Add-Type -AssemblyName System.Windows.Forms',
+        '[System.Windows.Forms.Application]::EnableVisualStyles()',
+        '$dlg = New-Object System.Windows.Forms.FolderBrowserDialog',
+        "$dlg.Description = if ($env:AG_PICKER_TITLE) { $env:AG_PICKER_TITLE } else { 'Select folder' }",
+        `$dlg.ShowNewFolderButton = ${allowNewFolder ? '$true' : '$false'}`,
+        'if ($env:AG_PICKER_INITIAL_DIR -and (Test-Path -LiteralPath $env:AG_PICKER_INITIAL_DIR -PathType Container)) { $dlg.SelectedPath = $env:AG_PICKER_INITIAL_DIR }',
+        "$owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true; ShowInTaskbar = $false; FormBorderStyle = 'None'; Opacity = 0; Width = 1; Height = 1; StartPosition = 'CenterScreen' }",
+        '$owner.Show()',
+        '$owner.Activate()',
+        '$res = $dlg.ShowDialog($owner)',
+        '$owner.Close()',
+        '$owner.Dispose()',
+        'if ($res -eq [System.Windows.Forms.DialogResult]::OK -and $dlg.SelectedPath) { [Console]::Out.Write($dlg.SelectedPath) }',
+      ].join('; ');
+      const { stdout } = await execFileAsync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-STA', '-Command', psScript],
+        { timeout: 120000, windowsHide: true, env: pickerEnv, maxBuffer: 1024 * 1024 }
+      );
+      picked = String(stdout || '').trim();
+    } else if (process.platform === 'darwin') {
+      const osaScript = [
+        'set initDir to system attribute "AG_PICKER_INITIAL_DIR"',
+        'set dlgTitle to system attribute "AG_PICKER_TITLE"',
+        'if initDir is not "" then',
+        '  POSIX path of (choose folder with prompt dlgTitle default location (POSIX file initDir))',
+        'else',
+        '  POSIX path of (choose folder with prompt dlgTitle)',
+        'end if',
+      ].join('\n');
+      try {
+        const { stdout } = await execFileAsync('osascript', ['-e', osaScript], {
+          timeout: 120000,
+          env: pickerEnv,
+          maxBuffer: 1024 * 1024,
+        });
+        picked = String(stdout || '').trim();
+      } catch (err) {
+        const msg = String(err?.stderr || err?.message || '');
+        if (err?.code === 1 || /user canceled|-128/i.test(msg)) {
+          return { ok: true, cancelled: true, workspaceRoot: '', dir: '' };
+        }
+        throw err;
+      }
+    } else {
+      const zenityArgs = ['--file-selection', '--directory', `--title=${pickerTitle}`];
+      if (safeInitDir) zenityArgs.push(`--filename=${safeInitDir.replace(/\/+$/, '')}/`);
+      try {
+        const { stdout } = await execFileAsync('zenity', zenityArgs, {
+          timeout: 120000,
+          env: pickerEnv,
+          maxBuffer: 1024 * 1024,
+        });
+        picked = String(stdout || '').trim();
+      } catch (zenErr) {
+        if (zenErr?.code === 1) {
+          return { ok: true, cancelled: true, workspaceRoot: '', dir: '' };
+        }
+        if (zenErr?.code === 'ENOENT') {
+          const kdArgs = ['--getexistingdirectory', safeInitDir || homedir(), '--title', pickerTitle];
+          try {
+            const { stdout } = await execFileAsync('kdialog', kdArgs, {
+              timeout: 120000,
+              env: pickerEnv,
+              maxBuffer: 1024 * 1024,
+            });
+            picked = String(stdout || '').trim();
+          } catch (kdErr) {
+            if (kdErr?.code === 1) {
+              return { ok: true, cancelled: true, workspaceRoot: '', dir: '' };
+            }
+            throw kdErr;
+          }
+        } else {
+          throw zenErr;
+        }
+      }
+    }
+
+    if (!picked) {
+      return { ok: true, cancelled: true, workspaceRoot: '', dir: '' };
+    }
+    if (!isValidWorkspaceDir(picked)) {
+      return {
+        ok: false,
+        error: pickLang(lang, 'Выбранная папка недоступна', 'Selected folder is inaccessible'),
+      };
+    }
+    const abs = resolve(picked);
+    return {
+      ok: true,
+      cancelled: false,
+      workspaceRoot: abs,
+      dir: abs,
+      projectName: basename(abs) || abs,
+    };
+  }
+
+  app.api('/api/project-graph/pick-folder', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      return await openNativeFolderPicker({
+        rawPath: data && Object.prototype.hasOwnProperty.call(data, 'path') ? data.path : undefined,
+        dryRun: data?.dryRun === true,
+        initialDir: data?.initialDir,
+        title: pickLang(lang, 'Выберите папку проекта для карты', 'Select project folder for map'),
+        allowNewFolder: false,
+        allowCreatablePath: false,
+        lang,
+      });
+    } catch (err) {
+      return {
+        ok: false,
+        error: err?.message || pickLang(lang, 'Не удалось открыть диалог выбора папки', 'Failed to open folder picker'),
+      };
+    }
+  }, 'POST');
+
+  app.api('/api/gpu/pick-folder', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    const mode = data?.mode === 'models' ? 'models' : 'ollama';
+    try {
+      const title = mode === 'models'
+        ? pickLang(lang, 'Выберите папку для хранения моделей Ollama (OLLAMA_MODELS)', 'Select folder for Ollama models (OLLAMA_MODELS)')
+        : pickLang(lang, 'Выберите папку для установки Ollama и локальных моделей', 'Select folder for Ollama installation and local models');
+      return await openNativeFolderPicker({
+        rawPath: data && Object.prototype.hasOwnProperty.call(data, 'path') ? data.path : undefined,
+        dryRun: data?.dryRun === true,
+        initialDir: data?.initialDir,
+        title,
+        allowNewFolder: true,
+        allowCreatablePath: true,
+        lang,
+      });
     } catch (err) {
       return {
         ok: false,
@@ -2033,9 +2134,78 @@ export async function startSidecarPanel(options = {}) {
         gpuStatusPanelCache.ts = 0;
         return { ok: true, pullStatus };
       }
+      if (action === 'pull_dismiss_error') {
+        const pullStatus = typeof mod.clearGpuPullErrorStatus === 'function' ? mod.clearGpuPullErrorStatus() : null;
+        gpuStatusPanelCache.ts = 0;
+        return { ok: true, pullStatus };
+      }
+      if (action === 'install_status') {
+        const installStatus = typeof mod.getOllamaInstallJobStatus === 'function' ? mod.getOllamaInstallJobStatus() : null;
+        return { ok: true, installStatus };
+      }
+      if (action === 'install_dismiss') {
+        const installStatus = typeof mod.clearOllamaInstallJobStatus === 'function' ? mod.clearOllamaInstallJobStatus() : null;
+        gpuStatusPanelCache.ts = 0;
+        return { ok: true, installStatus };
+      }
+      if (action === 'install_ollama') {
+        const curState = loadState();
+        const reqInstallDir = typeof data?.installDir === 'string'
+          ? data.installDir.trim()
+          : String(curState.gpuOllamaDir || '').trim();
+        const reqModelsDir = typeof data?.modelsDir === 'string' && data.modelsDir.trim()
+          ? data.modelsDir.trim()
+          : (reqInstallDir ? join(reqInstallDir, 'models') : String(curState.gpuModelsDir || '').trim());
+        const mirrorMode = data?.mirrorMode === 'huggingface'
+          ? 'huggingface'
+          : (curState.gpuPreferHfMirror ? 'huggingface' : 'auto');
+        const nextPatch = {
+          gpuEnabled: true,
+          gpuOllamaDir: reqInstallDir,
+          gpuModelsDir: reqModelsDir,
+        };
+        if (typeof data?.preferHfMirror === 'boolean') {
+          nextPatch.gpuPreferHfMirror = data.preferHfMirror;
+        }
+        const saved = saveState(nextPatch);
+        const pullModeAfter = data?.pullModeAfter === 'cascade' || data?.pullModeAfter === 'active_only'
+          ? data.pullModeAfter
+          : '';
+        const selectedCapMb = Number(data?.selectedCapMb) || Number(saved?.gpuMaxVramMb) || 4096;
+        const installStatus = typeof mod.startOllamaInstallJob === 'function'
+          ? await mod.startOllamaInstallJob({
+              installDir: reqInstallDir,
+              modelsDir: reqModelsDir,
+              pullModeAfter,
+              selectedCapMb,
+              mirrorMode,
+              lang: normalizeLang(saved?.uiLanguage, lang),
+            })
+          : { ok: false, phase: 'error', error: pickLang(lang, 'Установщик Ollama недоступен', 'Ollama installer unavailable') };
+        gpuStatusPanelCache.ts = 0;
+        const snap = await fetchFreshGpuSnap();
+        return {
+          ok: installStatus?.ok !== false && installStatus?.phase !== 'error',
+          installStatus,
+          state: saved,
+          gpu: snap,
+          error: installStatus?.error || '',
+        };
+      }
       if (action === 'pull_cascade') {
         const snap = await fetchFreshGpuSnap();
         const curState = loadState();
+        const safeModelsOverride = Array.isArray(data?.models)
+          ? data.models.map((m) => String(m || '').trim()).filter((m) => /^[a-z0-9._:/-]{2,128}$/i.test(m)).slice(0, 8)
+          : [];
+        if (!snap?.ollama?.installed && !snap?.ollama?.running && safeModelsOverride.length === 0) {
+          return {
+            ok: false,
+            code: 'OLLAMA_NOT_INSTALLED',
+            error: pickLang(lang, 'Ollama не установлена — сначала установите Ollama', 'Ollama is not installed — install Ollama first'),
+            gpu: snap,
+          };
+        }
         const hwMod = await getHardwareProfilerMod();
         const hwProfile = hwMod?.getHardwareProfile
           ? await hwMod.getHardwareProfile({ pluginRoot: join(__dirname, '..', '..'), force: false, subscriptionTier: curState.subscriptionTier === 'ultra' ? 'ultra' : 'pro' }).catch(() => null)
@@ -2043,18 +2213,19 @@ export async function startSidecarPanel(options = {}) {
         const totalVramMb = Number(data?.totalVramMb) || Number(snap?.hardware?.totalMb) || Number(hwProfile?.gpu?.totalMb) || 0;
         const selectedCapMb = Number(data?.selectedCapMb) || Number(curState.gpuMaxVramMb) || 4096;
         const pullMode = data?.mode === 'active_only' ? 'active_only' : 'cascade';
+        const mirrorMode = data?.mirrorMode === 'huggingface'
+          ? 'huggingface'
+          : (data?.mirrorMode === 'auto' ? 'auto' : (curState.gpuPreferHfMirror ? 'huggingface' : 'auto'));
         const downloadedModels = snap?.ollama?.downloadedModels || [];
         const bundle = hwMod?.buildGpuCascadeBundleForHardware
           ? hwMod.buildGpuCascadeBundleForHardware(totalVramMb, { mode: pullMode, selectedCapMb, downloadedModels })
           : { mode: pullMode, models: [], missingModels: [] };
-        const safeModelsOverride = Array.isArray(data?.models)
-          ? data.models.map((m) => String(m || '').trim()).filter((m) => /^[a-z0-9._:/-]{2,128}$/i.test(m)).slice(0, 8)
-          : [];
         const targetModels = safeModelsOverride.length > 0 ? safeModelsOverride : bundle.models.map((m) => m.name);
         const pullStatus = typeof mod.startGpuCascadePull === 'function'
           ? await mod.startGpuCascadePull({
               models: targetModels,
               mode: pullMode,
+              mirrorMode,
               totalVramMb,
               selectedCapMb,
               installedTags: downloadedModels.map((m) => m.name),
@@ -2256,11 +2427,21 @@ export async function startSidecarPanel(options = {}) {
         };
       }
 
-      const draft = String(data?.draft || '').slice(0, 600);
+      const draft = String(data?.draft || '').slice(0, 1200);
       const scopedCtx = prioritizeContextForDraft(draft, ctx);
       const stage = data?.stage === 'fast' ? 'fast' : 'gpu';
       const curState = loadState();
       const autocompleteLang = normalizeLang(curState?.uiLanguage, 'en');
+      const allowFollowUp = data?.allowFollowUp !== false;
+      const recentMessages = Array.isArray(data?.recentMessages)
+        ? data.recentMessages
+            .slice(-4)
+            .map((m) => ({
+              role: m?.role === 'assistant' ? 'assistant' : 'user',
+              content: String(m?.content || '').trim().slice(0, 220),
+            }))
+            .filter((m) => m.content.length > 0)
+        : [];
       const fastRes = computeFastRamAutocomplete(draft, { ...scopedCtx, lang: autocompleteLang });
 
       const verifyFastCandidate = async (candidateText) => {
@@ -2320,7 +2501,7 @@ export async function startSidecarPanel(options = {}) {
             if (draft.trim().length >= 5) {
               ragRes = await postRamDaemonJson(
                 '/ram/composer-rag',
-                { wsPath: ctx.wsRoot || '', query: draft },
+                { wsPath: ctx.wsRoot || '', query: draft.slice(-600) },
                 800
               ).catch(() => null);
               if (ac.signal.aborted) {
@@ -2382,6 +2563,7 @@ export async function startSidecarPanel(options = {}) {
               return await mod.generatePromptContinuation({
                 draft,
                 recentGoals: scopedCtx.recentGoals,
+                recentMessages,
                 touchedFiles: mergedFiles,
                 symbolHints,
                 ragSnippets,
@@ -2390,6 +2572,8 @@ export async function startSidecarPanel(options = {}) {
                 symbolsByFile: groundingSymbolsByFile,
                 repoTechTerms: groundingRepoTechTerms,
                 allowedSlashCommands: ALLOWED_SLASH_COMMANDS,
+                allowFollowUpSentence: allowFollowUp,
+                maxOutputTokens: 56,
                 lang: autocompleteLang,
                 signal: ac.signal,
               });
@@ -2498,11 +2682,64 @@ export async function startSidecarPanel(options = {}) {
     }
   }, 'POST');
 
+  const activeLocalChatControllers = new Map();
+
+  app.api('/api/local-chat/abort', async (data, req) => {
+    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const reqId = typeof data?.requestId === 'string' ? data.requestId.trim().slice(0, 128) : '';
+    if (reqId) {
+      const ac = activeLocalChatControllers.get(reqId);
+      if (ac) {
+        try { ac.abort('client_requested_abort'); } catch {}
+        activeLocalChatControllers.delete(reqId);
+        return { ok: true, abortedCount: 1, requestId: reqId };
+      }
+      return { ok: true, abortedCount: 0, requestId: reqId };
+    }
+    let abortedCount = 0;
+    for (const [id, ac] of activeLocalChatControllers.entries()) {
+      try { ac.abort('client_requested_abort'); } catch {}
+      activeLocalChatControllers.delete(id);
+      abortedCount += 1;
+    }
+    return { ok: true, abortedCount };
+  }, 'POST');
+
   app.api('/api/local-chat', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const curLocalState = loadState();
     const lang = normalizeLang(curLocalState?.uiLanguage, 'en');
+    const reqAbort = new AbortController();
+    const requestId = (typeof data?.requestId === 'string' && data.requestId.trim())
+      ? data.requestId.trim().slice(0, 128)
+      : ('lc-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
+    const prevCtrl = activeLocalChatControllers.get(requestId);
+    if (prevCtrl) {
+      try { prevCtrl.abort('superseded_request_id'); } catch {}
+    }
+    activeLocalChatControllers.set(requestId, reqAbort);
+
+    const triggerClientAbort = () => {
+      if (!reqAbort.signal.aborted) reqAbort.abort('client_disconnected');
+    };
+    if (req?.aborted || req?.destroyed || req?.socket?.destroyed) {
+      triggerClientAbort();
+    }
+    const onReqAborted = () => triggerClientAbort();
+    const onSocketClose = () => triggerClientAbort();
+    if (req && typeof req.on === 'function') req.on('aborted', onReqAborted);
+    if (req?.socket && typeof req.socket.on === 'function') req.socket.on('close', onSocketClose);
+
+    const abortedResponse = (viaDaemon) => ({
+      ok: false,
+      aborted: true,
+      answer: '',
+      error: pickLang(lang, 'Запрос отменён', 'Request aborted'),
+      ...(viaDaemon !== undefined ? { viaDaemon } : {}),
+    });
+
     try {
+      if (reqAbort.signal.aborted) return abortedResponse();
       const rawMessage = typeof data?.message === 'string' ? data.message.trim() : '';
       if (!rawMessage) {
         return { ok: false, code: 'EMPTY_MESSAGE', answer: '', error: pickLang(lang, 'Пустой текст запроса', 'Prompt message is empty') };
@@ -2522,6 +2759,8 @@ export async function startSidecarPanel(options = {}) {
         : [];
 
       const wsRoot = await resolveActiveWorkspaceForPanel(typeof data?.rootDir === 'string' ? data.rootDir : '');
+      if (reqAbort.signal.aborted) return abortedResponse();
+      const focusFile = typeof data?.focusFile === 'string' ? data.focusFile.trim().slice(0, 512) : '';
       const daemonRes = (process.env.TUNNEL_TEST_ISOLATE_INSTALLED === '1' || curLocalState.gpuEnabled === false)
         ? null
         : await postRamDaemonJson(
@@ -2529,12 +2768,26 @@ export async function startSidecarPanel(options = {}) {
             {
               wsPath: wsRoot,
               query: rawMessage,
+              focusFile,
               messages: cleanMessages,
               maxOutputTokens: data?.maxOutputTokens,
               lang,
             },
-            60000
+            60000,
+            { signal: reqAbort.signal, stopOnResponse: true }
           );
+      if (reqAbort.signal.aborted || daemonRes?.aborted) {
+        return abortedResponse(true);
+      }
+      if (daemonRes?.timedOut) {
+        return {
+          ok: false,
+          timedOut: true,
+          answer: '',
+          error: pickLang(lang, 'Превышено время ожидания локального GPU', 'Local GPU request timed out'),
+          viaDaemon: true,
+        };
+      }
       if (daemonRes && typeof daemonRes.ok === 'boolean') {
         return { ...daemonRes, viaDaemon: true };
       }
@@ -2553,20 +2806,25 @@ export async function startSidecarPanel(options = {}) {
           viaDaemon: false,
         };
       }
+      if (reqAbort.signal.aborted) return abortedResponse(false);
 
       const { RamMemoryEngine } = await import('../../core/ram-memory-engine.mjs');
       const ram = new RamMemoryEngine();
       try {
         const warmRes = await ram.warmWorkspaceAsync(wsRoot, { startWatcher: false });
+        if (reqAbort.signal.aborted) return abortedResponse(false);
         const ws = warmRes?.ok ? ram.ensureWarm(wsRoot) : null;
         if (!ws || !ws.files) {
           return { ok: false, answer: '', error: pickLang(lang, 'Рабочая папка проекта не найдена', 'Project workspace folder not found'), viaDaemon: false };
         }
-        let effectiveQuery = rawMessage;
+        const queryWithFocus = focusFile && !rawMessage.toLowerCase().includes(focusFile.toLowerCase())
+          ? `${rawMessage} ${focusFile}`
+          : rawMessage;
+        let effectiveQuery = queryWithFocus;
         if (cleanMessages.length > 0) {
           const carryTerms = [];
           const seenTerms = new Set();
-          const lowerRaw = rawMessage.toLowerCase();
+          const lowerRaw = queryWithFocus.toLowerCase();
           for (const turn of cleanMessages.slice(-4)) {
             const text = String(turn?.content || '');
             const fileHits = text.match(/[A-Za-z0-9_./-]+\.(?:mjs|cjs|js|ts|tsx|jsx|json|md|html|css|py|go|rs)\b/g) || [];
@@ -2583,27 +2841,33 @@ export async function startSidecarPanel(options = {}) {
             if (carryTerms.length >= 6) break;
           }
           if (carryTerms.length > 0) {
-            effectiveQuery = `${rawMessage} ${carryTerms.join(' ')}`;
+            effectiveQuery = `${queryWithFocus} ${carryTerms.join(' ')}`;
           }
         }
 
         const hasBoundedIndexer = typeof gpuMod.indexWorkspaceVectors === 'function';
-        if (gpuCfg?.gpuSemanticSearch !== false && hasBoundedIndexer) {
+        const chatActive = typeof gpuMod.isLocalChatActive === 'function' && gpuMod.isLocalChatActive();
+        if (!reqAbort.signal.aborted && !chatActive && gpuCfg?.gpuSemanticSearch !== false && hasBoundedIndexer) {
           await gpuMod.indexWorkspaceVectors(ws.absRoot, ws.files, { maxNewFiles: 20 }).catch(() => null);
         }
+        if (reqAbort.signal.aborted) return abortedResponse(false);
+
         const semRes = await ram.searchSemantic(ws.absRoot, effectiveQuery, {
           maxResults: 6,
           contextLines: 3,
           reindexMissing: !hasBoundedIndexer,
         });
+        if (reqAbort.signal.aborted) return abortedResponse(false);
+
         const hits = Array.isArray(semRes?.results) ? semRes.results : [];
         const packRes = typeof ram.buildGroundedChatPack === 'function'
-          ? ram.buildGroundedChatPack(ws.absRoot, rawMessage, {
+          ? ram.buildGroundedChatPack(ws.absRoot, queryWithFocus, {
               messages: cleanMessages,
               maxChars: 8400,
               warmSemanticHits: hits,
+              focusFile,
             })
-          : ram.getContextPack(ws.absRoot, rawMessage, {
+          : ram.getContextPack(ws.absRoot, queryWithFocus, {
               maxChars: 6800,
               warmSemanticHits: hits,
               toon: true,
@@ -2648,6 +2912,7 @@ export async function startSidecarPanel(options = {}) {
           }
           repoSymbols = Array.from(symSet).slice(0, 2500);
         }
+        if (reqAbort.signal.aborted) return abortedResponse(false);
         const chatRes = await gpuMod.runLocalProjectChat({
           query: rawMessage,
           messages: cleanMessages,
@@ -2662,6 +2927,7 @@ export async function startSidecarPanel(options = {}) {
             : null,
           workspaceName: basename(ws.absRoot),
           maxOutputTokens: data?.maxOutputTokens,
+          signal: reqAbort.signal,
           lang,
         });
         return { ...chatRes, viaDaemon: false };
@@ -2669,13 +2935,27 @@ export async function startSidecarPanel(options = {}) {
         ram.evict('all');
       }
     } catch (err) {
-      const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+      if (reqAbort.signal.aborted) return abortedResponse();
       return {
         ok: false,
         code: err?.code || 'LOCAL_CHAT_ERROR',
         answer: '',
         error: err?.message || pickLang(lang, 'Ошибка локального RAG-чата', 'Local RAG chat failed'),
       };
+    } finally {
+      if (activeLocalChatControllers.get(requestId) === reqAbort) {
+        activeLocalChatControllers.delete(requestId);
+      }
+      if (req && typeof req.off === 'function') {
+        req.off('aborted', onReqAborted);
+      } else if (req && typeof req.removeListener === 'function') {
+        req.removeListener('aborted', onReqAborted);
+      }
+      if (req?.socket && typeof req.socket.off === 'function') {
+        req.socket.off('close', onSocketClose);
+      } else if (req?.socket && typeof req.socket.removeListener === 'function') {
+        req.socket.removeListener('close', onSocketClose);
+      }
     }
   }, 'POST');
 
@@ -2797,6 +3077,93 @@ export async function startSidecarPanel(options = {}) {
       autocompleteQueue: autocompleteGpuQueue.getStats(),
     };
   }, 'GET');
+
+  const updateHandlers = options?.updateHandlers && typeof options.updateHandlers === 'object'
+    ? options.updateHandlers
+    : null;
+  const resolveUpdaterRoot = () => (
+    typeof options?.pluginRoot === 'string' && options.pluginRoot.trim()
+      ? resolve(options.pluginRoot.trim())
+      : join(__dirname, '..', '..')
+  );
+
+  app.api('/api/plugin/update-check', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const pluginRoot = resolveUpdaterRoot();
+    const force = data?.force === true || data?.force === '1' || data?.force === 'true';
+    try {
+      const checkFn = typeof updateHandlers?.checkForPluginUpdate === 'function'
+        ? updateHandlers.checkForPluginUpdate
+        : checkForPluginUpdate;
+      const statusFn = typeof updateHandlers?.getPluginUpdateStatus === 'function'
+        ? updateHandlers.getPluginUpdateStatus
+        : getPluginUpdateStatus;
+      const checkRes = await checkFn({ pluginRoot, force });
+      const status = statusFn(pluginRoot);
+      return { ...checkRes, status };
+    } catch (err) {
+      return {
+        ok: false,
+        updateAvailable: false,
+        error: err?.message || 'Update check failed',
+        status: getPluginUpdateStatus(pluginRoot),
+      };
+    }
+  }, 'GET');
+
+  app.api('/api/plugin/update-status', async (_data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const pluginRoot = resolveUpdaterRoot();
+    const statusFn = typeof updateHandlers?.getPluginUpdateStatus === 'function'
+      ? updateHandlers.getPluginUpdateStatus
+      : getPluginUpdateStatus;
+    return { ok: true, status: statusFn(pluginRoot) };
+  }, 'GET');
+
+  app.api('/api/plugin/update-apply', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const curState = loadState();
+    const lang = normalizeLang(curState?.uiLanguage, 'en');
+    const pluginRoot = resolveUpdaterRoot();
+    const downloadUrl = typeof data?.downloadUrl === 'string' ? data.downloadUrl.trim() : '';
+    const targetVersion = typeof data?.targetVersion === 'string' ? data.targetVersion.trim() : '';
+    const forceApply = data?.forceApply === true || data?.force === true;
+    try {
+      const applyFn = typeof updateHandlers?.applyPluginUpdate === 'function'
+        ? updateHandlers.applyPluginUpdate
+        : applyPluginUpdate;
+      const status = await applyFn({
+        pluginRoot,
+        downloadUrl,
+        targetVersion,
+        forceApply,
+        lang,
+        awaitCompletion: false,
+      });
+      return {
+        ok: status?.ok !== false && status?.phase !== 'error',
+        started: Boolean(status?.active),
+        status,
+        error: status?.error || '',
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        started: false,
+        error: err?.message || pickLang(lang, 'Ошибка запуска обновления', 'Failed to start plugin update'),
+        status: getPluginUpdateStatus(pluginRoot),
+      };
+    }
+  }, 'POST');
+
+  app.api('/api/plugin/update-dismiss', async (_data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const pluginRoot = resolveUpdaterRoot();
+    const dismissFn = typeof updateHandlers?.clearPluginUpdateStatus === 'function'
+      ? updateHandlers.clearPluginUpdateStatus
+      : clearPluginUpdateStatus;
+    return { ok: true, status: dismissFn(pluginRoot) };
+  }, 'POST');
 
   const server = await app.run();
   if (server) {

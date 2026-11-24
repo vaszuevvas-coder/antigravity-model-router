@@ -475,13 +475,19 @@ test('11. UI & Server v3.21.0 sync: footer version, 32GB/64-thread controls, Swa
   assert.ok(uiHtml.includes(`id="footerPluginVersion">The Tunnel v${ver}</div>`), 'ui.html footer must match package.json version');
   assert.ok(serverSrc.includes('pluginVersion: getPluginVersion()'), 'server.mjs must expose pluginVersion to panel API');
 
+  assert.ok(uiHtml.includes('data-change-action="setGpuVramCap"'), 'VRAM control select must bind setGpuVramCap');
+  assert.ok(uiHtml.includes('data-change-action="setRamBudget"'), 'RAM control select must bind setRamBudget');
+  assert.ok(uiHtml.includes('data-change-action="setCpuMaxThreads"'), 'CPU threads select must bind setCpuMaxThreads');
+  const vramPresets = uiHtml.match(/const VRAM_LIMIT_PRESETS\s*=\s*\[([^\]]+)\]/)?.[1] || '';
+  const ramPresets = uiHtml.match(/const RAM_LIMIT_PRESETS\s*=\s*\[([^\]]+)\]/)?.[1] || '';
+  const cpuPresets = uiHtml.match(/const CPU_THREAD_PRESETS\s*=\s*\[([^\]]+)\]/)?.[1] || '';
   for (const capVal of ['16384', '24576', '32768']) {
-    assert.ok(uiHtml.includes(`data-action="setGpuVramCap" data-arg="${capVal}"`), `VRAM controls must include ${capVal}`);
-    assert.ok(uiHtml.includes(`data-action="setRamBudget" data-arg="${capVal}"`), `RAM controls must include ${capVal}`);
+    assert.ok(vramPresets.includes(capVal), `VRAM_LIMIT_PRESETS must include ${capVal}`);
+    assert.ok(ramPresets.includes(capVal), `RAM_LIMIT_PRESETS must include ${capVal}`);
   }
-  assert.ok(uiHtml.includes('data-action="setRamBudget" data-arg="6144"'), 'RAM controls must include 6 GB step');
+  assert.ok(ramPresets.includes('6144'), 'RAM_LIMIT_PRESETS must include 6 GB step');
   for (const thVal of ['32', '48', '64']) {
-    assert.ok(uiHtml.includes(`data-action="setCpuMaxThreads" data-arg="${thVal}"`), `CPU threads must include ${thVal}`);
+    assert.ok(cpuPresets.includes(thVal), `CPU_THREAD_PRESETS must include ${thVal}`);
   }
   for (const swMode of ['auto_all', 'always_ask']) {
     assert.ok(uiHtml.includes(`data-action="setSwarmMode" data-arg="${swMode}"`), `Swarm modes must include ${swMode}`);

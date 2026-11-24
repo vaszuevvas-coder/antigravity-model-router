@@ -150,10 +150,13 @@ export function createSanitizedDefaultState(rawState = {}) {
   return {
     ...base,
     uiLanguage: 'en',
+    panelUiScale: 'auto',
     hardwareProfiled: false,
     onboardingCompleted: false,
     gpuEnabled: false,
     gpuModelsDir: '',
+    gpuOllamaDir: '',
+    gpuPreferHfMirror: false,
     ramMaxBudgetMb: 4096,
     gpuMaxVramMb: 4096,
     gpuContextTokens: 4096,
@@ -564,7 +567,7 @@ function findCscCompiler() {
 }
 
 function buildInstallerCSharpSource(version) {
-  const safeVersion = String(version || '3.33.1').replace(/[^0-9A-Za-z._-]/g, '');
+  const safeVersion = String(version || '3.34.0').replace(/[^0-9A-Za-z._-]/g, '');
   // Строго C# 5.0 (без $"" интерполяции, ?., ??=, nameof, auto-property initializers)
   return `using System;
 using System.Collections.Generic;
@@ -1383,7 +1386,7 @@ export function buildReleasePackages(options = {}) {
   }
   const pluginJson = JSON.parse(fs.readFileSync(pluginJsonPath, 'utf8'));
   const pkgJson = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
-  const version = String(pluginJson.version || pkgJson.version || '3.33.1');
+  const version = String(pluginJson.version || pkgJson.version || '3.34.0');
   if (pluginJson.version && pkgJson.version && pluginJson.version !== pkgJson.version) {
     throw new Error(isRuPack ? `Несовпадение версий: plugin.json=${pluginJson.version}, package.json=${pkgJson.version}` : `Version mismatch: plugin.json=${pluginJson.version}, package.json=${pkgJson.version}`);
   }

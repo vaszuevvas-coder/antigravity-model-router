@@ -10,6 +10,32 @@
     let _knownWorkspacesList = [];
     let _activeWorkspaceResolved = '';
     let _autoWorkspaceResolved = '';
+    let _cachedSidecarOpenWorkspaces = [];
+    let _lastOpenWorkspacesPollAt = 0;
+
+    async function refreshSidecarOpenWorkspacesFast(force) {
+      const now = Date.now();
+      if (!force && _lastOpenWorkspacesPollAt > 0 && now - _lastOpenWorkspacesPollAt < 4000) {
+        return _cachedSidecarOpenWorkspaces;
+      }
+      _lastOpenWorkspacesPollAt = now;
+      try {
+        if (window.sidecar && typeof window.sidecar.getWorkspaceUris === 'function') {
+          const res = await Promise.race([
+            window.sidecar.getWorkspaceUris(),
+            new Promise(function (resolve) { setTimeout(function () { resolve([]); }, 350); })
+          ]);
+          if (Array.isArray(res)) {
+            _cachedSidecarOpenWorkspaces = res
+              .map(function (u) { return String(u || '').trim(); })
+              .filter(Boolean)
+              .slice(0, 24);
+          }
+        }
+      } catch {}
+      return _cachedSidecarOpenWorkspaces;
+    }
+    void refreshSidecarOpenWorkspacesFast(true);
 
     function getEffectivePanelRootParam() {
       return _selectedWorkspaceMode === '__auto__' ? '' : _selectedWorkspaceMode;
@@ -150,6 +176,8 @@
             }
             if (w.status === 'running' || w.status === 'waiting_user') {
               opt.dataset.vram = L('● В работе', '● Active');
+            } else if (w.isOpenInIde) {
+              opt.dataset.vram = L('● Открыт', '● Open');
             }
             sel.appendChild(opt);
           }
@@ -253,9 +281,19 @@
       if (opts.body && !hdrs['Content-Type'] && !hdrs['content-type']) {
         hdrs['Content-Type'] = 'application/json';
       }
+      let targetUrl = String(url || '');
+      if (
+        _cachedSidecarOpenWorkspaces.length > 0 &&
+        !hdrs['X-Open-Workspaces'] &&
+        !hdrs['x-open-workspaces'] &&
+        (targetUrl.indexOf('/api/state') === 0 ||
+          targetUrl.indexOf('/api/telemetry') === 0 ||
+          targetUrl.indexOf('/api/project-graph/workspaces') === 0)
+      ) {
+        hdrs['X-Open-Workspaces'] = encodeURIComponent(_cachedSidecarOpenWorkspaces.join('|'));
+      }
       opts.headers = hdrs;
 
-      let targetUrl = String(url || '');
       if (targetUrl.indexOf('/api/') === 0) {
         const wsParam = getEffectivePanelRootParam();
         if (wsParam === '__all__') {
@@ -317,9 +355,11 @@
     let wizThemePreviewDirty = false;
     let wizSubTierPreviewDirty = false;
     let wizLangPreviewDirty = false;
+    let wizViewModePreviewDirty = false;
     let wizStep = 1;
     let wizDraft = {
       uiLanguage: 'en',
+      panelViewMode: 'full',
       subscriptionTier: 'pro',
       useRam: true,
       ramMaxBudgetMb: 4096,
@@ -330,6 +370,10 @@
       gpuChatModel: 'qwen3:4b',
       gpuEmbedModel: 'qwen3-embedding:0.6b',
       gpuContextTokens: 8192,
+      gpuOllamaDir: '',
+      gpuModelsDir: '',
+      gpuPreferHfMirror: false,
+      autoInstallOllama: true,
       gpuAutoDistillLogs: false,
       gpuSemanticSearch: false,
       gpuPullMode: 'cascade',
@@ -396,6 +440,7 @@
       const isFresh = currentState.onboardingCompleted === false;
 
       wizDraft.uiLanguage = normalizeUiLanguage(currentState.uiLanguage || 'en');
+      wizDraft.panelViewMode = normalizePanelViewMode(currentState.panelViewMode || 'full');
       wizDraft.subscriptionTier = currentState.subscriptionTier === 'ultra' ? 'ultra' : 'pro';
       wizDraft.useRam = isFresh && rec.ramCacheEnabled !== undefined
         ? !!rec.ramCacheEnabled
@@ -424,6 +469,12 @@
       wizDraft.gpuContextTokens = Number(
         (isFresh && rec.gpuContextTokens) ? rec.gpuContextTokens : (currentState.gpuContextTokens || gpuPre.gpuContextTokens || 4096)
       );
+      wizDraft.gpuOllamaDir = String(currentState.gpuOllamaDir || '').trim();
+      wizDraft.gpuModelsDir = String(
+        currentState.gpuModelsDir || (wizDraft.gpuOllamaDir ? (wizDraft.gpuOllamaDir.replace(/[\\/]+$/, '') + '\\models') : '')
+      ).trim();
+      wizDraft.gpuPreferHfMirror = Boolean(currentState.gpuPreferHfMirror);
+      wizDraft.autoInstallOllama = true;
       wizDraft.gpuAutoDistillLogs = Boolean(
         gpuPre.gpuAutoDistillLogs !== undefined ? gpuPre.gpuAutoDistillLogs : (currentState.gpuAutoDistillLogs !== false)
       );
@@ -436,6 +487,23 @@
         ? currentState.uiInspirationMode
         : 'ask';
       wizDraft.sentinelBundle = currentState.sentinelEnabled !== false && currentState.shadowWorktreeEnabled !== false;
+    }
+
+    function normalizePanelViewMode(rawMode) {
+      return String(rawMode || '').trim().toLowerCase() === 'lite' ? 'lite' : 'full';
+    }
+
+    function applyPanelViewModeDomPreviewOnly(mode) {
+      const valid = normalizePanelViewMode(mode);
+      if (document.body) {
+        document.body.setAttribute('data-panel-view', valid);
+      }
+      document.querySelectorAll('#panelViewModeGroup button').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.view === valid);
+      });
+      if (typeof syncSmartComposerSizeAndScroll === 'function') {
+        syncSmartComposerSizeAndScroll();
+      }
     }
 
     function applyThemeDomPreviewOnly(themeId) {
@@ -473,6 +541,7 @@
       wizThemePreviewDirty = false;
       wizSubTierPreviewDirty = false;
       wizLangPreviewDirty = false;
+      wizViewModePreviewDirty = false;
       wizHwLoading = !currentHardwareProfile;
       renderWizardStep();
 
@@ -512,7 +581,9 @@
       wizThemePreviewDirty = false;
       wizSubTierPreviewDirty = false;
       wizLangPreviewDirty = false;
+      wizViewModePreviewDirty = false;
       applyThemeDomPreviewOnly(currentState.panelTheme);
+      applyPanelViewModeDomPreviewOnly(currentState.panelViewMode);
       if (typeof applyUiLanguageDom === 'function') {
         applyUiLanguageDom(currentState.uiLanguage);
       }
@@ -602,6 +673,14 @@
         const isFresh = currentState.onboardingCompleted === false;
         launchBadge.textContent = isFresh ? L('Первый запуск', 'First Run') : L('Быстрая настройка', 'Quick Setup');
       }
+      renderWizardStep();
+    }
+
+    function wizSetViewMode(mode) {
+      const valid = normalizePanelViewMode(mode);
+      wizDraft.panelViewMode = valid;
+      wizViewModePreviewDirty = true;
+      applyPanelViewModeDomPreviewOnly(valid);
       renderWizardStep();
     }
 
@@ -696,6 +775,7 @@
           : (oll.running ? L('🟢 Запущена', '🟢 Running') : (oll.installed ? L('🟡 Установлена', '🟡 Installed') : L('⚪ Не найдена', '⚪ Not found')));
         const sub = wizDraft.subscriptionTier;
         const lang = normalizeUiLanguage(wizDraft.uiLanguage || getUiLanguage());
+        const viewMode = normalizePanelViewMode(wizDraft.panelViewMode || currentState.panelViewMode);
 
         bodyEl.innerHTML =
           '<div class="wiz-section-label" style="margin-top:0;">🌐 Language / Язык интерфейса и ответов ИИ</div>' +
@@ -707,6 +787,17 @@
             '<div class="wiz-choice-card' + (lang === 'ru' ? ' selected' : '') + '" style="margin-bottom:0;" data-action="wizSetLanguage" data-arg="ru">' +
               '<div class="wiz-choice-head"><span>🇷🇺 Русский</span><span style="font-size:10px;color:var(--status-ok);">RU</span></div>' +
               '<div class="wiz-choice-desc">Русский интерфейс пульта, мастера, хуков и ответов ИИ.</div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="wiz-section-label">' + L('🎛️ Режим интерфейса панели', '🎛️ Panel Interface Mode') + '</div>' +
+          '<div class="wiz-two-col" style="margin-bottom:10px;">' +
+            '<div class="wiz-choice-card' + (viewMode === 'full' ? ' selected' : '') + '" style="margin-bottom:0;" data-action="wizSetViewMode" data-arg="full">' +
+              '<div class="wiz-choice-head"><span>🧩 Full</span><span style="font-size:10px;color:var(--accent-cyan);">' + L('По умолчанию', 'Default') + '</span></div>' +
+              '<div class="wiz-choice-desc">' + L('Все блоки настроек, телеметрия Роя, графики RAM/GPU, Дозор и экспертные спойлеры.', 'All setting blocks, Swarm telemetry, RAM/GPU charts, Sentinel & expert spoilers.') + '</div>' +
+            '</div>' +
+            '<div class="wiz-choice-card' + (viewMode === 'lite' ? ' selected' : '') + '" style="margin-bottom:0;" data-action="wizSetViewMode" data-arg="lite">' +
+              '<div class="wiz-choice-head"><span>⚡ Lite</span><span style="font-size:10px;color:var(--status-ok);">' + L('Компактно', 'Compact') + '</span></div>' +
+              '<div class="wiz-choice-desc">' + L('Краткий пульт: прогресс, Стек, Карта, компактный Композер, порог, дизайн, Рой, Дозор и RAM+GPU.', 'Compact panel: progress, Stack, Map, slim Composer, confirm threshold, design, Swarm, Sentinel & RAM+GPU.') + '</div>' +
             '</div>' +
           '</div>' +
 
@@ -775,13 +866,42 @@
                   ? (' (~' + Number(cb.approxMissingDiskGb).toFixed(1) + L(' ГБ к загрузке)', ' GB to download)'))
                   : L(' (все модели каскада уже скачаны ✓)', ' (all cascade models already downloaded ✓)');
                 const pm = wizDraft.gpuPullMode || 'cascade';
-                const ollHint = (!isScanning && !oll.installed && !oll.running)
-                  ? '<div style="font-size:9.5px;color:var(--status-warn);margin-top:4px;">' + L('⚠️ Ollama пока не обнаружена в системе — установите её с ollama.com, чтобы локальные модели заработали.', '⚠️ Ollama was not detected yet — install it from ollama.com to run local GPU models.') + '</div>'
-                  : '';
+                const joinWizModelsSubdir = function (baseDir) {
+                  const clean = String(baseDir || '').trim().replace(/[\\/]+$/, '');
+                  return clean ? (clean + (clean.indexOf('/') !== -1 && clean.indexOf('\\') === -1 ? '/models' : '\\models')) : '';
+                };
+                const effectiveDir = String(wizDraft.gpuOllamaDir || '').trim();
+                const derivedModelsDir = String(wizDraft.gpuModelsDir || joinWizModelsSubdir(effectiveDir) || '').trim();
+                const ollNeedsInstall = !isScanning && !oll.installed && !oll.running;
+                const ollInstallBlock = ollNeedsInstall
+                  ? '<div class="wiz-gpu-install-box">' +
+                      '<label class="wiz-mini-check-row" data-action="wizToggleFlag" data-arg="autoInstallOllama">' +
+                        '<input type="checkbox"' + (wizDraft.autoInstallOllama !== false ? ' checked' : '') + ' tabindex="-1" style="pointer-events:none;" />' +
+                        '<span><strong>' + L('⚡ Установить Ollama автоматически', '⚡ Auto-install Ollama') + '</strong> — ' +
+                          L('скачает и установит Ollama после завершения мастера, затем сразу начнёт загрузку моделей.', 'downloads and installs Ollama on finish, then immediately starts model downloads.') +
+                        '</span>' +
+                      '</label>' +
+                    '</div>'
+                  : '<div style="font-size:9.5px;color:var(--status-ok);margin-top:4px;">✓ ' + L('Ollama обнаружена в системе — модели можно скачать сразу после мастера.', 'Ollama detected on this PC — models can download right after finish.') + '</div>';
+                const dirHintLine = effectiveDir
+                  ? ('<div style="font-size:9px;color:var(--text-sub);margin-top:3px;word-break:break-all;">' + L('Модели сохранятся в: ', 'Models folder: ') + '<code>' + escHtml(derivedModelsDir) + '</code></div>')
+                  : '<div style="font-size:9px;color:var(--text-sub);margin-top:3px;">' + L('Если не указывать — используются стандартные пути системы (~/.ollama).', 'Leave empty to use default system paths (~/.ollama).') + '</div>';
                 return '<div class="wiz-gpu-cascade-box">' +
                   '<div style="font-size:10.5px;font-weight:600;">' + L('📦 Модели под ступени вашей видеопамяти', '📦 Models matched to your VRAM tiers') + escHtml(missingGbTxt) + '</div>' +
                   '<div style="font-size:9.5px;color:var(--text-sub);margin-top:2px;line-height:1.35;">' + escHtml(namesList) + '</div>' +
-                  ollHint +
+                  '<div style="margin-top:6px;">' +
+                    '<div style="font-size:9.5px;font-weight:600;margin-bottom:3px;color:var(--text-main);">' + L('📁 Папка установки Ollama и моделей:', '📁 Folder for Ollama & models:') + '</div>' +
+                    '<div class="wiz-dir-row">' +
+                      '<input type="text" id="wizGpuInstallDir" class="lg-input" data-input-action="wizSetGpuInstallDir" value="' + escHtml(effectiveDir) + '" placeholder="' + escHtml(L('По умолчанию (AppData / ~/.ollama)', 'Default (AppData / ~/.ollama)')) + '" />' +
+                      '<button type="button" class="win-btn wiz-dir-pick-btn" id="wizBtnPickGpuDir" data-action="wizPickGpuInstallDir">' + L('📁 Выбрать…', '📁 Browse…') + '</button>' +
+                    '</div>' +
+                    dirHintLine +
+                  '</div>' +
+                  ollInstallBlock +
+                  '<label class="wiz-mini-check-row" style="margin-top:5px;" data-action="wizToggleFlag" data-arg="gpuPreferHfMirror">' +
+                    '<input type="checkbox"' + (wizDraft.gpuPreferHfMirror ? ' checked' : '') + ' tabindex="-1" style="pointer-events:none;" />' +
+                    '<span>' + L('🤗 Предпочитать зеркало Hugging Face (GGUF напрямую с hf.co)', '🤗 Prefer Hugging Face mirror (GGUF directly from hf.co)') + '</span>' +
+                  '</label>' +
                   '<div class="wiz-gpu-cascade-pills">' +
                     '<button type="button" class="wiz-gpu-cascade-pill' + (pm === 'cascade' ? ' selected' : '') + '" data-action="wizSetGpuPullMode" data-arg="cascade">' + L('⬇️ Скачать весь каскад (Рекомендуется)', '⬇️ Download full cascade (Recommended)') + '</button>' +
                     '<button type="button" class="wiz-gpu-cascade-pill' + (pm === 'active_only' ? ' selected' : '') + '" data-action="wizSetGpuPullMode" data-arg="active_only">' + L('🎯 Только текущий лимит', '🎯 Active limit only') + '</button>' +
@@ -883,9 +1003,10 @@
         const hwSummary = (wizDraft.useRam ? ('RAM ' + recRamGb + L(' ГБ', ' GB')) : L('RAM выкл', 'RAM off'))
           + ' · ' + (wizDraft.useCpu ? ('CPU ' + wizDraft.cpuMaxThreads + L(' пот.', ' thr.')) : L('CPU 1 пот.', 'CPU 1 thr.'))
           + ' · ' + (wizDraft.useGpu ? ('GPU ' + wizDraft.gpuChatModel) : L('без GPU', 'no GPU'));
-        const themeSummary = normalizeUiTheme(wizDraft.panelTheme) === 'studio_titanium'
+        const themeSummary = (normalizeUiTheme(wizDraft.panelTheme) === 'studio_titanium'
           ? L('Персиковый фарфор', 'Peach Porcelain')
-          : L('Жидкое стекло iOS', 'Liquid Glass iOS');
+          : L('Жидкое стекло iOS', 'Liquid Glass iOS')) +
+          ' · ' + (normalizePanelViewMode(wizDraft.panelViewMode) === 'lite' ? 'Lite' : 'Full');
         const langSummary = normalizeUiLanguage(wizDraft.uiLanguage) === 'ru' ? '🇷🇺 Русский' : '🇺🇸 English';
 
         bodyEl.innerHTML =
@@ -927,13 +1048,57 @@
       }
     }
 
+    function wizSetGpuInstallDir(val) {
+      const clean = String(val || '').trim();
+      wizDraft.gpuOllamaDir = clean;
+      if (clean) {
+        const sep = clean.indexOf('/') !== -1 && clean.indexOf('\\') === -1 ? '/' : '\\';
+        wizDraft.gpuModelsDir = clean.replace(/[\\/]+$/, '') + sep + 'models';
+      } else {
+        wizDraft.gpuModelsDir = '';
+      }
+    }
+
+    async function wizPickGpuInstallDir() {
+      const btn = document.getElementById('wizBtnPickGpuDir');
+      if (btn) btn.disabled = true;
+      try {
+        flashStatus(L('Открываем выбор папки для Ollama и моделей…', 'Opening folder picker for Ollama and models…'));
+        const res = await panelFetch('/api/gpu/pick-folder', {
+          method: 'POST',
+          body: JSON.stringify({ mode: 'ollama', initialDir: wizDraft.gpuOllamaDir || '' }),
+        });
+        const data = await res.json();
+        if (!data || !data.ok) {
+          flashStatus((data && data.error) || L('Не удалось выбрать папку', 'Failed to pick folder'));
+          return;
+        }
+        const chosen = data.dir || data.workspaceRoot || '';
+        if (data.cancelled || !chosen) return;
+        wizSetGpuInstallDir(chosen);
+        renderWizardStep();
+        flashStatus(L('Папка установки выбрана ✓', 'Installation folder selected ✓'));
+      } catch {
+        flashStatus(L('Ошибка диалога выбора папки', 'Folder picker error'));
+      } finally {
+        const b2 = document.getElementById('wizBtnPickGpuDir');
+        if (b2) b2.disabled = false;
+      }
+    }
+
     async function finishOnboardingWizard() {
       const subTier = wizDraft.subscriptionTier === 'ultra' ? 'ultra' : 'pro';
       const chosenLang = normalizeUiLanguage(wizDraft.uiLanguage || getUiLanguage());
+      const chosenViewMode = normalizePanelViewMode(wizDraft.panelViewMode || currentState.panelViewMode);
+      const gpuInstallDirClean = String(wizDraft.gpuOllamaDir || '').trim();
+      const gpuModelsDirClean = String(
+        wizDraft.gpuModelsDir || (gpuInstallDirClean ? (gpuInstallDirClean.replace(/[\\/]+$/, '') + '\\models') : '')
+      ).trim();
       const patch = {
         onboardingCompleted: true,
         hardwareProfiled: true,
         uiLanguage: chosenLang,
+        panelViewMode: chosenViewMode,
         subscriptionTier: subTier,
         swarmWorkerTier: subTier === 'ultra' ? 'neon_auto' : 'hydrogen_auto',
         panelTheme: normalizeUiTheme(wizDraft.panelTheme || 'glass_teal'),
@@ -946,6 +1111,9 @@
         gpuChatModel: String(wizDraft.gpuChatModel || 'gemma4:12b'),
         gpuEmbedModel: String(wizDraft.gpuEmbedModel || 'qwen3-embedding:0.6b'),
         gpuContextTokens: Number(wizDraft.gpuContextTokens || 4096),
+        gpuOllamaDir: gpuInstallDirClean,
+        gpuModelsDir: gpuModelsDirClean,
+        gpuPreferHfMirror: Boolean(wizDraft.gpuPreferHfMirror),
         gpuAutoDistillLogs: wizDraft.useGpu ? !!wizDraft.gpuAutoDistillLogs : false,
         gpuSemanticSearch: wizDraft.useGpu ? !!wizDraft.gpuSemanticSearch : false,
         uiDesignPreviewGate: !!wizDraft.uiDesignPreviewGate,
@@ -988,9 +1156,28 @@
       wizThemePreviewDirty = false;
       wizSubTierPreviewDirty = false;
       wizLangPreviewDirty = false;
+      wizViewModePreviewDirty = false;
+      try {
+        localStorage.setItem('ag_panel_view_mode_v1', chosenViewMode);
+      } catch {}
+      const preHwSnap = currentHardwareProfile;
       await updateState(patch);
-      if (wizDraft.useGpu && wizDraft.gpuPullMode && wizDraft.gpuPullMode !== 'skip') {
-        startGpuCascadePull(wizDraft.gpuPullMode, patch.gpuMaxVramMb);
+      const hwSnap = preHwSnap || currentHardwareProfile || {};
+      const ollInfo = hwSnap.ollama || {};
+      const ollAlreadyPresent = Boolean(ollInfo.installed || ollInfo.running);
+      const pullModeSelected = wizDraft.gpuPullMode || 'cascade';
+      const mirrorSelected = patch.gpuPreferHfMirror ? 'huggingface' : 'auto';
+      if (wizDraft.useGpu && wizDraft.autoInstallOllama !== false && !ollAlreadyPresent && typeof startOllamaInstall === 'function') {
+        void startOllamaInstall({
+          installDir: patch.gpuOllamaDir,
+          modelsDir: patch.gpuModelsDir,
+          pullModeAfter: pullModeSelected !== 'skip' ? pullModeSelected : '',
+          selectedCapMb: patch.gpuMaxVramMb,
+          mirrorMode: mirrorSelected,
+        });
+        flashStatus(L('Настройка сохранена · Устанавливаем Ollama в выбранную папку ✓', 'Setup saved · Installing Ollama into chosen folder ✓'));
+      } else if (wizDraft.useGpu && pullModeSelected && pullModeSelected !== 'skip') {
+        startGpuCascadePull(pullModeSelected, patch.gpuMaxVramMb, mirrorSelected);
         flashStatus(L('Настройка завершена · Запущена фоновая загрузка моделей ✓', 'Setup complete · Background model download started ✓'));
       } else {
         flashStatus(L('Калибровка ПК и настройка завершены ✓', 'PC calibration and setup complete ✓'));

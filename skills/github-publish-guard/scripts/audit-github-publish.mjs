@@ -409,6 +409,16 @@ function checkRouterStateTemplate(rootDir) {
         message: `Template router-state.json has non-empty gpuModelsDir ("${state.gpuModelsDir}")`,
       });
     }
+    if (typeof state.gpuOllamaDir === 'string' && state.gpuOllamaDir.trim() !== '') {
+      findings.push({
+        severity: 'error',
+        category: 'privacy',
+        ruleId: 'dirty_router_state',
+        file: 'router-state.json',
+        line: 1,
+        message: `Template router-state.json has non-empty gpuOllamaDir ("${state.gpuOllamaDir}")`,
+      });
+    }
     if (state.gpuEnabled === true) {
       findings.push({
         severity: 'warn',

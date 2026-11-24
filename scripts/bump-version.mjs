@@ -207,6 +207,10 @@ const COMPANION_VERSION_RULES = [
     patterns: [[/('User-Agent':\s*'antigravity-model-router\/)\d+\.\d+(?:\.\d+)?(')/, (v) => `$1${v}$2`]],
   },
   {
+    rel: 'core/plugin-updater.mjs',
+    patterns: [[/(\|\|\s*')\d+\.\d+(?:\.\d+)?(')/g, (v) => `$1${v}$2`]],
+  },
+  {
     rel: '.github/ISSUE_TEMPLATE/bug_report.md',
     patterns: [[/(\[e\.g\.,\s*v)\d+\.\d+(?:\.\d+)?(\])/, (v) => `$1${v}$2`]],
   },

@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="The Tunnel v3.33.1 — 3D AI Autopilot & Coprocessor for Google Antigravity" width="100%" />
+  <img src="assets/banner.svg" alt="The Tunnel v3.34.0 — 3D AI Autopilot & Coprocessor for Google Antigravity" width="100%" />
 </p>
 
-# The Tunnel `v3.33.1` — 3D AI Autopilot & Model Router
+# The Tunnel `v3.34.0` — 3D AI Autopilot & Model Router
 
 > Intelligent 3D model routing, multi-core CPU coprocessing, adaptive In-RAM project memory (`4–32 GB`), optional local Ollama Int8 GPU acceleration, and 59 safety & verification guardrails for **Google Antigravity** — built with zero external runtime dependencies on **Node.js `>=22` ESM**.
 
@@ -12,7 +12,7 @@
 
 ### 1. 3D Task Tensor (`Breadth × Depth × Risk`) & Smart-Synergy Routing
 - **Automatic complexity grading (`S / M / L / XL`)**: `core/tool-pruner.mjs` and `core/model-profile.mjs` analyze file breadth, architectural/concurrency depth, and blast radius (`reverseDeps`) before edits begin.
-- **Gemini 4 Smart-Synergy**: Pairs `Orchestrator` planning with `Hydrogen` execution (`-24%` quota overhead on `L/XL` tasks vs. standalone heavy models), enforces explicit thinking/planner depth (`Low` / `Medium` / `High` / `XHigh`), and detects selector mismatches with mode-switch recommendations.
+- **Gemini 4 Smart-Synergy & Split-Turn Handoff**: Pairs `Orchestrator` planning with `Hydrogen` execution (`-24%` quota overhead on `L/XL` tasks vs. standalone heavy models), enforces explicit thinking/planner depth (`Low` / `Medium` / `High` / `XHigh`), and supports AGY 2.35+ Split-Turn Model-Switch Handoff (`core/hook-runner.mjs`, `rules/AGENTS.md`) when a selector change is needed.
 - **Adaptive Pre-Task Gate & Grill-Me Frontier**: Generates 3 concrete, non-boilerplate plan choices (`buildAdaptive3DOptionsBlueprint`) and surfaces unsettled design-tree decisions upfront when `confirmBeforeRun` is active.
 
 ### 2. Adaptive In-RAM Project Memory (`4–32 GB`) & Zero-Turn Context MCP
@@ -29,6 +29,7 @@
 
 ### 4. Local Ollama GPU Engine (`i8bin-v2` · Zero Cloud Tokens)
 - **Quantized Int8 MRL-512 Vector Index**: `core/local-gpu-engine.mjs` stores compact `.bin` + `.meta.json` embeddings (`qwen3-embedding:0.6b`) for hybrid semantic + lexical search (`gpu_semantic_search`), auto-detects `gpuModelsDir`, and unloads VRAM cleanly on exit (`gpuUnloadOnExit`).
+- **1-Click Ollama Installer & Mirror Support**: `core/gpu/gpu-vram-runtime.mjs` (`startOllamaInstallJob`) provisions Ollama into a user-selected directory (`gpuOllamaDir`) and supports an optional HuggingFace mirror (`gpuPreferHfMirror`).
 - **0-Token Local Distillation, Vision & Diff Critic**: `gemma4:12b` compresses massive logs/docs (`gpu_distill`), catches post-edit regressions (`gpuPostEditCritic`), and audits pasted UI screenshots locally (`/api/composer/vision`) without spending cloud quota.
 
 ### 5. Native Swarm Orchestration & Quota Burn-Rate Pacer
@@ -37,8 +38,8 @@
 
 ### 6. Turn-Level Time-Machine, Shadow Worktrees & Sidecar Control Panel (`EN / RU`)
 - **Atomic Turn Rollback & Git Sandboxes**: `core/shadow-guard.mjs` and `core/shadow-worktree.mjs` bind checkpoints to user turns (`rollbackTurn`) and run risky experiments inside detached git worktrees before promoting changes.
-- **Sidecar Control Panel (`sidecars/panel/`)**: CSP-safe localhost HUD (`server.mjs` + `ui.html`) with live **EN / RU** switching (`00-i18n.js`), dark & studio-light themes, **Smart Composer 2.0** (`@file:`, `@symbol:`, `@git:diff`, `@error:last` chips, Ghost Text, local Vision screenshot audit, optional voice dictation, and `0-token` pre-commit check), live token/cache/CPU/RAM/GPU telemetry, and one-click management of all 13 built-in skills.
-- **Interactive Project Map (`?view=graph` & modal)**: Multi-level architecture map (`Folders / Files / Symbols` via `core/project-graph-builder.mjs` + `07*.js`) featuring Layered (Sugiyama) and Force layouts, 5 engineering lenses (**Architecture**, **Blast & Diff**, **Tarjan SCC Cycles & Orphans**, **Git Hotspots**, **Path A→B**), a Context Cart (`@file:` batching to Smart Composer with token budget), Edge Bundling, interactive Minimap, GPU semantic search, Mermaid/PNG export, and **Barnes-Hut `O(N log N)` + WebGL2 Instanced Renderer** scaling up to 25k nodes.
+- **Sidecar Control Panel (`sidecars/panel/`)**: CSP-safe localhost HUD (`server.mjs` + `ui.html`) with **Lite / Full** view modes (`panelViewMode`), adaptive UI scaling (`panelUiScale`), safe 1-click GitHub Plugin Updater (`core/plugin-updater.mjs`), native folder pickers, live **EN / RU** switching (`00-i18n.js`), dark & studio-light themes, **Smart Composer 2.0** (`@file:`, `@symbol:`, `@git:diff`, `@error:last` chips, Ghost Text, local Vision screenshot audit, optional voice dictation, and `0-token` pre-commit check), live token/cache/CPU/RAM/GPU telemetry, and one-click management of all 13 built-in skills.
+- **Interactive Project Map (`?view=graph` & modal)**: Multi-level architecture map (`Folders / Files / Symbols` via `core/project-graph-builder.mjs` + `07*.js`) featuring hybrid architectural layer columns (interactive layer header filter/drag, free node detachment/reattachment & reset), Layered (Sugiyama) and Force layouts, 5 engineering lenses (**Architecture**, **Blast & Diff**, **Tarjan SCC Cycles & Orphans**, **Git Hotspots**, **Path A→B**), a Context Cart (`@file:` batching to Smart Composer with token budget), Edge Bundling, interactive Minimap, GPU semantic search, Mermaid/PNG export, and **Barnes-Hut `O(N log N)` + WebGL2 Instanced Renderer** scaling up to 25k nodes.
 
 ---
 
@@ -59,7 +60,7 @@
 
 ```text
 antigravity-model-router/
-├── plugin.json                # Plugin manifest (The Tunnel v3.33.1)
+├── plugin.json                # Plugin manifest (The Tunnel v3.34.0)
 ├── package.json               # ESM scripts (test, audit, lint:skills, pack, version:check)
 ├── router-state.json          # Sanitized default router & guardrail template
 ├── hooks.json                 # SessionStart / PreInvocation / PreToolUse / PostToolUse / Stop hooks
@@ -67,11 +68,11 @@ antigravity-model-router/
 ├── install.js                 # Cross-platform installer & i8bin-v2 cache migrator
 ├── SECURITY.md                # Security policy & local-only architecture guarantees
 ├── CHANGELOG.md               # Release history
-├── core/                      # 55 core ESM modules (63 total with gpu/progress/ram submodules)
+├── core/                      # 56 core ESM modules (64 total with gpu/progress/ram submodules)
 ├── sidecars/panel/            # Localhost Control Panel (server.mjs, ui-src/, ui.html)
 ├── agents/                    # Read-only verifier subagent (router-verifier.md)
 ├── skills/                    # 13 built-in domain skills & deterministic scripts
-├── tests/                     # 38 automated test suites (node:test)
+├── tests/                     # 40 automated test suites (node:test)
 └── rules/                     # Autopilot & routing rules (AGENTS.md)
 ```
 
@@ -89,7 +90,7 @@ node install.js
 Then restart **Google Antigravity** (or reload the sidecar panel) to activate hooks, In-RAM MCP, and **The Tunnel** HUD.
 
 ### Option 2 — Windows 1-Click Installer (`Setup.exe`) & Portable `.zip`
-- Download `The-Tunnel-v3.33.1-Setup.exe` or `The-Tunnel-v3.33.1.zip` from [GitHub Releases](https://github.com/vaszuevvas-coder/antigravity-model-router/releases/latest).
+- Download `The-Tunnel-v3.34.0-Setup.exe` or `The-Tunnel-v3.34.0.zip` from [GitHub Releases](https://github.com/vaszuevvas-coder/antigravity-model-router/releases/latest).
 - `Setup.exe`, `install.js`, and `install.sh` auto-detect your OS locale (`en` / `ru`, overridable via `--lang=en|ru` or `TUNNEL_LANG`), and `Setup.exe` supports both GUI and silent CLI flags (`--silent` / `/S`, `--uninstall`) while keeping a backup of `router-state.json`.
 - In the portable `.zip`, run `install.bat` / `uninstall.bat` (or `Установить плагин.bat` / `Удалить плагин.bat`) on Windows, or `./install.sh` on macOS / Linux. Direct extraction or `git clone` into `~/.gemini/config/plugins/antigravity-model-router` is also supported — `The Tunnel` auto-calibrates hardware limits and MCP paths on first launch.
 

@@ -45,8 +45,8 @@ function buildStaticSessionStartHeader(state = {}) {
   const isEn = resolveUserLanguage(state) === 'en';
   const lines = [
     isEn
-      ? '# The Tunnel v3.33.1 (EN-Internal / EN-Chat)'
-      : '# The Tunnel v3.33.1 (EN-Internal / RU-Chat)',
+      ? '# The Tunnel v3.34.0 (EN-Internal / EN-Chat)'
+      : '# The Tunnel v3.34.0 (EN-Internal / RU-Chat)',
     isEn
       ? '- User replies/UI/Role/toolSummary: 100% English.'
       : '- User replies/UI/Role/toolSummary: 100% Russian.',
@@ -683,12 +683,12 @@ export function buildZeroTokenUserBadgeStep(rawOpts = {}) {
         ? `Pro Architect${subSuffix}`
         : strat === 'flash_dispatcher' || strat === 'economy'
           ? `Flash Dispatcher${subSuffix}`
-          : `Autopilot v3.33.1${subSuffix}`)
+          : `Autopilot v3.34.0${subSuffix}`)
     : (strat === 'pro_architect' || strat === 'performance'
         ? `Pro-Архитектор${subSuffix}`
         : strat === 'flash_dispatcher' || strat === 'economy'
           ? `Flash-Диспетчер${subSuffix}`
-          : `Автопилот v3.33.1${subSuffix}`);
+          : `Автопилот v3.34.0${subSuffix}`);
   const executor = isEn
     ? (modelProfile?.displayEn || modelProfile?.shortLabel || modelProfile?.displayRu || modelProfile?.displayNameRu || 'Current executor')
     : (modelProfile?.displayRu || modelProfile?.displayNameRu || modelProfile?.shortLabel || 'Текущий исполнитель');
@@ -1125,6 +1125,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
           ts: Date.now(),
           wasReadOnly: false,
           askQuestionCalled: false,
+          modelSwitchPending: false,
           preTaskGateRequired: null,
           editGateWarned: false,
           planHandedOff: false,
@@ -1229,7 +1230,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
       }
     }
 
-    // 2. Когнитивный ИИ-Автопилот v3.33.1 (3D-матрица Breadth × Depth × Risk + безлимитное EN-мышление на Gemini 4)
+    // 2. Когнитивный ИИ-Автопилот v3.34.0 (3D-матрица Breadth × Depth × Risk + безлимитное EN-мышление на Gemini 4)
     if (baseState.thinkingLimiter !== false && toolPruner && typeof toolPruner.estimateTaskGradeAndThinkingBudget === 'function') {
       try {
         const budgetRes = toolPruner.estimateTaskGradeAndThinkingBudget(userInput, effectiveState, {
@@ -1244,6 +1245,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
           prevAskQuestionCalled: cachedPrev && typeof cachedPrev.askQuestionCalled === 'boolean' ? cachedPrev.askQuestionCalled : undefined,
           prevWasReadOnly: Boolean(cachedPrev?.wasReadOnly),
           prevProposedGrade: cachedPrev?.proposedGrade || null,
+          prevModelSwitchPending: Boolean(cachedPrev?.modelSwitchPending),
         });
         thinkingBudgetHint = budgetRes?.budgetHint || budgetRes?.formattedHint || budgetRes?.hint || '';
         matchedRepoFiles = budgetRes?.scope?.matchedFiles || [];
@@ -1277,6 +1279,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
               grade: 'S',
               wasReadOnly: true,
               askQuestionCalled: false,
+              modelSwitchPending: false,
               preTaskGateRequired: false,
               isPlanReview: Boolean(isPlanReviewTurn),
               editGateWarned: false,
@@ -1311,6 +1314,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
             askQuestionCalled: isPlanReviewTurn
               ? true
               : (isContinuationMetaTurn ? Boolean(cachedPrev?.askQuestionCalled || budgetRes?.isApprovalFollowUp || answeredStructuredAsk) : false),
+            modelSwitchPending: Boolean(!isContinuationMetaTurn && !isPlanReviewTurn && budgetRes?.modelSwitchSplitTurn),
             editGateWarned: isContinuationMetaTurn ? Boolean(cachedPrev?.editGateWarned) : false,
             planHandedOff: isContinuationMetaTurn ? Boolean(cachedPrev?.planHandedOff) : false,
             selectorWarned: isContinuationMetaTurn ? Boolean(cachedPrev?.selectorWarned) : false,
@@ -1523,9 +1527,14 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
             ? ` On multi-file L/XL, Deep, or High-Blast tasks, prefer Orchestrator (Neon · High/XHigh) / Orchestrator (Carbon · Medium/High) over standalone Carbon/Neon (-24% quota + fast Hydrogen edits) and include "💡 Mode tip" when active selector differs (if <plan_execute_protocol> or exit_plan_mode is active in your system prompt, UI is already in Orchestrator · ${activeDisp} — treat active selector as Orchestrator · ${activeDisp} and skip redundant standalone switch advice)!`
             : ` On multi-file L/XL, Deep, or High-Blast tasks, prefer Orchestrator (Neon · Высокий/XHigh) / Orchestrator (Carbon · Средний/Высокий) over standalone Carbon/Neon (-24% quota + fast Hydrogen edits) and include "💡 Совет по режиму" when active selector differs (if <plan_execute_protocol> or exit_plan_mode is active in your system prompt, UI is already in Оркестратор · ${activeDisp} — treat active selector as Оркестратор · ${activeDisp} and skip redundant standalone switch advice)!`)
         : '';
+      const splitTurnReminder = (prevTurnSnapshot.selectorMatch && prevTurnSnapshot.selectorMatch !== 'optimal')
+        ? (isEnLang
+            ? ` [AGY 2.35+ Split-Turn] If post-scout confirms switching to ${prevTurnSnapshot.selectorRecommended || 'the optimal model'} is needed, do NOT call ask_question — output the plan + 3 numbered options + "💡 Mode tip" in plain text and end the turn so the model selector unlocks (or include "⏸ End turn to switch model" if ask_question is required for architectural forks).`
+            : ` [AGY 2.35+ Split-Turn] Если после разведки смена модели на ${prevTurnSnapshot.selectorRecommended || 'оптимальную модель'} нужна, НЕ вызывай ask_question — выведи план + 3 пронумерованных варианта + "💡 Совет по режиму" обычным текстом и заверши ход для разблокировки селектора (либо добавь вариант "⏸ Завершить ход, чтобы я переключил модель", если ask_question нужен для развилок).`)
+        : '';
       const carryLine = isEnLang
-        ? `🧭 [Post-Scout AI Triage | Active Selector: ${activeDisp}] Base final scope (S/M/L/XL) & optimal model strictly on the files you just inspected (override pre-read ~${prevTurnSnapshot.grade || 'M'} if code is simpler or deeper), and keep EN chat, ask_question ("Scope", "Recommended power", "💡 Mode tip" if optimal != ${activeDisp}), and option #1 100% synchronized; ALWAYS include explicit thinking/planner depth for BOTH standalone models AND Orchestrator (e.g. Hydrogen · Medium/High, Neon · High/XHigh, Carbon · High, Orchestrator (Neon · Medium/High/XHigh), Orchestrator (Carbon · Medium/High) — never bare model or bare Orchestrator names).${orchReminder}`
-        : `🧭 [Post-Scout AI Triage | Active Selector: ${activeDisp}] Base final scope (S/M/L/XL) & optimal model strictly on the files you just inspected (override pre-read ~${prevTurnSnapshot.grade || 'M'} if code is simpler or deeper), and keep RU chat, ask_question ("Объём", "Рекомендуемая мощность", "💡 Совет по режиму" if optimal != ${activeDisp}), and option #1 100% synchronized; ALWAYS include explicit thinking/planner depth for BOTH standalone models AND Orchestrator (e.g. Hydrogen · Средний/Высокий, Neon · Высокий/XHigh, Carbon · Высокий, Orchestrator (Neon · Средний/Высокий/XHigh), Orchestrator (Carbon · Средний/Высокий) — never bare model or bare Orchestrator names).${orchReminder}`;
+        ? `🧭 [Post-Scout AI Triage | Active Selector: ${activeDisp}] Base final scope (S/M/L/XL) & optimal model strictly on the files you just inspected (override pre-read ~${prevTurnSnapshot.grade || 'M'} if code is simpler or deeper), and keep EN chat, ask_question ("Scope", "Recommended power", "💡 Mode tip" if optimal != ${activeDisp}), and option #1 100% synchronized; ALWAYS include explicit thinking/planner depth for BOTH standalone models AND Orchestrator (e.g. Hydrogen · Medium/High, Neon · High/XHigh, Carbon · High, Orchestrator (Neon · Medium/High/XHigh), Orchestrator (Carbon · Medium/High) — never bare model or bare Orchestrator names).${orchReminder}${splitTurnReminder}`
+        : `🧭 [Post-Scout AI Triage | Active Selector: ${activeDisp}] Base final scope (S/M/L/XL) & optimal model strictly on the files you just inspected (override pre-read ~${prevTurnSnapshot.grade || 'M'} if code is simpler or deeper), and keep RU chat, ask_question ("Объём", "Рекомендуемая мощность", "💡 Совет по режиму" if optimal != ${activeDisp}), and option #1 100% synchronized; ALWAYS include explicit thinking/planner depth for BOTH standalone models AND Orchestrator (e.g. Hydrogen · Средний/Высокий, Neon · Высокий/XHigh, Carbon · Высокий, Orchestrator (Neon · Средний/Высокий/XHigh), Orchestrator (Carbon · Средний/Высокий) — never bare model or bare Orchestrator names).${orchReminder}${splitTurnReminder}`;
       thinkingBudgetHint = thinkingBudgetHint ? `${thinkingBudgetHint}\n${carryLine}` : carryLine;
       if (!prevTurnSnapshot.carryOverSent) {
         try {
@@ -2053,7 +2062,7 @@ function evaluateAskQuestionSelectorGuard({ args = {}, convoId = 'default', stat
       updateJsonAtomicSync(turnFile, () => ({ turns: {} }), (tState) => {
         const turns = tState?.turns && typeof tState.turns === 'object' ? tState.turns : {};
         const prev = Object.hasOwn(turns, convoId) ? turns[convoId] : { hash: '', ts: Date.now() };
-        turns[convoId] = { ...prev, askQuestionCalled: true, preTaskGateRequired: false };
+        turns[convoId] = { ...prev, askQuestionCalled: true, modelSwitchPending: false, preTaskGateRequired: false };
         return { turns };
       });
     } catch {}
@@ -2114,6 +2123,7 @@ function evaluateAskQuestionSelectorGuard({ args = {}, convoId = 'default', stat
         matrix2D: effectiveMatrix2D,
         isDeepAuditOrArch: effectiveIsDeep,
         askQuestionCalled: true,
+        modelSwitchPending: false,
         preTaskGateRequired: false,
       };
       return { turns };
@@ -2216,6 +2226,15 @@ function evaluateEditPreTaskGateGuard({
   } catch {}
 
   const isEn = resolveUserLanguage(state) === 'en';
+  if (prev.modelSwitchPending === true) {
+    const targetRec = prev.selectorRecommended || (isEn ? 'the recommended model' : 'рекомендуемую модель');
+    return {
+      decision: 'deny',
+      reason: isEn
+        ? `⏸️ [Model-Switch Gate Guard (AGY 2.35+)] A model switch to ${targetRec} is pending. Do NOT edit files in this turn — output the concise plan and prompt the user to switch the model, then END the turn so the IDE selector unlocks (or call ask_question only if post-scout confirmed the current model is optimal).`
+        : `⏸️ [Model-Switch Gate Guard (AGY 2.35+)] Ожидается переключение модели на ${targetRec}. Не вносите правки в этом ходе — выведите краткий план и попросите пользователя переключить модель, затем ЗАВЕРШИТЕ ход для разблокировки селектора (либо вызовите ask_question, только если после разведки текущая модель оказалась оптимальной).`,
+    };
+  }
   return {
     decision: 'deny',
     reason: isEn
@@ -2772,37 +2791,58 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
       })
     : String(payload.conversationId || 'default');
 
-  // 0. Автоматическая фиксация выборов пользователя из опросов ask_question (Decision Pinning)
-  if (!payload.error && toolName === 'ask_question' && sessionHandoff?.recordUserDecision) {
-    try {
-      let parsedQuestions = args.questions;
-      if (typeof parsedQuestions === 'string') {
-        try { parsedQuestions = JSON.parse(parsedQuestions); } catch { parsedQuestions = []; }
+  // 0. Автоматическая фиксация выборов пользователя из опросов ask_question (Decision Pinning + Variant 1B Model-Switch Pause)
+  if (!payload.error && toolName === 'ask_question') {
+    const rawOutput = String(payload.output || payload.result || payload.response || '');
+    const isModelSwitchPauseReply = /(?:пауз[аеыу].*модел|заверш(?:ить|и)\s+ход.*модел|смен[иыуть].*модел|переключ[иыуть].*модел|end\s+turn.*switch.*model|pause.*switch.*model)/i.test(rawOutput);
+    if (isModelSwitchPauseReply) {
+      try {
+        const turnFile = join(CACHE_DIR, 'pre-invocation-turn.json');
+        updateJsonAtomicSync(turnFile, () => ({ turns: {} }), (tState) => {
+          const turns = tState?.turns && typeof tState.turns === 'object' ? tState.turns : {};
+          const prev = Object.hasOwn(turns, postConvoKey) ? turns[postConvoKey] : { hash: '', ts: Date.now() };
+          turns[postConvoKey] = {
+            ...prev,
+            modelSwitchPending: true,
+            askQuestionCalled: false,
+            preTaskGateRequired: true,
+          };
+          return { turns };
+        });
+      } catch (err) {
+        console.error('[hook] modelSwitchPending update failed in PostToolUse:', err);
       }
-      const questions = Array.isArray(parsedQuestions) ? parsedQuestions : [];
-      const rawOutput = String(payload.output || payload.result || payload.response || '');
-      const answerLines = rawOutput
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter((l) => /^A\d+\s*:/i.test(l));
-
-      for (let i = 0; i < questions.length; i++) {
-        const qText = String(questions[i]?.question || '').trim();
-        const ansLine = answerLines[i] ? answerLines[i].replace(/^A\d+\s*:\s*/i, '').trim() : '';
-        const fallbackAns = !ansLine && answerLines.length === 1 ? answerLines[0].replace(/^A\d+\s*:\s*/i, '').trim() : '';
-        const finalAns = ansLine || fallbackAns;
-        if (qText && finalAns) {
-          sessionHandoff.recordUserDecision({
-            workspaceRoot: wsPath,
-            conversationId: payload.conversationId || '',
-            question: qText.slice(0, 120),
-            answer: finalAns.slice(0, 140),
-            category: /дизайн|стил|визуал|палитр|анимац|design|style|visual|palette|animat/i.test(qText) ? 'ui_style' : 'autopilot_plan',
-          });
+    }
+    if (sessionHandoff?.recordUserDecision) {
+      try {
+        let parsedQuestions = args.questions;
+        if (typeof parsedQuestions === 'string') {
+          try { parsedQuestions = JSON.parse(parsedQuestions); } catch { parsedQuestions = []; }
         }
+        const questions = Array.isArray(parsedQuestions) ? parsedQuestions : [];
+        const answerLines = rawOutput
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter((l) => /^A\d+\s*:/i.test(l));
+
+        for (let i = 0; i < questions.length; i++) {
+          const qText = String(questions[i]?.question || '').trim();
+          const ansLine = answerLines[i] ? answerLines[i].replace(/^A\d+\s*:\s*/i, '').trim() : '';
+          const fallbackAns = !ansLine && answerLines.length === 1 ? answerLines[0].replace(/^A\d+\s*:\s*/i, '').trim() : '';
+          const finalAns = ansLine || fallbackAns;
+          if (qText && finalAns) {
+            sessionHandoff.recordUserDecision({
+              workspaceRoot: wsPath,
+              conversationId: payload.conversationId || '',
+              question: qText.slice(0, 120),
+              answer: finalAns.slice(0, 140),
+              category: /дизайн|стил|визуал|палитр|анимац|design|style|visual|palette|animat/i.test(qText) ? 'ui_style' : 'autopilot_plan',
+            });
+          }
+        }
+      } catch (err) {
+        console.error('[hook] recordUserDecision failed in PostToolUse:', err);
       }
-    } catch (err) {
-      console.error('[hook] recordUserDecision failed in PostToolUse:', err);
     }
     return {};
   }

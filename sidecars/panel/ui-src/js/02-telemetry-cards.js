@@ -722,7 +722,8 @@
         delete _pendingBlockRenders.expertRamGpuFieldset;
         renderGpuAndRam(args.gpu, args.ramCache, args.s, args.cpu);
       };
-      if (isBlockRenderable('gpuRamCard') || isBlockRenderable('expertRamGpuFieldset')) {
+      const isLiteView = document.body && document.body.getAttribute('data-panel-view') === 'lite';
+      if (isLiteView || isBlockRenderable('gpuRamCard') || isBlockRenderable('expertRamGpuFieldset')) {
         runHwOnce();
         return;
       }
@@ -879,6 +880,9 @@
     }
 
     function computeActiveTelemetrySections() {
+      if (document.body && document.body.getAttribute('data-panel-view') === 'lite') {
+        return ['core', 'swarm', 'hw'];
+      }
       const secs = ['core'];
       if (isBlockRenderable('swarmTelemetryCard')) {
         secs.push('swarm');
@@ -979,7 +983,7 @@
       document.getElementById('advisorBox').className = 'sub-settings' + (isAdvisor ? ' visible' : '');
       document.getElementById('autopilotBox').className = 'sub-settings' + (!isAdvisor ? ' visible' : '');
 
-      document.querySelectorAll('#confirmThresholdGroup button').forEach((btn) => {
+      document.querySelectorAll('#confirmThresholdGroup button, #liteConfirmThresholdGroup button').forEach((btn) => {
         btn.classList.toggle('active', btn.dataset.val === confirmThr);
       });
 
@@ -998,7 +1002,7 @@
       });
 
       const activeSwarmMode = s.swarmMode || 'auto_xl';
-      document.querySelectorAll('#swarmModeGroup button').forEach((btn) => {
+      document.querySelectorAll('#swarmModeGroup button, #liteSwarmModeGroup button').forEach((btn) => {
         btn.classList.toggle('active', btn.dataset.val === activeSwarmMode);
       });
 
@@ -1025,13 +1029,22 @@
         applyUiLanguageDom(activeLang);
       }
 
+      const activeViewMode = (wizModalOpen && wizViewModePreviewDirty)
+        ? normalizePanelViewMode(wizDraft.panelViewMode || s.panelViewMode)
+        : normalizePanelViewMode(s.panelViewMode);
+      applyPanelViewModeDom(activeViewMode, !(wizModalOpen && wizViewModePreviewDirty));
+
+      if (typeof applyPanelUiScaleDom === 'function') {
+        applyPanelUiScaleDom(s.panelUiScale || 'auto', true);
+      }
+
       const swVerifierEl = document.getElementById('chk-swarmAutoVerifier');
       if (swVerifierEl) swVerifierEl.checked = s.swarmAutoVerifier !== false;
       const swQuotaEl = document.getElementById('chk-swarmQuotaFailover');
       if (swQuotaEl) swQuotaEl.checked = s.swarmQuotaFailover !== false;
 
       const designGateOn = s.uiDesignPreviewGate !== false;
-      document.querySelectorAll('#uiDesignGateGroup button').forEach((btn) => {
+      document.querySelectorAll('#uiDesignGateGroup button, #liteUiDesignGateGroup button').forEach((btn) => {
         btn.classList.toggle('active', (btn.dataset.val === 'on') === designGateOn);
       });
 
@@ -1240,8 +1253,10 @@
           payload ? (payload.ramCache || null) : null
         );
       }
+      const isLiteViewHw = document.body && document.body.getAttribute('data-panel-view') === 'lite';
       if (
         (payload && (payload.gpu !== undefined || payload.ramCache !== undefined || payload.cpu !== undefined)) ||
+        isLiteViewHw ||
         isBlockRenderable('expertRamGpuFieldset')
       ) {
         scheduleHwBlockRender(
@@ -1366,6 +1381,16 @@
         (gpu.liveActivity && gpu.liveActivity.opSeq) || 0,
         (gpu.liveActivity && gpu.liveActivity.isWorking) ? 1 : 0,
         (gpu.liveActivity && gpu.liveActivity.isAfterglow) ? 1 : 0,
+        (gpu.pullStatus && gpu.pullStatus.active) ? 1 : 0,
+        (gpu.pullStatus && gpu.pullStatus.completedCount) || 0,
+        (gpu.pullStatus && gpu.pullStatus.currentPercent) || 0,
+        (gpu.pullStatus && gpu.pullStatus.error) || '',
+        (gpu.pullStatus && gpu.pullStatus.dismissed) ? 1 : 0,
+        (gpu.ollamaInstallStatus && gpu.ollamaInstallStatus.active) ? 1 : 0,
+        (gpu.ollamaInstallStatus && gpu.ollamaInstallStatus.phase) || '',
+        (gpu.ollamaInstallStatus && gpu.ollamaInstallStatus.percent) || 0,
+        (gpu.ollamaInstallStatus && gpu.ollamaInstallStatus.error) || '',
+        (gpu.ollamaInstallStatus && gpu.ollamaInstallStatus.dismissed) ? 1 : 0,
         cpuTel.rerankCalls || 0,
         cpuTel.workerBatches || 0,
         cpuTel.lastRerankMs || 0,
@@ -1426,10 +1451,11 @@
       const profileLbl = pickText(info, 'label', 'labelEn', '');
       if (!profileLbl) return;
       bannerTextEl.innerHTML =
-        '<strong>' + L('ИИ-Пилот активен', 'AI Pilot Active') + '</strong> · ' +
+        '<strong>' + L('ИИ-Пилот активен', 'AI Pilot Active') + '</strong>' +
+        '<span class="smart-banner-sub"> · ' +
         L('Профиль воркспейса: ', 'Workspace profile: ') + '<strong>' +
         L('«', '"') + escHtml(profileLbl) + L('»', '"') +
-        '</strong> · ' + L('Навыки в Авто-режиме', 'Skills in Auto mode');
+        '</strong> · ' + L('Навыки в Авто-режиме', 'Skills in Auto mode') + '</span>';
     }
 
     let _knownUiBuildVersion = null;
@@ -1533,7 +1559,8 @@
         );
       }
       if (data.sentinel !== undefined) {
-        scheduleBlockRender('sentinelSectionCard', function () {
+        const isLiteViewNow = document.body && document.body.getAttribute('data-panel-view') === 'lite';
+        scheduleBlockRender(isLiteViewNow ? 'liteQuickCard' : 'sentinelSectionCard', function () {
           renderSentinelStatus(data.sentinel, currentState);
         });
       }
@@ -1804,6 +1831,210 @@
 
     function setSwarmWorkerTier(swarmWorkerTier) {
       void updateState({ swarmWorkerTier: swarmWorkerTier });
+    }
+
+    const PANEL_VIEW_STORAGE_KEY = 'ag_panel_view_mode_v1';
+    const LITE_HW_MASK_STORAGE_KEY = 'ag_lite_hw_mask_v1';
+    let _liteLastHwMask = null;
+
+    function applyPanelViewModeDom(mode, syncStorage) {
+      const valid = normalizePanelViewMode(mode);
+      if (document.body) {
+        document.body.setAttribute('data-panel-view', valid);
+      }
+      document.querySelectorAll('#panelViewModeGroup button').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.view === valid);
+      });
+      if (syncStorage) {
+        try {
+          localStorage.setItem(PANEL_VIEW_STORAGE_KEY, valid);
+        } catch {}
+      }
+      if (typeof syncSmartComposerSizeAndScroll === 'function') {
+        syncSmartComposerSizeAndScroll();
+      }
+      return valid;
+    }
+
+    function setPanelViewMode(mode) {
+      const valid = applyPanelViewModeDom(mode, true);
+      wizDraft.panelViewMode = valid;
+      wizViewModePreviewDirty = false;
+      void updateState({ panelViewMode: valid });
+      if (valid === 'full') {
+        flushVisibleBlockRenders();
+        for (let i = 0; i < DEFAULT_PANEL_BLOCK_ORDER.length; i++) {
+          maybeLoadMissingSectionsForBlock(DEFAULT_PANEL_BLOCK_ORDER[i]);
+        }
+        void pollTelemetryTick();
+      } else if (lastPayloadCache && lastPayloadCache.sentinel !== undefined) {
+        renderSentinelStatus(lastPayloadCache.sentinel, currentState);
+      }
+      flashStatus(valid === 'lite'
+        ? L('Включён краткий режим Lite ✓', 'Switched to Lite mode ✓')
+        : L('Включён полный режим Full ✓', 'Switched to Full mode ✓'));
+    }
+
+    const PANEL_UI_SCALE_STORAGE_KEY = 'tunnel.panelUiScale';
+    const PANEL_UI_SCALE_CYCLE = ['auto', '100', '115', '130', '90'];
+    let _activePanelUiScaleMode = 'auto';
+
+    function normalizePanelUiScale(rawScale) {
+      const s = (typeof rawScale === 'string' || typeof rawScale === 'number')
+        ? String(rawScale).trim().toLowerCase()
+        : '';
+      return (s === '90' || s === '100' || s === '115' || s === '130' || s === 'auto') ? s : 'auto';
+    }
+
+    function computeAutoUiScale(metricsOverride) {
+      const m = (metricsOverride && typeof metricsOverride === 'object') ? metricsOverride : null;
+      const winObj = typeof window !== 'undefined' ? window : null;
+      const dpr = Math.max(1, Number(m ? m.devicePixelRatio : (winObj && winObj.devicePixelRatio)) || 1);
+      const rawScreenW = Number(m ? m.screenWidth : (winObj && winObj.screen && winObj.screen.width)) || 0;
+      const rawScreenH = Number(m ? m.screenHeight : (winObj && winObj.screen && winObj.screen.height)) || 0;
+      const vpW = Number(m ? m.innerWidth : (winObj && winObj.innerWidth)) || 0;
+      const vpH = Number(m ? m.innerHeight : (winObj && winObj.innerHeight)) || 0;
+      const screenW = Math.max(rawScreenW, vpW);
+      const screenH = Math.max(rawScreenH, vpH);
+      if (screenW <= 0) return 1;
+
+      const physW = Math.round(screenW * dpr);
+      const physH = Math.round(screenH * dpr);
+      let scale = 1;
+
+      if (physW >= 3400 || physH >= 1900) {
+        if (dpr <= 1.1) scale = 1.25;
+        else if (dpr <= 1.6) scale = 1.14;
+        else scale = 1.04;
+      } else if (physW >= 2400 || physH >= 1350) {
+        if (dpr <= 1.1) scale = 1.12;
+        else if (dpr <= 1.35) scale = 1.06;
+        else scale = 1.0;
+      }
+
+      if (vpW > 0 && vpW < 360) {
+        scale = Math.min(scale, 1.06);
+      }
+      return Math.round(scale * 100) / 100;
+    }
+
+    function applyPanelUiScaleDom(mode, syncStorage) {
+      const valid = normalizePanelUiScale(mode);
+      _activePanelUiScaleMode = valid;
+      const factor = valid === 'auto' ? computeAutoUiScale() : Number(valid) / 100;
+      if (document.documentElement && document.documentElement.style) {
+        if (typeof document.documentElement.style.setProperty === 'function') {
+          document.documentElement.style.setProperty('--panel-ui-scale', String(factor));
+        } else {
+          document.documentElement.style['--panel-ui-scale'] = String(factor);
+        }
+      }
+      if (document.body) {
+        document.body.setAttribute('data-panel-scale', valid);
+      }
+      const pct = Math.round(factor * 100);
+      const btnText = valid === 'auto'
+        ? (pct === 100 ? L('Авто', 'Auto') : (L('Авто ', 'Auto ') + pct + '%'))
+        : (valid + '%');
+      const scaleBtnIds = ['panelUiScaleBtn', 'pgUiScaleBtn'];
+      for (let i = 0; i < scaleBtnIds.length; i++) {
+        const btn = document.getElementById(scaleBtnIds[i]);
+        if (btn) {
+          btn.textContent = btnText;
+          btn.setAttribute('data-scale-factor', String(factor));
+        }
+      }
+      if (syncStorage) {
+        try {
+          localStorage.setItem(PANEL_UI_SCALE_STORAGE_KEY, valid);
+        } catch {}
+      }
+      if (typeof syncSmartComposerSizeAndScroll === 'function') {
+        syncSmartComposerSizeAndScroll();
+      }
+      if (typeof pgState === 'object' && pgState && pgState.open) {
+        try {
+          if (typeof pgSyncCanvasSize === 'function') pgSyncCanvasSize();
+          if (typeof pgDrawGraph === 'function') pgDrawGraph();
+        } catch {}
+      }
+      return valid;
+    }
+
+    function setPanelUiScale(mode) {
+      const valid = applyPanelUiScaleDom(mode, true);
+      if (currentState && typeof currentState === 'object') {
+        currentState.panelUiScale = valid;
+      }
+      void updateState({ panelUiScale: valid });
+      const label = valid === 'auto'
+        ? L('Авто (', 'Auto (') + Math.round(computeAutoUiScale() * 100) + '%)'
+        : (valid + '%');
+      flashStatus(L('Масштаб интерфейса: ', 'UI scale: ') + label + ' ✓');
+    }
+
+    function cyclePanelUiScale() {
+      const cur = normalizePanelUiScale((currentState && currentState.panelUiScale) || _activePanelUiScaleMode);
+      const idx = PANEL_UI_SCALE_CYCLE.indexOf(cur);
+      const next = PANEL_UI_SCALE_CYCLE[(idx + 1) % PANEL_UI_SCALE_CYCLE.length];
+      setPanelUiScale(next);
+    }
+
+    function readLiteHwMask() {
+      if (_liteLastHwMask && (_liteLastHwMask.ram || _liteLastHwMask.gpu)) {
+        return _liteLastHwMask;
+      }
+      try {
+        const raw = localStorage.getItem(LITE_HW_MASK_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object' && (parsed.ram || parsed.gpu)) {
+            _liteLastHwMask = { ram: Boolean(parsed.ram), gpu: Boolean(parsed.gpu) };
+            return _liteLastHwMask;
+          }
+        }
+      } catch {}
+      return { ram: true, gpu: true };
+    }
+
+    function saveLiteHwMask(ramOn, gpuOn) {
+      if (!ramOn && !gpuOn) return;
+      _liteLastHwMask = { ram: Boolean(ramOn), gpu: Boolean(gpuOn) };
+      try {
+        localStorage.setItem(LITE_HW_MASK_STORAGE_KEY, JSON.stringify(_liteLastHwMask));
+      } catch {}
+    }
+
+    function toggleLiteRamGpuMaster() {
+      const ramOn = currentState.ramCacheEnabled !== false;
+      const gpuOn = Boolean(currentState.gpuEnabled);
+      if (ramOn || gpuOn) {
+        saveLiteHwMask(ramOn, gpuOn);
+        void updateState({ ramCacheEnabled: false, gpuEnabled: false });
+        flashStatus(L('RAM + GPU на паузе', 'RAM + GPU paused'));
+        return;
+      }
+      const mask = readLiteHwMask();
+      const nextRam = mask.ram || !mask.gpu;
+      const nextGpu = Boolean(mask.gpu);
+      void updateState({ ramCacheEnabled: nextRam, gpuEnabled: nextGpu });
+      flashStatus(L('RAM + GPU включены ✓', 'RAM + GPU enabled ✓'));
+    }
+
+    function toggleLiteRamOnly() {
+      const nextRam = currentState.ramCacheEnabled === false;
+      const curGpu = Boolean(currentState.gpuEnabled);
+      if (nextRam || curGpu) saveLiteHwMask(nextRam, curGpu);
+      void updateState({ ramCacheEnabled: nextRam });
+      flashStatus(nextRam ? L('RAM-кэш включён ✓', 'RAM cache enabled ✓') : L('RAM-кэш выключен', 'RAM cache disabled'));
+    }
+
+    function toggleLiteGpuOnly() {
+      const curRam = currentState.ramCacheEnabled !== false;
+      const nextGpu = !Boolean(currentState.gpuEnabled);
+      if (curRam || nextGpu) saveLiteHwMask(curRam, nextGpu);
+      void updateState({ gpuEnabled: nextGpu });
+      flashStatus(nextGpu ? L('Локальный GPU включён ✓', 'Local GPU enabled ✓') : L('Локальный GPU выключен', 'Local GPU disabled'));
     }
 
     function setPanelTheme(panelTheme) {
@@ -2456,13 +2687,34 @@
       }
     }
 
+    let _setupDoctorAutoCloseTimer = 0;
+
+    function closeSetupDoctor() {
+      if (_setupDoctorAutoCloseTimer) {
+        clearTimeout(_setupDoctorAutoCloseTimer);
+        _setupDoctorAutoCloseTimer = 0;
+      }
+      const box = document.getElementById('setupDoctorBox');
+      if (box) {
+        box.classList.remove('is-rescanning');
+        box.style.minHeight = '';
+        box.style.display = 'none';
+      }
+      const btn = document.getElementById('smartBannerDoctorBtn');
+      if (btn) btn.setAttribute('aria-expanded', 'false');
+    }
+
     function renderSetupDoctorReport(rec) {
       const box = document.getElementById('setupDoctorBox');
       if (!box) return;
       _lastSetupDoctorData = rec;
       if (!rec || rec.ok === false) {
-        box.innerHTML = '<div style="color: var(--status-warn);">' + L('Не удалось проанализировать стек проекта: ', 'Failed to analyze project stack: ') +
-          escapeHtml((rec && rec.error) || L('ошибка', 'error')) + '</div>';
+        box.innerHTML =
+          '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">' +
+            '<span style="color: var(--status-warn);">' + L('Не удалось проанализировать стек проекта: ', 'Failed to analyze project stack: ') +
+              escapeHtml((rec && rec.error) || L('ошибка', 'error')) + '</span>' +
+            '<button type="button" class="win-btn" style="padding:1px 6px;font-size:10px;flex-shrink:0;" data-action="closeSetupDoctor" title="' + L('Свернуть диагностику', 'Collapse diagnostics') + '" aria-label="' + L('Свернуть диагностику', 'Collapse diagnostics') + '">✕</button>' +
+          '</div>';
         return;
       }
       const st = rec.stack || {};
@@ -2477,9 +2729,13 @@
       const applyableKinds = new Set(['hook_profile', 'agentignore', 'design_md', 'gates_md']);
 
       let html =
+        '<div data-setup-doctor-body="1">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px;">' +
           '<strong style="color:var(--accent-cyan);">' + L('🩺 Диагностика стека · ', '🩺 Setup Doctor · ') + escapeHtml(langs + fws) + ' (' + Number(st.totalFiles || 0) + L(' ф.)', ' files)') + '</strong>' +
-          '<button type="button" class="win-btn" style="padding:1px 6px;font-size:10px;" data-action="loadSetupDoctor">' + L('↻ Пересканировать', '↻ Rescan') + '</button>' +
+          '<div style="display:inline-flex;align-items:center;gap:4px;flex-shrink:0;">' +
+            '<button type="button" class="win-btn" style="padding:1px 6px;font-size:10px;" data-action="loadSetupDoctor">' + L('↻ Пересканировать', '↻ Rescan') + '</button>' +
+            '<button type="button" class="win-btn" style="padding:1px 6px;font-size:10px;" data-action="closeSetupDoctor" title="' + L('Свернуть диагностику', 'Collapse diagnostics') + '" aria-label="' + L('Свернуть диагностику', 'Collapse diagnostics') + '">✕</button>' +
+          '</div>' +
         '</div>' +
         '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px;color:var(--text-sub);">' +
           '<span style="min-width:0;flex:1 1 170px;">' + L('Рекомендованный профиль: ', 'Recommended profile: ') + '<strong>' + escapeHtml(profLabel) + '</strong>' +
@@ -2512,20 +2768,50 @@
           ext.slice(0, 4).map(function (e) { return escapeHtml(pickText(e, 'name', 'nameEn', e.id)); }).join(', ') +
           '</div>';
       }
+      html += '</div>';
       box.innerHTML = html;
     }
 
     async function loadSetupDoctor() {
       const box = document.getElementById('setupDoctorBox');
       if (!box) return;
-      box.style.display = 'block';
-      box.innerHTML = '<div style="color:var(--text-sub);">' + L('Анализ стека и гигиены проекта...', 'Analyzing project stack & hygiene...') + '</div>';
+      if (_setupDoctorAutoCloseTimer) {
+        clearTimeout(_setupDoctorAutoCloseTimer);
+        _setupDoctorAutoCloseTimer = 0;
+      }
+      const doctorBtn = document.getElementById('smartBannerDoctorBtn');
+      if (doctorBtn) doctorBtn.setAttribute('aria-expanded', 'true');
+      const hasExistingReport = box.style.display !== 'none' && Boolean(box.querySelector('[data-setup-doctor-body]'));
+      if (hasExistingReport) {
+        const rect = typeof box.getBoundingClientRect === 'function' ? box.getBoundingClientRect() : null;
+        const prevH = rect && Number.isFinite(rect.height) ? Math.ceil(rect.height) : 0;
+        if (prevH > 0) box.style.minHeight = prevH + 'px';
+        box.classList.add('is-rescanning');
+        const rescanBtn = box.querySelector('[data-action="loadSetupDoctor"]');
+        if (rescanBtn) {
+          rescanBtn.disabled = true;
+          rescanBtn.textContent = L('↻ Анализ...', '↻ Scanning...');
+        }
+      } else {
+        box.style.display = 'block';
+        box.innerHTML = '<div class="setup-doctor-loading">' + L('Анализ стека и гигиены проекта...', 'Analyzing project stack & hygiene...') + '</div>';
+      }
       try {
         const res = await panelFetch('/api/setup-recommendations', { method: 'GET' });
         const data = await res.json();
         renderSetupDoctorReport(data);
       } catch {
-        box.innerHTML = '<div style="color:var(--status-warn);">' + L('Ошибка запроса Setup Doctor', 'Setup Doctor request failed') + '</div>';
+        renderSetupDoctorReport({ ok: false, error: L('Ошибка запроса Setup Doctor', 'Setup Doctor request failed') });
+      } finally {
+        const releaseLock = function () {
+          box.classList.remove('is-rescanning');
+          box.style.minHeight = '';
+        };
+        if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+          window.requestAnimationFrame(releaseLock);
+        } else {
+          releaseLock();
+        }
       }
     }
 
@@ -2533,7 +2819,7 @@
       const box = document.getElementById('setupDoctorBox');
       if (!box) return;
       if (box.style.display !== 'none' && box.innerHTML.trim()) {
-        box.style.display = 'none';
+        closeSetupDoctor();
         return;
       }
       void loadSetupDoctor();
@@ -2541,6 +2827,7 @@
 
     async function applySetupDoctorItem(kind) {
       if (!kind) return;
+      const applyableKinds = new Set(['agentignore', 'design_md', 'gates_md']);
       try {
         flashStatus(L('Применение рекомендации Setup Doctor...', 'Applying Setup Doctor recommendation...'));
         const res = await panelFetch('/api/setup-recommendations/apply', {
@@ -2554,6 +2841,20 @@
           flashStatus((pickText(data, 'detail', 'detailEn', '') || L('Рекомендация применена', 'Recommendation applied')) + ' ✓');
           await refreshAll({ silent: true });
           if (kind === 'gates_md') void refreshGatesStatus({ silent: true });
+          const remHyg = Array.isArray(data.recommendation && data.recommendation.projectHygieneSuggestions)
+            ? data.recommendation.projectHygieneSuggestions
+            : [];
+          const hasRemainingApplyable = remHyg.some(function (h) { return h && applyableKinds.has(h.kind); });
+          if (kind === 'hook_profile' || !hasRemainingApplyable) {
+            const reducedMotion = typeof window !== 'undefined' && typeof window.matchMedia === 'function' &&
+              window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            if (_setupDoctorAutoCloseTimer) clearTimeout(_setupDoctorAutoCloseTimer);
+            if (reducedMotion) {
+              closeSetupDoctor();
+            } else {
+              _setupDoctorAutoCloseTimer = setTimeout(closeSetupDoctor, 240);
+            }
+          }
         } else {
           flashStatus('Setup Doctor: ' + ((data && (pickText(data, 'detail', 'detailEn', '') || data.error)) || L('не удалось применить', 'failed to apply')));
         }
@@ -3022,6 +3323,7 @@
       'inp-gpuKeepAlive',
       'inp-gpuEmbedKeepAlive',
       'inp-gpuContextTokens',
+      'inp-gpuOllamaDir',
       'inp-gpuModelsDir',
     ];
 

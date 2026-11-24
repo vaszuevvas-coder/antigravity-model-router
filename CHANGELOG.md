@@ -2,7 +2,25 @@
 
 Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
 
-> Хронология с `v3.8.0` по `v3.33.1` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`55` основных / `63` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `13` навыков и `38` наборов автотестов).
+> Хронология с `v3.8.0` по `v3.34.0` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`56` основных / `64` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `13` навыков и `40` наборов автотестов).
+
+---
+
+## [3.34.0] — 2026-11-25
+
+### Добавлено и улучшено (Автообновление плагина, Lite/Full-панель, установщик Ollama, гибридные слои Карты проекта и Split-Turn смена модели)
+- **Безопасное автообновление плагина с GitHub ([core/plugin-updater.mjs](core/plugin-updater.mjs), [tests/plugin-updater.test.mjs](tests/plugin-updater.test.mjs), [sidecars/panel/server.mjs](sidecars/panel/server.mjs))**:
+  - Проверка релизов с 6-часовым кэшем, строгим белым списком доменов GitHub и лимитом архива `80 МБ`; установка в 1 клик с сохранением `router-state.json`, `.cache`, `checkpoints` и `backups`, защитой dev-репозиториев с `.git` и проверкой симлинков.
+  - Добавлены API-маршруты панели: `/api/plugin/update-check`, `/api/plugin/update-status`, `/api/plugin/update-apply` и `/api/plugin/update-dismiss`.
+- **Режим панели `Lite / Full`, масштаб UI и автоустановка Ollama в 1 клик ([core/gpu/gpu-vram-runtime.mjs](core/gpu/gpu-vram-runtime.mjs), [sidecars/panel/server.mjs](sidecars/panel/server.mjs), [sidecars/panel/ui-src/js/01-workspace-wizard.js](sidecars/panel/ui-src/js/01-workspace-wizard.js), [sidecars/panel/ui-src/js/02-telemetry-cards.js](sidecars/panel/ui-src/js/02-telemetry-cards.js), [sidecars/panel/ui-src/js/03-hardware-gpu.js](sidecars/panel/ui-src/js/03-hardware-gpu.js), [sidecars/panel/ui-src/js/04-sentinel-layout.js](sidecars/panel/ui-src/js/04-sentinel-layout.js), [router-state.json](router-state.json))**:
+  - Добавлено переключение режима отображения `panelViewMode` (`full` / `lite` + быстрая карточка `liteQuickCard`), адаптивное масштабирование `panelUiScale`, нативные диалоги выбора папок (`/api/project-graph/pick-folder`, `/api/gpu/pick-folder`) и кнопка прерывания локального чата (`/api/local-chat/abort`).
+  - Реализована 1-кликовая автоустановка Ollama (`startOllamaInstallJob`) с пользовательским каталогом `gpuOllamaDir` и поддержкой зеркала HuggingFace (`gpuPreferHfMirror`).
+- **Интерактивная «Карта проекта» — гибридные архитектурные слои ([sidecars/panel/ui-src/js/07-project-graph.js](sidecars/panel/ui-src/js/07-project-graph.js), [sidecars/panel/ui-src/styles.css](sidecars/panel/ui-src/styles.css), [tests/project-graph-panel.test.mjs](tests/project-graph-panel.test.mjs))**:
+  - Гибридная слоистая раскладка с ролевыми колонками, интерактивной фильтрацией и перетаскиванием колонок за заголовок, свободным откреплением/возвратом узлов к слою и сбросом позиций, поддержкой масштаба UI и выбором произвольной папки проекта.
+- **Split-Turn передача смены модели (AGY 2.35+) и сквозной трекинг прогресса ([core/hook-runner.mjs](core/hook-runner.mjs), [core/tool-pruner.mjs](core/tool-pruner.mjs), [rules/AGENTS.md](rules/AGENTS.md), [core/task-progress.mjs](core/task-progress.mjs), [core/progress/progress-parsers.mjs](core/progress/progress-parsers.mjs), [tests/model-switch-split-turn.test.mjs](tests/model-switch-split-turn.test.mjs))**:
+  - Поддержка паузы/завершения хода для разблокировки селектора модели в AGY 2.35+, сквозное сканирование Swarm/субагентов и фоновых задач, а также аккуратная маркировка чатов вне проекта («Без проекта» / «No project»).
+- **Гигиена релиза и синхронизация метаданных ([install.js](install.js), [scripts/pack-release.mjs](scripts/pack-release.mjs), [scripts/bump-version.mjs](scripts/bump-version.mjs), [skills/github-publish-guard/scripts/audit-github-publish.mjs](skills/github-publish-guard/scripts/audit-github-publish.mjs), [README.md](README.md))**:
+  - Валидация `gpuOllamaDir` в пре-аудиторе GitHub и установщике, автосинхронизация версии в `core/plugin-updater.mjs`, актуализация счётчиков проекта (`56`/`64` модулей ядра, `40` наборов автотестов).
 
 ---
 

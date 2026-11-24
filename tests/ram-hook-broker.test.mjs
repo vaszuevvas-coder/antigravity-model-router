@@ -20,6 +20,7 @@ import {
   sanitizeStatePatch,
   startSidecarHostWatchdog,
 } from '../sidecars/panel/server.mjs';
+import { postRamDaemonJson } from '../sidecars/panel/lib/panel-state-skills.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -362,4 +363,133 @@ test('4. Sidecar host watchdog: parses loopback LS endpoints, probes TCP, and ex
   assert.equal(fail3.alive, false);
   assert.equal(neverLostReason, 'ls_unreachable');
   neverWatchdog.stop();
+});
+
+test('6. IPC /gpu/chat client disconnect abort & postRamDaemonJson signal/stopOnResponse', async () => {
+  const tmpWs = makeTempDir('tunnel-gpu-abort-');
+  fs.writeFileSync(path.join(tmpWs, 'index.mjs'), 'export const ping = () => 1;\n', 'utf8');
+
+  let observedSignal = null;
+  let chatFinished = false;
+  const engine = new RamMemoryEngine({ budgetMb: 64 });
+  await engine.warmWorkspaceAsync(tmpWs, { startWatcher: false });
+
+  const server = http.createServer((req, res) =>
+    handleIpcHttpRequest(req, res, {
+      skipAuth: true,
+      engine,
+      runLocalProjectChatFn: ({ signal }) =>
+        new Promise((resolve) => {
+          observedSignal = signal;
+          const finish = (val) => {
+            chatFinished = true;
+            resolve(val);
+          };
+          if (signal?.aborted) return finish({ ok: false, aborted: true, answer: '' });
+          signal?.addEventListener('abort', () => finish({ ok: false, aborted: true, answer: '' }), { once: true });
+          const t = setTimeout(() => finish({ ok: true, answer: 'too-late' }), 2000);
+          if (typeof t.unref === 'function') t.unref();
+        }),
+    })
+  );
+
+  let d1Hits = 0;
+  let d2Hits = 0;
+  let d1ClosedEarly = false;
+  const daemon1 = http.createServer((req, res) => {
+    d1Hits += 1;
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      if (d1Hits === 1) {
+        res.on('close', () => {
+          if (!res.writableEnded) d1ClosedEarly = true;
+        });
+        const t = setTimeout(() => {
+          if (!res.destroyed && !res.writableEnded) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, answer: 'late' }));
+          }
+        }, 1500);
+        if (typeof t.unref === 'function') t.unref();
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, answer: '', error: 'Ollama down' }));
+    });
+  });
+  const daemon2 = http.createServer((req, res) => {
+    d2Hits += 1;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, answer: 'should-not-run' }));
+  });
+
+  try {
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    await new Promise((r) => daemon1.listen(0, '127.0.0.1', r));
+    await new Promise((r) => daemon2.listen(0, '127.0.0.1', r));
+
+    // 6a) Disconnecting HTTP client on /gpu/chat must abort signal inside runLocalProjectChatFn
+    const payload = JSON.stringify({ wsPath: tmpWs, query: 'ping' });
+    await new Promise((resolveDone) => {
+      const req = http.request({
+        hostname: '127.0.0.1',
+        port: server.address().port,
+        path: '/gpu/chat',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload),
+        },
+      });
+      req.on('error', () => {});
+      req.write(payload);
+      req.end(() => {
+        setTimeout(() => {
+          try { req.destroy(); } catch {}
+          resolveDone();
+        }, 35);
+      });
+    });
+
+    for (let i = 0; i < 40 && !chatFinished; i++) {
+      await new Promise((r) => setTimeout(r, 15));
+    }
+    assert.ok(observedSignal, 'runLocalProjectChatFn must receive AbortSignal');
+    assert.equal(observedSignal.aborted, true, 'Disconnecting client must abort /gpu/chat signal');
+
+    // 6b) postRamDaemonJson with AbortSignal stops immediately and never falls through to daemon2
+    const candidates = [
+      { pid: process.pid, port: daemon1.address().port, token: 't1' },
+      { pid: process.pid, port: daemon2.address().port, token: 't2' },
+    ];
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 35);
+    const abortRes = await postRamDaemonJson('/gpu/chat', { query: 'test' }, 5000, {
+      signal: ac.signal,
+      stopOnResponse: true,
+      candidates,
+    });
+    clearTimeout(timer);
+    await new Promise((r) => setTimeout(r, 25));
+    assert.equal(abortRes?.aborted, true);
+    assert.equal(d1Hits, 1);
+    assert.equal(d2Hits, 0, 'Aborted postRamDaemonJson must not query second daemon');
+    assert.equal(d1ClosedEarly, true, 'Aborted postRamDaemonJson must destroy daemon socket');
+
+    // 6c) stopOnResponse:true prevents retrying second daemon when first daemon returns structured error
+    const errRes = await postRamDaemonJson('/gpu/chat', { query: 'test' }, 5000, {
+      stopOnResponse: true,
+      candidates,
+    });
+    assert.equal(errRes?.ok, false);
+    assert.equal(errRes?.error, 'Ollama down');
+    assert.equal(d2Hits, 0, 'stopOnResponse must not retry second daemon on structured ok:false');
+  } finally {
+    try { engine.evict('all'); } catch {}
+    try { server.closeAllConnections?.(); server.close(); } catch {}
+    try { daemon1.closeAllConnections?.(); daemon1.close(); } catch {}
+    try { daemon2.closeAllConnections?.(); daemon2.close(); } catch {}
+    fs.rmSync(tmpWs, { recursive: true, force: true });
+  }
 });

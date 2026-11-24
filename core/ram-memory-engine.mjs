@@ -3706,12 +3706,12 @@ export class RamMemoryEngine {
    * NEVER injects session handoff or pitfall ledger noise.
    * @param {string} rootDir
    * @param {string} [query='']
-   * @param {{ messages?: Array, maxChars?: number, warmSemanticHits?: Array, maxFiles?: number }} [options={}]
+   * @param {{ messages?: Array, maxChars?: number, warmSemanticHits?: Array, maxFiles?: number, focusFile?: string }} [options={}]
    */
   buildGroundedChatPack(
     rootDir,
     query = '',
-    { messages = [], maxChars = 8400, warmSemanticHits = [], maxFiles = 5 } = {}
+    { messages = [], maxChars = 8400, warmSemanticHits = [], maxFiles = 5, focusFile = '' } = {}
   ) {
     const t0 = performance.now();
     const ws = this.ensureWarm(rootDir);
@@ -3734,10 +3734,28 @@ export class RamMemoryEngine {
       maxRepoSymbols: 2500,
     });
 
+    let resolvedFocusRel = '';
+    const rawFocus = String(focusFile || '').replace(/\\/g, '/').replace(/^\/+/, '').trim();
+    if (rawFocus && !rawFocus.includes('..') && !rawFocus.includes('\0')) {
+      if (ws.files.has(rawFocus)) {
+        resolvedFocusRel = rawFocus;
+      } else {
+        const lowerFocus = rawFocus.toLowerCase();
+        for (const k of ws.files.keys()) {
+          if (k.toLowerCase() === lowerFocus) {
+            resolvedFocusRel = k;
+            break;
+          }
+        }
+      }
+    }
+
     const cleanQuery = String(query || '').trim();
     const effectiveQuery = enrichMultiTurnChatQuery(cleanQuery, messages, { maxExtraTerms: 6 });
     const explicitQueryFiles = extractExplicitFileMatches(cleanQuery, ws.files);
+    if (resolvedFocusRel) explicitQueryFiles.add(resolvedFocusRel);
     const contextFiles = extractExplicitFileMatches(effectiveQuery, ws.files);
+    if (resolvedFocusRel) contextFiles.add(resolvedFocusRel);
 
     const decomposeCompoundQuery = (qStr = '') => {
       const s = String(qStr || '').trim();
@@ -4040,7 +4058,14 @@ export class RamMemoryEngine {
     }
 
     // Whole AST Symbol Expansion (<= 55 lines per slice) + deduplicate identical expanded ranges
-    const orderedSlices = [...selected, ...pool.filter((p) => !selected.includes(p))];
+    let orderedSlices = [...selected, ...pool.filter((p) => !selected.includes(p))];
+    if (resolvedFocusRel) {
+      const focusSlices = orderedSlices.filter((s) => (s.file || s.relPath) === resolvedFocusRel);
+      const otherSlices = orderedSlices.filter((s) => (s.file || s.relPath) !== resolvedFocusRel);
+      if (focusSlices.length > 0) {
+        orderedSlices = [...focusSlices, ...otherSlices];
+      }
+    }
     const expandedSlices = [];
     const seenSliceRange = new Set();
     for (const item of orderedSlices) {

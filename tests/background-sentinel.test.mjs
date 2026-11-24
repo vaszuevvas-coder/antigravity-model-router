@@ -196,7 +196,7 @@ test('1b. Short Russian approvals ("Да", "Да!", "Исправляем") + Pr
         conversationId: convo1,
         workspacePaths: [tmpWs],
         lastUserInput: 'Исправь функцию x в app.mjs',
-        modelName: 'gemini-4-carbon-medium',
+        modelName: 'gemini-4-hydrogen-medium',
       },
       {
         showBadge: true,

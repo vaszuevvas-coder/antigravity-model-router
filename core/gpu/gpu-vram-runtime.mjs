@@ -4,12 +4,12 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import http from 'node:http';
 import https from 'node:https';
 import os from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { normalizeLang, pickLang, readActiveUiLanguage } from '../i18n.mjs';
 import { HF_GGUF_FALLBACK_MAP, buildGpuCascadeBundleForHardware, probeAnyGpu, resolveGpuModelPairForVramCap } from '../hardware-profiler.mjs';
 import { atomicWriteJsonSync, safeReadJsonSync } from '../safe-json.mjs';
@@ -17,6 +17,7 @@ import {
   CACHE_DIR,
   DEFAULT_GPU_CONFIG,
   GPU_PULL_STATUS_FILE,
+  OLLAMA_INSTALL_STATUS_FILE,
   HOST_RAM_WARM_COOLDOWN_MS,
   OLLAMA_BIN_TTL_MS,
   OLLAMA_SPAWN_COOLDOWN_MS,
@@ -672,9 +673,25 @@ export function evaluateGpuThermalAndLoadGuard(
 /**
  * Находит исполняемый файл Ollama на Windows / POSIX с мемоизацией на 5 минут.
  * @param {boolean} [force=false]
+ * @param {object|null} [cfgOverride=null]
  * @returns {string|null}
  */
-export function findOllamaBinary(force = false) {
+export function findOllamaBinary(force = false, cfgOverride = null) {
+  const customCfg = cfgOverride && typeof cfgOverride === 'object' ? cfgOverride : null;
+  let customDir = String(customCfg?.gpuOllamaDir || '').trim();
+  if (!customDir && !customCfg) {
+    try {
+      customDir = String(loadGpuConfig()?.gpuOllamaDir || '').trim();
+    } catch {}
+  }
+  const customBinName = process.platform === 'win32' ? 'ollama.exe' : 'ollama';
+  if (customDir) {
+    const customCandidate = join(customDir, customBinName);
+    if (existsSync(customCandidate)) {
+      gpuRuntime.ollamaBinCache = { ts: Date.now(), path: customCandidate };
+      return customCandidate;
+    }
+  }
   const now = Date.now();
   if (!force && gpuRuntime.ollamaBinCache.ts > 0 && (now - gpuRuntime.ollamaBinCache.ts) < OLLAMA_BIN_TTL_MS) {
     return gpuRuntime.ollamaBinCache.path;
@@ -1126,7 +1143,7 @@ export async function unloadModelsOnAppExit({
 export async function getGpuStatusSnapshot(opts = {}) {
   const cfg = loadGpuConfig();
   const hw = probeNvidiaGpu(Boolean(opts?.force));
-  const installedBinary = findOllamaBinary();
+  const installedBinary = findOllamaBinary(false, cfg);
   const [tagsRes, psRes] = await Promise.all([
     ollamaHttpJson('GET', '/api/tags', null, 700, cfg.gpuEndpoint),
     ollamaHttpJson('GET', '/api/ps', null, 700, cfg.gpuEndpoint),
@@ -1186,6 +1203,7 @@ export async function getGpuStatusSnapshot(opts = {}) {
     vramFit,
     cascadeStatus,
     pullStatus: getGpuPullJobStatus(),
+    ollamaInstallStatus: getOllamaInstallJobStatus(),
     telemetry: {
       ...getGpuTelemetry(),
       distillCacheEntries: ramDistillCache.size,
@@ -1197,6 +1215,7 @@ export async function getGpuStatusSnapshot(opts = {}) {
 // --- Устойчивая каскадная загрузка моделей Ollama с автофоллбэком на Hugging Face ---
 
 const SAFE_OLLAMA_TAG_RE = /^[a-z0-9._:/-]{2,128}$/i;
+const OLLAMA_INSTALLER_WIN_URL = 'https://ollama.com/download/OllamaSetup.exe';
 
 let activePullJob = {
   active: false,
@@ -1214,8 +1233,12 @@ let activePullJob = {
     currentModel: '',
     currentPercent: 0,
     source: '',
+    mirrorMode: 'auto',
     statusText: '',
+    statusTextRu: '',
+    statusTextEn: '',
     cancelled: false,
+    dismissed: false,
     error: '',
     items: [],
   },
@@ -1237,8 +1260,12 @@ function persistPullStatus(statusObj, force = false) {
     currentModel: String(statusObj.currentModel || ''),
     currentPercent: Number(statusObj.currentPercent) || 0,
     source: String(statusObj.source || ''),
+    mirrorMode: String(statusObj.mirrorMode || 'auto'),
     statusText: String(statusObj.statusText || ''),
+    statusTextRu: String(statusObj.statusTextRu || ''),
+    statusTextEn: String(statusObj.statusTextEn || ''),
     cancelled: Boolean(statusObj.cancelled),
+    dismissed: Boolean(statusObj.dismissed),
     error: String(statusObj.error || ''),
     items: Array.isArray(statusObj.items) ? statusObj.items.map((it) => ({ ...it })) : [],
   };
@@ -1246,6 +1273,33 @@ function persistPullStatus(statusObj, force = false) {
     if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
     atomicWriteJsonSync(GPU_PULL_STATUS_FILE, clean, { spaces: 0 });
   } catch {}
+}
+
+export function clearGpuPullErrorStatus() {
+  if (activePullJob.active) return getGpuPullJobStatus();
+  activePullJob.status = {
+    active: false,
+    pid: 0,
+    startedAt: 0,
+    updatedAt: Date.now(),
+    finishedAt: 0,
+    totalCount: 0,
+    completedCount: 0,
+    currentIndex: -1,
+    currentModel: '',
+    currentPercent: 0,
+    source: '',
+    mirrorMode: 'auto',
+    statusText: '',
+    statusTextRu: '',
+    statusTextEn: '',
+    cancelled: false,
+    dismissed: true,
+    error: '',
+    items: [],
+  };
+  persistPullStatus(activePullJob.status, true);
+  return getGpuPullJobStatus();
 }
 
 export function getGpuPullJobStatus() {
@@ -1502,7 +1556,7 @@ function execDefaultOllamaCliStep(
 ) {
   const isEnStep = normalizeLang(lang || cfg?.uiLanguage || readActiveUiLanguage(), 'en') === 'en';
   return new Promise((resolvePromise) => {
-    const bin = findOllamaBinary();
+    const bin = findOllamaBinary(false, cfg);
     if (!bin) {
       resolvePromise({ ok: false, code: -1, error: isEnStep ? 'Ollama is not installed on this PC' : 'Ollama не установлена на этом ПК' });
       return;
@@ -1590,18 +1644,19 @@ function execDefaultOllamaCliStep(
 
 /**
  * Downloads a single Ollama model with automatic fallback to official Hugging Face GGUF mirror.
+ * Supports `preferMirror: 'huggingface'` to try Hugging Face GGUF mirror first when available.
  * @param {string} modelName
  * @param {object} [opts={}]
  */
 export async function pullSingleOllamaModelWithFallback(
   modelName,
-  { cfg = null, onProgress = null, execStepFn = null, checkCancelled = null, hfMaxAttempts = 3, retryDelayMs = null, lang = '' } = {}
+  { cfg = null, onProgress = null, execStepFn = null, checkCancelled = null, hfMaxAttempts = 3, retryDelayMs = null, lang = '', preferMirror = '' } = {}
 ) {
   const resolvedCfg = cfg || loadGpuConfig();
   const isEn = normalizeLang(lang || resolvedCfg?.uiLanguage || readActiveUiLanguage(), 'en') === 'en';
   const cleanName = String(modelName || '').trim();
   if (!SAFE_OLLAMA_TAG_RE.test(cleanName)) {
-    return { ok: false, model: cleanName, error: isEn ? 'Invalid model name' : 'Некорректное имя модели' };
+    return { ok: false, model: cleanName, hfAvailable: false, error: isEn ? 'Invalid model name' : 'Некорректное имя модели' };
   }
   let useHttpDaemon = false;
   if (!execStepFn) {
@@ -1617,41 +1672,45 @@ export async function pullSingleOllamaModelWithFallback(
   const pauseBeforeRetry = () => new Promise((r) => setTimeout(r, waitMs));
   const cancelledMsg = isEn ? 'Cancelled by user' : 'Отменено пользователем';
 
-  onProgress?.({
-    percent: 0,
-    source: 'ollama',
-    statusText: isEn ? `Downloading ${cleanName} from Ollama...` : `Скачивание ${cleanName} из Ollama...`,
-  });
-  let r1 = await runStep(['pull', cleanName], {
-    manifestTimeoutMs: 20000,
-    onLine: (_line, pct) => {
-      if (pct !== null) {
-        onProgress?.({ percent: pct, source: 'ollama', statusText: `Ollama: ${cleanName} (${pct}%)` });
-      }
-    },
-  });
-  if (r1?.ok) {
-    return { ok: true, model: cleanName, source: 'ollama' };
-  }
-  if (checkCancelled?.() || r1?.cancelled) {
-    return { ok: false, cancelled: true, model: cleanName, error: cancelledMsg };
-  }
-
   const norm = normalizeOllamaTag(cleanName);
   const hfMeta = HF_GGUF_FALLBACK_MAP[norm];
   const hfTag = hfMeta?.hfTag || '';
-  if (!hfTag) {
-    if (r1?.sawDownloadProgress && isTransientPullError(r1?.error)) {
+  const hfAvailable = Boolean(hfTag);
+  const mirrorPref = (preferMirror === 'huggingface' || preferMirror === 'auto')
+    ? preferMirror
+    : (resolvedCfg?.gpuPreferHfMirror ? 'huggingface' : 'auto');
+
+  const tryOllamaRegistry = async (allowTransientRetry) => {
+    onProgress?.({
+      percent: 0,
+      source: 'ollama',
+      statusText: isEn ? `Downloading ${cleanName} from Ollama...` : `Скачивание ${cleanName} из Ollama...`,
+    });
+    let r = await runStep(['pull', cleanName], {
+      manifestTimeoutMs: 20000,
+      onLine: (_line, pct) => {
+        if (pct !== null) {
+          onProgress?.({ percent: pct, source: 'ollama', statusText: `Ollama: ${cleanName} (${pct}%)` });
+        }
+      },
+    });
+    if (r?.ok) {
+      return { ok: true, model: cleanName, source: 'ollama', hfAvailable };
+    }
+    if (checkCancelled?.() || r?.cancelled) {
+      return { ok: false, cancelled: true, model: cleanName, hfAvailable, error: cancelledMsg };
+    }
+    if (allowTransientRetry && r?.sawDownloadProgress && isTransientPullError(r?.error)) {
       if (waitMs > 0) await pauseBeforeRetry();
       if (checkCancelled?.()) {
-        return { ok: false, cancelled: true, model: cleanName, error: cancelledMsg };
+        return { ok: false, cancelled: true, model: cleanName, hfAvailable, error: cancelledMsg };
       }
       onProgress?.({
         percent: 0,
         source: 'ollama',
         statusText: isEn ? `Retrying Ollama: ${cleanName}...` : `Повтор Ollama: ${cleanName}...`,
       });
-      r1 = await runStep(['pull', cleanName], {
+      r = await runStep(['pull', cleanName], {
         manifestTimeoutMs: 25000,
         onLine: (_line, pct) => {
           if (pct !== null) {
@@ -1659,65 +1718,107 @@ export async function pullSingleOllamaModelWithFallback(
           }
         },
       });
-      if (r1?.ok) {
-        return { ok: true, model: cleanName, source: 'ollama' };
+      if (r?.ok) {
+        return { ok: true, model: cleanName, source: 'ollama', hfAvailable };
       }
-      if (checkCancelled?.() || r1?.cancelled) {
-        return { ok: false, cancelled: true, model: cleanName, error: cancelledMsg };
+      if (checkCancelled?.() || r?.cancelled) {
+        return { ok: false, cancelled: true, model: cleanName, hfAvailable, error: cancelledMsg };
       }
     }
     return {
       ok: false,
       model: cleanName,
       source: 'ollama',
-      error: formatCompactPullError(r1?.error || (isEn ? 'Failed to download model' : 'Не удалось скачать модель'), 240),
+      hfAvailable,
+      error: formatCompactPullError(r?.error || (isEn ? 'Failed to download model' : 'Не удалось скачать модель'), 240),
     };
-  }
+  };
 
-  const maxAttempts = Math.max(1, Number(hfMaxAttempts) || 3);
-  let r2 = null;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    if (checkCancelled?.()) {
-      return { ok: false, cancelled: true, model: cleanName, error: cancelledMsg };
+  const tryHfMirror = async () => {
+    const maxAttempts = Math.max(1, Number(hfMaxAttempts) || 3);
+    let r2 = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (checkCancelled?.()) {
+        return { ok: false, cancelled: true, model: cleanName, hfAvailable: true, error: cancelledMsg };
+      }
+      const statusLabel = attempt === 1
+        ? (isEn ? `Hugging Face mirror: ${cleanName}...` : `Зеркало Hugging Face: ${cleanName}...`)
+        : (isEn ? `Hugging Face retry (${attempt}/${maxAttempts}): ${cleanName}...` : `Повтор Hugging Face (${attempt}/${maxAttempts}): ${cleanName}...`);
+      onProgress?.({ percent: 0, source: 'huggingface', statusText: statusLabel });
+      r2 = await runStep(['pull', hfTag], {
+        manifestTimeoutMs: 45000,
+        onLine: (_line, pct) => {
+          if (pct !== null) {
+            onProgress?.({ percent: pct, source: 'huggingface', statusText: `Hugging Face: ${cleanName} (${pct}%)` });
+          }
+        },
+      });
+      if (r2?.ok) break;
+      if (checkCancelled?.() || r2?.cancelled) {
+        return { ok: false, cancelled: true, model: cleanName, hfAvailable: true, error: cancelledMsg };
+      }
+      if (attempt < maxAttempts && isTransientPullError(r2?.error)) {
+        if (waitMs > 0) await pauseBeforeRetry();
+        continue;
+      }
+      break;
     }
-    const statusLabel = attempt === 1
-      ? (isEn ? `Hugging Face mirror: ${cleanName}...` : `Резервное зеркало Hugging Face: ${cleanName}...`)
-      : (isEn ? `Hugging Face retry (${attempt}/${maxAttempts}): ${cleanName}...` : `Повтор Hugging Face (${attempt}/${maxAttempts}): ${cleanName}...`);
-    onProgress?.({ percent: 0, source: 'huggingface', statusText: statusLabel });
-    r2 = await runStep(['pull', hfTag], {
-      manifestTimeoutMs: 45000,
-      onLine: (_line, pct) => {
-        if (pct !== null) {
-          onProgress?.({ percent: pct, source: 'huggingface', statusText: `Hugging Face: ${cleanName} (${pct}%)` });
-        }
-      },
-    });
-    if (r2?.ok) break;
-    if (checkCancelled?.() || r2?.cancelled) {
-      return { ok: false, cancelled: true, model: cleanName, error: cancelledMsg };
+    if (!r2?.ok) {
+      return {
+        ok: false,
+        cancelled: Boolean(r2?.cancelled),
+        model: cleanName,
+        source: 'huggingface',
+        hfAvailable: true,
+        hfTag,
+        error: formatCompactPullError(r2?.error || (isEn ? 'Hugging Face download failed' : 'Ошибка загрузки с Hugging Face'), 240),
+      };
     }
-    if (attempt < maxAttempts && isTransientPullError(r2?.error)) {
-      if (waitMs > 0) await pauseBeforeRetry();
-      continue;
+    const rCp = await runStep(['cp', hfTag, cleanName], { manifestTimeoutMs: 30000 });
+    if (!rCp?.ok) {
+      return {
+        ok: false,
+        model: cleanName,
+        source: 'huggingface',
+        hfAvailable: true,
+        hfTag,
+        error: rCp?.error || (isEn ? 'Failed to register model tag' : 'Не удалось зарегистрировать тег модели'),
+      };
     }
-    break;
-  }
-  if (!r2?.ok) {
+    await runStep(['rm', hfTag], { manifestTimeoutMs: 15000 }).catch(() => {});
+    return { ok: true, model: cleanName, source: 'huggingface', hfTag, hfAvailable: true };
+  };
+
+  if (mirrorPref === 'huggingface' && hfTag) {
+    const hfFirst = await tryHfMirror();
+    if (hfFirst.ok || hfFirst.cancelled) return hfFirst;
+    const olFallback = await tryOllamaRegistry(true);
+    if (olFallback.ok || olFallback.cancelled) return olFallback;
     return {
       ok: false,
-      cancelled: Boolean(r2?.cancelled),
       model: cleanName,
       source: 'huggingface',
-      error: formatCompactPullError(r2?.error || r1?.error || (isEn ? 'Hugging Face download failed' : 'Ошибка загрузки с Hugging Face'), 240),
+      hfAvailable: true,
+      hfTag,
+      error: formatCompactPullError(hfFirst.error || olFallback.error, 240),
     };
   }
 
-  const rCp = await runStep(['cp', hfTag, cleanName], { manifestTimeoutMs: 30000 });
-  if (!rCp?.ok) {
-    return { ok: false, model: cleanName, source: 'huggingface', error: rCp?.error || (isEn ? 'Failed to register model tag' : 'Не удалось зарегистрировать тег модели') };
+  const olFirst = await tryOllamaRegistry(!hfTag);
+  if (olFirst.ok || olFirst.cancelled || !hfTag) {
+    return olFirst;
   }
-  await runStep(['rm', hfTag], { manifestTimeoutMs: 15000 }).catch(() => {});
-  return { ok: true, model: cleanName, source: 'huggingface', hfTag };
+  const hfFallback = await tryHfMirror();
+  if (hfFallback.ok || hfFallback.cancelled) return hfFallback;
+  return {
+    ok: false,
+    cancelled: Boolean(hfFallback.cancelled),
+    model: cleanName,
+    source: 'huggingface',
+    hfAvailable: true,
+    hfTag,
+    error: formatCompactPullError(hfFallback.error || olFirst.error, 240),
+  };
 }
 
 /**
@@ -1727,6 +1828,7 @@ export async function pullSingleOllamaModelWithFallback(
 export async function startGpuCascadePull({
   models = [],
   mode = 'cascade',
+  mirrorMode = '',
   totalVramMb = 0,
   selectedCapMb = 0,
   installedTags = null,
@@ -1742,6 +1844,9 @@ export async function startGpuCascadePull({
   const cfg = cfgOverride ? loadGpuConfig(cfgOverride) : loadGpuConfig();
   const pullLang = normalizeLang(lang || cfg.uiLanguage || readActiveUiLanguage(), 'en');
   const isEnPull = pullLang === 'en';
+  const effectiveMirrorMode = (mirrorMode === 'huggingface' || mirrorMode === 'auto')
+    ? mirrorMode
+    : (cfg.gpuPreferHfMirror ? 'huggingface' : 'auto');
   let candidateList = Array.isArray(models)
     ? models.map((m) => String(m || '').trim()).filter((m) => SAFE_OLLAMA_TAG_RE.test(m))
     : [];
@@ -1780,11 +1885,13 @@ export async function startGpuCascadePull({
 
   const items = deduped.map((name) => {
     const isInstalled = installedSet.has(normalizeOllamaTag(name));
+    const hfAvailable = Boolean(HF_GGUF_FALLBACK_MAP[normalizeOllamaTag(name)]?.hfTag);
     return {
       name,
       status: isInstalled ? 'skipped' : 'pending',
       percent: isInstalled ? 100 : 0,
       source: isInstalled ? 'installed' : '',
+      hfAvailable,
       error: '',
     };
   });
@@ -1804,10 +1911,12 @@ export async function startGpuCascadePull({
       currentModel: '',
       currentPercent: 100,
       source: 'installed',
+      mirrorMode: effectiveMirrorMode,
       statusText: isEnPull ? 'All cascade models are already installed ✓' : 'Все модели каскада уже установлены ✓',
       statusTextRu: 'Все модели каскада уже установлены ✓',
       statusTextEn: 'All cascade models are already installed ✓',
       cancelled: false,
+      dismissed: false,
       error: '',
       items,
     };
@@ -1829,11 +1938,13 @@ export async function startGpuCascadePull({
     currentIndex: -1,
     currentModel: '',
     currentPercent: 0,
-    source: '',
+    source: effectiveMirrorMode === 'huggingface' ? 'huggingface' : '',
+    mirrorMode: effectiveMirrorMode,
     statusText: isEnPull ? 'Preparing cascade model download...' : 'Подготовка каскадной загрузки моделей...',
     statusTextRu: 'Подготовка каскадной загрузки моделей...',
     statusTextEn: 'Preparing cascade model download...',
     cancelled: false,
+    dismissed: false,
     error: '',
     items,
   };
@@ -1857,6 +1968,7 @@ export async function startGpuCascadePull({
         const res = await pullSingleOllamaModelWithFallback(item.name, {
           cfg,
           lang: pullLang,
+          preferMirror: effectiveMirrorMode,
           execStepFn,
           checkCancelled: () => activePullJob.cancelRequested,
           onProgress: ({ percent, source, statusText }) => {
@@ -1929,4 +2041,476 @@ export async function startGpuCascadePull({
     await loopPromise;
   }
   return getGpuPullJobStatus();
+}
+
+// --- Автоматическая установка Ollama с выбором папки ---
+
+let activeInstallJob = {
+  active: false,
+  status: {
+    active: false,
+    pid: 0,
+    phase: 'idle',
+    percent: 0,
+    startedAt: 0,
+    updatedAt: 0,
+    finishedAt: 0,
+    installDir: '',
+    modelsDir: '',
+    installedBinary: '',
+    statusText: '',
+    statusTextRu: '',
+    statusTextEn: '',
+    error: '',
+    pullTriggered: false,
+    dismissed: false,
+  },
+};
+
+function persistInstallStatus(statusObj, force = false) {
+  const now = Date.now();
+  if (!force && statusObj._lastDiskWriteAt && (now - statusObj._lastDiskWriteAt) < 350) return;
+  statusObj._lastDiskWriteAt = now;
+  const clean = {
+    active: Boolean(statusObj.active),
+    pid: Number(statusObj.pid) || 0,
+    phase: String(statusObj.phase || 'idle'),
+    percent: Math.max(0, Math.min(100, Number(statusObj.percent) || 0)),
+    startedAt: Number(statusObj.startedAt) || 0,
+    updatedAt: Number(statusObj.updatedAt) || now,
+    finishedAt: Number(statusObj.finishedAt) || 0,
+    installDir: String(statusObj.installDir || ''),
+    modelsDir: String(statusObj.modelsDir || ''),
+    installedBinary: String(statusObj.installedBinary || ''),
+    statusText: String(statusObj.statusText || ''),
+    statusTextRu: String(statusObj.statusTextRu || ''),
+    statusTextEn: String(statusObj.statusTextEn || ''),
+    error: String(statusObj.error || ''),
+    pullTriggered: Boolean(statusObj.pullTriggered),
+    dismissed: Boolean(statusObj.dismissed),
+  };
+  try {
+    if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
+    atomicWriteJsonSync(OLLAMA_INSTALL_STATUS_FILE, clean, { spaces: 0 });
+  } catch {}
+}
+
+export function getOllamaInstallJobStatus() {
+  if (activeInstallJob.active) {
+    return { ...activeInstallJob.status };
+  }
+  const disk = safeReadJsonSync(OLLAMA_INSTALL_STATUS_FILE, () => null, { selfHeal: false });
+  if (disk && typeof disk === 'object') {
+    if (disk.active) {
+      const stale = (Date.now() - Number(disk.updatedAt || 0)) > 20 * 60 * 1000 || (disk.pid && !isProcessAliveSafe(disk.pid));
+      if (stale) {
+        return {
+          ...disk,
+          active: false,
+          phase: 'error',
+          statusText: disk.statusText || 'Ollama setup interrupted',
+          statusTextRu: disk.statusTextRu || 'Установка Ollama прервана',
+          statusTextEn: disk.statusTextEn || 'Ollama setup interrupted',
+          error: disk.error || 'Setup process interrupted',
+        };
+      }
+    }
+    return disk;
+  }
+  return { ...activeInstallJob.status };
+}
+
+export function clearOllamaInstallJobStatus() {
+  if (activeInstallJob.active) return getOllamaInstallJobStatus();
+  activeInstallJob.status = {
+    active: false,
+    pid: 0,
+    phase: 'idle',
+    percent: 0,
+    startedAt: 0,
+    updatedAt: Date.now(),
+    finishedAt: 0,
+    installDir: '',
+    modelsDir: '',
+    installedBinary: '',
+    statusText: '',
+    statusTextRu: '',
+    statusTextEn: '',
+    error: '',
+    pullTriggered: false,
+    dismissed: true,
+  };
+  persistInstallStatus(activeInstallJob.status, true);
+  return getOllamaInstallJobStatus();
+}
+
+function validateAndPrepareDir(rawDir, isEn, plat = process.platform) {
+  const clean = String(rawDir || '').trim();
+  if (!clean) return { ok: true, dir: '' };
+  if (clean.length > 512 || /[\r\n\0<>|"?*]/.test(clean.replace(/^[A-Za-z]:/, ''))) {
+    return { ok: false, error: isEn ? 'Invalid folder path' : 'Некорректный путь к папке' };
+  }
+  if (plat === 'win32') {
+    const drv = /^([A-Za-z]):/.exec(clean);
+    if (drv && !existsSync(`${drv[1]}:\\`)) {
+      return { ok: false, error: isEn ? `Drive ${drv[1]}: not found` : `Диск ${drv[1]}: не найден` };
+    }
+  }
+  const abs = resolve(clean);
+  try {
+    mkdirSync(abs, { recursive: true });
+    return { ok: true, dir: abs };
+  } catch (err) {
+    return { ok: false, error: err?.message || (isEn ? 'Folder is not writable' : 'Нет прав на запись в выбранную папку') };
+  }
+}
+
+function defaultDownloadFileWithRedirects(urlStr, destPath, { onProgress = null, redirectsLeft = 5, timeoutMs = 180000 } = {}) {
+  return new Promise((resolvePromise) => {
+    let parsed;
+    try {
+      parsed = new URL(urlStr);
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+        resolvePromise({ ok: false, error: 'Unsupported installer URL protocol' });
+        return;
+      }
+    } catch (err) {
+      resolvePromise({ ok: false, error: err?.message || 'Invalid URL' });
+      return;
+    }
+
+    const mod = parsed.protocol === 'https:' ? https : http;
+    let settled = false;
+    let fileStream = null;
+    const finish = (res) => {
+      if (settled) return;
+      settled = true;
+      if (fileStream) {
+        try { fileStream.destroy(); } catch {}
+      }
+      if (!res?.ok) {
+        try { if (existsSync(destPath)) unlinkSync(destPath); } catch {}
+      }
+      resolvePromise(res);
+    };
+
+    const req = mod.get(parsed, { timeout: 30000 }, (res) => {
+      const code = Number(res.statusCode) || 0;
+      if ((code === 301 || code === 302 || code === 303 || code === 307 || code === 308) && res.headers?.location) {
+        res.resume();
+        if (redirectsLeft <= 0) {
+          finish({ ok: false, error: 'Too many redirects while downloading OllamaSetup.exe' });
+          return;
+        }
+        const nextUrl = new URL(res.headers.location, parsed).toString();
+        defaultDownloadFileWithRedirects(nextUrl, destPath, { onProgress, redirectsLeft: redirectsLeft - 1, timeoutMs }).then(resolvePromise);
+        return;
+      }
+      if (code < 200 || code >= 300) {
+        res.resume();
+        finish({ ok: false, error: `HTTP ${code} from ollama.com` });
+        return;
+      }
+      const totalBytes = Number(res.headers?.['content-length']) || 0;
+      let downloaded = 0;
+      fileStream = createWriteStream(destPath);
+      fileStream.on('error', (err) => finish({ ok: false, error: err?.message || 'Disk write error' }));
+      res.on('data', (chunk) => {
+        downloaded += chunk.length;
+        if (totalBytes > 0) {
+          const frac = Math.max(0, Math.min(1, downloaded / totalBytes));
+          onProgress?.(frac, downloaded, totalBytes);
+        }
+      });
+      res.on('error', (err) => finish({ ok: false, error: err?.message || 'Download stream error' }));
+      fileStream.on('finish', () => finish({ ok: true, path: destPath, bytes: downloaded }));
+      res.pipe(fileStream);
+    });
+
+    req.setTimeout(timeoutMs, () => {
+      try { req.destroy(new Error('OllamaSetup.exe download timeout')); } catch {}
+    });
+    req.on('error', (err) => finish({ ok: false, error: err?.message || 'Network download error' }));
+  });
+}
+
+function defaultRunInstallerBinary(binPath, args = [], { timeoutMs = 10 * 60 * 1000, env = process.env } = {}) {
+  return new Promise((resolvePromise) => {
+    let settled = false;
+    const finish = (res) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolvePromise(res);
+    };
+    const child = spawn(binPath, args, { detached: false, windowsHide: true, stdio: 'ignore', env });
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch {}
+      finish({ ok: false, code: -1, error: 'Ollama installer timed out' });
+    }, timeoutMs);
+    child.on('error', (err) => finish({ ok: false, code: -1, error: err?.message || 'Failed to launch installer' }));
+    child.on('close', (code) => {
+      if (code === 0) finish({ ok: true, code: 0 });
+      else finish({ ok: false, code: Number(code), error: `Installer exited with code ${code}` });
+    });
+  });
+}
+
+/**
+ * Downloads and installs Ollama into a chosen folder, binds OLLAMA_MODELS, starts the daemon,
+ * and optionally triggers model cascade download right after installation.
+ * @param {object} [opts={}]
+ */
+export async function startOllamaInstallJob({
+  installDir = '',
+  modelsDir = '',
+  pullModeAfter = '',
+  selectedCapMb = 4096,
+  mirrorMode = 'auto',
+  lang = '',
+  cfgOverride = null,
+  downloadFn = null,
+  execInstallFn = null,
+  verifyBinaryFn = null,
+  ensureRunningFn = null,
+  startPullFn = null,
+  platform = process.platform,
+  allowInTests = false,
+  awaitCompletion = false,
+} = {}) {
+  if (activeInstallJob.active) {
+    return { ...getOllamaInstallJobStatus(), alreadyRunning: true };
+  }
+
+  const cfg = cfgOverride ? loadGpuConfig(cfgOverride) : loadGpuConfig();
+  const installLang = normalizeLang(lang || cfg.uiLanguage || readActiveUiLanguage(), 'en');
+  const isEn = installLang === 'en';
+
+  if (process.env.NODE_TEST_CONTEXT && !allowInTests && !downloadFn && !execInstallFn) {
+    return {
+      ok: false,
+      active: false,
+      phase: 'error',
+      error: isEn ? 'Installer disabled in test mode without mocks' : 'Установщик отключён в тестовой среде без моков',
+    };
+  }
+
+  const dirCheckInstall = validateAndPrepareDir(installDir || cfg.gpuOllamaDir || '', isEn, platform);
+  if (!dirCheckInstall.ok) {
+    return { ok: false, active: false, phase: 'error', error: dirCheckInstall.error };
+  }
+  const cleanInstallDir = dirCheckInstall.dir;
+  const derivedModels = String(modelsDir || '').trim() || (cleanInstallDir ? join(cleanInstallDir, 'models') : String(cfg.gpuModelsDir || '').trim());
+  const dirCheckModels = validateAndPrepareDir(derivedModels, isEn, platform);
+  if (!dirCheckModels.ok) {
+    return { ok: false, active: false, phase: 'error', error: dirCheckModels.error };
+  }
+  const cleanModelsDir = dirCheckModels.dir;
+
+  const setStatus = (patch, force = false) => {
+    Object.assign(activeInstallJob.status, patch, { updatedAt: Date.now() });
+    persistInstallStatus(activeInstallJob.status, force);
+  };
+
+  const now = Date.now();
+  activeInstallJob.active = true;
+  activeInstallJob.status = {
+    active: true,
+    pid: process.pid,
+    phase: 'preparing',
+    percent: 4,
+    startedAt: now,
+    updatedAt: now,
+    finishedAt: 0,
+    installDir: cleanInstallDir,
+    modelsDir: cleanModelsDir,
+    installedBinary: '',
+    statusText: isEn ? 'Preparing Ollama setup...' : 'Подготовка установки Ollama...',
+    statusTextRu: 'Подготовка установки Ollama...',
+    statusTextEn: 'Preparing Ollama setup...',
+    error: '',
+    pullTriggered: false,
+    dismissed: false,
+  };
+  persistInstallStatus(activeInstallJob.status, true);
+
+  const runInstall = async () => {
+    let tempInstaller = '';
+    try {
+      const updatedCfg = {
+        ...cfg,
+        gpuEnabled: true,
+        gpuAutoStart: true,
+        gpuOllamaDir: cleanInstallDir,
+        gpuModelsDir: cleanModelsDir || cfg.gpuModelsDir,
+      };
+      const checkBin = () => (
+        typeof verifyBinaryFn === 'function'
+          ? verifyBinaryFn(cleanInstallDir)
+          : findOllamaBinary(true, updatedCfg)
+      );
+
+      let binPath = checkBin();
+      const customTargetMissing = Boolean(
+        cleanInstallDir &&
+        (!binPath || !resolve(binPath).toLowerCase().startsWith(resolve(cleanInstallDir).toLowerCase()))
+      );
+
+      if (!binPath || customTargetMissing) {
+        if (platform !== 'win32' && !downloadFn && !execInstallFn) {
+          if (platform === 'darwin') {
+            setStatus({
+              phase: 'installing',
+              percent: 45,
+              statusText: isEn ? 'Installing Ollama via Homebrew...' : 'Установка Ollama через Homebrew...',
+              statusTextRu: 'Установка Ollama через Homebrew...',
+              statusTextEn: 'Installing Ollama via Homebrew...',
+            }, true);
+            const brewRes = await defaultRunInstallerBinary('brew', ['install', 'ollama'], { timeoutMs: 8 * 60 * 1000 });
+            if (!brewRes.ok) {
+              throw new Error(isEn ? 'Install Ollama from https://ollama.com/download (brew install ollama failed)' : 'Установите Ollama с https://ollama.com/download (brew не сработал)');
+            }
+            binPath = checkBin();
+          } else {
+            throw new Error(isEn ? 'On Linux install Ollama from https://ollama.com/download' : 'Для Linux установите Ollama с https://ollama.com/download');
+          }
+        } else {
+          tempInstaller = join(os.tmpdir(), `OllamaSetup-tunnel-${Date.now()}.exe`);
+          setStatus({
+            phase: 'downloading',
+            percent: 8,
+            statusText: isEn ? 'Downloading OllamaSetup.exe from ollama.com...' : 'Скачивание OllamaSetup.exe с ollama.com...',
+            statusTextRu: 'Скачивание OllamaSetup.exe с ollama.com...',
+            statusTextEn: 'Downloading OllamaSetup.exe from ollama.com...',
+          }, true);
+          const dlRes = typeof downloadFn === 'function'
+            ? await downloadFn(OLLAMA_INSTALLER_WIN_URL, tempInstaller, {
+                onProgress: (frac) => {
+                  const pct = 8 + Math.round(frac * 52);
+                  setStatus({
+                    phase: 'downloading',
+                    percent: pct,
+                    statusText: isEn ? `Downloading OllamaSetup.exe (${pct}%)...` : `Скачивание OllamaSetup.exe (${pct}%)...`,
+                    statusTextRu: `Скачивание OllamaSetup.exe (${pct}%)...`,
+                    statusTextEn: `Downloading OllamaSetup.exe (${pct}%)...`,
+                  });
+                },
+              })
+            : await defaultDownloadFileWithRedirects(OLLAMA_INSTALLER_WIN_URL, tempInstaller, {
+                onProgress: (frac) => {
+                  const pct = 8 + Math.round(frac * 52);
+                  setStatus({
+                    phase: 'downloading',
+                    percent: pct,
+                    statusText: isEn ? `Downloading OllamaSetup.exe (${pct}%)...` : `Скачивание OllamaSetup.exe (${pct}%)...`,
+                    statusTextRu: `Скачивание OllamaSetup.exe (${pct}%)...`,
+                    statusTextEn: `Downloading OllamaSetup.exe (${pct}%)...`,
+                  });
+                },
+              });
+          if (!dlRes?.ok) {
+            throw new Error(dlRes?.error || (isEn ? 'Failed to download OllamaSetup.exe' : 'Не удалось скачать OllamaSetup.exe'));
+          }
+
+          setStatus({
+            phase: 'installing',
+            percent: 65,
+            statusText: cleanInstallDir
+              ? (isEn ? `Installing Ollama into ${cleanInstallDir}...` : `Установка Ollama в ${cleanInstallDir}...`)
+              : (isEn ? 'Installing Ollama...' : 'Установка Ollama...'),
+            statusTextRu: cleanInstallDir ? `Установка Ollama в ${cleanInstallDir}...` : 'Установка Ollama...',
+            statusTextEn: cleanInstallDir ? `Installing Ollama into ${cleanInstallDir}...` : 'Installing Ollama...',
+          }, true);
+          const instArgs = ['/VERYSILENT', '/NORESTART'];
+          if (cleanInstallDir) instArgs.push(`/DIR=${cleanInstallDir}`);
+          const instEnv = { ...process.env };
+          if (cleanModelsDir) instEnv.OLLAMA_MODELS = cleanModelsDir;
+          const instRes = typeof execInstallFn === 'function'
+            ? await execInstallFn(dlRes.path || tempInstaller, instArgs, { installDir: cleanInstallDir, modelsDir: cleanModelsDir, env: instEnv })
+            : await defaultRunInstallerBinary(dlRes.path || tempInstaller, instArgs, { env: instEnv });
+          if (!instRes?.ok) {
+            throw new Error(instRes?.error || (isEn ? 'Ollama installer failed' : 'Ошибка установщика Ollama'));
+          }
+
+          if (cleanModelsDir && platform === 'win32' && !execInstallFn && !process.env.NODE_TEST_CONTEXT) {
+            process.env.OLLAMA_MODELS = cleanModelsDir;
+            try {
+              execFileSync('setx', ['OLLAMA_MODELS', cleanModelsDir], { windowsHide: true, timeout: 4000, stdio: 'ignore' });
+            } catch {}
+          }
+          gpuRuntime.ollamaBinCache = { ts: 0, path: null };
+          binPath = checkBin() || (!verifyBinaryFn ? findOllamaBinary(true) : '');
+        }
+      }
+
+      if (!binPath) {
+        throw new Error(isEn ? 'Ollama binary was not found after installation' : 'Исполняемый файл Ollama не найден после установки');
+      }
+
+      setStatus({
+        phase: 'starting',
+        percent: 90,
+        installedBinary: binPath,
+        statusText: isEn ? 'Starting local Ollama service...' : 'Запуск локального сервиса Ollama...',
+        statusTextRu: 'Запуск локального сервиса Ollama...',
+        statusTextEn: 'Starting local Ollama service...',
+      }, true);
+
+      const starter = typeof ensureRunningFn === 'function' ? ensureRunningFn : ensureOllamaRunning;
+      const runRes = await starter(updatedCfg);
+      if (runRes && runRes.ok === false && runRes.error) {
+        throw new Error(runRes.error);
+      }
+
+      let pullTriggered = false;
+      if (pullModeAfter === 'cascade' || pullModeAfter === 'active_only') {
+        const puller = typeof startPullFn === 'function' ? startPullFn : startGpuCascadePull;
+        await puller({
+          mode: pullModeAfter,
+          selectedCapMb: Number(selectedCapMb || updatedCfg.gpuMaxVramMb || 4096),
+          mirrorMode,
+          lang: installLang,
+          cfgOverride: updatedCfg,
+        });
+        pullTriggered = true;
+      }
+
+      setStatus({
+        active: false,
+        phase: 'done',
+        percent: 100,
+        finishedAt: Date.now(),
+        installedBinary: binPath,
+        pullTriggered,
+        error: '',
+        statusText: pullTriggered
+          ? (isEn ? 'Ollama installed ✓ Downloading models...' : 'Ollama установлена ✓ Запускаем загрузку моделей...')
+          : (isEn ? 'Ollama installed and running ✓' : 'Ollama установлена и запущена ✓'),
+        statusTextRu: pullTriggered ? 'Ollama установлена ✓ Запускаем загрузку моделей...' : 'Ollama установлена и запущена ✓',
+        statusTextEn: pullTriggered ? 'Ollama installed ✓ Downloading models...' : 'Ollama installed and running ✓',
+      }, true);
+    } catch (err) {
+      const msg = formatCompactPullError(err?.message || (isEn ? 'Ollama installation failed' : 'Ошибка установки Ollama'), 260);
+      setStatus({
+        active: false,
+        phase: 'error',
+        finishedAt: Date.now(),
+        error: msg,
+        statusText: isEn ? `Install error: ${msg}` : `Ошибка установки: ${msg}`,
+        statusTextRu: `Ошибка установки: ${msg}`,
+        statusTextEn: `Install error: ${msg}`,
+      }, true);
+    } finally {
+      activeInstallJob.active = false;
+      if (tempInstaller) {
+        try { if (existsSync(tempInstaller)) unlinkSync(tempInstaller); } catch {}
+      }
+    }
+  };
+
+  const p = runInstall().catch(() => {});
+  if (awaitCompletion) {
+    await p;
+  }
+  return { ok: !activeInstallJob.status.error, ...getOllamaInstallJobStatus() };
 }

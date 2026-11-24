@@ -2207,3 +2207,2462 @@ test('15. Standalone graph window launch avoids windowsHide cold-start bug and s
   assert.ok(/<meta\s+name="google"\s+content="notranslate"/i.test(uiHtml), 'ui.html must include google notranslate meta tag');
 });
 
+test('16. Project Graph minimap releases pointer cleanly and Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y undo/redo node drags', async () => {
+  const uiHtml = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+  const scriptMatches = [...uiHtml.matchAll(/<script>([\s\S]*?)<\/script>/gi)];
+  const mainScriptMatch = scriptMatches.find((m) => m[1].includes('pgBindCanvasEvents'));
+  assert.ok(mainScriptMatch, 'Main compiled panel script containing pgBindCanvasEvents must exist in ui.html');
+
+  const attachBus = (obj) => {
+    const map = new Map();
+    obj.addEventListener = (type, fn) => {
+      if (!map.has(type)) map.set(type, []);
+      map.get(type).push(fn);
+    };
+    obj.removeEventListener = (type, fn) => {
+      const arr = map.get(type);
+      if (!arr) return;
+      const idx = arr.indexOf(fn);
+      if (idx >= 0) arr.splice(idx, 1);
+    };
+    obj.dispatchEvent = (ev) => {
+      const e = Object.assign({
+        preventDefault() {},
+        stopPropagation() {},
+      }, ev);
+      const arr = map.get(e.type) || [];
+      for (const fn of arr.slice()) fn.call(obj, e);
+      return true;
+    };
+    return obj;
+  };
+
+  const makeClassList = () => {
+    const set = new Set();
+    return {
+      add: (...cls) => cls.filter(Boolean).forEach((c) => set.add(c)),
+      remove: (...cls) => cls.forEach((c) => set.delete(c)),
+      toggle: (c, force) => {
+        if (force === true) { set.add(c); return true; }
+        if (force === false) { set.delete(c); return false; }
+        if (set.has(c)) { set.delete(c); return false; }
+        set.add(c);
+        return true;
+      },
+      contains: (c) => set.has(c),
+    };
+  };
+
+  const makeEl = (tag = 'div', id = '') => {
+    const attrs = new Map();
+    const el = {
+      id,
+      tagName: tag.toUpperCase(),
+      className: '',
+      classList: makeClassList(),
+      style: { setProperty() {}, removeProperty() {} },
+      dataset: {},
+      value: '',
+      textContent: '',
+      innerHTML: '',
+      disabled: false,
+      clientWidth: 1200,
+      clientHeight: 800,
+      setAttribute: (k, v) => attrs.set(String(k), String(v)),
+      getAttribute: (k) => (attrs.has(String(k)) ? attrs.get(String(k)) : null),
+      removeAttribute: (k) => attrs.delete(String(k)),
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      appendChild: (c) => c,
+      getBoundingClientRect: () => ({ width: 1200, height: 800, left: 0, top: 0 }),
+      focus() {},
+      blur() {},
+    };
+    return attachBus(el);
+  };
+
+  const fakeCtx2d = {
+    save() {}, restore() {}, setTransform() {}, clearRect() {}, fillRect() {}, strokeRect() {},
+    beginPath() {}, closePath() {}, moveTo() {}, lineTo() {}, quadraticCurveTo() {}, bezierCurveTo() {},
+    arc() {}, roundRect() {}, rect() {}, clip() {}, fill() {}, stroke() {}, fillText() {}, strokeText() {}, setLineDash() {},
+    measureText: (t) => ({ width: String(t || '').length * 7 }),
+    createLinearGradient: () => ({ addColorStop() {} }),
+    createRadialGradient: () => ({ addColorStop() {} }),
+    fillStyle: '', strokeStyle: '', lineWidth: 1, font: '', textAlign: 'left', textBaseline: 'alphabetic', globalAlpha: 1,
+  };
+
+  const elements = new Map();
+  for (const id of [
+    'projectGraphModal', 'projectGraphCanvas', 'pgCanvasStage', 'pgInspector', 'pgStatsPill',
+    'pgClusterPills', 'pgEmptyHint', 'pgHoverTooltip', 'pgZoomIndicator', 'pgSearchInput',
+  ]) {
+    elements.set(id, makeEl(id === 'projectGraphCanvas' ? 'canvas' : (id === 'pgSearchInput' ? 'input' : 'div'), id));
+  }
+  const canvasEl = elements.get('projectGraphCanvas');
+  canvasEl.parentElement = elements.get('pgCanvasStage');
+  canvasEl.getContext = () => fakeCtx2d;
+  let releaseCalls = 0;
+  canvasEl.setPointerCapture = () => {};
+  canvasEl.releasePointerCapture = () => { releaseCalls += 1; };
+
+  const doc = attachBus({
+    visibilityState: 'visible',
+    activeElement: null,
+    title: 'The Tunnel',
+    body: makeEl('body'),
+    documentElement: makeEl('html'),
+    getElementById: (id) => elements.get(id) || null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: (tag) => makeEl(tag),
+  });
+
+  const windowObj = attachBus({
+    innerWidth: 1280,
+    innerHeight: 820,
+    devicePixelRatio: 1,
+    location: { search: '?view=graph&token=tok123', reload() {} },
+    fetch: async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }),
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    navigator: { clipboard: { writeText: async () => {} } },
+    requestAnimationFrame: () => 1,
+    cancelAnimationFrame() {},
+  });
+  windowObj.document = doc;
+  windowObj.window = windowObj;
+
+  const ctx = vm.createContext({
+    window: windowObj,
+    document: doc,
+    localStorage: windowObj.localStorage,
+    navigator: windowObj.navigator,
+    fetch: windowObj.fetch,
+    location: windowObj.location,
+    requestAnimationFrame: windowObj.requestAnimationFrame,
+    cancelAnimationFrame: windowObj.cancelAnimationFrame,
+    URLSearchParams,
+    ResizeObserver: undefined,
+    console,
+    setTimeout,
+    clearTimeout,
+    Math,
+    Number,
+    String,
+    Array,
+    Object,
+    Set,
+    Map,
+    JSON,
+    Date,
+    RegExp,
+    Promise,
+  });
+
+  vm.runInContext(mainScriptMatch[1], ctx);
+
+  const rawGraph = {
+    ok: true,
+    workspaceName: 'undo-test',
+    totalFiles: 2,
+    shownNodes: 2,
+    shownEdges: 1,
+    clusters: [{ id: 'core', label: 'core', size: 2 }],
+    nodes: [
+      { id: 'core/a.mjs', label: 'a.mjs', dir: 'core', lines: 30, estTokens: 240, inDeg: 0, outDeg: 1 },
+      { id: 'core/b.mjs', label: 'b.mjs', dir: 'core', lines: 50, estTokens: 400, inDeg: 1, outDeg: 0, isGod: true },
+    ],
+    edges: [{ source: 'core/a.mjs', target: 'core/b.mjs', kind: 'import' }],
+  };
+
+  const res = vm.runInContext(`(() => {
+    const raw = ${JSON.stringify(rawGraph)};
+    const canvas = document.getElementById('projectGraphCanvas');
+    pgState.open = true;
+    pgState.width = 1200;
+    pgState.height = 800;
+    pgState.rawGraphData = raw;
+    pgState.viewLevel = 'files';
+    pgState.layoutMode = 'layered';
+    pgState.showMinimap = true;
+    pgBindCanvasEvents();
+    pgHydrateSimulation(raw);
+    pgDrawGraph();
+
+    const mr = pgState.minimapRect;
+    if (!mr) throw new Error('Expected minimapRect');
+    canvas.dispatchEvent({
+      type: 'pointerdown',
+      button: 0,
+      pointerType: 'mouse',
+      pointerId: 11,
+      clientX: mr.mx + 12,
+      clientY: mr.my + 12,
+    });
+    const modeDuringMinimap = pgState.dragMode;
+    window.dispatchEvent({
+      type: 'pointerup',
+      pointerId: 11,
+      clientX: mr.mx + 24,
+      clientY: mr.my + 18,
+    });
+    const modeAfterWindowUp = pgState.dragMode;
+
+    // Also test stale mouse move with buttons === 0 resets stuck minimap drag
+    canvas.dispatchEvent({
+      type: 'pointerdown',
+      button: 0,
+      pointerType: 'mouse',
+      pointerId: 12,
+      clientX: mr.mx + 14,
+      clientY: mr.my + 14,
+    });
+    const modeBeforeStaleMove = pgState.dragMode;
+    canvas.dispatchEvent({
+      type: 'pointermove',
+      pointerType: 'mouse',
+      buttons: 0,
+      pointerId: 12,
+      clientX: mr.mx + 16,
+      clientY: mr.my + 16,
+    });
+    const modeAfterStaleMove = pgState.dragMode;
+
+    // Node drag -> Ctrl+Z (Russian layout 'я' with code KeyZ) -> Ctrl+Shift+Z -> Ctrl+Y
+    const targetNode = pgState.nodeById.get('core/a.mjs');
+    const origX = targetNode.x;
+    const origY = targetNode.y;
+    const sp = pgWorldToScreen(origX, origY);
+
+    canvas.dispatchEvent({
+      type: 'pointerdown',
+      button: 0,
+      pointerType: 'mouse',
+      pointerId: 13,
+      clientX: sp.x,
+      clientY: sp.y,
+    });
+    canvas.dispatchEvent({
+      type: 'pointermove',
+      pointerType: 'mouse',
+      buttons: 1,
+      pointerId: 13,
+      clientX: sp.x + 90,
+      clientY: sp.y + 55,
+    });
+    canvas.dispatchEvent({
+      type: 'pointerup',
+      pointerType: 'mouse',
+      pointerId: 13,
+      clientX: sp.x + 90,
+      clientY: sp.y + 55,
+    });
+    const movedX = targetNode.x;
+    const movedY = targetNode.y;
+
+    // Focus inside search input must NOT trigger node undo
+    document.activeElement = document.getElementById('pgSearchInput');
+    document.dispatchEvent({ type: 'keydown', ctrlKey: true, code: 'KeyZ', key: 'z' });
+    const xAfterInputUndo = targetNode.x;
+
+    // Undo with Russian key 'я' + code 'KeyZ'
+    document.activeElement = null;
+    document.dispatchEvent({ type: 'keydown', ctrlKey: true, code: 'KeyZ', key: 'я' });
+    const undoX = targetNode.x;
+    const undoY = targetNode.y;
+
+    // Redo with Ctrl+Shift+Z
+    document.dispatchEvent({ type: 'keydown', ctrlKey: true, shiftKey: true, code: 'KeyZ', key: 'Я' });
+    const redoX = targetNode.x;
+    const redoY = targetNode.y;
+
+    // Undo again then redo with Ctrl+Y
+    document.dispatchEvent({ type: 'keydown', ctrlKey: true, code: 'KeyZ', key: 'z' });
+    const undo2X = targetNode.x;
+    document.dispatchEvent({ type: 'keydown', ctrlKey: true, code: 'KeyY', key: 'н' });
+    const redoYX = targetNode.x;
+
+    return {
+      modeDuringMinimap,
+      modeAfterWindowUp,
+      modeBeforeStaleMove,
+      modeAfterStaleMove,
+      origX,
+      origY,
+      movedX,
+      movedY,
+      xAfterInputUndo,
+      undoX,
+      undoY,
+      redoX,
+      redoY,
+      undo2X,
+      redoYX,
+    };
+  })()`, ctx);
+
+  assert.equal(res.modeDuringMinimap, 'minimap');
+  assert.equal(res.modeAfterWindowUp, '', 'Minimap dragMode must reset on pointerup');
+  assert.equal(res.modeBeforeStaleMove, 'minimap');
+  assert.equal(res.modeAfterStaleMove, '', 'Minimap dragMode must reset on pointermove with buttons === 0');
+  assert.ok(releaseCalls >= 2, 'releasePointerCapture must be called when minimap drag ends');
+  assert.ok(Math.hypot(res.movedX - res.origX, res.movedY - res.origY) > 10, 'Node drag must move node coordinates');
+  assert.equal(res.xAfterInputUndo, res.movedX, 'Ctrl+Z inside <input> must not undo graph node moves');
+  assert.equal(res.undoX, res.origX, 'Ctrl+Z must restore node original X');
+  assert.equal(res.undoY, res.origY, 'Ctrl+Z must restore node original Y');
+  assert.equal(res.redoX, res.movedX, 'Ctrl+Shift+Z must restore moved X');
+  assert.equal(res.redoY, res.movedY, 'Ctrl+Shift+Z must restore moved Y');
+  assert.equal(res.undo2X, res.origX);
+  assert.equal(res.redoYX, res.movedX, 'Ctrl+Y must redo node move');
+});
+
+test('17. Wave 3 Project Map AI menu, Escape/outside close & hybrid inline Q&A / Composer handoff', async () => {
+  const vm = await import('node:vm');
+  const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+  for (const marker of [
+    'id="pgAiChatBox"',
+    'id="pgActionAskAiBtn"',
+    'id="pgAskAiMenu"',
+    'id="pgAiQuestionInput"',
+    'data-action="pgToggleAskAiMenu"',
+    'data-action="pgRunAiPreset"',
+    'data-action="pgSendAiToComposer"',
+    'function pgToggleAskAiMenu(',
+    'function pgExecuteFileAiQuestion(',
+  ]) {
+    assert.ok(html.includes(marker), `Expected Wave 3 Project Map marker ${marker} in ui.html`);
+  }
+
+  const mainScriptMatch = html.match(/<script>\s*([\s\S]*?)\s*<\/script>\s*<\/body>/i);
+  assert.ok(mainScriptMatch, 'Main script block must exist in ui.html');
+
+  const attachBus = (obj) => {
+    const map = new Map();
+    obj.addEventListener = (type, fn) => {
+      if (!map.has(type)) map.set(type, new Set());
+      map.get(type).add(fn);
+    };
+    obj.removeEventListener = (type, fn) => {
+      if (map.has(type)) map.get(type).delete(fn);
+    };
+    obj.dispatchEvent = (ev) => {
+      const listeners = map.get(ev.type);
+      if (!listeners) return;
+      for (const fn of Array.from(listeners)) fn(ev);
+    };
+    return obj;
+  };
+
+  const makeClassList = () => {
+    const set = new Set();
+    return {
+      add: (c) => set.add(c),
+      remove: (c) => set.delete(c),
+      toggle: (c, force) => {
+        if (force === true) { set.add(c); return true; }
+        if (force === false) { set.delete(c); return false; }
+        if (set.has(c)) { set.delete(c); return false; }
+        set.add(c);
+        return true;
+      },
+      contains: (c) => set.has(c),
+    };
+  };
+
+  const makeEl = (tag = 'div', id = '') => {
+    const attrs = new Map();
+    const el = {
+      id,
+      tagName: tag.toUpperCase(),
+      className: '',
+      hidden: id === 'pgAskAiMenu',
+      classList: makeClassList(),
+      style: { display: '', setProperty() {}, removeProperty() {} },
+      dataset: {},
+      value: '',
+      textContent: '',
+      innerHTML: '',
+      disabled: false,
+      clientWidth: 1200,
+      clientHeight: 800,
+      scrollTop: 0,
+      scrollHeight: 100,
+      setAttribute: (k, v) => attrs.set(String(k), String(v)),
+      getAttribute: (k) => (attrs.has(String(k)) ? attrs.get(String(k)) : null),
+      removeAttribute: (k) => attrs.delete(String(k)),
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      appendChild: (c) => c,
+      closest: (sel) => (sel === '#' + id ? el : null),
+      getBoundingClientRect: () => ({ width: 1200, height: 800, left: 0, top: 0 }),
+      focus() { el._focused = true; },
+      blur() {},
+    };
+    return attachBus(el);
+  };
+
+  const elements = new Map();
+  for (const id of [
+    'projectGraphModal', 'projectGraphCanvas', 'pgCanvasStage', 'pgInspector', 'pgStatsPill',
+    'pgClusterPills', 'pgEmptyHint', 'pgHoverTooltip', 'pgZoomIndicator', 'pgSearchInput',
+    'pgActionAskAiBtn', 'pgAskAiMenu', 'pgAiChatBox', 'pgAiChatMessages', 'pgAiEngineBadge',
+    'pgAiChatTitle', 'pgAiAskSubmitBtn', 'pgAiQuestionInput', 'smartComposerInput',
+    'pgInspActions', 'pgMetricIn', 'pgMetricOut', 'pgMetricLines', 'pgMetricRel', 'pgInspFilename',
+    'pgInspPath', 'pgInspBadges', 'pgInspMetrics', 'pgInspTabs', 'pgInspList',
+  ]) {
+    elements.set(id, makeEl(id === 'projectGraphCanvas' ? 'canvas' : (id.includes('Input') ? 'input' : 'div'), id));
+  }
+  const fakeCtx2d = {
+    save() {}, restore() {}, setTransform() {}, clearRect() {}, fillRect() {}, strokeRect() {},
+    beginPath() {}, closePath() {}, moveTo() {}, lineTo() {}, quadraticCurveTo() {}, bezierCurveTo() {},
+    arc() {}, roundRect() {}, rect() {}, clip() {}, fill() {}, stroke() {}, fillText() {}, strokeText() {}, setLineDash() {},
+    measureText: (t) => ({ width: String(t || '').length * 7 }),
+    createLinearGradient: () => ({ addColorStop() {} }),
+    createRadialGradient: () => ({ addColorStop() {} }),
+    fillStyle: '', strokeStyle: '', lineWidth: 1, font: '', textAlign: 'left', textBaseline: 'alphabetic', globalAlpha: 1,
+  };
+  const canvasEl = elements.get('projectGraphCanvas');
+  canvasEl.parentElement = elements.get('pgCanvasStage');
+  canvasEl.getContext = () => fakeCtx2d;
+  canvasEl.setPointerCapture = () => {};
+  canvasEl.releasePointerCapture = () => {};
+
+  const doc = attachBus({
+    visibilityState: 'visible',
+    activeElement: null,
+    title: 'The Tunnel',
+    body: makeEl('body'),
+    documentElement: makeEl('html'),
+    getElementById: (id) => elements.get(id) || null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: (tag) => makeEl(tag),
+  });
+
+  const fetchCalls = [];
+  const windowObj = attachBus({
+    innerWidth: 1280,
+    innerHeight: 820,
+    devicePixelRatio: 1,
+    location: { search: '', reload() {} },
+    fetch: async (url, init) => {
+      fetchCalls.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          answer: 'Файл core/a.mjs экспортирует runHelper и зависит от core/b.mjs.',
+          sources: [{ file: 'core/a.mjs', startLine: 1, endLine: 12 }],
+        }),
+      };
+    },
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    navigator: { clipboard: { writeText: async () => {} } },
+    requestAnimationFrame: () => 1,
+    cancelAnimationFrame() {},
+  });
+  windowObj.document = doc;
+  windowObj.window = windowObj;
+
+  const activeTimers = new Set();
+  const safeSetTimeout = (fn, ms, ...args) => {
+    const id = setTimeout(() => {
+      activeTimers.delete(id);
+      if (typeof fn === 'function') fn(...args);
+    }, ms);
+    if (typeof id?.unref === 'function') id.unref();
+    activeTimers.add(id);
+    return id;
+  };
+  const safeClearTimeout = (id) => {
+    if (id !== undefined && id !== null) {
+      activeTimers.delete(id);
+      clearTimeout(id);
+    }
+  };
+
+  const ctx = vm.createContext({
+    window: windowObj,
+    document: doc,
+    localStorage: windowObj.localStorage,
+    navigator: windowObj.navigator,
+    fetch: windowObj.fetch,
+    location: windowObj.location,
+    requestAnimationFrame: windowObj.requestAnimationFrame,
+    cancelAnimationFrame: windowObj.cancelAnimationFrame,
+    URLSearchParams,
+    ResizeObserver: undefined,
+    console,
+    setTimeout: safeSetTimeout,
+    clearTimeout: safeClearTimeout,
+    Math,
+    Number,
+    String,
+    Array,
+    Object,
+    Set,
+    Map,
+    JSON,
+    Date,
+    RegExp,
+    Promise,
+  });
+
+  try {
+    vm.runInContext(mainScriptMatch[1], ctx);
+
+    const rawGraph = {
+      ok: true,
+      workspaceName: 'ai-menu-test',
+      totalFiles: 2,
+      shownNodes: 2,
+      shownEdges: 1,
+      clusters: [{ id: 'core', label: 'core', size: 2 }],
+      nodes: [
+        { id: 'core/a.mjs', label: 'a.mjs', dir: 'core', lines: 30, estTokens: 240, inDeg: 0, outDeg: 1, isFragile: false },
+        { id: 'core/b.mjs', label: 'b.mjs', dir: 'core', lines: 50, estTokens: 400, inDeg: 1, outDeg: 0, isGod: true },
+      ],
+      edges: [{ source: 'core/a.mjs', target: 'core/b.mjs', kind: 'import' }],
+    };
+
+    const out = await vm.runInContext(`(async () => {
+      currentState = { ...(currentState || {}), gpuEnabled: false, uiLanguage: 'ru' };
+      pgState.open = true;
+      pgState.viewLevel = 'files';
+      pgHydrateSimulation(${JSON.stringify(rawGraph)});
+      pgSelectNodeById('core/a.mjs');
+
+      // 1) Toggle menu open -> Escape closes -> reopen -> outside click closes
+      pgToggleAskAiMenu();
+      const openAfterToggle = pgState.aiMenuOpen && document.getElementById('pgAskAiMenu').hidden === false;
+      const escEv = {
+        type: 'keydown',
+        key: 'Escape',
+        defaultPrevented: false,
+        preventDefault() { this.defaultPrevented = true; },
+        stopPropagation() {},
+        stopImmediatePropagation() {},
+      };
+      document.dispatchEvent(escEv);
+      const closedAfterEsc = !pgState.aiMenuOpen && document.getElementById('pgAskAiMenu').hidden === true;
+
+      pgToggleAskAiMenu(true);
+      document.dispatchEvent({ type: 'click', target: { closest: () => null } });
+      const closedAfterOutsideClick = !pgState.aiMenuOpen;
+
+      // 2) Preset 'risks' with GPU OFF -> renders static dependency summary & sends @file to Composer
+      await pgRunAiPreset('risks');
+      const offModeBadge = document.getElementById('pgAiEngineBadge').textContent;
+      const offBoxOpen = document.getElementById('pgAiChatBox').style.display === 'flex';
+      const offHtml = document.getElementById('pgAiChatMessages').innerHTML;
+      pgSendAiToComposer();
+      const composerValAfterOff = document.getElementById('smartComposerInput').value;
+
+      // 3) GPU ON -> custom question via Enter calls /api/local-chat with focusFile
+      currentState.gpuEnabled = true;
+      const qInp = document.getElementById('pgAiQuestionInput');
+      qInp.value = 'Как устроена обработка ошибок?';
+      let prevented = false;
+      document.dispatchEvent({
+        type: 'keydown',
+        key: 'Enter',
+        shiftKey: false,
+        target: qInp,
+        preventDefault() { prevented = true; },
+      });
+      await new Promise((r) => setTimeout(r, 30));
+      const onModeHtml = document.getElementById('pgAiChatMessages').innerHTML;
+
+      return {
+        openAfterToggle,
+        closedAfterEsc,
+        closedAfterOutsideClick,
+        offModeBadge,
+        offBoxOpen,
+        offHtml,
+        composerValAfterOff,
+        prevented,
+        onModeHtml,
+      };
+    })()`, ctx);
+
+    assert.equal(out.openAfterToggle, true, 'pgToggleAskAiMenu must open #pgAskAiMenu');
+    assert.equal(out.closedAfterEsc, true, 'Escape must close #pgAskAiMenu');
+    assert.equal(out.closedAfterOutsideClick, true, 'Outside click must close #pgAskAiMenu');
+    assert.equal(out.offBoxOpen, true, '#pgAiChatBox must open on preset');
+    assert.ok(out.offHtml.includes('core/b.mjs'), 'Static GPU-OFF summary must include imports from graph');
+    assert.ok(out.composerValAfterOff.includes('@file:core/a.mjs'), 'pgSendAiToComposer must insert @file:core/a.mjs into Smart Composer');
+    assert.equal(out.prevented, true);
+    assert.ok(out.onModeHtml.includes('runHelper'), 'GPU-ON inline Q&A must render /api/local-chat answer');
+    const localChatCall = fetchCalls.find((c) => c.url.includes('/api/local-chat'));
+    assert.ok(localChatCall, 'Must POST /api/local-chat');
+    assert.equal(localChatCall.body.focusFile, 'core/a.mjs', '/api/local-chat payload must include focusFile');
+  } finally {
+    try {
+      vm.runInContext(`if (typeof telemetryPollTimer !== 'undefined' && telemetryPollTimer) { clearTimeout(telemetryPollTimer); telemetryPollTimer = null; }`, ctx);
+    } catch {}
+    for (const id of Array.from(activeTimers)) {
+      safeClearTimeout(id);
+    }
+  }
+});
+
+test('18. Project Map right-click contextmenu opens custom node menu instead of native canvas menu', async () => {
+  const vm = await import('node:vm');
+  const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+  for (const marker of [
+    'id="pgNodeContextMenu"',
+    'function pgOpenNodeContextMenu(',
+    'function pgCloseNodeContextMenu(',
+    'function pgRunNodeContextAction(',
+    "case 'pgCtxAction':",
+    "canvas.addEventListener('contextmenu'",
+  ]) {
+    assert.ok(html.includes(marker), `Expected RMB context menu marker ${marker} in ui.html`);
+  }
+
+  const mainScriptMatch = html.match(/<script>\s*([\s\S]*?)\s*<\/script>\s*<\/body>/i);
+  assert.ok(mainScriptMatch, 'Main script block must exist in ui.html');
+
+  const attachBus = (obj) => {
+    const map = new Map();
+    obj.addEventListener = (type, fn) => {
+      if (!map.has(type)) map.set(type, new Set());
+      map.get(type).add(fn);
+    };
+    obj.removeEventListener = (type, fn) => {
+      if (map.has(type)) map.get(type).delete(fn);
+    };
+    obj.dispatchEvent = (ev) => {
+      const listeners = map.get(ev.type);
+      if (!listeners) return;
+      for (const fn of Array.from(listeners)) fn(ev);
+    };
+    return obj;
+  };
+
+  const makeClassList = () => {
+    const set = new Set();
+    return {
+      add: (c) => set.add(c),
+      remove: (c) => set.delete(c),
+      toggle: (c, force) => {
+        if (force === true) { set.add(c); return true; }
+        if (force === false) { set.delete(c); return false; }
+        if (set.has(c)) { set.delete(c); return false; }
+        set.add(c);
+        return true;
+      },
+      contains: (c) => set.has(c),
+    };
+  };
+
+  const makeEl = (tag = 'div', id = '') => {
+    const attrs = new Map();
+    const el = {
+      id,
+      tagName: tag.toUpperCase(),
+      className: '',
+      hidden: id === 'pgAskAiMenu' || id === 'pgNodeContextMenu',
+      classList: makeClassList(),
+      style: { display: '', left: '', top: '', setProperty() {}, removeProperty() {} },
+      dataset: {},
+      value: '',
+      textContent: '',
+      innerHTML: '',
+      disabled: false,
+      clientWidth: 1200,
+      clientHeight: 800,
+      offsetWidth: 250,
+      offsetHeight: 320,
+      scrollTop: 0,
+      scrollHeight: 100,
+      setAttribute: (k, v) => attrs.set(String(k), String(v)),
+      getAttribute: (k) => (attrs.has(String(k)) ? attrs.get(String(k)) : null),
+      removeAttribute: (k) => attrs.delete(String(k)),
+      getBoundingClientRect: () => ({ left: 10, top: 20, width: 1200, height: 800 }),
+      getContext: () => ({
+        save() {}, restore() {}, clearRect() {}, fillRect() {}, strokeRect() {}, beginPath() {}, closePath() {},
+        arc() {}, rect() {}, clip() {}, fill() {}, stroke() {}, moveTo() {}, lineTo() {}, quadraticCurveTo() {},
+        bezierCurveTo() {}, roundRect() {}, drawImage() {},
+        setLineDash() {}, setTransform() {}, scale() {}, translate() {}, fillText() {}, strokeText() {},
+        createLinearGradient: () => ({ addColorStop() {} }),
+        createRadialGradient: () => ({ addColorStop() {} }),
+        measureText: (s) => ({ width: String(s || '').length * 7 }),
+      }),
+      focus() {},
+      closest: (sel) => (sel === '#' + id ? el : null),
+      querySelectorAll: () => [],
+      querySelector: () => null,
+    };
+    return attachBus(el);
+  };
+
+  const els = new Map();
+  for (const [id, tag] of [
+    ['projectGraphModal', 'div'],
+    ['pgCanvasStage', 'div'],
+    ['projectGraphCanvas', 'canvas'],
+    ['pgNodeContextMenu', 'div'],
+    ['pgAskAiMenu', 'div'],
+    ['pgActionAskAiBtn', 'button'],
+    ['pgAiChatBox', 'div'],
+    ['pgAiChatTitle', 'span'],
+    ['pgAiEngineBadge', 'span'],
+    ['pgAiChatMessages', 'div'],
+    ['pgAiQuestionInput', 'input'],
+    ['pgAiAskSubmitBtn', 'button'],
+    ['pgInspFilename', 'div'],
+    ['pgInspPath', 'div'],
+    ['pgInspBadges', 'div'],
+    ['pgInspMetrics', 'div'],
+    ['pgInspTabs', 'div'],
+    ['pgInspActions', 'div'],
+    ['pgInspList', 'div'],
+    ['pgHoverTooltip', 'div'],
+    ['smartComposerInput', 'textarea'],
+  ]) {
+    els.set(id, makeEl(tag, id));
+  }
+
+  const doc = attachBus({
+    body: makeEl('body', 'body'),
+    documentElement: makeEl('html', 'html'),
+    activeElement: null,
+    getElementById: (id) => els.get(id) || null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: (tag) => makeEl(tag, ''),
+  });
+
+  const activeTimers = new Set();
+  const safeSetTimeout = (fn, ms) => {
+    const id = setTimeout(() => { activeTimers.delete(id); fn(); }, Math.min(Number(ms) || 0, 50));
+    if (id && typeof id.unref === 'function') id.unref();
+    activeTimers.add(id);
+    return id;
+  };
+  const safeClearTimeout = (id) => { activeTimers.delete(id); clearTimeout(id); };
+
+  const win = attachBus({
+    location: { search: '', href: 'http://127.0.0.1:4242/' },
+    innerWidth: 1400,
+    innerHeight: 900,
+    devicePixelRatio: 1,
+    document: doc,
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    navigator: { clipboard: { writeText: async () => {} } },
+    setTimeout: safeSetTimeout,
+    clearTimeout: safeClearTimeout,
+    requestAnimationFrame: () => 1,
+    cancelAnimationFrame: () => {},
+    fetch: async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }),
+    URLSearchParams,
+    AbortController,
+  });
+
+  const ctx = vm.createContext({
+    window: win,
+    document: doc,
+    navigator: win.navigator,
+    localStorage: win.localStorage,
+    location: win.location,
+    fetch: win.fetch,
+    setTimeout: safeSetTimeout,
+    clearTimeout: safeClearTimeout,
+    setInterval: () => 0,
+    clearInterval: () => {},
+    requestAnimationFrame: win.requestAnimationFrame,
+    cancelAnimationFrame: win.cancelAnimationFrame,
+    URLSearchParams,
+    AbortController,
+    console,
+    Math,
+    Date,
+    JSON,
+    Map,
+    Set,
+    Array,
+    Object,
+    String,
+    Number,
+    Boolean,
+    RegExp,
+    Promise,
+  });
+
+  try {
+    vm.runInContext(mainScriptMatch[1], ctx);
+    const out = await vm.runInContext(`(async () => {
+      pgState.open = true;
+      pgState.width = 1200;
+      pgState.height = 800;
+      pgState.camX = 0;
+      pgState.camY = 0;
+      pgState.camScale = 1;
+      pgState.viewLevel = 'files';
+      const fileNode = {
+        id: 'core/a.mjs',
+        label: 'a.mjs',
+        x: 0,
+        y: 0,
+        r: 16,
+        isFolder: false,
+        isSymbol: false,
+        lines: 90,
+        inDeg: 1,
+        outDeg: 1,
+        reliabilityPercent: 100,
+      };
+      pgState.nodes = [fileNode];
+      pgState.nodeById = new Map([['core/a.mjs', fileNode]]);
+      pgState.inNeighbors = new Map([['core/a.mjs', []]]);
+      pgState.outNeighbors = new Map([['core/a.mjs', [{ id: 'core/b.mjs', kind: 'import' }]]]);
+      pgBindCanvasEvents();
+
+      const canvas = document.getElementById('projectGraphCanvas');
+      const menu = document.getElementById('pgNodeContextMenu');
+
+      // 1) Right-click on fileNode at canvas center (clientX = rect.left + 600, clientY = rect.top + 400)
+      let preventedOnNode = false;
+      canvas.dispatchEvent({
+        type: 'contextmenu',
+        clientX: 610,
+        clientY: 420,
+        preventDefault() { preventedOnNode = true; },
+      });
+      const openedOnNode = !menu.hidden && pgState.ctxMenuOpen === true;
+      const selectedOnRmb = pgState.selectedNodeId;
+      const menuHtml = menu.innerHTML;
+
+      // 2) Run action 'cart' from context menu -> toggles node in cart & closes menu
+      pgRunNodeContextAction('cart');
+      const closedAfterAction = menu.hidden === true && pgState.ctxMenuOpen === false;
+      const inCartAfterAction = pgState.contextCart.has('core/a.mjs');
+
+      // 3) Re-open and press Escape -> closes menu without closing modal
+      canvas.dispatchEvent({
+        type: 'contextmenu',
+        clientX: 610,
+        clientY: 420,
+        preventDefault() {},
+      });
+      const escEv = {
+        type: 'keydown',
+        key: 'Escape',
+        defaultPrevented: false,
+        preventDefault() { this.defaultPrevented = true; },
+        stopPropagation() {},
+        stopImmediatePropagation() {},
+      };
+      document.dispatchEvent(escEv);
+      const closedAfterEsc = menu.hidden === true && pgState.ctxMenuOpen === false;
+      const modalStillOpen = pgState.open === true;
+
+      // 4) Right-click on empty space -> suppresses native menu and keeps custom menu hidden
+      let preventedOnEmpty = false;
+      canvas.dispatchEvent({
+        type: 'contextmenu',
+        clientX: 30,
+        clientY: 30,
+        preventDefault() { preventedOnEmpty = true; },
+      });
+      const hiddenOnEmpty = menu.hidden === true;
+
+      return {
+        preventedOnNode,
+        openedOnNode,
+        selectedOnRmb,
+        menuHtml,
+        closedAfterAction,
+        inCartAfterAction,
+        closedAfterEsc,
+        modalStillOpen,
+        preventedOnEmpty,
+        hiddenOnEmpty,
+      };
+    })()`, ctx);
+
+    assert.equal(out.preventedOnNode, true, 'contextmenu on node must call preventDefault()');
+    assert.equal(out.openedOnNode, true, 'RMB on node must open #pgNodeContextMenu');
+    assert.equal(out.selectedOnRmb, 'core/a.mjs', 'RMB on node must select that node');
+    assert.ok(out.menuHtml.includes('data-arg="focus"'), 'Context menu must include Focus action');
+    assert.ok(out.menuHtml.includes('data-arg="symbols"'), 'Context menu must include Symbols action for file');
+    assert.ok(out.menuHtml.includes('data-arg="ai:explain"'), 'Context menu must include AI Explain preset');
+    assert.ok(out.menuHtml.includes('data-arg="ai:risks"'), 'Context menu must include AI Blast Radius preset');
+    assert.equal(out.closedAfterAction, true, 'Running a context menu action must close the menu');
+    assert.equal(out.inCartAfterAction, true, 'Cart action must add node to contextCart');
+    assert.equal(out.closedAfterEsc, true, 'Escape must close #pgNodeContextMenu');
+    assert.equal(out.modalStillOpen, true, 'Escape while context menu is open must not close the whole modal');
+    assert.equal(out.preventedOnEmpty, true, 'contextmenu on empty canvas must still call preventDefault()');
+    assert.equal(out.hiddenOnEmpty, true, 'RMB on empty canvas must keep #pgNodeContextMenu hidden');
+  } finally {
+    try {
+      vm.runInContext(`if (typeof telemetryPollTimer !== 'undefined' && telemetryPollTimer) { clearTimeout(telemetryPollTimer); telemetryPollTimer = null; }`, ctx);
+    } catch {}
+    for (const id of Array.from(activeTimers)) {
+      safeClearTimeout(id);
+    }
+  }
+});
+
+test('19. Project Map AI thinking bubble, Stop button & /api/local-chat/abort on Stop and Modal Close', async () => {
+  const vm = await import('node:vm');
+  buildPanelUi({ repoRoot: ROOT_DIR });
+  const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+  for (const marker of [
+    'function pgAbortActiveAiRequest(',
+    'function pgStopAiRequest(',
+    "case 'pgStopAiRequest':",
+    'id="pgAiThinkingBubble"',
+    '/api/local-chat/abort',
+  ]) {
+    assert.ok(html.includes(marker), `Expected marker ${marker} in compiled ui.html`);
+  }
+
+  const mainScriptMatch = html.match(/<script>\s*([\s\S]*?)\s*<\/script>\s*<\/body>/i);
+  assert.ok(mainScriptMatch, 'Main script block must exist in ui.html');
+
+  const attachBus = (obj) => {
+    const map = new Map();
+    obj.addEventListener = (type, fn) => {
+      if (!map.has(type)) map.set(type, new Set());
+      map.get(type).add(fn);
+    };
+    obj.removeEventListener = (type, fn) => {
+      if (map.has(type)) map.get(type).delete(fn);
+    };
+    obj.dispatchEvent = (ev) => {
+      const listeners = map.get(ev.type);
+      if (!listeners) return;
+      for (const fn of Array.from(listeners)) fn(ev);
+    };
+    return obj;
+  };
+
+  const makeClassList = () => {
+    const set = new Set();
+    return {
+      add: (c) => set.add(c),
+      remove: (c) => set.delete(c),
+      toggle: (c, force) => {
+        if (force === true) { set.add(c); return true; }
+        if (force === false) { set.delete(c); return false; }
+        if (set.has(c)) { set.delete(c); return false; }
+        set.add(c);
+        return true;
+      },
+      contains: (c) => set.has(c),
+    };
+  };
+
+  const makeEl = (tag = 'div', id = '') => {
+    const attrs = new Map();
+    const el = {
+      id,
+      tagName: tag.toUpperCase(),
+      className: '',
+      hidden: id === 'pgAskAiMenu',
+      classList: makeClassList(),
+      style: { display: '', setProperty() {}, removeProperty() {} },
+      dataset: {},
+      value: '',
+      textContent: '',
+      innerHTML: '',
+      disabled: false,
+      clientWidth: 1200,
+      clientHeight: 800,
+      scrollTop: 0,
+      scrollHeight: 100,
+      setAttribute: (k, v) => attrs.set(String(k), String(v)),
+      getAttribute: (k) => (attrs.has(String(k)) ? attrs.get(String(k)) : null),
+      removeAttribute: (k) => attrs.delete(String(k)),
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      appendChild: (c) => c,
+      closest: (sel) => (sel === '#' + id ? el : null),
+      getBoundingClientRect: () => ({ width: 1200, height: 800, left: 0, top: 0 }),
+      focus() {},
+      blur() {},
+    };
+    return attachBus(el);
+  };
+
+  const elements = new Map();
+  for (const id of [
+    'projectGraphModal', 'projectGraphCanvas', 'pgCanvasStage', 'pgInspector', 'pgStatsPill',
+    'pgClusterPills', 'pgEmptyHint', 'pgHoverTooltip', 'pgZoomIndicator', 'pgSearchInput',
+    'pgActionAskAiBtn', 'pgAskAiMenu', 'pgAiChatBox', 'pgAiChatMessages', 'pgAiEngineBadge',
+    'pgAiChatTitle', 'pgAiAskSubmitBtn', 'pgAiQuestionInput', 'smartComposerInput',
+    'pgInspActions', 'pgMetricIn', 'pgMetricOut', 'pgMetricLines', 'pgMetricRel', 'pgInspFilename',
+    'pgInspPath', 'pgInspBadges', 'pgInspMetrics', 'pgInspTabs', 'pgInspList',
+  ]) {
+    elements.set(id, makeEl(id === 'projectGraphCanvas' ? 'canvas' : (id.includes('Input') ? 'input' : 'div'), id));
+  }
+  const fakeCtx2d = {
+    save() {}, restore() {}, setTransform() {}, clearRect() {}, fillRect() {}, strokeRect() {},
+    beginPath() {}, closePath() {}, moveTo() {}, lineTo() {}, quadraticCurveTo() {}, bezierCurveTo() {},
+    arc() {}, roundRect() {}, rect() {}, clip() {}, fill() {}, stroke() {}, fillText() {}, strokeText() {}, setLineDash() {},
+    measureText: (t) => ({ width: String(t || '').length * 7 }),
+    createLinearGradient: () => ({ addColorStop() {} }),
+    createRadialGradient: () => ({ addColorStop() {} }),
+    fillStyle: '', strokeStyle: '', lineWidth: 1, font: '', textAlign: 'left', textBaseline: 'alphabetic', globalAlpha: 1,
+  };
+  const canvasEl = elements.get('projectGraphCanvas');
+  canvasEl.parentElement = elements.get('pgCanvasStage');
+  canvasEl.getContext = () => fakeCtx2d;
+  canvasEl.setPointerCapture = () => {};
+  canvasEl.releasePointerCapture = () => {};
+
+  const doc = attachBus({
+    visibilityState: 'visible',
+    activeElement: null,
+    title: 'The Tunnel',
+    body: makeEl('body'),
+    documentElement: makeEl('html'),
+    getElementById: (id) => elements.get(id) || null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: (tag) => makeEl(tag),
+  });
+
+  const localChatCalls = [];
+  const abortCalls = [];
+  const windowObj = attachBus({
+    innerWidth: 1280,
+    innerHeight: 820,
+    devicePixelRatio: 1,
+    location: { search: '', reload() {} },
+    fetch: (url, init) => {
+      const u = String(url);
+      const body = init && init.body ? JSON.parse(init.body) : null;
+      if (u.includes('/api/local-chat/abort')) {
+        abortCalls.push(body);
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, abortedCount: 1, requestId: body?.requestId || '' }),
+        });
+      }
+      if (u.includes('/api/local-chat')) {
+        const rec = {
+          url: u,
+          body,
+          aborted: Boolean(init?.signal?.aborted),
+        };
+        localChatCalls.push(rec);
+        return new Promise((resolve, reject) => {
+          const onAbort = () => {
+            rec.aborted = true;
+            const err = new Error('The operation was aborted.');
+            err.name = 'AbortError';
+            reject(err);
+          };
+          if (init?.signal) {
+            if (init.signal.aborted) return onAbort();
+            init.signal.addEventListener('abort', onAbort, { once: true });
+          }
+          const t = setTimeout(() => {
+            resolve({
+              ok: true,
+              status: 200,
+              json: async () => ({ ok: true, answer: 'Delayed answer' }),
+            });
+          }, 5000);
+          if (typeof t.unref === 'function') t.unref();
+        });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) });
+    },
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    navigator: { clipboard: { writeText: async () => {} } },
+    requestAnimationFrame: () => 1,
+    cancelAnimationFrame() {},
+  });
+  windowObj.document = doc;
+  windowObj.window = windowObj;
+
+  const activeTimeouts = new Set();
+  const activeIntervals = new Set();
+  const safeSetTimeout = (fn, ms, ...args) => {
+    const id = setTimeout(() => {
+      activeTimeouts.delete(id);
+      if (typeof fn === 'function') fn(...args);
+    }, ms);
+    if (typeof id?.unref === 'function') id.unref();
+    activeTimeouts.add(id);
+    return id;
+  };
+  const safeClearTimeout = (id) => {
+    if (id !== undefined && id !== null) {
+      activeTimeouts.delete(id);
+      clearTimeout(id);
+    }
+  };
+  const safeSetInterval = (fn, ms, ...args) => {
+    const id = setInterval(() => {
+      if (typeof fn === 'function') fn(...args);
+    }, ms);
+    if (typeof id?.unref === 'function') id.unref();
+    activeIntervals.add(id);
+    return id;
+  };
+  const safeClearInterval = (id) => {
+    if (id !== undefined && id !== null) {
+      activeIntervals.delete(id);
+      clearInterval(id);
+    }
+  };
+
+  const ctx = vm.createContext({
+    window: windowObj,
+    document: doc,
+    localStorage: windowObj.localStorage,
+    navigator: windowObj.navigator,
+    fetch: windowObj.fetch,
+    location: windowObj.location,
+    requestAnimationFrame: windowObj.requestAnimationFrame,
+    cancelAnimationFrame: windowObj.cancelAnimationFrame,
+    AbortController,
+    URLSearchParams,
+    ResizeObserver: undefined,
+    console,
+    setTimeout: safeSetTimeout,
+    clearTimeout: safeClearTimeout,
+    setInterval: safeSetInterval,
+    clearInterval: safeClearInterval,
+    Math, Number, String, Array, Object, Set, Map, JSON, Date, RegExp, Promise, Error,
+  });
+
+  try {
+    vm.runInContext(mainScriptMatch[1], ctx);
+
+    const rawGraph = {
+      ok: true,
+      workspaceName: 'ai-abort-test',
+      totalFiles: 1,
+      shownNodes: 1,
+      shownEdges: 0,
+      clusters: [{ id: 'core', label: 'core', size: 1 }],
+      nodes: [{ id: 'core/a.mjs', label: 'a.mjs', dir: 'core', lines: 30, estTokens: 240, inDeg: 0, outDeg: 0 }],
+      edges: [],
+    };
+
+    const out = await vm.runInContext(`(async () => {
+      currentUiLanguage = 'ru';
+      currentState = { ...(currentState || {}), gpuEnabled: true, uiLanguage: 'ru' };
+      pgState.open = true;
+      pgState.viewLevel = 'files';
+      pgHydrateSimulation(${JSON.stringify(rawGraph)});
+      pgSelectNodeById('core/a.mjs');
+
+      // 1) Start async request -> verify thinking bubble & stop button state
+      const p1 = pgExecuteFileAiQuestion('Зачем нужен этот файл?', 'Зачем нужен этот файл?');
+      const busyWhileRunning = pgState.aiBusy;
+      const htmlWhileRunning = document.getElementById('pgAiChatMessages').innerHTML;
+      const submitBtn = document.getElementById('pgAiAskSubmitBtn');
+      const stopBtnText = submitBtn.textContent;
+      const stopBtnAction = submitBtn.getAttribute('data-action');
+      const stopBtnClass = submitBtn.classList.contains('is-stop');
+
+      // 2) Stop button aborts signal + posts /api/local-chat/abort with matching requestId
+      pgStopAiRequest();
+      await p1;
+      const busyAfterStop = pgState.aiBusy;
+      const timerAfterStop = pgState.aiElapsedTimer;
+      const htmlAfterStop = document.getElementById('pgAiChatMessages').innerHTML;
+      const submitActionAfterStop = submitBtn.getAttribute('data-action');
+
+      // 3) Second request + closing modal aborts signal + posts /api/local-chat/abort
+      const p2 = pgExecuteFileAiQuestion('Проверь зависимости', 'Проверь зависимости');
+      const busyBeforeClose = pgState.aiBusy;
+      closeProjectGraphModal();
+      await p2;
+      const busyAfterClose = pgState.aiBusy;
+      const timerAfterClose = pgState.aiElapsedTimer;
+
+      return {
+        busyWhileRunning,
+        htmlWhileRunning,
+        stopBtnText,
+        stopBtnAction,
+        stopBtnClass,
+        busyAfterStop,
+        timerAfterStop,
+        htmlAfterStop,
+        submitActionAfterStop,
+        busyBeforeClose,
+        busyAfterClose,
+        timerAfterClose,
+      };
+    })()`, ctx);
+
+    assert.equal(out.busyWhileRunning, true);
+    assert.ok(out.htmlWhileRunning.includes('id="pgAiThinkingBubble"'), 'Thinking bubble must appear while GPU is running');
+    assert.ok(out.htmlWhileRunning.includes('data-action="pgStopAiRequest"'), 'Inline stop button must be rendered');
+    assert.equal(out.stopBtnText, '■');
+    assert.equal(out.stopBtnAction, 'pgStopAiRequest');
+    assert.equal(out.stopBtnClass, true);
+    assert.equal(out.busyAfterStop, false);
+    assert.equal(out.timerAfterStop, 0);
+    assert.ok(out.htmlAfterStop.includes('остановлена'), 'Stop action must append stopped message');
+    assert.equal(out.submitActionAfterStop, 'pgSubmitCustomAiQuestion');
+
+    assert.equal(out.busyBeforeClose, true);
+    assert.equal(out.busyAfterClose, false);
+    assert.equal(out.timerAfterClose, 0);
+
+    assert.equal(localChatCalls.length, 2);
+    assert.equal(localChatCalls[0].aborted, true, 'pgStopAiRequest must abort fetch signal');
+    assert.equal(localChatCalls[1].aborted, true, 'closeProjectGraphModal must abort fetch signal');
+    assert.equal(abortCalls.length, 2, 'Both Stop and Modal Close must notify /api/local-chat/abort');
+    assert.equal(abortCalls[0].requestId, localChatCalls[0].body.requestId);
+    assert.equal(abortCalls[1].requestId, localChatCalls[1].body.requestId);
+    assert.equal(activeIntervals.size, 0, 'All elapsed intervals must be cleared');
+  } finally {
+    try {
+      vm.runInContext(`if (typeof telemetryPollTimer !== 'undefined' && telemetryPollTimer) { clearTimeout(telemetryPollTimer); telemetryPollTimer = null; }`, ctx);
+    } catch {}
+    for (const id of Array.from(activeTimeouts)) safeClearTimeout(id);
+    for (const id of Array.from(activeIntervals)) safeClearInterval(id);
+  }
+});
+
+test('20. Combo AI visualization: structured card without raw sym:, Markdown GPU reply, map spotlight & callout', async () => {
+  const vm = await import('node:vm');
+  buildPanelUi({ repoRoot: ROOT_DIR });
+  const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+  for (const marker of [
+    'id="pgAiMapCallout"',
+    'function pgBuildStaticSummaryCard(',
+    'function pgSyncAiMapOverlay(',
+    'function pgFocusAiMention(',
+    "case 'pgFocusAiMention':",
+    "case 'pgDismissAiMapCallout':",
+  ]) {
+    assert.ok(html.includes(marker), `Expected Combo marker ${marker} in ui.html`);
+  }
+
+  const mainScriptMatch = html.match(/<script>\s*([\s\S]*?)\s*<\/script>\s*<\/body>/i);
+  assert.ok(mainScriptMatch, 'Main script block must exist in ui.html');
+
+  const attachBus = (obj) => {
+    const map = new Map();
+    obj.addEventListener = (type, fn) => {
+      if (!map.has(type)) map.set(type, new Set());
+      map.get(type).add(fn);
+    };
+    obj.removeEventListener = (type, fn) => {
+      if (map.has(type)) map.get(type).delete(fn);
+    };
+    obj.dispatchEvent = (ev) => {
+      const listeners = map.get(ev.type);
+      if (!listeners) return;
+      for (const fn of Array.from(listeners)) fn(ev);
+    };
+    return obj;
+  };
+
+  const makeClassList = () => {
+    const set = new Set();
+    return {
+      add: (c) => set.add(c),
+      remove: (c) => set.delete(c),
+      toggle: (c, force) => {
+        if (force === true) { set.add(c); return true; }
+        if (force === false) { set.delete(c); return false; }
+        if (set.has(c)) { set.delete(c); return false; }
+        set.add(c);
+        return true;
+      },
+      contains: (c) => set.has(c),
+    };
+  };
+
+  const makeEl = (tag = 'div', id = '') => {
+    const attrs = new Map();
+    const el = {
+      id,
+      tagName: tag.toUpperCase(),
+      className: '',
+      hidden: id === 'pgAskAiMenu' || id === 'pgAiMapCallout',
+      classList: makeClassList(),
+      style: { display: '', left: '', top: '', setProperty() {}, removeProperty() {} },
+      dataset: {},
+      value: '',
+      textContent: '',
+      innerHTML: '',
+      disabled: false,
+      offsetHeight: 110,
+      clientWidth: 1200,
+      clientHeight: 800,
+      scrollTop: 0,
+      scrollHeight: 100,
+      setAttribute: (k, v) => attrs.set(String(k), String(v)),
+      getAttribute: (k) => (attrs.has(String(k)) ? attrs.get(String(k)) : null),
+      removeAttribute: (k) => attrs.delete(String(k)),
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      appendChild: (c) => c,
+      closest: (sel) => (sel === '#' + id ? el : null),
+      getBoundingClientRect: () => ({ width: 1200, height: 800, left: 0, top: 0 }),
+      focus() {},
+      blur() {},
+    };
+    return attachBus(el);
+  };
+
+  const elements = new Map();
+  for (const id of [
+    'projectGraphModal', 'projectGraphCanvas', 'pgCanvasStage', 'pgInspector', 'pgStatsPill',
+    'pgClusterPills', 'pgEmptyHint', 'pgHoverTooltip', 'pgZoomIndicator', 'pgSearchInput',
+    'pgActionAskAiBtn', 'pgAskAiMenu', 'pgAiChatBox', 'pgAiChatMessages', 'pgAiEngineBadge',
+    'pgAiChatTitle', 'pgAiAskSubmitBtn', 'pgAiQuestionInput', 'pgAiMapCallout', 'smartComposerInput',
+    'pgInspActions', 'pgMetricIn', 'pgMetricOut', 'pgMetricLines', 'pgMetricRel', 'pgInspFilename',
+    'pgInspPath', 'pgInspBadges', 'pgInspMetrics', 'pgInspTabs', 'pgInspList',
+  ]) {
+    elements.set(id, makeEl(id === 'projectGraphCanvas' ? 'canvas' : (id.includes('Input') ? 'input' : 'div'), id));
+  }
+  const fakeCtx2d = {
+    save() {}, restore() {}, setTransform() {}, clearRect() {}, fillRect() {}, strokeRect() {},
+    beginPath() {}, closePath() {}, moveTo() {}, lineTo() {}, quadraticCurveTo() {}, bezierCurveTo() {},
+    arc() {}, roundRect() {}, rect() {}, clip() {}, fill() {}, stroke() {}, fillText() {}, strokeText() {}, setLineDash() {},
+    measureText: (t) => ({ width: String(t || '').length * 7 }),
+    createLinearGradient: () => ({ addColorStop() {} }),
+    createRadialGradient: () => ({ addColorStop() {} }),
+    fillStyle: '', strokeStyle: '', lineWidth: 1, font: '', textAlign: 'left', textBaseline: 'alphabetic', globalAlpha: 1,
+  };
+  const canvasEl = elements.get('projectGraphCanvas');
+  canvasEl.parentElement = elements.get('pgCanvasStage');
+  canvasEl.getContext = () => fakeCtx2d;
+  canvasEl.setPointerCapture = () => {};
+  canvasEl.releasePointerCapture = () => {};
+
+  const doc = attachBus({
+    visibilityState: 'visible',
+    activeElement: null,
+    title: 'The Tunnel',
+    body: makeEl('body'),
+    documentElement: makeEl('html'),
+    getElementById: (id) => elements.get(id) || null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: (tag) => makeEl(tag),
+  });
+
+  const windowObj = attachBus({
+    innerWidth: 1280,
+    innerHeight: 820,
+    devicePixelRatio: 1,
+    location: { search: '', reload() {} },
+    fetch: async (url) => {
+      if (String(url).includes('/api/local-chat')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            answer: '### Разбор `toRelPath`\n- Используется в **upsertFile** и `core/b.mjs`.',
+            sources: [{ file: 'core/b.mjs', startLine: 12, endLine: 25 }],
+          }),
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    },
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    navigator: { clipboard: { writeText: async () => {} } },
+    requestAnimationFrame: () => 1,
+    cancelAnimationFrame() {},
+  });
+  windowObj.document = doc;
+  windowObj.window = windowObj;
+
+  const activeTimeouts = new Set();
+  const safeSetTimeout = (fn, ms, ...args) => {
+    const id = setTimeout(() => {
+      activeTimeouts.delete(id);
+      if (typeof fn === 'function') fn(...args);
+    }, ms);
+    if (typeof id?.unref === 'function') id.unref();
+    activeTimeouts.add(id);
+    return id;
+  };
+  const safeClearTimeout = (id) => {
+    if (id !== undefined && id !== null) {
+      activeTimeouts.delete(id);
+      clearTimeout(id);
+    }
+  };
+
+  const ctx = vm.createContext({
+    window: windowObj,
+    document: doc,
+    localStorage: windowObj.localStorage,
+    navigator: windowObj.navigator,
+    fetch: windowObj.fetch,
+    location: windowObj.location,
+    requestAnimationFrame: windowObj.requestAnimationFrame,
+    cancelAnimationFrame: windowObj.cancelAnimationFrame,
+    AbortController,
+    URLSearchParams,
+    ResizeObserver: undefined,
+    console,
+    setTimeout: safeSetTimeout,
+    clearTimeout: safeClearTimeout,
+    Math, Number, String, Array, Object, Set, Map, JSON, Date, RegExp, Promise, Error,
+  });
+
+  try {
+    vm.runInContext(mainScriptMatch[1], ctx);
+
+    const rawGraph = {
+      ok: true,
+      workspaceName: 'combo-ai-test',
+      totalFiles: 3,
+      shownNodes: 3,
+      shownEdges: 2,
+      clusters: [{ id: 'core', label: 'core', size: 3 }],
+      nodes: [
+        {
+          id: 'sym:core/ram/ram-index-helpers.mjs#toRelPath:10',
+          label: 'toRelPath',
+          file: 'core/ram/ram-index-helpers.mjs',
+          isSymbol: true,
+          dir: 'core',
+          lines: 3,
+          inDeg: 1,
+          outDeg: 1,
+          isGod: true,
+        },
+        {
+          id: 'sym:core/ram-memory-engine.mjs#upsertFile:508',
+          label: 'upsertFile',
+          file: 'core/ram-memory-engine.mjs',
+          isSymbol: true,
+          dir: 'core',
+          lines: 40,
+          inDeg: 0,
+          outDeg: 1,
+        },
+        {
+          id: 'core/b.mjs',
+          label: 'b.mjs',
+          dir: 'core',
+          lines: 20,
+          inDeg: 1,
+          outDeg: 0,
+        },
+      ],
+      edges: [
+        { source: 'sym:core/ram-memory-engine.mjs#upsertFile:508', target: 'sym:core/ram/ram-index-helpers.mjs#toRelPath:10', kind: 'call' },
+        { source: 'sym:core/ram/ram-index-helpers.mjs#toRelPath:10', target: 'core/b.mjs', kind: 'import' },
+      ],
+    };
+
+    const out = await vm.runInContext(`(async () => {
+      currentUiLanguage = 'ru';
+      currentState = { ...(currentState || {}), gpuEnabled: false, uiLanguage: 'ru' };
+      pgState.open = true;
+      pgState.width = 900;
+      pgState.height = 600;
+      pgState.viewLevel = 'files';
+      pgHydrateSimulation(${JSON.stringify(rawGraph)});
+      pgSelectNodeById('sym:core/ram/ram-index-helpers.mjs#toRelPath:10');
+
+      // 1) Static card mode (GPU OFF) -> clean chip labels, no raw sym: in visible chip spans, callout shown & spotlight populated
+      await pgRunAiPreset('explain');
+      const cardHtml = document.getElementById('pgAiChatMessages').innerHTML;
+      const spotlightAfterCard = pgState.aiSpotlightMap.size;
+      const calloutEl = document.getElementById('pgAiMapCallout');
+      const calloutVisibleAfterCard = calloutEl.hidden === false;
+      const calloutHtmlAfterCard = calloutEl.innerHTML;
+
+      // 2) GPU ON -> Markdown rendering + spotlight + click focus preserves spotlight
+      currentState.gpuEnabled = true;
+      await pgRunAiPreset('explain');
+      const mdHtml = document.getElementById('pgAiChatMessages').innerHTML;
+      const spotlightAfterGpu = pgState.aiSpotlightMap.size;
+      const targetNode = pgState.nodeById.get('core/b.mjs');
+      targetNode.x = 240;
+      targetNode.y = -120;
+      pgFocusAiMention('core/b.mjs');
+      const camMovedToB = pgState.camX === 240 && pgState.camY === -120 && pgState.hoveredNodeId === 'core/b.mjs';
+      const spotlightPreserved = pgState.aiSpotlightMap.size === spotlightAfterGpu;
+
+      // 3) Dismiss callout clears spotlight & hides callout
+      pgDismissAiMapCallout();
+      const calloutHiddenAfterDismiss = calloutEl.hidden === true;
+      const spotlightAfterDismiss = pgState.aiSpotlightMap.size;
+
+      return {
+        cardHtml,
+        spotlightAfterCard,
+        calloutVisibleAfterCard,
+        calloutHtmlAfterCard,
+        mdHtml,
+        spotlightAfterGpu,
+        camMovedToB,
+        spotlightPreserved,
+        calloutHiddenAfterDismiss,
+        spotlightAfterDismiss,
+      };
+    })()`, ctx);
+
+    assert.ok(out.cardHtml.includes('pg-ai-card'), 'Static fallback must render .pg-ai-card');
+    assert.ok(out.cardHtml.includes('<span class="pg-ai-ref-primary">upsertFile</span>'), 'Chip must render clean symbol name');
+    assert.ok(out.cardHtml.includes('ram-memory-engine.mjs:508'), 'Chip sub-label must format file:line cleanly');
+    assert.ok(!out.cardHtml.includes('>sym:'), 'Visible chip text must not start with raw sym:');
+    assert.ok(out.spotlightAfterCard >= 2, 'AI spotlight must highlight anchor and dependent nodes');
+    assert.equal(out.calloutVisibleAfterCard, true, '#pgAiMapCallout must be visible after AI reply');
+    assert.ok(out.calloutHtmlAfterCard.includes('toRelPath'), 'Callout must show anchor title');
+
+    assert.ok(out.mdHtml.includes('rag-md-heading'), 'GPU reply must render Markdown headings');
+    assert.ok(out.mdHtml.includes('<strong>upsertFile</strong>'), 'GPU reply must render bold Markdown');
+    assert.ok(out.mdHtml.includes('rag-inline-code'), 'GPU reply must render inline code');
+    assert.ok(out.spotlightAfterGpu >= 2, 'GPU reply must spotlight mentioned/source nodes');
+    assert.equal(out.camMovedToB, true, 'pgFocusAiMention must pan camera to mentioned node');
+    assert.equal(out.spotlightPreserved, true, 'pgFocusAiMention must keep AI spotlight active');
+    assert.equal(out.calloutHiddenAfterDismiss, true, 'pgDismissAiMapCallout must hide map callout');
+    assert.equal(out.spotlightAfterDismiss, 0, 'pgDismissAiMapCallout must clear AI spotlight');
+  } finally {
+    try {
+      vm.runInContext(`if (typeof telemetryPollTimer !== 'undefined' && telemetryPollTimer) { clearTimeout(telemetryPollTimer); telemetryPollTimer = null; }`, ctx);
+    } catch {}
+    for (const id of Array.from(activeTimeouts)) safeClearTimeout(id);
+  }
+});
+
+test('21. Far node drag invalidates quadtree spatialTree for hover, select, and re-drag (>=100 nodes layered)', async () => {
+  const vm = await import('node:vm');
+  const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+  const mainScriptMatch = html.match(/<script>\s*([\s\S]*?)\s*<\/script>\s*<\/body>/i);
+  assert.ok(mainScriptMatch, 'Main script block must exist in ui.html');
+
+  const attachBus = (obj) => {
+    const map = new Map();
+    obj.addEventListener = (type, fn) => {
+      if (!map.has(type)) map.set(type, new Set());
+      map.get(type).add(fn);
+    };
+    obj.removeEventListener = (type, fn) => {
+      if (map.has(type)) map.get(type).delete(fn);
+    };
+    obj.dispatchEvent = (ev) => {
+      const listeners = map.get(ev.type);
+      if (!listeners) return;
+      for (const fn of Array.from(listeners)) fn(ev);
+    };
+    return obj;
+  };
+
+  const makeClassList = () => {
+    const set = new Set();
+    return {
+      add: (c) => set.add(c),
+      remove: (c) => set.delete(c),
+      toggle: (c, force) => {
+        if (force === true) { set.add(c); return true; }
+        if (force === false) { set.delete(c); return false; }
+        if (set.has(c)) { set.delete(c); return false; }
+        set.add(c);
+        return true;
+      },
+      contains: (c) => set.has(c),
+    };
+  };
+
+  const makeEl = (tag = 'div', id = '') => {
+    const attrs = new Map();
+    const el = {
+      id,
+      tagName: tag.toUpperCase(),
+      className: '',
+      hidden: false,
+      classList: makeClassList(),
+      style: { display: '', cursor: '', setProperty() {}, removeProperty() {} },
+      dataset: {},
+      value: '',
+      textContent: '',
+      innerHTML: '',
+      disabled: false,
+      clientWidth: 1200,
+      clientHeight: 800,
+      scrollTop: 0,
+      scrollHeight: 100,
+      setAttribute: (k, v) => attrs.set(String(k), String(v)),
+      getAttribute: (k) => (attrs.has(String(k)) ? attrs.get(String(k)) : null),
+      removeAttribute: (k) => attrs.delete(String(k)),
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      appendChild: (c) => c,
+      closest: (sel) => (sel === '#' + id ? el : null),
+      getBoundingClientRect: () => ({ width: 1200, height: 800, left: 0, top: 0 }),
+      focus() {},
+      blur() {},
+    };
+    return attachBus(el);
+  };
+
+  const elements = new Map();
+  for (const id of [
+    'projectGraphModal', 'projectGraphCanvas', 'pgCanvasStage', 'pgInspector', 'pgStatsPill',
+    'pgClusterPills', 'pgEmptyHint', 'pgHoverTooltip', 'pgZoomIndicator', 'pgSearchInput',
+    'pgInspActions', 'pgMetricIn', 'pgMetricOut', 'pgMetricLines', 'pgMetricRel', 'pgInspFilename',
+    'pgInspPath', 'pgInspBadges', 'pgInspMetrics', 'pgInspTabs', 'pgInspList',
+  ]) {
+    elements.set(id, makeEl(id === 'projectGraphCanvas' ? 'canvas' : (id === 'pgSearchInput' ? 'input' : 'div'), id));
+  }
+  const fakeCtx2d = {
+    save() {}, restore() {}, setTransform() {}, clearRect() {}, fillRect() {}, strokeRect() {},
+    beginPath() {}, closePath() {}, moveTo() {}, lineTo() {}, quadraticCurveTo() {}, bezierCurveTo() {},
+    arc() {}, roundRect() {}, rect() {}, clip() {}, fill() {}, stroke() {}, fillText() {}, strokeText() {}, setLineDash() {},
+    measureText: (t) => ({ width: String(t || '').length * 7 }),
+    createLinearGradient: () => ({ addColorStop() {} }),
+    createRadialGradient: () => ({ addColorStop() {} }),
+    fillStyle: '', strokeStyle: '', lineWidth: 1, font: '', textAlign: 'left', textBaseline: 'alphabetic', globalAlpha: 1,
+  };
+  const canvasEl = elements.get('projectGraphCanvas');
+  canvasEl.parentElement = elements.get('pgCanvasStage');
+  canvasEl.getContext = () => fakeCtx2d;
+  canvasEl.setPointerCapture = () => {};
+  canvasEl.releasePointerCapture = () => {};
+
+  const doc = attachBus({
+    visibilityState: 'visible',
+    activeElement: null,
+    title: 'The Tunnel',
+    body: makeEl('body'),
+    documentElement: makeEl('html'),
+    getElementById: (id) => elements.get(id) || null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: (tag) => makeEl(tag),
+  });
+
+  const windowObj = attachBus({
+    innerWidth: 1280,
+    innerHeight: 820,
+    devicePixelRatio: 1,
+    location: { search: '', reload() {} },
+    fetch: async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }),
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    navigator: { clipboard: { writeText: async () => {} } },
+    requestAnimationFrame: () => 1,
+    cancelAnimationFrame() {},
+  });
+  windowObj.document = doc;
+  windowObj.window = windowObj;
+
+  const activeTimeouts = new Set();
+  const safeSetTimeout = (fn, ms, ...args) => {
+    const id = setTimeout(() => {
+      activeTimeouts.delete(id);
+      if (typeof fn === 'function') fn(...args);
+    }, ms);
+    if (typeof id?.unref === 'function') id.unref();
+    activeTimeouts.add(id);
+    return id;
+  };
+  const safeClearTimeout = (id) => {
+    if (id !== undefined && id !== null) {
+      activeTimeouts.delete(id);
+      clearTimeout(id);
+    }
+  };
+
+  const ctx = vm.createContext({
+    window: windowObj,
+    document: doc,
+    localStorage: windowObj.localStorage,
+    navigator: windowObj.navigator,
+    fetch: windowObj.fetch,
+    location: windowObj.location,
+    requestAnimationFrame: windowObj.requestAnimationFrame,
+    cancelAnimationFrame: windowObj.cancelAnimationFrame,
+    AbortController,
+    URLSearchParams,
+    ResizeObserver: undefined,
+    console,
+    setTimeout: safeSetTimeout,
+    clearTimeout: safeClearTimeout,
+    Math, Number, String, Array, Object, Set, Map, JSON, Date, RegExp, Promise, Error,
+  });
+
+  try {
+    vm.runInContext(mainScriptMatch[1], ctx);
+
+    const nodes = [];
+    const edges = [];
+    for (let i = 0; i < 120; i++) {
+      nodes.push({
+        id: 'core/f' + i + '.mjs',
+        label: 'f' + i + '.mjs',
+        dir: 'core',
+        lines: 30 + i,
+        estTokens: 200,
+        inDeg: i > 0 ? 1 : 0,
+        outDeg: i < 119 ? 1 : 0,
+      });
+      if (i > 0) {
+        edges.push({ source: 'core/f' + (i - 1) + '.mjs', target: 'core/f' + i + '.mjs', kind: 'import' });
+      }
+    }
+    const rawGraph = {
+      ok: true,
+      workspaceName: 'far-drag-test',
+      totalFiles: 120,
+      shownNodes: 120,
+      shownEdges: 119,
+      clusters: [{ id: 'core', label: 'core', size: 120 }],
+      nodes,
+      edges,
+    };
+
+    const res = vm.runInContext(`(() => {
+      const canvas = document.getElementById('projectGraphCanvas');
+      pgState.open = true;
+      pgState.width = 1200;
+      pgState.height = 800;
+      pgState.rawGraphData = ${JSON.stringify(rawGraph)};
+      pgState.viewLevel = 'files';
+      pgState.layoutMode = 'layered';
+      pgBindCanvasEvents();
+      updateState = async (patch) => {
+        Object.assign(currentState, patch || {});
+        return { ok: true, state: currentState };
+      };
+      pgHydrateSimulation(pgState.rawGraphData);
+      pgDrawGraph();
+
+      const target = pgState.nodeById.get('core/f0.mjs');
+      const sp1 = pgWorldToScreen(target.x, target.y);
+      const treeBeforeDrag = Boolean(pgState.spatialTree);
+
+      // Drag far outside initial quadtree bounds (+2500, +1800)
+      canvas.dispatchEvent({
+        type: 'pointerdown',
+        button: 0,
+        pointerType: 'mouse',
+        pointerId: 31,
+        clientX: sp1.x,
+        clientY: sp1.y,
+      });
+      canvas.dispatchEvent({
+        type: 'pointermove',
+        pointerType: 'mouse',
+        buttons: 1,
+        pointerId: 31,
+        clientX: sp1.x + 2500,
+        clientY: sp1.y + 1800,
+      });
+      const treeClearedDuringDrag = pgState.spatialTree === null;
+      canvas.dispatchEvent({
+        type: 'pointerup',
+        pointerType: 'mouse',
+        pointerId: 31,
+        clientX: sp1.x + 2500,
+        clientY: sp1.y + 1800,
+      });
+      const treeClearedAfterDrag = pgState.spatialTree === null;
+      const farX = target.x;
+      const farY = target.y;
+
+      // Pan camera to the moved node and hover over it
+      pgState.camX = farX;
+      pgState.camY = farY;
+      const sp2 = pgWorldToScreen(farX, farY);
+      canvas.dispatchEvent({
+        type: 'pointermove',
+        pointerType: 'mouse',
+        buttons: 0,
+        pointerId: 32,
+        clientX: sp2.x,
+        clientY: sp2.y,
+      });
+      const hoveredAfterMove = pgState.hoveredNodeId;
+      const cursorAfterMove = canvas.style.cursor;
+      const hitAfterMove = pgFindNodeAtScreen(sp2.x, sp2.y)?.id || '';
+
+      // Click to select the moved node
+      canvas.dispatchEvent({
+        type: 'pointerdown',
+        button: 0,
+        pointerType: 'mouse',
+        pointerId: 33,
+        clientX: sp2.x,
+        clientY: sp2.y,
+      });
+      canvas.dispatchEvent({
+        type: 'pointerup',
+        pointerType: 'mouse',
+        pointerId: 33,
+        clientX: sp2.x,
+        clientY: sp2.y,
+      });
+      const selectedAfterClick = pgState.selectedNodeId;
+
+      // Drag the moved node again to verify re-dragging works
+      canvas.dispatchEvent({
+        type: 'pointerdown',
+        button: 0,
+        pointerType: 'mouse',
+        pointerId: 34,
+        clientX: sp2.x,
+        clientY: sp2.y,
+      });
+      canvas.dispatchEvent({
+        type: 'pointermove',
+        pointerType: 'mouse',
+        buttons: 1,
+        pointerId: 34,
+        clientX: sp2.x + 120,
+        clientY: sp2.y - 80,
+      });
+      canvas.dispatchEvent({
+        type: 'pointerup',
+        pointerType: 'mouse',
+        pointerId: 34,
+        clientX: sp2.x + 120,
+        clientY: sp2.y - 80,
+      });
+
+      return {
+        treeBeforeDrag,
+        treeClearedDuringDrag,
+        treeClearedAfterDrag,
+        farX,
+        farY,
+        hoveredAfterMove,
+        cursorAfterMove,
+        hitAfterMove,
+        selectedAfterClick,
+        reDraggedDist: Math.hypot(target.x - farX, target.y - farY),
+      };
+    })()`, ctx);
+
+    assert.equal(res.treeBeforeDrag, true, 'Quadtree must be built for >= 100 nodes');
+    assert.equal(res.treeClearedDuringDrag, true, 'spatialTree must be invalidated while dragging a node');
+    assert.equal(res.treeClearedAfterDrag, true, 'spatialTree must be invalidated after dropping a dragged node');
+    assert.equal(res.hitAfterMove, 'core/f0.mjs', 'Moved node far away must still be hit-tested via quadtree');
+    assert.equal(res.hoveredAfterMove, 'core/f0.mjs', 'Moved node far away must highlight on hover');
+    assert.equal(res.cursorAfterMove, 'pointer', 'Cursor must switch to pointer when hovering moved node');
+    assert.equal(res.selectedAfterClick, 'core/f0.mjs', 'Moved node far away must be selectable on click');
+    assert.ok(res.reDraggedDist > 50, 'Moved node far away must be draggable again');
+  } finally {
+    try {
+      vm.runInContext(`if (typeof telemetryPollTimer !== 'undefined' && telemetryPollTimer) { clearTimeout(telemetryPollTimer); telemetryPollTimer = null; }`, ctx);
+    } catch {}
+    for (const id of Array.from(activeTimeouts)) safeClearTimeout(id);
+  }
+});
+
+test('20. Project Map combo layers (swimlanes + frames + clickable headers) and synchronized UI scale', async () => {
+  const vm = await import('node:vm');
+  const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+  for (const marker of [
+    'id="pgUiScaleBtn"',
+    'function pgGetUiScale(',
+    'function pgGetLayerRolePalette(',
+    'function pgFindLayerHeaderAtScreen(',
+    'function pgToggleLayerFilter(',
+    "case 'pgClearLayerFilter':",
+    'pg-layer-filter-chip',
+  ]) {
+    assert.ok(html.includes(marker), `Expected layer combo / scale marker ${marker} in ui.html`);
+  }
+
+  const mainScriptMatch = html.match(/<script>\s*([\s\S]*?)\s*<\/script>\s*<\/body>/i);
+  assert.ok(mainScriptMatch, 'Main script block must exist in ui.html');
+
+  const attachBus = (obj) => {
+    const map = new Map();
+    obj.addEventListener = (type, fn) => {
+      if (!map.has(type)) map.set(type, new Set());
+      map.get(type).add(fn);
+    };
+    obj.removeEventListener = (type, fn) => {
+      if (map.has(type)) map.get(type).delete(fn);
+    };
+    obj.dispatchEvent = (ev) => {
+      const listeners = map.get(ev.type);
+      if (!listeners) return;
+      for (const fn of Array.from(listeners)) fn(ev);
+    };
+    return obj;
+  };
+
+  const makeClassList = () => {
+    const set = new Set();
+    return {
+      add: (c) => set.add(c),
+      remove: (c) => set.delete(c),
+      toggle: (c, force) => {
+        if (force === true) { set.add(c); return true; }
+        if (force === false) { set.delete(c); return false; }
+        if (set.has(c)) { set.delete(c); return false; }
+        set.add(c);
+        return true;
+      },
+      contains: (c) => set.has(c),
+    };
+  };
+
+  const makeEl = (tag = 'div', id = '') => {
+    const attrs = new Map();
+    const cssProps = {};
+    const el = {
+      id,
+      tagName: tag.toUpperCase(),
+      className: '',
+      hidden: false,
+      classList: makeClassList(),
+      style: {
+        display: '',
+        setProperty(k, v) { cssProps[String(k)] = String(v); },
+        removeProperty(k) { delete cssProps[String(k)]; },
+        _props: cssProps,
+      },
+      dataset: {},
+      value: '',
+      textContent: '',
+      innerHTML: '',
+      disabled: false,
+      clientWidth: 1200,
+      clientHeight: 800,
+      setAttribute: (k, v) => attrs.set(String(k), String(v)),
+      getAttribute: (k) => (attrs.has(String(k)) ? attrs.get(String(k)) : null),
+      removeAttribute: (k) => attrs.delete(String(k)),
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 800 }),
+      getContext: () => ({
+        save() {}, restore() {}, clearRect() {}, fillRect() {}, strokeRect() {}, beginPath() {}, closePath() {},
+        arc() {}, rect() {}, clip() {}, fill() {}, stroke() {}, moveTo() {}, lineTo() {}, quadraticCurveTo() {},
+        bezierCurveTo() {}, roundRect() {}, drawImage() {},
+        setLineDash() {}, setTransform() {}, scale() {}, translate() {}, fillText() {}, strokeText() {},
+        createLinearGradient: () => ({ addColorStop() {} }),
+        createRadialGradient: () => ({ addColorStop() {} }),
+        measureText: (s) => ({ width: String(s || '').length * 7 }),
+      }),
+      focus() {},
+      closest: (sel) => (sel === '#' + id ? el : null),
+      querySelectorAll: () => [],
+      querySelector: () => null,
+    };
+    return attachBus(el);
+  };
+
+  const els = new Map();
+  for (const [id, tag] of [
+    ['projectGraphModal', 'div'],
+    ['pgCanvasStage', 'div'],
+    ['projectGraphCanvas', 'canvas'],
+    ['pgClusterPills', 'div'],
+    ['panelUiScaleBtn', 'button'],
+    ['pgUiScaleBtn', 'button'],
+    ['pgInspFilename', 'div'],
+    ['pgInspPath', 'div'],
+    ['pgInspBadges', 'div'],
+    ['pgInspMetrics', 'div'],
+    ['pgInspTabs', 'div'],
+    ['pgInspActions', 'div'],
+    ['pgInspList', 'div'],
+    ['pgHoverTooltip', 'div'],
+    ['smartComposerInput', 'textarea'],
+  ]) {
+    els.set(id, makeEl(tag, id));
+  }
+
+  const doc = attachBus({
+    body: makeEl('body', 'body'),
+    documentElement: makeEl('html', 'html'),
+    activeElement: null,
+    getElementById: (id) => els.get(id) || null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: (tag) => makeEl(tag, ''),
+  });
+
+  const activeTimeouts = new Set();
+  const safeSetTimeout = (fn, ms) => {
+    const id = setTimeout(() => { activeTimeouts.delete(id); fn(); }, Math.min(Number(ms) || 0, 50));
+    if (id && typeof id.unref === 'function') id.unref();
+    activeTimeouts.add(id);
+    return id;
+  };
+  const safeClearTimeout = (id) => { activeTimeouts.delete(id); clearTimeout(id); };
+
+  const win = attachBus({
+    location: { search: '', href: 'http://127.0.0.1:4242/' },
+    innerWidth: 1400,
+    innerHeight: 900,
+    screen: { width: 3840, height: 2160 },
+    devicePixelRatio: 1,
+    document: doc,
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    navigator: { clipboard: { writeText: async () => {} } },
+    setTimeout: safeSetTimeout,
+    clearTimeout: safeClearTimeout,
+    requestAnimationFrame: () => 1,
+    cancelAnimationFrame: () => {},
+    fetch: async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }),
+    URLSearchParams,
+    AbortController,
+  });
+
+  const ctx = vm.createContext({
+    window: win,
+    document: doc,
+    navigator: win.navigator,
+    localStorage: win.localStorage,
+    location: win.location,
+    fetch: win.fetch,
+    setTimeout: safeSetTimeout,
+    clearTimeout: safeClearTimeout,
+    setInterval: () => 0,
+    clearInterval: () => {},
+    requestAnimationFrame: win.requestAnimationFrame,
+    cancelAnimationFrame: win.cancelAnimationFrame,
+    URLSearchParams,
+    AbortController,
+    console,
+    Math,
+    Date,
+    JSON,
+    Map,
+    Set,
+    Array,
+    Object,
+    String,
+    Number,
+    Boolean,
+    RegExp,
+    Promise,
+  });
+
+  try {
+    vm.runInContext(mainScriptMatch[1], ctx);
+    const out = await vm.runInContext(`(async () => {
+      currentState.uiLanguage = 'ru';
+      currentState.panelUiScale = 'auto';
+      pgState.open = true;
+      pgState.width = 1200;
+      pgState.height = 800;
+      pgState.layoutMode = 'layered';
+      pgBindCanvasEvents();
+      updateState = async (patch) => {
+        Object.assign(currentState, patch || {});
+        return { ok: true, state: currentState };
+      };
+
+      // 1) Sync auto & manual UI scale between #panelUiScaleBtn and #pgUiScaleBtn
+      applyPanelUiScaleDom('auto', false);
+      const autoMainTxt = document.getElementById('panelUiScaleBtn').textContent;
+      const autoPgTxt = document.getElementById('pgUiScaleBtn').textContent;
+      const autoScaleVal = pgGetUiScale();
+
+      setPanelUiScale('130');
+      const manMainTxt = document.getElementById('panelUiScaleBtn').textContent;
+      const manPgTxt = document.getElementById('pgUiScaleBtn').textContent;
+      const manScaleVal = pgGetUiScale();
+
+      // 2) Symbol-mode layer roles & names
+      const symRaw = {
+        ok: true,
+        isSymbolsView: true,
+        isMacro: false,
+        nodes: [
+          { id: 'sym:app.mjs#main', label: 'main', isSymbol: true, clusterId: 'c1', inDeg: 0, outDeg: 1 },
+          { id: 'sym:app.mjs#service', label: 'service', isSymbol: true, clusterId: 'c1', inDeg: 1, outDeg: 1 },
+          { id: 'sym:app.mjs#helper', label: 'helper', isSymbol: true, clusterId: 'c1', inDeg: 1, outDeg: 0 },
+        ],
+        edges: [
+          { source: 'sym:app.mjs#main', target: 'sym:app.mjs#service', kind: 'import', weight: 1 },
+          { source: 'sym:app.mjs#service', target: 'sym:app.mjs#helper', kind: 'import', weight: 1 },
+        ],
+        clusters: [{ id: 'c1', label: 'app.mjs', size: 3 }],
+      };
+      pgState.rawGraphData = symRaw;
+      pgState.viewLevel = 'symbols';
+      pgHydrateSimulation(symRaw);
+
+      const colsInfo = pgState.layeredColumns.map((c) => ({
+        tier: c.tier,
+        role: c.role,
+        labelRu: c.labelRu,
+        hasBounds: Number.isFinite(c.minY) && Number.isFinite(c.maxY),
+      }));
+      const headerCount = pgState.layerHeaderRects.length;
+      const firstHdr = pgState.layerHeaderRects[0];
+      const hitHdr = pgFindLayerHeaderAtScreen(firstHdr.x + firstHdr.w * 0.5, firstHdr.y + firstHdr.h * 0.5);
+
+      // 3) Click layer header to filter & render chip, then click again to clear
+      const canvas = document.getElementById('projectGraphCanvas');
+      canvas.dispatchEvent({
+        type: 'pointerdown',
+        button: 0,
+        pointerType: 'mouse',
+        pointerId: 41,
+        clientX: firstHdr.x + firstHdr.w * 0.5,
+        clientY: firstHdr.y + firstHdr.h * 0.5,
+      });
+      canvas.dispatchEvent({
+        type: 'pointerup',
+        pointerType: 'mouse',
+        pointerId: 41,
+        clientX: firstHdr.x + firstHdr.w * 0.5,
+        clientY: firstHdr.y + firstHdr.h * 0.5,
+      });
+      const activeTierAfterClick = pgState.activeLayerTier;
+      const chipPresent = document.getElementById('pgClusterPills').innerHTML.includes('pg-layer-filter-chip');
+      const entryNode = pgState.nodeById.get('sym:app.mjs#main');
+      const coreNode = pgState.nodeById.get('sym:app.mjs#helper');
+      const entryMatches = pgNodeMatchesFilters(entryNode);
+      const coreMatches = pgNodeMatchesFilters(coreNode);
+
+      pgToggleLayerFilter(null);
+      const activeTierAfterClear = pgState.activeLayerTier;
+      const chipPresentAfterClear = document.getElementById('pgClusterPills').innerHTML.includes('pg-layer-filter-chip');
+
+      return {
+        autoMainTxt,
+        autoPgTxt,
+        autoScaleVal,
+        manMainTxt,
+        manPgTxt,
+        manScaleVal,
+        colsInfo,
+        headerCount,
+        hitTier: hitHdr ? hitHdr.tier : -1,
+        activeTierAfterClick,
+        chipPresent,
+        entryMatches,
+        coreMatches,
+        activeTierAfterClear,
+        chipPresentAfterClear,
+      };
+    })()`, ctx);
+
+    assert.equal(out.autoPgTxt, out.autoMainTxt, '#pgUiScaleBtn must match #panelUiScaleBtn in auto mode');
+    assert.equal(out.autoScaleVal, 1.25, '3840x2160 screen must compute 1.25 auto scale for graph');
+    assert.equal(out.manMainTxt, '130%', 'Manual 130% scale label must update main button');
+    assert.equal(out.manPgTxt, '130%', 'Manual 130% scale label must sync to map button');
+    assert.equal(out.manScaleVal, 1.3, 'Manual 130% scale must propagate to pgGetUiScale');
+
+    assert.equal(out.colsInfo.length, 3, 'Three layered columns expected');
+    assert.equal(out.colsInfo[0].role, 'entry');
+    assert.equal(out.colsInfo[0].labelRu, 'Точки входа');
+    assert.equal(out.colsInfo[2].role, 'core');
+    assert.equal(out.colsInfo[2].labelRu, 'База / Утилиты');
+    assert.equal(out.colsInfo.every((c) => c.hasBounds), true, 'Columns must store minY/maxY bounds');
+    assert.equal(out.headerCount, 3, 'pgDrawGraph must emit clickable rects for all 3 layer headers');
+    assert.equal(out.hitTier, out.colsInfo[0].tier, 'pgFindLayerHeaderAtScreen must resolve clicked header tier');
+    assert.equal(out.activeTierAfterClick, out.colsInfo[0].tier, 'Clicking layer header must filter to that tier');
+    assert.equal(out.chipPresent, true, 'Active layer filter chip must render in #pgClusterPills');
+    assert.equal(out.entryMatches, true, 'Entry node must match active entry layer filter');
+    assert.equal(out.coreMatches, false, 'Core node must be filtered out when entry layer is active');
+    assert.equal(out.activeTierAfterClear, null, 'pgToggleLayerFilter(null) must clear activeLayerTier');
+    assert.equal(out.chipPresentAfterClear, false, 'Layer filter chip must disappear after clearing filter');
+  } finally {
+    try {
+      vm.runInContext(`if (typeof telemetryPollTimer !== 'undefined' && telemetryPollTimer) { clearTimeout(telemetryPollTimer); telemetryPollTimer = null; }`, ctx);
+    } catch {}
+    for (const id of Array.from(activeTimeouts)) safeClearTimeout(id);
+  }
+});
+
+test('22. Hybrid layer column drag by header, smart node detach/reattach, align reset & batch undo/redo', async () => {
+  const vm = await import('node:vm');
+  const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+  for (const marker of [
+    'id="pgAlignLayersBtn"',
+    "case 'pgResetLayeredPositions':",
+    'function pgSyncNodeLayerDetachment(',
+    'function pgResetLayeredPositions(',
+  ]) {
+    assert.ok(html.includes(marker), `Expected hybrid layer marker ${marker} in ui.html`);
+  }
+
+  const mainScriptMatch = html.match(/<script>\s*([\s\S]*?)\s*<\/script>\s*<\/body>/i);
+  assert.ok(mainScriptMatch, 'Main script block must exist in ui.html');
+
+  const attachBus = (obj) => {
+    const map = new Map();
+    obj.addEventListener = (type, fn) => {
+      if (!map.has(type)) map.set(type, new Set());
+      map.get(type).add(fn);
+    };
+    obj.removeEventListener = (type, fn) => {
+      if (map.has(type)) map.get(type).delete(fn);
+    };
+    obj.dispatchEvent = (ev) => {
+      const listeners = map.get(ev.type);
+      if (!listeners) return;
+      for (const fn of Array.from(listeners)) fn(ev);
+    };
+    return obj;
+  };
+
+  const makeClassList = () => {
+    const set = new Set();
+    return {
+      add: (c) => set.add(c),
+      remove: (c) => set.delete(c),
+      toggle: (c, force) => {
+        if (force === true) { set.add(c); return true; }
+        if (force === false) { set.delete(c); return false; }
+        if (set.has(c)) { set.delete(c); return false; }
+        set.add(c);
+        return true;
+      },
+      contains: (c) => set.has(c),
+    };
+  };
+
+  const makeEl = (tag = 'div', id = '') => {
+    const attrs = new Map();
+    const el = {
+      id,
+      tagName: tag.toUpperCase(),
+      className: '',
+      hidden: false,
+      classList: makeClassList(),
+      style: { display: '', setProperty() {}, removeProperty() {} },
+      dataset: {},
+      value: '',
+      textContent: '',
+      innerHTML: '',
+      disabled: false,
+      clientWidth: 1200,
+      clientHeight: 800,
+      setAttribute: (k, v) => attrs.set(String(k), String(v)),
+      getAttribute: (k) => (attrs.has(String(k)) ? attrs.get(String(k)) : null),
+      removeAttribute: (k) => attrs.delete(String(k)),
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 800 }),
+      getContext: () => ({
+        save() {}, restore() {}, clearRect() {}, fillRect() {}, strokeRect() {}, beginPath() {}, closePath() {},
+        arc() {}, rect() {}, clip() {}, fill() {}, stroke() {}, moveTo() {}, lineTo() {}, quadraticCurveTo() {},
+        bezierCurveTo() {}, roundRect() {}, drawImage() {},
+        setLineDash() {}, setTransform() {}, scale() {}, translate() {}, fillText() {}, strokeText() {},
+        createLinearGradient: () => ({ addColorStop() {} }),
+        createRadialGradient: () => ({ addColorStop() {} }),
+        measureText: (s) => ({ width: String(s || '').length * 7 }),
+      }),
+      focus() {},
+      closest: (sel) => (sel === '#' + id ? el : null),
+      querySelectorAll: () => [],
+      querySelector: () => null,
+    };
+    return attachBus(el);
+  };
+
+  const els = new Map();
+  for (const [id, tag] of [
+    ['projectGraphModal', 'div'],
+    ['pgCanvasStage', 'div'],
+    ['projectGraphCanvas', 'canvas'],
+    ['pgClusterPills', 'div'],
+    ['pgAlignLayersBtn', 'button'],
+    ['pgInspFilename', 'div'],
+    ['pgInspPath', 'div'],
+    ['pgInspBadges', 'div'],
+    ['pgInspMetrics', 'div'],
+    ['pgInspTabs', 'div'],
+    ['pgInspActions', 'div'],
+    ['pgInspList', 'div'],
+    ['pgHoverTooltip', 'div'],
+    ['smartComposerInput', 'textarea'],
+  ]) {
+    els.set(id, makeEl(tag, id));
+  }
+
+  const doc = attachBus({
+    body: makeEl('body', 'body'),
+    documentElement: makeEl('html', 'html'),
+    activeElement: null,
+    getElementById: (id) => els.get(id) || null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: (tag) => makeEl(tag, ''),
+  });
+
+  const activeTimeouts = new Set();
+  const safeSetTimeout = (fn, ms) => {
+    const id = setTimeout(() => { activeTimeouts.delete(id); fn(); }, Math.min(Number(ms) || 0, 50));
+    if (id && typeof id.unref === 'function') id.unref();
+    activeTimeouts.add(id);
+    return id;
+  };
+  const safeClearTimeout = (id) => { activeTimeouts.delete(id); clearTimeout(id); };
+
+  const win = attachBus({
+    location: { search: '', href: 'http://127.0.0.1:4242/' },
+    innerWidth: 1400,
+    innerHeight: 900,
+    devicePixelRatio: 1,
+    document: doc,
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    navigator: { clipboard: { writeText: async () => {} } },
+    setTimeout: safeSetTimeout,
+    clearTimeout: safeClearTimeout,
+    requestAnimationFrame: () => 1,
+    cancelAnimationFrame: () => {},
+    fetch: async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }),
+    URLSearchParams,
+    AbortController,
+  });
+
+  const ctx = vm.createContext({
+    window: win,
+    document: doc,
+    navigator: win.navigator,
+    localStorage: win.localStorage,
+    location: win.location,
+    fetch: win.fetch,
+    setTimeout: safeSetTimeout,
+    clearTimeout: safeClearTimeout,
+    setInterval: () => 0,
+    clearInterval: () => {},
+    requestAnimationFrame: win.requestAnimationFrame,
+    cancelAnimationFrame: win.cancelAnimationFrame,
+    URLSearchParams,
+    AbortController,
+    console,
+    Math,
+    Date,
+    JSON,
+    Map,
+    Set,
+    Array,
+    Object,
+    String,
+    Number,
+    Boolean,
+    RegExp,
+    Promise,
+  });
+
+  try {
+    vm.runInContext(mainScriptMatch[1], ctx);
+    const out = await vm.runInContext(`(async () => {
+      pgState.open = true;
+      pgState.width = 1200;
+      pgState.height = 800;
+      pgState.layoutMode = 'layered';
+      pgBindCanvasEvents();
+
+      const macroRaw = {
+        ok: true,
+        nodes: [
+          { id: 'ui/view.mjs', label: 'view.mjs', clusterId: 'ui', inDeg: 0, outDeg: 1 },
+          { id: 'core/progress/track.mjs', label: 'track.mjs', clusterId: 'core', inDeg: 1, outDeg: 1 },
+          { id: 'core/hub.mjs', label: 'hub.mjs', clusterId: 'core', inDeg: 1, outDeg: 0 },
+        ],
+        edges: [
+          { source: 'ui/view.mjs', target: 'core/progress/track.mjs', kind: 'import', weight: 2 },
+          { source: 'core/progress/track.mjs', target: 'core/hub.mjs', kind: 'import', weight: 3 },
+        ],
+        clusters: [
+          { id: 'ui', label: 'ui', size: 1 },
+          { id: 'core', label: 'core', size: 2 },
+        ],
+      };
+      pgState.rawGraphData = macroRaw;
+      pgState.viewLevel = 'folders';
+      pgHydrateSimulation(macroRaw);
+
+      const entryCol = pgState.layeredColumns[0];
+      const origColX = entryCol.x;
+      const uiNode = pgState.nodeById.get('folder:ui');
+      const origNodeX = uiNode.x;
+      const firstHdr = pgState.layerHeaderRects.find((h) => h.tier === entryCol.tier);
+      const canvas = document.getElementById('projectGraphCanvas');
+
+      // 1) Drag layer header horizontally -> moves column and its node without toggling filter
+      const startX = firstHdr.x + firstHdr.w * 0.5;
+      const startY = firstHdr.y + firstHdr.h * 0.5;
+      canvas.dispatchEvent({ type: 'pointerdown', button: 0, pointerType: 'mouse', pointerId: 51, clientX: startX, clientY: startY });
+      canvas.dispatchEvent({ type: 'pointermove', pointerType: 'mouse', buttons: 1, pointerId: 51, clientX: startX - 150, clientY: startY });
+      canvas.dispatchEvent({ type: 'pointerup', pointerType: 'mouse', pointerId: 51, clientX: startX - 150, clientY: startY });
+
+      const colMovedDelta = entryCol.x - origColX;
+      const nodeMovedWithCol = uiNode.x - origNodeX;
+      const filterAfterHeaderDrag = pgState.activeLayerTier;
+
+      // Undo & Redo column move
+      pgUndoNodeMove();
+      const colAfterUndo = entryCol.x;
+      pgRedoNodeMove();
+      const colAfterRedo = entryCol.x;
+
+      // 2) Drag a single node far out of its column -> detaches; drag back -> reattaches
+      const midNode = pgState.nodeById.get('folder:core/progress');
+      const midOrigX = midNode._origX;
+      const midOrigY = midNode._origY;
+      const midSp = pgWorldToScreen(midNode.x, midNode.y);
+      canvas.dispatchEvent({ type: 'pointerdown', button: 0, pointerType: 'mouse', pointerId: 52, clientX: midSp.x, clientY: midSp.y });
+      canvas.dispatchEvent({ type: 'pointermove', pointerType: 'mouse', buttons: 1, pointerId: 52, clientX: midSp.x + 420, clientY: midSp.y + 80 });
+      canvas.dispatchEvent({ type: 'pointerup', pointerType: 'mouse', pointerId: 52, clientX: midSp.x + 420, clientY: midSp.y + 80 });
+      const detachedFar = Boolean(midNode._detachedFromLayer);
+
+      const farSp = pgWorldToScreen(midNode.x, midNode.y);
+      const backSp = pgWorldToScreen(pgState.layeredColumns[1].x, midOrigY);
+      canvas.dispatchEvent({ type: 'pointerdown', button: 0, pointerType: 'mouse', pointerId: 53, clientX: farSp.x, clientY: farSp.y });
+      canvas.dispatchEvent({ type: 'pointermove', pointerType: 'mouse', buttons: 1, pointerId: 53, clientX: backSp.x, clientY: backSp.y });
+      canvas.dispatchEvent({ type: 'pointerup', pointerType: 'mouse', pointerId: 53, clientX: backSp.x, clientY: backSp.y });
+      const reattachedNear = Boolean(midNode._detachedFromLayer);
+
+      // Detach again, then test pgResetLayeredPositions + Undo
+      midNode.x = midOrigX + 500;
+      pgSyncNodeLayerDetachment(midNode);
+      const detachedBeforeReset = Boolean(midNode._detachedFromLayer);
+      const didReset = pgResetLayeredPositions();
+      const colAfterReset = entryCol.x;
+      const midAfterResetX = midNode.x;
+      const detachedAfterReset = Boolean(midNode._detachedFromLayer);
+
+      pgUndoNodeMove();
+      const colAfterResetUndo = entryCol.x;
+      const detachedAfterResetUndo = Boolean(midNode._detachedFromLayer);
+
+      return {
+        colMovedDelta,
+        nodeMovedWithCol,
+        filterAfterHeaderDrag,
+        colAfterUndo,
+        colAfterRedo,
+        origColX,
+        detachedFar,
+        reattachedNear,
+        detachedBeforeReset,
+        didReset,
+        colAfterReset,
+        midAfterResetX,
+        midOrigX,
+        detachedAfterReset,
+        colAfterResetUndo,
+        detachedAfterResetUndo,
+      };
+    })()`, ctx);
+
+    assert.ok(out.colMovedDelta < -50, 'Dragging layer header left must move column world X');
+    assert.ok(Math.abs(out.colMovedDelta - out.nodeMovedWithCol) < 1e-6, 'Attached node must move identically with its column');
+    assert.equal(out.filterAfterHeaderDrag, null, 'Dragging layer header must not toggle layer filter');
+    assert.ok(Math.abs(out.colAfterUndo - out.origColX) < 1e-6, 'pgUndoNodeMove must revert dragged column');
+    assert.ok(Math.abs(out.colAfterRedo - (out.origColX + out.colMovedDelta)) < 1e-6, 'pgRedoNodeMove must redo dragged column');
+    assert.equal(out.detachedFar, true, 'Dragging node far outside column must detach it from layer frame');
+    assert.equal(out.reattachedNear, false, 'Dragging node back into column must reattach it');
+    assert.equal(out.detachedBeforeReset, true);
+    assert.equal(out.didReset, true, 'pgResetLayeredPositions must align moved columns and nodes');
+    assert.ok(Math.abs(out.colAfterReset - out.origColX) < 1e-6, 'Column must snap back to origX');
+    assert.ok(Math.abs(out.midAfterResetX - out.midOrigX) < 1e-6, 'Node must snap back to _origX');
+    assert.equal(out.detachedAfterReset, false, 'Reset must clear _detachedFromLayer');
+    assert.ok(out.colAfterResetUndo < out.origColX - 50, 'Undo after reset must restore custom column position');
+    assert.equal(out.detachedAfterResetUndo, true, 'Undo after reset must restore detached state');
+  } finally {
+    try {
+      vm.runInContext(`if (typeof telemetryPollTimer !== 'undefined' && telemetryPollTimer) { clearTimeout(telemetryPollTimer); telemetryPollTimer = null; }`, ctx);
+    } catch {}
+    for (const id of Array.from(activeTimeouts)) safeClearTimeout(id);
+  }
+});
+
+

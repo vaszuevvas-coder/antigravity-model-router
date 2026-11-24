@@ -214,6 +214,16 @@ test('1. Sidecar Panel: validateRequestOrigin, sanitizeSkillModesPatch, CSP UI H
   assert.equal(sanitizeStatePatch({ panelTheme: 'amber_hive' }).panelTheme, 'glass_teal');
   assert.equal(sanitizeStatePatch({ panelTheme: 'conductor_paper' }).panelTheme, 'studio_titanium');
   assert.equal(Object.hasOwn(sanitizeStatePatch({ panelTheme: 'unknown_theme' }), 'panelTheme'), false);
+  assert.equal(DEFAULT_STATE.panelViewMode, 'full');
+  assert.equal(ALLOWED_STATE_KEYS.has('panelViewMode'), true);
+  assert.equal(sanitizeStatePatch({ panelViewMode: 'lite' }).panelViewMode, 'lite');
+  assert.equal(sanitizeStatePatch({ panelViewMode: 'FULL' }).panelViewMode, 'full');
+  assert.equal(Object.hasOwn(sanitizeStatePatch({ panelViewMode: 'compact_invalid' }), 'panelViewMode'), false);
+  assert.equal(DEFAULT_STATE.panelUiScale, 'auto');
+  assert.equal(ALLOWED_STATE_KEYS.has('panelUiScale'), true);
+  assert.equal(sanitizeStatePatch({ panelUiScale: '115' }).panelUiScale, '115');
+  assert.equal(sanitizeStatePatch({ panelUiScale: 'AUTO' }).panelUiScale, 'auto');
+  assert.equal(Object.hasOwn(sanitizeStatePatch({ panelUiScale: '250' }), 'panelUiScale'), false);
   assert.equal(ALLOWED_STATE_KEYS.has('panelBlockOrder'), true);
   assert.equal(Array.isArray(DEFAULT_STATE.panelBlockOrder), true);
   const reorderedPatch = sanitizeStatePatch({
@@ -267,7 +277,14 @@ test('1. Sidecar Panel: validateRequestOrigin, sanitizeSkillModesPatch, CSP UI H
   assert.equal(migratedLegacyOrder[1], 'gpuRamCard');
   assert.equal(migratedLegacyOrder[2], 'sentinelSectionCard');
   assert.equal(migratedLegacyOrder[3], 'smartComposerCard');
-  assert.equal(migratedLegacyOrder[4], 'swarmTelemetryCard');
+  assert.equal(migratedLegacyOrder[4], 'liteQuickCard');
+  assert.equal(migratedLegacyOrder[5], 'swarmTelemetryCard');
+  assert.deepEqual(DEFAULT_PANEL_BLOCK_ORDER.slice(0, 4), [
+    'smartProjectBanner',
+    'agLiveProgressWrap',
+    'smartComposerCard',
+    'liteQuickCard',
+  ]);
   assert.equal(migratedLegacyOrder.includes('hardwareResourcesSpoiler'), false);
   assert.equal(migratedLegacyOrder.includes('telemetrySwarmSpoiler'), false);
 
@@ -447,6 +464,40 @@ test('1. Sidecar Panel: validateRequestOrigin, sanitizeSkillModesPatch, CSP UI H
   assert.equal(explicitSec.bayesian, true);
   assert.equal(explicitSec.skills, false);
   assert.deepEqual(explicitSec.included, ['hw', 'bayesian']);
+
+  const liteAdaptiveSec = resolvePanelFetchSections(
+    { adaptive: '1' },
+    {
+      panelViewMode: 'lite',
+      panelOpenSpoilers: { snapshotsBayesianSpoiler: true, expertDetailsBox: true },
+      panelCollapsedCards: {},
+    }
+  );
+  assert.equal(liteAdaptiveSec.all, false);
+  assert.equal(liteAdaptiveSec.core, true);
+  assert.equal(liteAdaptiveSec.swarm, true);
+  assert.equal(liteAdaptiveSec.hw, true);
+  assert.equal(liteAdaptiveSec.skills, false);
+  assert.equal(liteAdaptiveSec.checkpoints, false);
+  assert.equal(liteAdaptiveSec.bayesian, false);
+  assert.equal(liteAdaptiveSec.circuit, false);
+  assert.equal(liteAdaptiveSec.compaction, false);
+  assert.equal(liteAdaptiveSec.pitfalls, false);
+
+  assert.ok(uiHtml.includes('id="panelViewModeGroup"'), 'ui.html must include #panelViewModeGroup switcher');
+  assert.ok(uiHtml.includes('id="liteQuickCard"'), 'ui.html must include #liteQuickCard');
+  assert.ok(uiHtml.includes('id="liteRamGpuMasterBtn"'), 'ui.html must include #liteRamGpuMasterBtn');
+  assert.ok(uiHtml.includes('id="sel-liteRamBudget"'), 'ui.html must include Lite RAM limit dropdown');
+  assert.ok(uiHtml.includes('id="sel-liteGpuVramCap"'), 'ui.html must include Lite GPU VRAM limit dropdown');
+  assert.ok(uiHtml.includes('id="sel-liteCpuThreadsCap"'), 'ui.html must include Lite CPU threads dropdown');
+  assert.ok(uiHtml.includes('id="sel-gpuVramCap"'), 'ui.html must include Full GPU VRAM limit dropdown');
+  assert.ok(uiHtml.includes('id="sel-ramBudgetMain"'), 'ui.html must include Full RAM limit dropdown');
+  assert.ok(uiHtml.includes('id="sel-ramBudgetExpert"'), 'ui.html must include Expert RAM limit dropdown');
+  assert.ok(uiHtml.includes('id="sel-cpuThreadsCap"'), 'ui.html must include Full CPU threads dropdown');
+  assert.equal(uiHtml.includes('id="composerEngineBadge"'), false, 'ui.html must NOT include removed #composerEngineBadge');
+  assert.equal(uiHtml.includes('id="liteRamTogglePill"'), false, 'ui.html must NOT include removed #liteRamTogglePill');
+  assert.equal(uiHtml.includes('id="liteGpuTogglePill"'), false, 'ui.html must NOT include removed #liteGpuTogglePill');
+  assert.ok(uiHtml.includes('body[data-panel-view="lite"]'), 'ui.html must style Lite mode');
 
   assert.match(serverSource, /app\.api\('\/api\/panel-sections'/);
   assert.match(uiHtml, /IntersectionObserver/);
@@ -4393,6 +4444,225 @@ test('32. Orchestrator Multi-Phase Continuity: exit_plan_mode, Stop handoff, Exe
   }
 });
 
+test('32b. Background Task (task running) keeps progress running across Stop and resolves on finish/kill/restart', async () => {
+  const {
+    finalizeTaskProgressOnStop,
+    getTaskProgressSnapshot,
+    initTaskProgressFromPrompt,
+    advanceTaskProgressOnPreTool,
+    recordTaskProgressOnPostTool,
+    inspectTranscriptTurnState,
+    localizeProgressLabelToEn,
+    resetTaskProgress,
+  } = await import('../core/task-progress.mjs');
+
+  const prevTaskCacheEnv = process.env.TUNNEL_CACHE_DIR;
+  const tmpTaskCache = makeTempDir('amr-t32b-cache-');
+  const tmpBrain = makeTempDir('amr-t32b-brain-');
+  process.env.TUNNEL_CACHE_DIR = tmpTaskCache;
+  try {
+    resetTaskProgress();
+    const cid = 'chat-bg-1';
+    const tPath = path.join(tmpBrain, cid, '.system_generated', 'logs', 'transcript.jsonl');
+    fs.mkdirSync(path.dirname(tPath), { recursive: true });
+
+    const lines = [
+      JSON.stringify({ step_index: 1, source: 'USER_EXPLICIT', type: 'USER_INPUT', created_at: '2026-11-24T17:00:00Z', content: '<USER_REQUEST>Запусти все тесты</USER_REQUEST>' }),
+      JSON.stringify({
+        step_index: 2,
+        type: 'PLANNER_RESPONSE',
+        status: 'DONE',
+        tool_calls: [{ name: 'run_command', args: { CommandLine: 'node --test tests/router-core.test.mjs' } }],
+      }),
+      JSON.stringify({
+        step_index: 3,
+        type: 'GENERIC',
+        status: 'RUNNING',
+        content: 'Tool is running as a background task with task id: chat-bg/task-1\nTask Description: node --test tests/router-core.test.mjs\nTask logs are available at: file:///tmp/task-1.log',
+      }),
+      JSON.stringify({
+        step_index: 4,
+        type: 'PLANNER_RESPONSE',
+        status: 'DONE',
+        tool_calls: [],
+        content: 'Запустил тесты в фоне, ожидаю завершения.',
+      }),
+    ];
+    fs.writeFileSync(tPath, lines.join('\n') + '\n', 'utf8');
+
+    const turnActive = inspectTranscriptTurnState(tPath);
+    assert.equal(turnActive.state, 'running');
+    assert.equal(turnActive.hasRunningBackgroundTask, true);
+    assert.equal(turnActive.runningBackgroundTasks.length, 1);
+    assert.ok(turnActive.backgroundTaskLabel.startsWith('Фон:'), `Expected Фон: label, got ${turnActive.backgroundTaskLabel}`);
+    assert.ok(localizeProgressLabelToEn(turnActive.backgroundTaskLabel).startsWith('Background:'));
+
+    initTaskProgressFromPrompt({
+      conversationId: cid,
+      workspaceRoot: ROOT_DIR,
+      transcriptPath: tPath,
+      userPrompt: 'Запусти все тесты',
+      grade: 'M',
+      isReadOnlyQuestion: false,
+      brainDirs: [tmpBrain],
+    });
+    advanceTaskProgressOnPreTool({
+      conversationId: cid,
+      workspaceRoot: ROOT_DIR,
+      transcriptPath: tPath,
+      toolName: 'run_command',
+      commandLine: 'node --test tests/router-core.test.mjs',
+      brainDirs: [tmpBrain],
+    });
+    recordTaskProgressOnPostTool({
+      conversationId: cid,
+      workspaceRoot: ROOT_DIR,
+      transcriptPath: tPath,
+      toolName: 'run_command',
+      commandLine: 'node --test tests/router-core.test.mjs',
+      verifyOk: true,
+      brainDirs: [tmpBrain],
+    });
+
+    let snap = finalizeTaskProgressOnStop({
+      conversationId: cid,
+      workspaceRoot: ROOT_DIR,
+      transcriptPath: tPath,
+      terminationReason: 'NO_TOOL_CALL',
+      fullyIdle: true,
+      brainDirs: [tmpBrain],
+    });
+    let chat = snap.activeChats.find((c) => c.conversationId === cid);
+    assert.ok(chat, 'Chat with active background task must stay visible in activeChats');
+    assert.equal(chat.status, 'running');
+    assert.ok(chat.percent < 100, `Running background task must stay < 100%, got ${chat.percent}`);
+    assert.equal(chat.hasRunningBackgroundTask, true);
+    assert.equal(chat.backgroundTasksCount, 1);
+    assert.ok(chat.stepTitle.startsWith('Фон:'));
+
+    const holdSnap = getTaskProgressSnapshot({
+      workspaceRoot: ROOT_DIR,
+      brainDirs: [tmpBrain],
+      now: Date.now() + 25000,
+    });
+    const holdChat = holdSnap.activeChats.find((c) => c.conversationId === cid);
+    assert.ok(holdChat, 'Chat must not expire to idle after 25s while background task is running');
+    assert.equal(holdChat.status, 'running');
+
+    // Finish background task via SYSTEM notification + final planner reply
+    fs.appendFileSync(
+      tPath,
+      [
+        JSON.stringify({
+          step_index: 5,
+          source: 'SYSTEM',
+          type: 'SYSTEM_MESSAGE',
+          status: 'DONE',
+          content: '[Message] sender=chat-bg/task-1 content=Task id "chat-bg/task-1" finished with result:\nCommand exited with code 0.',
+        }),
+        JSON.stringify({
+          step_index: 6,
+          type: 'PLANNER_RESPONSE',
+          status: 'DONE',
+          tool_calls: [],
+          content: 'Все тесты успешно прошли.',
+        }),
+      ].join('\n') + '\n',
+      'utf8'
+    );
+
+    const turnDone = inspectTranscriptTurnState(tPath);
+    assert.equal(turnDone.state, 'completed');
+    assert.equal(turnDone.hasRunningBackgroundTask, false);
+    assert.equal(turnDone.runningBackgroundTasks.length, 0);
+
+    snap = finalizeTaskProgressOnStop({
+      conversationId: cid,
+      workspaceRoot: ROOT_DIR,
+      transcriptPath: tPath,
+      terminationReason: 'NO_TOOL_CALL',
+      fullyIdle: true,
+      brainDirs: [tmpBrain],
+    });
+    chat = snap.activeChats.find((c) => c.conversationId === cid);
+    assert.equal(chat.status, 'completed');
+    assert.equal(chat.percent, 100);
+    assert.equal(chat.hasRunningBackgroundTask, false);
+
+    // Verify cleanup via manage_task kill and server-restart system notice
+    const killLog = path.join(tmpBrain, 'chat-bg-kill', '.system_generated', 'logs', 'transcript.jsonl');
+    fs.mkdirSync(path.dirname(killLog), { recursive: true });
+    fs.writeFileSync(
+      killLog,
+      [
+        JSON.stringify({ step_index: 1, source: 'USER_EXPLICIT', type: 'USER_INPUT', content: '<USER_REQUEST>Запусти сервер</USER_REQUEST>' }),
+        JSON.stringify({
+          step_index: 2,
+          type: 'GENERIC',
+          status: 'RUNNING',
+          content: 'Tool is running as a background task with task id: chat-bg/task-2\nTask Description: npm start',
+        }),
+        JSON.stringify({
+          step_index: 3,
+          type: 'PLANNER_RESPONSE',
+          status: 'DONE',
+          tool_calls: [{ name: 'manage_task', args: { Action: 'kill', TaskId: 'chat-bg/task-2' } }],
+        }),
+        JSON.stringify({
+          step_index: 4,
+          type: 'PLANNER_RESPONSE',
+          status: 'DONE',
+          tool_calls: [],
+          content: 'Остановил.',
+        }),
+      ].join('\n') + '\n',
+      'utf8'
+    );
+    const killTurn = inspectTranscriptTurnState(killLog);
+    assert.equal(killTurn.hasRunningBackgroundTask, false);
+    assert.equal(killTurn.state, 'completed');
+
+    const restartLog = path.join(tmpBrain, 'chat-bg-restart', '.system_generated', 'logs', 'transcript.jsonl');
+    fs.mkdirSync(path.dirname(restartLog), { recursive: true });
+    fs.writeFileSync(
+      restartLog,
+      [
+        JSON.stringify({ step_index: 1, source: 'USER_EXPLICIT', type: 'USER_INPUT', content: '<USER_REQUEST>Запусти сборку</USER_REQUEST>' }),
+        JSON.stringify({
+          step_index: 2,
+          type: 'GENERIC',
+          status: 'RUNNING',
+          content: 'Tool is running as a background task with task id: chat-bg/task-3\nTask Description: npm run build',
+        }),
+        JSON.stringify({
+          step_index: 3,
+          type: 'PLANNER_RESPONSE',
+          status: 'DONE',
+          tool_calls: [],
+          content: 'Ожидаю сборки.',
+        }),
+        JSON.stringify({
+          step_index: 4,
+          source: 'SYSTEM',
+          type: 'SYSTEM_MESSAGE',
+          status: 'DONE',
+          content: 'All your subagents and background tasks have been stopped because the language server restarted.',
+        }),
+      ].join('\n') + '\n',
+      'utf8'
+    );
+    const restartTurn = inspectTranscriptTurnState(restartLog);
+    assert.equal(restartTurn.hasRunningBackgroundTask, false);
+    assert.equal(restartTurn.state, 'cancelled');
+  } finally {
+    resetTaskProgress();
+    if (prevTaskCacheEnv === undefined) delete process.env.TUNNEL_CACHE_DIR;
+    else process.env.TUNNEL_CACHE_DIR = prevTaskCacheEnv;
+    fs.rmSync(tmpTaskCache, { recursive: true, force: true });
+    fs.rmSync(tmpBrain, { recursive: true, force: true });
+  }
+});
+
 test('33. The Tunnel Rebrand, Version Sync, Manifest & CHANGELOG Contracts', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
   const plugin = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'plugin.json'), 'utf8'));
@@ -6130,8 +6400,8 @@ test('55. Dynamic Hardware Ceilings: VRAM/RAM/CPU auto-capping on backend, sanit
   }
   assert.ok(uiHtml.includes('computeClientMaxVramMb'), 'ui.html must compute client VRAM cap');
   assert.ok(uiHtml.includes('computeClientMaxRamMb'), 'ui.html must compute client RAM cap');
-  assert.ok(uiHtml.includes('applyCpuThreadsGroupCeiling'), 'ui.html must dynamically cap CPU threads group');
-  assert.ok(uiHtml.includes('hw-dynamic-cap-btn'), 'ui.html must support exact hwSafeCap CPU button');
+  assert.ok(uiHtml.includes('syncHwLimitSelect'), 'ui.html must dynamically cap hardware limit dropdowns');
+  assert.ok(uiHtml.includes('syncAllHwLimitSelects'), 'ui.html must sync Full and Lite RAM/GPU/CPU limit dropdowns');
 });
 
 test('55. Gemini 4 Neon & Orchestrator (Neon) full routing, FinOps, Guard, Bayesian & Swarm suite', async () => {
@@ -6640,6 +6910,52 @@ test('Smart Composer (Ghost Text): two-stage RAM+GPU continuation, overlap sanit
   assert.equal(retryAttempt, 2);
   assert.equal(retryRes.ok, true);
   assert.equal(retryRes.continuation, ' Например, учитывать открытые файлы и историю запросов.');
+
+  // 2c) Richer continuations (>96 chars up to 200 chars) + CHAT_CONTEXT injection + maxOutputTokens
+  const richContinuation =
+    ' с сохранением обратной совместимости контрактов, валидацией входных параметров и отдельными тестами для всех граничных случаев';
+  assert.ok(richContinuation.length > 100 && richContinuation.length < 180);
+  assert.equal(sanitizeGhostContinuation('Обнови обработчик', richContinuation), richContinuation);
+  const longText = `${richContinuation}, а также дополнительным логированием ошибок, кэшированием результатов, строгой проверкой типов и подробной документацией для всех публичных методов модуля`;
+  const cappedLong = sanitizeGhostContinuation('Обнови обработчик', longText);
+  assert.ok(cappedLong.length <= 200 && cappedLong.length > 96);
+
+  let sawChatContextLine = false;
+  let sawLargerPredict = false;
+  const ctxRes = await generatePromptContinuation({
+    draft: `Продолжи логику в ${Date.now()}`,
+    recentMessages: [
+      { role: 'user', content: 'Разбери автокомплит в 06-smart-composer.js' },
+      { role: 'assistant', content: 'Нужно увеличить бюджет токенов и убрать лишний пробел после Tab.' },
+    ],
+    allowFollowUpSentence: true,
+    maxOutputTokens: 56,
+    cfgOverride: {
+      gpuEnabled: true,
+      gpuMaxVramMb: 16384,
+      gpuChatModel: 'gemma4:12b',
+      gpuEmbedModel: 'qwen3-embedding:0.6b',
+      gpuEndpoint: 'http://127.0.0.1:11434',
+    },
+    hwProbeFn: () => hw16gb,
+    httpJsonFn: async (method, urlPath, body) => {
+      if (method === 'GET' && urlPath === '/api/ps') return { ok: true, data: { models: [{ name: 'gemma4:12b' }] } };
+      if (method === 'GET' && urlPath === '/api/tags') return { ok: true, data: { models: mockTags } };
+      if (method === 'POST' && urlPath === '/api/chat') {
+        const userMsg = body?.messages?.[1]?.content || '';
+        if (userMsg.includes('CHAT_CONTEXT:')) sawChatContextLine = true;
+        if (Number(body?.options?.num_predict) === 56) sawLargerPredict = true;
+        return {
+          ok: true,
+          data: { message: { content: 'с учётом уже обсуждённых правок и проверкой всех контрактов.' } },
+        };
+      }
+      return { ok: false };
+    },
+  });
+  assert.equal(sawChatContextLine, true);
+  assert.equal(sawLargerPredict, true);
+  assert.equal(ctxRes.ok, true);
 
   // 3) computeFastRamAutocomplete & buildSmartContinuationChips (Pure Factual Closed-World Stage-1)
   const slashRes = computeFastRamAutocomplete('/pl', {});
@@ -8349,6 +8665,146 @@ test('Task Progress: update_steps checklist sync & step-bounded honest percentag
     else process.env.TUNNEL_CACHE_DIR = prevCacheEnv;
     fs.rmSync(tmpCache, { recursive: true, force: true });
     fs.rmSync(tmpBrain, { recursive: true, force: true });
+  }
+});
+
+test('50. Wave 3 GPU & Ollama: HF mirror preference, persistent pull errors, custom gpuOllamaDir & installer job', async () => {
+  const {
+    loadGpuConfig,
+    resolveDefaultGpuModelsDir,
+    findOllamaBinary,
+    pullSingleOllamaModelWithFallback,
+    startGpuCascadePull,
+    clearGpuPullErrorStatus,
+    startOllamaInstallJob,
+    getOllamaInstallJobStatus,
+    clearOllamaInstallJobStatus,
+  } = await import('../core/local-gpu-engine.mjs');
+  const { RamMemoryEngine } = await import('../core/ram-memory-engine.mjs');
+
+  const customRoot = makeTempDir('amr-ollama-custom-');
+  try {
+    const customOllamaDir = path.join(customRoot, 'ollama-bin');
+    const customModelsDir = path.join(customRoot, 'ollama-models');
+    fs.mkdirSync(customOllamaDir, { recursive: true });
+    const binName = process.platform === 'win32' ? 'ollama.exe' : 'ollama';
+    const fakeBin = path.join(customOllamaDir, binName);
+    fs.writeFileSync(fakeBin, 'stub', 'utf8');
+
+    assert.equal(findOllamaBinary(true, { gpuOllamaDir: customOllamaDir }), fakeBin);
+    assert.equal(resolveDefaultGpuModelsDir('', customOllamaDir), path.join(customOllamaDir, 'models'));
+
+    const loaded = loadGpuConfig({
+      gpuEnabled: true,
+      gpuEndpoint: 'http://127.0.0.1:11434',
+      gpuChatModel: 'qwen3:4b',
+      gpuEmbedModel: 'qwen3-embedding:0.6b',
+      gpuOllamaDir: customOllamaDir,
+      gpuPreferHfMirror: true,
+    });
+    assert.equal(loaded.gpuOllamaDir, customOllamaDir);
+    assert.equal(loaded.gpuPreferHfMirror, true);
+
+    // 1) preferMirror: 'huggingface' pulls HF GGUF tag FIRST when available
+    const hfFirstCalls = [];
+    const hfFirstRes = await pullSingleOllamaModelWithFallback('qwen3:4b', {
+      preferMirror: 'huggingface',
+      retryDelayMs: 1,
+      execStepFn: async (args) => {
+        hfFirstCalls.push(args.join(' '));
+        return { ok: true, code: 0 };
+      },
+    });
+    assert.equal(hfFirstRes.ok, true);
+    assert.equal(hfFirstRes.source, 'huggingface');
+    assert.equal(hfFirstCalls[0], 'pull hf.co/Qwen/Qwen3-4B-GGUF:Q4_K_M');
+
+    // 2) Tag without HF GGUF (gemma4:12b) still works smoothly via Ollama when preferMirror='huggingface'
+    const noHfCalls = [];
+    const noHfRes = await pullSingleOllamaModelWithFallback('gemma4:12b', {
+      preferMirror: 'huggingface',
+      retryDelayMs: 1,
+      execStepFn: async (args) => {
+        noHfCalls.push(args.join(' '));
+        return { ok: true, code: 0 };
+      },
+    });
+    assert.equal(noHfRes.ok, true);
+    assert.equal(noHfRes.source, 'ollama');
+    assert.equal(noHfRes.hfAvailable, false);
+    assert.equal(noHfCalls[0], 'pull gemma4:12b');
+
+    // 3) Cascade pull records per-item error & dismiss clears error cleanly
+    const failPull = await startGpuCascadePull({
+      models: ['qwen3:4b'],
+      installedTags: [],
+      mirrorMode: 'huggingface',
+      awaitCompletion: true,
+      execStepFn: async () => ({ ok: false, code: 1, error: 'connection refused' }),
+    });
+    assert.ok(failPull.error);
+    assert.equal(failPull.items[0].status, 'error');
+    assert.equal(failPull.items[0].hfAvailable, true);
+    const clearedPull = clearGpuPullErrorStatus();
+    assert.equal(clearedPull.dismissed, true);
+    assert.equal(clearedPull.error, '');
+
+    // 4) Automated Ollama installer downloads, passes /DIR= and triggers cascade pull cleanly
+    const installCalls = [];
+    const pullAfterCalls = [];
+    let binChecks = 0;
+    const instRes = await startOllamaInstallJob({
+      installDir: path.join(customRoot, 'inst-dir'),
+      modelsDir: customModelsDir,
+      pullModeAfter: 'cascade',
+      selectedCapMb: 8192,
+      mirrorMode: 'huggingface',
+      platform: 'win32',
+      allowInTests: true,
+      awaitCompletion: true,
+      downloadFn: async (_url, dest, opts) => {
+        opts?.onProgress?.(0.5);
+        fs.writeFileSync(dest, 'exe-stub', 'utf8');
+        return { ok: true, path: dest };
+      },
+      execInstallFn: async (_exe, args, opts) => {
+        installCalls.push({ args, opts });
+        return { ok: true, code: 0 };
+      },
+      verifyBinaryFn: () => {
+        binChecks += 1;
+        return binChecks === 1 ? null : path.join(customRoot, 'inst-dir', 'ollama.exe');
+      },
+      ensureRunningFn: async () => ({ ok: true, running: true }),
+      startPullFn: async (pullArgs) => {
+        pullAfterCalls.push(pullArgs);
+        return { ok: true };
+      },
+    });
+    assert.equal(instRes.phase, 'done');
+    assert.equal(instRes.pullTriggered, true);
+    assert.ok(installCalls[0].args.includes('/VERYSILENT'));
+    assert.ok(installCalls[0].args.includes('/NORESTART'));
+    assert.ok(installCalls[0].args.some((a) => a.startsWith('/DIR=') && a.includes('inst-dir')));
+    assert.equal(installCalls[0].opts.modelsDir, customModelsDir);
+    assert.equal(pullAfterCalls.length, 1);
+    assert.equal(pullAfterCalls[0].mirrorMode, 'huggingface');
+    assert.equal(getOllamaInstallJobStatus().phase, 'done');
+    assert.equal(clearOllamaInstallJobStatus().dismissed, true);
+
+    // 5) buildGroundedChatPack pins focusFile cleanly even when query omits filename
+    const wsDir = path.join(customRoot, 'ws');
+    fs.mkdirSync(path.join(wsDir, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(wsDir, 'src', 'auth.mjs'), 'export function verifyJwtToken(tok) {\n  return Boolean(tok);\n}\n', 'utf8');
+    fs.writeFileSync(path.join(wsDir, 'src', 'routes.mjs'), "import { verifyJwtToken } from './auth.mjs';\nexport const ok = verifyJwtToken('x');\n", 'utf8');
+    const ram = new RamMemoryEngine();
+    ram.warmWorkspace(wsDir, { startWatcher: false });
+    const pack = ram.buildGroundedChatPack(wsDir, 'Объясни работу модуля и риски', { focusFile: 'src/auth.mjs' });
+    assert.ok(pack.sources.some((s) => s.file === 'src/auth.mjs'), 'focusFile must be included in grounded RAG sources');
+    assert.ok(pack.formatted.includes('src/auth.mjs'), 'focusFile code slice must be embedded in RAG context');
+    ram.evict('all');
+  } finally {
+    fs.rmSync(customRoot, { recursive: true, force: true });
   }
 });
 

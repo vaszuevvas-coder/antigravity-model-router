@@ -438,7 +438,52 @@
       'Пучки': 'Bundles',
       'Карта': 'Minimap',
       'ƒ Символы': 'ƒ Symbols',
-      '220 узл.': '220 nod.'
+      '220 узл.': '220 nod.',
+      '⚡ Быстрый пульт': '⚡ Quick Controls',
+      'Порог вопросов:': 'Confirm threshold:',
+      'Превью дизайна (A/B/C):': 'Design preview (A/B/C):',
+      'Командный Рой:': 'Agent Swarm:',
+      'Локальные RAM + GPU:': 'Local RAM + GPU:',
+      'Лимиты RAM / GPU / CPU:': 'RAM / GPU / CPU limits:',
+      'RAM · 4 ГБ': 'RAM · 4 GB',
+      'GPU · 4 ГБ': 'GPU · 4 GB',
+      'CPU · 6 пот.': 'CPU · 6 thr.',
+      '6 пот.': '6 thr.',
+      '⚡ Активно': '⚡ Active',
+      '⏸ Пауза': '⏸ Paused',
+      'Вручную': 'Manual',
+      'GPU · Выкл': 'GPU · Off',
+      'RAM · Выкл': 'RAM · Off',
+      '🤗 Через HuggingFace': '🤗 Via HuggingFace',
+      '↻ Повторить': '↻ Retry',
+      '🤗 Зеркало HuggingFace': '🤗 HuggingFace Mirror',
+      '✕ Скрыть': '✕ Dismiss',
+      '⚠️ Ollama не установлена': '⚠️ Ollama not installed',
+      'Установите Ollama в выбранную папку для работы локальных GPU-моделей.': 'Install Ollama into your chosen folder to run local GPU models.',
+      '⬇️ Установить Ollama': '⬇️ Install Ollama',
+      '📁 Папка…': '📁 Browse…',
+      'Зеркало Hugging Face': 'Hugging Face Mirror',
+      '— скачивать GGUF-модели напрямую с': '— pull GGUF models directly from',
+      'Папка программы Ollama (': 'Ollama Program Folder (',
+      '🤖 ИИ-разбор файла': '🤖 AI File Explorer',
+      'GPU RAG · 0 тк': 'GPU RAG · 0 tok',
+      '✦ В Композер': '✦ To Composer',
+      '🤖 Спросить ИИ о файле ▾': '🤖 Ask AI about file ▾',
+      '📖 Объяснить, за что отвечает файл': '📖 Explain what this file does',
+      '🔗 Зависимости и риски (Blast Radius)': '🔗 Dependencies & Risks (Blast Radius)',
+      '🐛 Найти баги и слабые места': '🐛 Find bugs & weak spots',
+      '🧪 Что проверить тестами': '🧪 What to test',
+      '💬 Задать свой вопрос…': '💬 Ask a custom question…',
+      '✦ Открыть вопрос в Умном Композере': '✦ Open question in Smart Composer',
+      'Обновить': 'Update',
+      'Обновление': 'Update',
+      'Доступна новая версия расширения на GitHub': 'New plugin version available on GitHub',
+      'Доступных обновлений нет': 'No updates available',
+      'Что нового ↗': 'What\'s new ↗',
+      '⬇ Обновить': '⬇ Update',
+      '🛡️ Фоновый Дозор:': '🛡️ Background Sentinel:',
+      'Контракты: чисто · BugBot: чисто': 'Contracts: clean · BugBot: clean',
+      '🛠️ Исправить': '🛠️ Fix'
     };
 
     const UI_RU_TO_EN_ATTR = {
@@ -449,10 +494,15 @@
       'Жидкое стекло iOS (Тёмная)': 'Liquid Glass iOS (Dark)',
       'Персиковый фарфор (Светлая)': 'Peach Porcelain (Light)',
       'Вернуть исходный порядок всех блоков по умолчанию': 'Reset all cards to default order',
+      'Проверить обновления расширения на GitHub': 'Check GitHub for plugin updates',
+      'Скачать и установить обновление с GitHub с сохранением настроек': 'Download and install update from GitHub while preserving settings',
+      'Скрыть уведомление до следующей версии': 'Dismiss notification until next version',
+      'Закрыть уведомление': 'Dismiss notification',
       'Обновить всё (телеметрия обновляется автоматически раз в ~3 сек)': 'Refresh all (telemetry auto-refreshes every ~3s)',
       'Автодиагностика стека проекта, .agentignore, DESIGN.md и GATES.md': 'Auto-diagnose project stack, .agentignore, DESIGN.md & GATES.md',
       'Открыть стартовую и быструю настройку ИИ-Пилота в 4 шага': 'Open the 4-step AI Pilot Setup Wizard',
       'Переключатель проекта: управляет снимками отката, Git-песочницами, Композером, Дозором, граблями и памятью': 'Workspace switcher: controls snapshots, Git sandboxes, Composer, Sentinel, pitfalls & memory',
+      'Активный проект: управляет снимками отката, Git-песочницами, Композером, Дозором, граблями и памятью': 'Active project: controls snapshots, Git sandboxes, Composer, Sentinel, pitfalls & memory',
       'Вернуться к автоопределению активного чата': 'Return to automatic active chat detection',
       'Сбросить зависшие или завершённые карточки чатов': 'Clear stale or finished chat cards',
       'Статус буфера проекта в оперативной памяти (клик — открыть блок ресурсов)': 'Project In-RAM buffer status (click to open Resources)',
@@ -590,6 +640,10 @@
       'Тип раскладки': 'Layout mode',
       'Режим графа': 'Graph scope',
       'Перестроить граф проекта из памяти RAM': 'Rebuild project graph from RAM',
+      'Масштаб интерфейса и карты под 1080p / 2K / 4K (Авто / 100% / 115% / 130% / 90%)': 'UI & map scale for 1080p / 2K / 4K (Auto / 100% / 115% / 130% / 90%)',
+      'Масштаб интерфейса карты': 'Map UI scale',
+      'Точки входа': 'Entry Points',
+      'База / Утилиты': 'Core / Utils',
       'Закрыть карту проекта (Esc)': 'Close project map (Esc)',
       'Закрыть карту проекта': 'Close project map',
       'Найти файл или модуль (напр. server.mjs)...': 'Find file or module (e.g. server.mjs)...',
@@ -601,6 +655,7 @@
       'Глубина локального обхода (хопы)': 'Local traversal depth (hops)',
       'Отдалить': 'Zoom out',
       'Уместить весь граф в экран': 'Fit graph to view',
+      'Выровнять слои и вернуть сдвинутые узлы в сетку': 'Realign layers and reset manually moved nodes to grid',
       'Приблизить': 'Zoom in',
       'Показать 1–2 хопа вокруг этого файла': 'Focus 1–2 hops around this file',
       'Скопировать относительный путь': 'Copy relative path',
@@ -627,7 +682,41 @@
       'Максимум узлов карты': 'Max graph nodes',
       'Выбрать проект для карты': 'Select project for map',
       'Открыть любую папку проекта на диске': 'Open any project folder from disk',
-      'Открыть папку проекта': 'Open project folder'
+      'Открыть папку проекта': 'Open project folder',
+      'Режим интерфейса панели: Краткий (Lite) или Полный (Full)': 'Panel interface mode: Compact (Lite) or Full',
+      'Краткий режим: только ключевые блоки и быстрые переключатели': 'Compact mode: core blocks and quick toggles only',
+      'Полный режим: все панели, телеметрия и экспертные настройки': 'Full mode: all panels, telemetry and expert settings',
+      'Общий переключатель связки RAM + GPU: ставит на паузу или восстанавливает активные модули': 'Master RAM + GPU switch: pauses or restores active local acceleration modules',
+      'Кликните, чтобы включить или выключить быстрый кэш кода в оперативной памяти (RAM)': 'Click to toggle fast In-RAM code cache',
+      'Кликните, чтобы включить или выключить локальную видеомодель GPU (Ollama)': 'Click to toggle local GPU model (Ollama)',
+      'Лимит оперативной памяти In-RAM': 'In-RAM cache budget limit',
+      'Лимит видеопамяти GPU (VRAM)': 'GPU video memory limit (VRAM)',
+      'Лимит потоков процессора (CPU-пул)': 'CPU worker pool thread limit',
+      'Свернуть диагностику': 'Collapse diagnostics',
+      'Масштаб интерфейса': 'Interface scale',
+      'Масштаб интерфейса под 1080p / 2K / 4K (Авто / 100% / 115% / 130% / 90%)': 'Interface scale for 1080p / 2K / 4K (Auto / 100% / 115% / 130% / 90%)',
+      'Скачать модели напрямую через зеркало Hugging Face (GGUF)': 'Download models directly via Hugging Face mirror (GGUF)',
+      'Повторить загрузку моделей через Ollama': 'Retry model download via Ollama',
+      'Скачать проблемные модели через зеркало Hugging Face (GGUF)': 'Download failed models via Hugging Face mirror (GGUF)',
+      'Скрыть уведомление об ошибке загрузки': 'Dismiss download error notification',
+      'Скрыть уведомление установки Ollama': 'Dismiss Ollama install notification',
+      'Автоматически скачать и установить Ollama в выбранную папку': 'Automatically download and install Ollama into chosen folder',
+      'Выбрать папку установки Ollama и моделей': 'Select folder for Ollama installation and models',
+      'Скачать компактные модели через зеркало Hugging Face': 'Download compact models via Hugging Face mirror',
+      'При скачивании моделей сразу использовать зеркало Hugging Face (GGUF), если оно доступно для модели': 'Use Hugging Face GGUF mirror first when available during model downloads',
+      'По умолчанию (AppData / Program Files / PATH)': 'Default (AppData / Program Files / PATH)',
+      'Выбрать папку установки Ollama': 'Select Ollama installation folder',
+      'Выбрать папку хранения моделей Ollama': 'Select Ollama models storage folder',
+      'Очистить ответы ИИ по файлу': 'Clear AI responses for this file',
+      'Скрыть ИИ-панель': 'Hide AI panel',
+      'Спросить про этот файл…': 'Ask about this file…',
+      'Задать вопрос по выбранному файлу': 'Ask a question about selected file',
+      'Остановить генерацию на GPU': 'Stop GPU generation',
+      '■ Стоп': '■ Stop',
+      'Перенести вопрос и @file в Умный Композер': 'Send question & @file to Smart Composer',
+      'Раскрыть меню ИИ-действий и вопросов по выбранному узлу': 'Open AI actions and questions menu for selected node',
+      'Запустить проверку Фонового Дозора сейчас': 'Run Background Sentinel check now',
+      'Сразу отправить найденные ошибки Дозора в активный чат агента на исправление': 'Send detected Sentinel issues directly to the active agent chat to fix'
     };
 
     function translateUiString(raw, dict) {
@@ -744,6 +833,9 @@
         flushAllRendersForLanguageChange();
       }
       applyUiLanguageDom(valid);
+      if (typeof applyPanelUiScaleDom === 'function') {
+        applyPanelUiScaleDom((currentState && currentState.panelUiScale) || 'auto', false);
+      }
       if (typeof syncComposerGrillToggleUi === 'function') {
         syncComposerGrillToggleUi();
       }
@@ -763,6 +855,9 @@
       }
       if (typeof syncSmartSendButtonLabel === 'function') {
         syncSmartSendButtonLabel();
+      }
+      if (typeof renderPluginUpdateBanner === 'function') {
+        renderPluginUpdateBanner();
       }
       const wizModal = document.getElementById('onboardingWizardModal');
       if (wizModal && wizModal.classList.contains('visible') && typeof renderWizardStep === 'function') {

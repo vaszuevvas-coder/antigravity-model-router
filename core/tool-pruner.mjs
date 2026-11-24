@@ -1,6 +1,6 @@
 /**
  * @file tool-pruner.mjs
- * @description Когнитивный 3D-маршрутизатор The Tunnel (3D Cognitive Router v3.33.1):
+ * @description Когнитивный 3D-маршрутизатор The Tunnel (3D Cognitive Router v3.34.0):
  * Оценивает реальный охват графа кода (Scope-Scout + PageRank), строит 3D-тензор
  * Ширина × Глубина × Неопределённость/Риск, генерирует адаптивные варианты плана и проверяет селектор модели Gemini 4.
  */
@@ -111,11 +111,11 @@ export function detectPromptIntentSignals(promptText = '') {
     clean.length > 0 &&
     clean.length <= 64 &&
     !/\?/.test(clean) &&
-    /^(?:(?:(?:да|давай|ок|ok|хорошо|отлично|супер|ага)[,\s]+)?(?:перейд[её]м\s+к\s+(?:меню|делу|реализации)\s+и\s+)?(?:делаем|делай|сделаем|погнали|запускай|запускаем|начинай|начинаем|поехали|внедряй|внедряем|приступай|приступаем|исправляем|исправляй|исправим|чиним|починим|фиксим|обновляем|подтверждаю|proceed)|да|давай|ок|ok|yes|go|го|ага|угу|хорошо|отлично|согласен|подтверждаю|первый\s+вариант|вариант\s*[123abcабв]|да[,\s]+(?:первый|давай|ок))[\s!.]*$/i.test(clean);
+    /^(?:(?:(?:да|давай|ок|ok|хорошо|отлично|супер|ага)[,\s]+)?(?:перейд[её]м\s+к\s+(?:меню|делу|реализации)\s+и\s+)?(?:делаем|делай|сделаем|погнали|запускай|запускаем|начинай|начинаем|поехали|внедряй|внедряем|приступай|приступаем|исправляем|исправляй|исправим|чиним|починим|фиксим|обновляем|подтверждаю|proceed)|да|давай|ок|ok|yes|go|го|ага|угу|хорошо|отлично|согласен|подтверждаю|первый\s+вариант|вариант\s*[123abcабв]|да[,\s]+(?:первый|давай|ок)|[123]|пуск|(?:(?:модель\s+)?(?:переключил(?:ся|ась)?|сменил(?:а)?|поменял(?:а)?|готово|switched|ready|resume|continue)(?:\s+(?:модель|model))?)(?:[,\s]+(?:пуск|запускай|запускаем|давай|делаем|go|proceed|1|2|3|вариант\s*[123]))?)[\s!.]*$/i.test(clean);
   const isStructuredGateApproval =
     /^A1\s*:\s*/i.test(clean) &&
     clean.length <= 450 &&
-    !/(?:только\s+(?:read-only|диагностик|отч[её]т)|без\s+(?:изменен|записи|правок)|отмен[аи]|витрин[аеыу]|референс|прототип[аы]\s+a\/b\/c)/i.test(clean);
+    !/(?:только\s+(?:read-only|диагностик|отч[её]т)|без\s+(?:изменен|записи|правок)|отмен[аи]|витрин[аеыу]|референс|прототип[аы]\s+a\/b\/c|пауз[аеыу].*модел|заверш(?:ить|и)\s+ход.*модел|смен[иыуть].*модел|переключ[иыуть].*модел|end\s+turn.*switch.*model|pause.*switch.*model)/i.test(clean);
   const isArtifactDocApproval =
     /(?:^|\n)The user has approved this document\./i.test(clean) &&
     !/\?/.test(clean);
@@ -948,6 +948,7 @@ export function buildAdaptive3DOptionsBlueprint({
   recModelEn = '',
   compiledSpec = null,
   grillSignal = null,
+  hasSelectorMismatch = false,
   lang = '',
 } = {}) {
   const uiLang = lang ? normalizeLang(lang, 'ru') : resolveStateLanguage(state, 'ru');
@@ -1042,9 +1043,14 @@ export function buildAdaptive3DOptionsBlueprint({
         ? ' | + Add 2nd compact ask_question item: "Run a clarifying interview (Grill-Me) on decision-tree forks and edge cases first?" with options: "(Recommended) No, spec is clear — proceed with the selected plan" | "Yes, blitz interview (1 round on main forks)" | "Yes, full Grill-Me interview (decision tree + record in SPEC.md)".'
         : ' | + Add 2nd compact ask_question item: "Нужен ли детальный опрос (Grill-Me) по развилкам и краевым случаям перед выполнением?" with options: "(Recommended) Нет, ТЗ понятное — сразу выполнять выбранный план" | "Да, блиц-опрос (1 раунд по главным спорным развилкам)" | "Да, полный Grill-Me (дерево решений + фиксация в SPEC.md)".')
     : '';
+  const modelSwitchGateSuffix = hasSelectorMismatch
+    ? (isEn
+        ? ` | + If you still open ask_question (e.g. for architectural forks) while model differs, include option: "⏸ End turn so I can switch model to ${modelTag}" (if chosen — do not edit, confirm direction in 1 line, and end the turn to unlock the selector).`
+        : ` | + Если всё же открываешь ask_question (например, нужны развилки архитектуры) при несовпадении модели, добавь вариант: "⏸ Завершить ход, чтобы я переключил модель на ${modelTag}" (при выборе этого варианта — ничего не правь, подтверди направление 1 строкой и заверши ход для разблокировки селектора).`)
+    : '';
   const formattedBlueprint = isEn
-    ? `🧩 [3D Adaptive Options Blueprint (${tensorId})]: Synthesize 3 task-specific EN options AFTER code inspection, reflecting YOUR post-scout optimal model in option #1 and naming REAL inspected files & trade-offs (NEVER copy static clichés or blind pre-estimates): 1) ${slots[0]} | 2) ${slots[1]} | 3) ${slots[2]}${grillGateSuffix}`
-    : `🧩 [3D Adaptive Options Blueprint (${tensorId})]: Synthesize 3 task-specific RU options AFTER code inspection, reflecting YOUR post-scout optimal model in option #1 and naming REAL inspected files & trade-offs (NEVER copy static clichés or blind pre-estimates): 1) ${slots[0]} | 2) ${slots[1]} | 3) ${slots[2]}${grillGateSuffix}`;
+    ? `🧩 [3D Adaptive Options Blueprint (${tensorId})]: Synthesize 3 task-specific EN options AFTER code inspection, reflecting YOUR post-scout optimal model in option #1 and naming REAL inspected files & trade-offs (NEVER copy static clichés or blind pre-estimates): 1) ${slots[0]} | 2) ${slots[1]} | 3) ${slots[2]}${grillGateSuffix}${modelSwitchGateSuffix}`
+    : `🧩 [3D Adaptive Options Blueprint (${tensorId})]: Synthesize 3 task-specific RU options AFTER code inspection, reflecting YOUR post-scout optimal model in option #1 and naming REAL inspected files & trade-offs (NEVER copy static clichés or blind pre-estimates): 1) ${slots[0]} | 2) ${slots[1]} | 3) ${slots[2]}${grillGateSuffix}${modelSwitchGateSuffix}`;
 
   return {
     tensorId,
@@ -1224,6 +1230,7 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
     !signals.isArtifactDocApproval &&
     !/^A1\s*:/i.test(promptText) &&
     context?.prevAskQuestionCalled === false &&
+    !context?.prevModelSwitchPending &&
     state.confirmBeforeRun !== false
   ) {
     const effectiveFollowGrade =
@@ -1262,6 +1269,7 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
     signals.isApprovalFollowUp &&
     (signals.isArtifactDocApproval ||
       /^A1\s*:/i.test(promptText) ||
+      context?.prevModelSwitchPending === true ||
       context?.prevAskQuestionCalled === true ||
       (context?.prevAskQuestionCalled === undefined &&
         (context?.prevTurnGrade === 'L' || context?.prevTurnGrade === 'XL')))
@@ -1273,10 +1281,13 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
       matrix3D.grade ||
       'M';
     const prevMatrix = context?.prevTurnMatrix || matrix3D;
+    const isModelSwitchResume = Boolean(context?.prevModelSwitchPending);
     return {
       grade: prevGrade,
       phase: 'standard',
-      budgetHint: `🚀 [Plan Approved Follow-Up (${prevGrade})] User confirmed the proposed plan — proceed directly with execution without repeating ask_question.`,
+      budgetHint: isModelSwitchResume
+        ? `🚀 [Plan Approved Follow-Up (${prevGrade}) | Model-Switch Resumed] User switched model / confirmed the proposed plan after Model-Switch Pause — proceed directly with execution without repeating ask_question.`
+        : `🚀 [Plan Approved Follow-Up (${prevGrade})] User confirmed the proposed plan — proceed directly with execution without repeating ask_question.`,
       maxSteps: 0,
       scope,
       structuralScore,
@@ -1288,6 +1299,7 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
       compiledSpec: { matchedIds: [], specs: [], targetFiles: [], formattedSpec: '', formatted: '' },
       isReadOnlyQuestion: false,
       isApprovalFollowUp: true,
+      modelSwitchSplitTurn: false,
     };
   }
 
@@ -1315,6 +1327,7 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
 
   let budgetHint = '';
   let optionsBlueprint = null;
+  let modelSwitchSplitTurn = false;
   const isProSub = state.subscriptionTier !== 'ultra';
   const subTag = isProSub ? 'Sub: Pro (max: Neon, no Carbon)' : 'Sub: Ultra';
   const modelExamples = isEnUi
@@ -1368,6 +1381,8 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
       lines.push(grillDirective);
     }
     if (gatePolicy.shouldAskModelGate || (state.confirmBeforeRun !== false && isDeepAuditOrArch)) {
+      const hasSelectorMismatch = Boolean(selectorEval && selectorEval.match && selectorEval.match !== 'optimal' && evalTip);
+      modelSwitchSplitTurn = hasSelectorMismatch;
       optionsBlueprint = buildAdaptive3DOptionsBlueprint({
         matrix3D,
         scope,
@@ -1376,6 +1391,7 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
         recModelEn,
         compiledSpec,
         grillSignal,
+        hasSelectorMismatch,
         lang: uiLang,
       });
       lines.push(
@@ -1383,6 +1399,13 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
           ? `🚦 [Pre-Task Gate: ON (${grade})] Inspect target slices FIRST, then determine the TRUE post-scout grade (S/M/L/XL) & optimal model WITH explicit thinking/planner depth (e.g. ${modelExamples} — ${noBareRuleEn}) from actual code (override pre-read ~${grade} if code is simpler or deeper!) and reflect YOUR AI verdict identically in EN chat, ask_question header ("Scope", "Recommended power", + "💡 Mode tip" on mismatch), and option #1.`
           : `🚦 [Pre-Task Gate: ON (${grade})] Inspect target slices FIRST, then determine the TRUE post-scout grade (S/M/L/XL) & optimal model WITH explicit thinking/planner depth (e.g. ${modelExamples} — ${noBareRuleEn}) from actual code (override pre-read ~${grade} if code is simpler or deeper!) and reflect YOUR AI verdict identically in RU chat, ask_question header ("Объём", "Рекомендуемая мощность", + "💡 Совет по режиму" on mismatch), and option #1.`
       );
+      if (hasSelectorMismatch) {
+        lines.push(
+          isEnUi
+            ? `⏸️ [Model-Switch Split-Turn (AGY 2.35+)] In AGY 2.35+, the model selector is locked while ask_question is open. If post-scout triage confirms switching to ${recModel} is needed: do NOT call ask_question — output the concise plan, 3 numbered options (1/2/3), and a clear prompt to switch the model to ${recModel} in a normal reply and END the turn so the selector unlocks (on the next turn after "go" / "1", execute immediately without repeating the gate). If post-scout confirms the current model fits, call ask_question as usual.`
+            : `⏸️ [Model-Switch Split-Turn (AGY 2.35+)] В AGY 2.35+ селектор моделей заблокирован во время открытого ask_question. Если после разведки кода смена модели на ${recModel} действительно нужна: НЕ вызывай ask_question — выведи краткий план, 3 пронумерованных варианта (1/2/3) и явную просьбу переключить модель на ${recModel} в обычном ответе и ЗАВЕРШИ ход, чтобы селектор разблокировался (на следующем ходе после «пуск» / «1» сразу выполни план без повторного gate). Если после разведки текущая модель подходит — вызывай ask_question как обычно.`
+        );
+      }
       if (optionsBlueprint?.formattedBlueprint) {
         lines.push(optionsBlueprint.formattedBlueprint);
       }
@@ -1419,6 +1442,7 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
     isReadOnlyQuestion: Boolean(signals.isReadOnlyQuestion),
     isModalAnalyticalQuestion: Boolean(signals.isModalAnalyticalQuestion),
     isApprovalFollowUp: false,
+    modelSwitchSplitTurn,
   };
 }
 

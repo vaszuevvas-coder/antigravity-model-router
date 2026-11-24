@@ -1,4 +1,6 @@
     let _sentinelActionBusy = false;
+    let _lastNormalizedSentinelFindings = [];
+    let _lastSentinelAlertCounts = { errs: 0, warns: 0, bugbot: 0 };
 
     function syncSentinelCheckboxes(s) {
       const st = s || {};
@@ -99,7 +101,8 @@
       const s = state || currentState || {};
       syncSentinelCheckboxes(s);
       const boxEl = document.getElementById('sentinelStatusBox');
-      if (!boxEl) return;
+      const liteRowEl = document.getElementById('liteSentinelRow');
+      if (!boxEl && !liteRowEl) return;
 
       const sen = (sentinelData && typeof sentinelData === 'object') ? sentinelData : {};
       const sg = (sen.shadowGuard && typeof sen.shadowGuard === 'object') ? sen.shadowGuard : {};
@@ -141,16 +144,19 @@
 
       const errCount = Math.max(0, Number(sg.errorCount || 0));
       const warnCount = Math.max(0, Number(sg.warnCount || 0)) + (Number(sg.warnCount || 0) === 0 ? Math.max(0, Number(sg.cloneCount || 0)) : 0);
+      const hasContractAlerts = !(errCount === 0 && warnCount === 0 && rawIssues.length === 0 && rawCoChange.length === 0);
+      const shownWarns = hasContractAlerts ? Math.max(warnCount, rawCoChange.length) : 0;
+      const shownErrs = hasContractAlerts
+        ? Math.max(errCount, rawIssues.length > 0 && shownWarns === 0 ? rawIssues.length : errCount)
+        : 0;
 
       const healthEl = document.getElementById('sentinelHealthVal');
       if (healthEl) {
-        if (errCount === 0 && warnCount === 0 && rawIssues.length === 0 && rawCoChange.length === 0) {
+        if (!hasContractAlerts) {
           healthEl.textContent = L('Чисто', 'Clean');
           healthEl.className = 'sentinel-metric-val is-ok';
           healthEl.title = L('Нарушений контрактов, импортов и пар Git Co-Change не обнаружено', 'No contract, import, or Git co-change violations detected');
         } else {
-          const shownWarns = Math.max(warnCount, rawCoChange.length);
-          const shownErrs = Math.max(errCount, rawIssues.length > 0 && shownWarns === 0 ? rawIssues.length : errCount);
           healthEl.textContent = L('Ошибок: ', 'Errors: ') + shownErrs + L(' · Пред.: ', ' · Warn: ') + shownWarns;
           healthEl.className = 'sentinel-metric-val ' + (shownErrs > 0 ? 'is-err' : 'is-warn');
           healthEl.title = L('Клонов SimHash: ', 'SimHash clones: ') + Number(sg.cloneCount || 0);
@@ -205,6 +211,9 @@
       }
 
       const hasAnyAlert = normalizedFindings.length > 0 || errCount > 0 || warnCount > 0 || bbCount > 0;
+      _lastNormalizedSentinelFindings = normalizedFindings;
+      _lastSentinelAlertCounts = { errs: shownErrs, warns: shownWarns, bugbot: bbCount };
+
       const clearBtn = document.getElementById('btnClearSentinelFindings');
       if (clearBtn) {
         clearBtn.style.display = hasAnyAlert ? 'inline-flex' : 'none';
@@ -215,6 +224,126 @@
       if (runBtn) {
         runBtn.disabled = _sentinelActionBusy;
         runBtn.textContent = _sentinelActionBusy ? L('Проверка…', 'Checking…') : L('Проверить сейчас', 'Check now');
+      }
+
+      const liteBadgeEl = document.getElementById('liteSentinelBadge');
+      if (liteBadgeEl) {
+        const curTaskLite = String(pickText(sen, 'currentTaskRu', 'currentTaskEn', '') || '').trim();
+        if (!isEnabled) {
+          liteBadgeEl.className = 'sentinel-live-badge is-off lite-sentinel-badge';
+          liteBadgeEl.textContent = L('Выключен', 'Off');
+          liteBadgeEl.title = L('Фоновый Дозор отключён в настройках', 'Background Sentinel is disabled in settings');
+        } else if (rawState === 'preempted' || rawState === 'yielded' || sen.p0Active) {
+          liteBadgeEl.className = 'sentinel-live-badge is-preempted lite-sentinel-badge';
+          liteBadgeEl.textContent = L('P0 Уступил чату', 'P0 Yielded');
+          liteBadgeEl.title = curTaskLite || L('Фоновая задача мгновенно уступила ресурсы активному запросу', 'Background task immediately yielded resources to active request');
+        } else if (rawState === 'working' || rawState === 'running' || rawState === 'scanning' || _sentinelActionBusy) {
+          liteBadgeEl.className = 'sentinel-live-badge is-working lite-sentinel-badge';
+          liteBadgeEl.textContent = L('Проверка…', 'Checking…');
+          liteBadgeEl.title = curTaskLite || L('Фоновый Дозор выполняет проверку', 'Background Sentinel is running checks');
+        } else if (shownErrs > 0) {
+          liteBadgeEl.className = 'sentinel-live-badge is-err lite-sentinel-badge';
+          liteBadgeEl.textContent = L('Ошибок: ', 'Errors: ') + (shownErrs + bbCount);
+          liteBadgeEl.title = L('Обнаружены ошибки контрактов или BugBot', 'Contract or BugBot errors detected');
+        } else if (shownWarns > 0 || bbCount > 0 || normalizedFindings.length > 0) {
+          liteBadgeEl.className = 'sentinel-live-badge is-preempted lite-sentinel-badge';
+          liteBadgeEl.textContent = L('Находок: ', 'Findings: ') + Math.max(normalizedFindings.length, shownWarns + bbCount);
+          liteBadgeEl.title = L('Есть предупреждения или находки Фонового Дозора', 'Background Sentinel warnings or findings detected');
+        } else {
+          liteBadgeEl.className = 'sentinel-live-badge is-ok lite-sentinel-badge';
+          liteBadgeEl.textContent = L('Чисто', 'Clean');
+          liteBadgeEl.title = L('Дежурит в паузах · ошибок не обнаружено', 'Standing by during pauses · no errors detected');
+        }
+      }
+
+      const liteSummaryEl = document.getElementById('liteSentinelSummary');
+      if (liteSummaryEl) {
+        if (!isEnabled) {
+          liteSummaryEl.className = 'lite-sentinel-summary';
+          liteSummaryEl.textContent = L('Дозор отключён в настройках', 'Sentinel disabled in settings');
+        } else if (!hasAnyAlert) {
+          liteSummaryEl.className = 'lite-sentinel-summary is-ok';
+          liteSummaryEl.textContent = L('Контракты: чисто · BugBot: чисто', 'Contracts: clean · BugBot: clean');
+        } else {
+          const sumParts = [];
+          if (shownErrs > 0) sumParts.push(L('Ошибок: ', 'Errors: ') + shownErrs);
+          if (shownWarns > 0) sumParts.push(L('Пред.: ', 'Warn: ') + shownWarns);
+          if (bbCount > 0) sumParts.push('BugBot: ' + bbCount);
+          if (sumParts.length === 0) sumParts.push(L('Находок: ', 'Findings: ') + normalizedFindings.length);
+          liteSummaryEl.className = 'lite-sentinel-summary ' + (shownErrs > 0 ? 'is-err' : 'is-warn');
+          liteSummaryEl.textContent = sumParts.join(' · ');
+        }
+      }
+
+      const liteCheckBtn = document.getElementById('btnLiteSentinelCheck');
+      if (liteCheckBtn) {
+        liteCheckBtn.disabled = _sentinelActionBusy;
+      }
+
+      const liteFixBtn = document.getElementById('btnLiteSentinelFix');
+      if (liteFixBtn) {
+        liteFixBtn.style.display = hasAnyAlert ? 'inline-flex' : 'none';
+        liteFixBtn.disabled = !hasAnyAlert || _sentinelActionBusy;
+        liteFixBtn.textContent = normalizedFindings.length > 1
+          ? (L('🛠️ Исправить (', '🛠️ Fix (') + normalizedFindings.length + ')')
+          : L('🛠️ Исправить', '🛠️ Fix');
+      }
+
+      const liteFindingsEl = document.getElementById('liteSentinelFindings');
+      if (liteFindingsEl) {
+        liteFindingsEl.textContent = '';
+        if (normalizedFindings.length === 0) {
+          liteFindingsEl.style.display = 'none';
+        } else {
+          liteFindingsEl.style.display = 'flex';
+          const previewLimit = Math.min(3, normalizedFindings.length);
+          for (let i = 0; i < previewLimit; i++) {
+            const lf = normalizedFindings[i];
+            const itemRow = document.createElement('div');
+            itemRow.className = 'lite-sentinel-finding-item';
+
+            const textWrap = document.createElement('div');
+            textWrap.className = 'lite-sentinel-finding-text';
+
+            const tagEl = document.createElement('span');
+            tagEl.className = 'sentinel-finding-tag ' + lf.tagClass;
+            tagEl.textContent = lf.tagLabel;
+            textWrap.appendChild(tagEl);
+
+            if (lf.loc) {
+              const locEl = document.createElement('span');
+              locEl.className = 'sentinel-finding-loc';
+              locEl.textContent = lf.loc;
+              textWrap.appendChild(locEl);
+            }
+
+            if (lf.desc) {
+              const descEl = document.createElement('span');
+              descEl.className = 'lite-sentinel-finding-desc';
+              descEl.textContent = lf.desc;
+              descEl.title = (lf.loc ? (lf.loc + ' — ') : '') + lf.desc;
+              textWrap.appendChild(descEl);
+            }
+
+            const itemFixBtn = document.createElement('button');
+            itemFixBtn.type = 'button';
+            itemFixBtn.className = 'win-btn lite-sentinel-item-fix-btn';
+            itemFixBtn.setAttribute('data-action', 'fixSentinelFindingNow');
+            itemFixBtn.setAttribute('data-prompt', lf.prompt);
+            itemFixBtn.textContent = '🛠️';
+            itemFixBtn.title = L('Отправить эту ошибку в чат на исправление', 'Send this issue to active chat to fix');
+
+            itemRow.appendChild(textWrap);
+            itemRow.appendChild(itemFixBtn);
+            liteFindingsEl.appendChild(itemRow);
+          }
+          if (normalizedFindings.length > previewLimit) {
+            const moreEl = document.createElement('div');
+            moreEl.className = 'lite-sentinel-more';
+            moreEl.textContent = L('+ ещё находок: ', '+ more findings: ') + (normalizedFindings.length - previewLimit);
+            liteFindingsEl.appendChild(moreEl);
+          }
+        }
       }
 
       const listEl = document.getElementById('sentinelFindingsList');
@@ -337,6 +466,46 @@
       flashStatus(L('Задача из Дозора перенесена в Композер ✓', 'Sentinel task sent to Composer ✓'));
     }
 
+    function fixSentinelFindingNow(promptText) {
+      const clean = String(promptText || '').trim();
+      if (!clean) return;
+      if (typeof enqueueSmartComposerMessage === 'function') {
+        enqueueSmartComposerMessage(clean);
+        flashStatus(L('Задача на исправление отправлена в чат ✓', 'Fix task sent to active chat ✓'));
+      } else {
+        sendSentinelToComposer(clean);
+      }
+    }
+
+    function fixLiteSentinelFindings() {
+      const findings = Array.isArray(_lastNormalizedSentinelFindings) ? _lastNormalizedSentinelFindings : [];
+      if (findings.length === 1) {
+        fixSentinelFindingNow(findings[0].prompt);
+        return;
+      }
+      if (findings.length > 1) {
+        const lines = findings.slice(0, 6).map(function (item, idx) {
+          const locPart = item.loc ? (' [' + item.loc + ']') : '';
+          return (idx + 1) + '. (' + item.tagLabel + ')' + locPart + ' ' + item.desc;
+        });
+        const extra = findings.length > 6
+          ? ('\n' + L('И ещё находок: ', 'And additional findings: ') + (findings.length - 6))
+          : '';
+        const batchPrompt = isRu()
+          ? ('Проверь и исправь находки Фонового Дозора:\n' + lines.join('\n') + extra)
+          : ('Inspect and fix these Background Sentinel findings:\n' + lines.join('\n') + extra);
+        fixSentinelFindingNow(batchPrompt);
+        return;
+      }
+      const c = _lastSentinelAlertCounts || { errs: 0, warns: 0, bugbot: 0 };
+      if (c.errs > 0 || c.warns > 0 || c.bugbot > 0) {
+        const fallbackPrompt = isRu()
+          ? ('Проверь и исправь предупреждения Фонового Дозора (ошибок: ' + c.errs + ', предупреждений: ' + c.warns + ', BugBot: ' + c.bugbot + ').')
+          : ('Inspect and fix Background Sentinel alerts (errors: ' + c.errs + ', warnings: ' + c.warns + ', BugBot: ' + c.bugbot + ').');
+        fixSentinelFindingNow(fallbackPrompt);
+      }
+    }
+
     let _latestWiretapFault = null;
 
     function renderWiretapAndQuota(wiretapFaults, quotaPacer) {
@@ -431,16 +600,29 @@
         case 'wizSetSubTier': wizSetSubTier(arg); break;
         case 'wizSetThemePreview': wizSetThemePreview(arg); break;
         case 'wizSetLanguage': wizSetLanguage(arg); break;
+        case 'wizSetViewMode': wizSetViewMode(arg); break;
         case 'setUiLanguage': void setUiLanguage(arg); break;
+        case 'setPanelViewMode': setPanelViewMode(arg); break;
+        case 'cyclePanelUiScale': cyclePanelUiScale(); break;
+        case 'setPanelUiScale': setPanelUiScale(arg); break;
+        case 'toggleLiteRamGpuMaster': toggleLiteRamGpuMaster(); break;
+        case 'toggleLiteRamOnly': toggleLiteRamOnly(); break;
+        case 'toggleLiteGpuOnly': toggleLiteGpuOnly(); break;
         case 'wizRescanHw': wizRescanHw(); break;
         case 'wizToggleFlag': wizToggleFlag(arg); break;
         case 'wizSetGpuPullMode': wizSetGpuPullMode(arg); break;
+        case 'wizPickGpuInstallDir': void wizPickGpuInstallDir(); break;
         case 'autoCalibrateHardware': autoCalibrateHardware(); break;
         case 'sendHardwareTunePrompt': sendHardwareTunePrompt(); break;
         case 'prepareModelSearchPrompt': prepareModelSearchPrompt(); break;
         case 'sendVramFitModelPrompt': sendVramFitModelPrompt(); break;
         case 'startGpuCascadePull': startGpuCascadePull(arg || 'cascade'); break;
+        case 'startGpuCascadePullHf': void startGpuCascadePullHf(); break;
+        case 'dismissGpuPullError': void dismissGpuPullError(); break;
         case 'cancelGpuCascadePull': cancelGpuCascadePull(); break;
+        case 'installOllamaFromPanel': void installOllamaFromPanel(); break;
+        case 'dismissOllamaInstallStatus': void dismissOllamaInstallStatus(); break;
+        case 'pickGpuFolder': void pickGpuFolder(arg || 'ollama'); break;
         case 'applySuggestedVramModel': if (arg) selectGpuModel('gpuChatModel', arg); break;
         case 'refreshAll': refreshAll(); break;
         case 'setPanelTheme': setPanelTheme(arg); break;
@@ -487,6 +669,7 @@
         case 'saveExpertGpuConfig': saveExpertGpuConfig(); break;
         case 'toggleSubagentsList': toggleSubagentsList(arg, actionEl); break;
         case 'resetStaleProgressChats': resetStaleProgressChats(arg); break;
+        case 'focusWaitingProgressChat': focusWaitingProgressChat(actionEl.getAttribute('data-cid') || arg); break;
         case 'toggleStepChip': toggleStepChip(actionEl.getAttribute('data-cid'), actionEl.getAttribute('data-step'), actionEl); break;
         case 'resetPanelBlockOrder': resetPanelBlockOrder(); break;
         case 'togglePanelCardCollapse': togglePanelCardCollapse(arg); break;
@@ -502,6 +685,8 @@
         case 'runSentinelNow': runSentinelNow(); break;
         case 'clearSentinelFindings': clearSentinelFindings(); break;
         case 'sendSentinelToComposer': sendSentinelToComposer(actionEl.getAttribute('data-prompt') || arg); break;
+        case 'fixLiteSentinelFindings': fixLiteSentinelFindings(); break;
+        case 'fixSentinelFindingNow': fixSentinelFindingNow(actionEl.getAttribute('data-prompt') || arg); break;
         case 'sendWiretapFaultToComposer': sendWiretapFaultToComposer(); break;
         case 'clearWiretapFaults': clearWiretapFaults(); break;
         case 'selectComposerAtItem': selectComposerAtItem(actionEl.getAttribute('data-token') || arg); break;
@@ -515,6 +700,7 @@
         case 'promoteInstinct': promoteInstinct(arg); break;
         case 'deleteInstinct': deleteInstinct(arg); break;
         case 'toggleSetupDoctor': toggleSetupDoctor(); break;
+        case 'closeSetupDoctor': closeSetupDoctor(); break;
         case 'loadSetupDoctor': loadSetupDoctor(); break;
         case 'applySetupDoctorItem': applySetupDoctorItem(arg); break;
         case 'toggleSkillRegistryDrawer': toggleSkillRegistryDrawer(); break;
@@ -540,6 +726,8 @@
         case 'pgToggleFilter': pgToggleFilter(arg); break;
         case 'pgZoomStep': pgZoomStep(arg); break;
         case 'pgFilterCluster': pgFilterCluster(arg); break;
+        case 'pgClearLayerFilter': pgToggleLayerFilter(null); break;
+        case 'pgResetLayeredPositions': pgResetLayeredPositions(); break;
         case 'pgSetInspectorTab': pgSetInspectorTab(arg); break;
         case 'pgSelectNodeById': pgSelectNodeById(arg); break;
         case 'pgFocusSelectedNode': pgFocusSelectedNode(); break;
@@ -564,6 +752,21 @@
         case 'pgChangeChurnDays': pgChangeChurnDays(arg); break;
         case 'pgAddTopHotspotsToCart': pgAddTopHotspotsToCart(); break;
         case 'pgBrowseWorkspaceFolder': void pgBrowseWorkspaceFolder(); break;
+        case 'pgToggleAskAiMenu': pgToggleAskAiMenu(); break;
+        case 'pgCtxAction': pgRunNodeContextAction(arg); break;
+        case 'pgRunAiPreset': void pgRunAiPreset(arg); break;
+        case 'pgSubmitCustomAiQuestion': void pgSubmitCustomAiQuestion(); break;
+        case 'pgClearAiChat': pgClearAiChat(); break;
+        case 'pgCloseAiChat': pgCloseAiChat(); break;
+        case 'pgStopAiRequest': pgStopAiRequest(); break;
+        case 'pgFocusAiMention': pgFocusAiMention(arg); break;
+        case 'pgDismissAiMapCallout': pgDismissAiMapCallout(); break;
+        case 'pgExpandAiFromCallout': pgExpandAiFromCallout(); break;
+        case 'pgSendAiToComposer': pgSendAiToComposer(); break;
+        case 'checkPluginUpdateManual': void checkPluginUpdate({ force: true, silent: false }); break;
+        case 'applyPluginUpdateFromPanel': void applyPluginUpdateFromPanel(); break;
+        case 'dismissPluginUpdateBanner': void dismissPluginUpdateBanner(); break;
+        case 'hidePluginUpdateToast': hidePluginUpdateToast(); break;
         default: break;
       }
     }
@@ -762,6 +965,7 @@
       'smartProjectBanner',
       'agLiveProgressWrap',
       'smartComposerCard',
+      'liteQuickCard',
       'skillsSectionCard',
       'agentModeCard',
       'skillProfilesFieldset',
@@ -829,6 +1033,13 @@
           seen.add(defId);
           if (defId === 'smartComposerCard') {
             const anchorIdx = out.indexOf('agLiveProgressWrap');
+            if (anchorIdx >= 0) {
+              out.splice(anchorIdx + 1, 0, defId);
+              continue;
+            }
+          }
+          if (defId === 'liteQuickCard') {
+            const anchorIdx = out.indexOf('smartComposerCard');
             if (anchorIdx >= 0) {
               out.splice(anchorIdx + 1, 0, defId);
               continue;
@@ -1035,6 +1246,13 @@
               continue;
             }
           }
+          if (defId === 'liteQuickCard') {
+            const anchorIdx = out.indexOf('smartComposerCard');
+            if (anchorIdx >= 0) {
+              out.splice(anchorIdx + 1, 0, defId);
+              continue;
+            }
+          }
           if (defId === 'sentinelSectionCard') {
             const anchorIdx = out.indexOf('gpuRamCard');
             if (anchorIdx >= 0) {
@@ -1092,6 +1310,369 @@
       updateBlockControlsStatus();
       updateState({ panelBlockOrder: nextOrder });
       if (statusMsg) flashStatus(statusMsg);
+    }
+
+    const DISMISSED_UPDATE_VERSION_KEY = 'tunnel_dismissed_update_ver_v1';
+    let _latestPluginUpdateCheck = null;
+    let _latestPluginUpdateStatus = null;
+    let _pluginUpdateCheckInFlight = false;
+    let _pluginUpdatePollTimer = null;
+    let _pluginUpdateToastState = null;
+    let _pluginUpdateToastTimer = null;
+
+    function getDismissedUpdateVersion() {
+      try {
+        return String(localStorage.getItem(DISMISSED_UPDATE_VERSION_KEY) || '').trim();
+      } catch {
+        return '';
+      }
+    }
+
+    function setDismissedUpdateVersion(ver) {
+      try {
+        const clean = String(ver || '').trim();
+        if (clean) localStorage.setItem(DISMISSED_UPDATE_VERSION_KEY, clean);
+        else localStorage.removeItem(DISMISSED_UPDATE_VERSION_KEY);
+      } catch {}
+    }
+
+    function clearPluginUpdatePollTimer() {
+      if (_pluginUpdatePollTimer) {
+        clearTimeout(_pluginUpdatePollTimer);
+        _pluginUpdatePollTimer = null;
+      }
+    }
+
+    function clearPluginUpdateToastTimer() {
+      if (_pluginUpdateToastTimer) {
+        clearTimeout(_pluginUpdateToastTimer);
+        _pluginUpdateToastTimer = null;
+      }
+    }
+
+    function renderPluginUpdateToast() {
+      const toastEl = document.getElementById('pluginUpdateToast');
+      const textEl = document.getElementById('pluginUpdateToastText');
+      const closeBtn = document.getElementById('pluginUpdateToastCloseBtn');
+      if (!toastEl) return;
+
+      if (!_pluginUpdateToastState) {
+        toastEl.style.display = 'none';
+        toastEl.classList.remove('is-ok', 'is-info', 'is-error');
+        return;
+      }
+
+      const kind = _pluginUpdateToastState.kind;
+      toastEl.style.display = 'flex';
+      toastEl.classList.toggle('is-info', kind === 'checking');
+      toastEl.classList.toggle('is-ok', kind === 'up_to_date');
+      toastEl.classList.toggle('is-error', kind === 'error');
+
+      if (textEl) {
+        if (kind === 'checking') {
+          textEl.textContent = L('Проверка обновлений на GitHub…', 'Checking GitHub for updates…');
+        } else if (kind === 'up_to_date') {
+          textEl.textContent =
+            L('Доступных обновлений нет', 'No updates available') +
+            (_pluginUpdateToastState.version ? (' (v' + _pluginUpdateToastState.version + ')') : '');
+        } else {
+          textEl.textContent =
+            L('Не удалось проверить обновления: ', 'Failed to check for updates: ') +
+            (_pluginUpdateToastState.error || L('сеть недоступна', 'network error'));
+        }
+      }
+
+      if (closeBtn) {
+        closeBtn.style.display = kind === 'checking' ? 'none' : 'inline-flex';
+        const closeLabel = L('Закрыть уведомление', 'Close notification');
+        closeBtn.title = closeLabel;
+        closeBtn.setAttribute('aria-label', closeLabel);
+      }
+    }
+
+    function showPluginUpdateToast(state, autoHideMs) {
+      clearPluginUpdateToastTimer();
+      _pluginUpdateToastState = state || null;
+      renderPluginUpdateToast();
+      const ttl = Number(autoHideMs) || 0;
+      if (_pluginUpdateToastState && ttl > 0) {
+        _pluginUpdateToastTimer = setTimeout(() => {
+          _pluginUpdateToastTimer = null;
+          _pluginUpdateToastState = null;
+          renderPluginUpdateToast();
+        }, ttl);
+      }
+    }
+
+    function hidePluginUpdateToast() {
+      clearPluginUpdateToastTimer();
+      _pluginUpdateToastState = null;
+      renderPluginUpdateToast();
+    }
+
+    function schedulePluginUpdatePoll() {
+      clearPluginUpdatePollTimer();
+      if (document.visibilityState === 'hidden') return;
+      _pluginUpdatePollTimer = setTimeout(() => {
+        void pollPluginUpdateStatus();
+      }, 900);
+    }
+
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('beforeunload', () => {
+        clearPluginUpdatePollTimer();
+        clearPluginUpdateToastTimer();
+      });
+    }
+
+    function renderPluginUpdateBanner(checkInfo, statusInfo) {
+      if (checkInfo !== undefined) _latestPluginUpdateCheck = checkInfo;
+      if (statusInfo !== undefined) _latestPluginUpdateStatus = statusInfo;
+
+      const info = _latestPluginUpdateCheck;
+      const st = _latestPluginUpdateStatus;
+      const banner = document.getElementById('pluginUpdateBanner');
+      const badgeEl = document.getElementById('pluginUpdateBadge');
+      const textEl = document.getElementById('pluginUpdateBannerText');
+      const linkEl = document.getElementById('pluginUpdateReleaseLink');
+      const applyBtn = document.getElementById('pluginUpdateApplyBtn');
+      const dismissBtn = document.getElementById('pluginUpdateDismissBtn');
+      const hdrBtn = document.getElementById('checkPluginUpdateBtn');
+      const hdrDot = document.getElementById('headerUpdateDot');
+
+      const isBusy = Boolean(st && st.active);
+      const isDone = Boolean(!isBusy && st && st.phase === 'done' && st.needsRestart && !st.dismissed);
+      const isErr = Boolean(!isBusy && st && st.phase === 'error' && st.error && !st.dismissed);
+      const hasUpdate = Boolean(info && info.ok && info.updateAvailable && info.latestVersion);
+      const dismissedVer = getDismissedUpdateVersion();
+      const isSuppressed = Boolean(hasUpdate && !isBusy && !isDone && !isErr && dismissedVer && dismissedVer === String(info.latestVersion));
+
+      if (hdrDot) {
+        hdrDot.style.display = (hasUpdate || isBusy) && !isDone ? 'inline-block' : 'none';
+      }
+      if (hdrBtn) {
+        hdrBtn.classList.toggle('has-update', Boolean(hasUpdate && !isDone));
+      }
+
+      if (!banner) {
+        renderPluginUpdateToast();
+        return;
+      }
+      if (!isBusy && !isDone && !isErr && (!hasUpdate || isSuppressed)) {
+        banner.style.display = 'none';
+        banner.classList.remove('is-busy', 'is-done', 'is-error');
+        renderPluginUpdateToast();
+        return;
+      }
+
+      banner.style.display = 'flex';
+      banner.classList.toggle('is-busy', isBusy);
+      banner.classList.toggle('is-done', isDone);
+      banner.classList.toggle('is-error', isErr);
+
+      const localizedStatusText = st
+        ? (isRu() ? (st.statusTextRu || st.statusText) : (st.statusTextEn || st.statusText))
+        : '';
+
+      if (isBusy) {
+        if (badgeEl) badgeEl.textContent = L('Обновление', 'Updating');
+        if (textEl) {
+          const pct = Number(st.percent || 0);
+          textEl.textContent = (localizedStatusText || L('Установка обновления...', 'Installing update...')) + (pct > 0 ? (' (' + pct + '%)') : '');
+        }
+        if (applyBtn) {
+          applyBtn.style.display = 'inline-flex';
+          applyBtn.disabled = true;
+          applyBtn.textContent = L('⏳ Установка...', '⏳ Installing...');
+        }
+        if (dismissBtn) dismissBtn.style.display = 'none';
+      } else if (isDone) {
+        if (badgeEl) badgeEl.textContent = L('Готово', 'Updated');
+        if (textEl) {
+          textEl.textContent = localizedStatusText || L('Обновлено ✓ Перезапустите Google Antigravity.', 'Updated ✓ Restart Google Antigravity.');
+        }
+        if (applyBtn) {
+          applyBtn.style.display = 'none';
+          applyBtn.disabled = false;
+        }
+        if (dismissBtn) dismissBtn.style.display = 'inline-flex';
+      } else if (isErr) {
+        if (badgeEl) badgeEl.textContent = L('Ошибка', 'Error');
+        if (textEl) {
+          textEl.textContent = localizedStatusText || String(st.error || L('Не удалось обновить расширение', 'Plugin update failed'));
+        }
+        if (applyBtn) {
+          applyBtn.style.display = 'inline-flex';
+          applyBtn.disabled = false;
+          applyBtn.textContent = L('↻ Повторить', '↻ Retry');
+        }
+        if (dismissBtn) dismissBtn.style.display = 'inline-flex';
+      } else {
+        if (badgeEl) badgeEl.textContent = 'v' + String(info.latestVersion);
+        if (textEl) {
+          textEl.textContent =
+            L('Доступна версия v', 'New version v') +
+            String(info.latestVersion) +
+            L(' (сейчас v', ' available (current v') +
+            String(info.currentVersion || '?') +
+            ')';
+        }
+        if (applyBtn) {
+          applyBtn.style.display = 'inline-flex';
+          applyBtn.disabled = false;
+          applyBtn.textContent = L('⬇ Обновить', '⬇ Update');
+        }
+        if (dismissBtn) dismissBtn.style.display = 'inline-flex';
+      }
+
+      if (linkEl) {
+        const relUrl = info && typeof info.releaseUrl === 'string' ? info.releaseUrl.trim() : '';
+        if (relUrl) {
+          linkEl.href = relUrl;
+          linkEl.style.display = 'inline-flex';
+          linkEl.textContent = L('Что нового ↗', 'What\'s new ↗');
+          if (info.releaseNotes) linkEl.title = String(info.releaseNotes);
+        } else {
+          linkEl.style.display = 'none';
+        }
+      }
+      renderPluginUpdateToast();
+    }
+
+    async function pollPluginUpdateStatus() {
+      try {
+        const res = await panelFetch('/api/plugin/update-status', { method: 'GET' });
+        if (!res || !res.ok) {
+          clearPluginUpdatePollTimer();
+          return;
+        }
+        const data = await res.json();
+        const st = (data && data.status) || null;
+        renderPluginUpdateBanner(undefined, st);
+        if (st && st.active) {
+          schedulePluginUpdatePoll();
+        } else {
+          clearPluginUpdatePollTimer();
+          if (st && st.phase === 'done' && st.needsRestart) {
+            flashStatus(L('Плагин обновлён · Перезапустите Google Antigravity ✓', 'Plugin updated · Restart Google Antigravity ✓'));
+            void refreshAll({ silent: true });
+          } else if (st && st.phase === 'error' && st.error) {
+            flashStatus(L('Ошибка обновления: ', 'Update error: ') + st.error);
+          }
+        }
+      } catch {
+        clearPluginUpdatePollTimer();
+      }
+    }
+
+    async function checkPluginUpdate(opts) {
+      const o = (opts && typeof opts === 'object') ? opts : {};
+      const force = Boolean(o.force);
+      const silent = o.silent !== false;
+      if (_pluginUpdateCheckInFlight) return null;
+      _pluginUpdateCheckInFlight = true;
+      const hdrBtn = document.getElementById('checkPluginUpdateBtn');
+      if (!silent) {
+        if (hdrBtn) hdrBtn.disabled = true;
+        flashStatus(L('Проверка обновлений на GitHub...', 'Checking GitHub for updates...'));
+        showPluginUpdateToast({ kind: 'checking' }, 0);
+      }
+      if (force) {
+        setDismissedUpdateVersion('');
+      }
+      try {
+        const url = force ? '/api/plugin/update-check?force=1' : '/api/plugin/update-check';
+        const res = await panelFetch(url, { method: 'GET' });
+        if (!res || !res.ok) {
+          if (!silent) {
+            flashStatus(L('Не удалось проверить обновления', 'Failed to check for updates'));
+            showPluginUpdateToast({ kind: 'error', error: L('ошибка ответа сервера', 'server error') }, 6000);
+          }
+          return null;
+        }
+        const data = await res.json();
+        if (!data || typeof data !== 'object') {
+          if (!silent) {
+            showPluginUpdateToast({ kind: 'error', error: L('некорректный ответ сервера', 'invalid server response') }, 6000);
+          }
+          return null;
+        }
+        renderPluginUpdateBanner(data, data.status || null);
+        if (data.status && data.status.active) {
+          schedulePluginUpdatePoll();
+        }
+        if (!silent) {
+          if (data.ok === false) {
+            flashStatus(L('Ошибка проверки обновлений: ', 'Update check failed: ') + (data.error || L('сеть недоступна', 'network error')));
+            showPluginUpdateToast({ kind: 'error', error: data.error || L('сеть недоступна', 'network error') }, 6000);
+          } else if (data.updateAvailable) {
+            hidePluginUpdateToast();
+            flashStatus(L('Доступно обновление v', 'Update available: v') + data.latestVersion + ' ✓');
+          } else {
+            showPluginUpdateToast({ kind: 'up_to_date', version: data.currentVersion || '' }, 4500);
+            flashStatus(L('Доступных обновлений нет', 'No updates available') + (data.currentVersion ? (' (v' + data.currentVersion + ')') : '') + ' ✓');
+          }
+        }
+        return data;
+      } catch {
+        if (!silent) {
+          flashStatus(L('Ошибка связи при проверке обновлений', 'Connection error checking updates'));
+          showPluginUpdateToast({ kind: 'error', error: L('ошибка связи', 'connection error') }, 6000);
+        }
+        return null;
+      } finally {
+        _pluginUpdateCheckInFlight = false;
+        if (hdrBtn) hdrBtn.disabled = false;
+      }
+    }
+
+    async function applyPluginUpdateFromPanel() {
+      const info = _latestPluginUpdateCheck || {};
+      setDismissedUpdateVersion('');
+      try {
+        flashStatus(L('Запуск загрузки обновления с GitHub...', 'Starting plugin update from GitHub...'));
+        const res = await panelFetch('/api/plugin/update-apply', {
+          method: 'POST',
+          body: JSON.stringify({
+            downloadUrl: info.downloadUrl || '',
+            targetVersion: info.latestVersion || '',
+          }),
+        });
+        const data = await res.json();
+        if (data && data.status) {
+          renderPluginUpdateBanner(undefined, data.status);
+          if (data.status.active) {
+            schedulePluginUpdatePoll();
+          } else {
+            clearPluginUpdatePollTimer();
+            if (data.status.phase === 'done' && data.status.needsRestart) {
+              flashStatus(L('Плагин обновлён · Перезапустите Google Antigravity ✓', 'Plugin updated · Restart Google Antigravity ✓'));
+              void refreshAll({ silent: true });
+            } else if (data.error || data.status.error) {
+              flashStatus(L('Ошибка обновления: ', 'Update error: ') + (data.error || data.status.error));
+            }
+          }
+        } else if (!data || !data.ok) {
+          flashStatus(L('Ошибка обновления: ', 'Update error: ') + ((data && data.error) || L('сбой', 'failed')));
+        }
+      } catch {
+        flashStatus(L('Ошибка связи при установке обновления', 'Connection error installing update'));
+      }
+    }
+
+    async function dismissPluginUpdateBanner() {
+      clearPluginUpdatePollTimer();
+      if (_latestPluginUpdateCheck && _latestPluginUpdateCheck.latestVersion) {
+        setDismissedUpdateVersion(_latestPluginUpdateCheck.latestVersion);
+      }
+      try {
+        const res = await panelFetch('/api/plugin/update-dismiss', { method: 'POST', body: '{}' });
+        const data = await res.json();
+        _latestPluginUpdateStatus = (data && data.status) || { active: false, phase: 'idle', dismissed: true };
+      } catch {
+        _latestPluginUpdateStatus = { active: false, phase: 'idle', dismissed: true };
+      }
+      renderPluginUpdateBanner(undefined, _latestPluginUpdateStatus);
     }
 
     function resetPanelBlockOrder() {

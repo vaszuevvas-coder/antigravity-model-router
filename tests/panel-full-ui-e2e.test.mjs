@@ -688,6 +688,7 @@ function createPanelDomHarness(uiHtml, originUrl, sidecarToken, extraOpts = {}) 
     }
   };
 
+  const winListeners = new Map();
   const windowObj = {
     innerWidth: 420,
     innerHeight: 860,
@@ -696,8 +697,24 @@ function createPanelDomHarness(uiHtml, originUrl, sidecarToken, extraOpts = {}) 
     sidecar: sidecarObj,
     localStorage: localStorageMock,
     navigator: { clipboard: { writeText: async () => {} } },
-    addEventListener() {},
-    removeEventListener() {},
+    addEventListener(ev, fn) {
+      if (!winListeners.has(ev)) winListeners.set(ev, []);
+      winListeners.get(ev).push(fn);
+    },
+    removeEventListener(ev, fn) {
+      const arr = winListeners.get(ev);
+      if (!arr) return;
+      const idx = arr.indexOf(fn);
+      if (idx >= 0) arr.splice(idx, 1);
+    },
+    dispatchEvent(ev) {
+      const eventObj = ev && typeof ev === 'object' ? ev : { type: String(ev) };
+      if (typeof eventObj.preventDefault !== 'function') eventObj.preventDefault = () => {};
+      if (typeof eventObj.stopPropagation !== 'function') eventObj.stopPropagation = () => {};
+      const arr = winListeners.get(eventObj.type) || [];
+      for (const fn of arr.slice()) fn.call(windowObj, eventObj);
+      return true;
+    },
     requestAnimationFrame(fn) {
       return trackedSetTimeout(() => fn(performance.now()), 0);
     },
@@ -889,6 +906,9 @@ const SNAPSHOT_PATHS = [
   path.join(REPO_ROOT, '.cache', 'circuit-breaker.json'),
   path.join(REPO_ROOT, '.cache', 'wiretap-faults.json'),
   path.join(REPO_ROOT, '.cache', 'gpu-pull-status.json'),
+  path.join(REPO_ROOT, '.cache', 'ollama-install-status.json'),
+  path.join(REPO_ROOT, '.cache', 'plugin-update-check.json'),
+  path.join(REPO_ROOT, '.cache', 'plugin-update-status.json'),
   path.join(REPO_ROOT, '.cache', 'task-progress.json'),
 ];
 
@@ -1267,10 +1287,15 @@ test('1. Full Panel E2E: UI DOM click-through for themes, wizard, workspace, com
     dom.doc.querySelector('[data-action="resetAllSkillsToAuto"]').click();
     await waitFor(() => Object.keys(loadState().skillModes || {}).length === 0);
 
-    // 8. Hardware Limits (VRAM Cap, RAM Budget, CPU Threads, Models Select, Calibration, GPU Actions, Sentinel)
-    await clickAndWaitState('#gpuVramCapGroup [data-action="setGpuVramCap"][data-arg="4096"]', (s) => s.gpuMaxVramMb === 4096, 'vram 4GB');
-    await clickAndWaitState('#ramBudgetMainGroup [data-action="setRamBudget"][data-arg="4096"]', (s) => s.ramMaxBudgetMb === 4096, 'ram 4GB');
-    await clickAndWaitState('#cpuThreadsCapGroup [data-action="setCpuMaxThreads"][data-arg="2"]', (s) => s.cpuMaxThreads === 2, 'cpu 2t');
+    // 8. Hardware Limits (VRAM Cap, RAM Budget, CPU Threads dropdowns, Models Select, Calibration, GPU Actions, Sentinel)
+    dom.doc.getElementById('btn-gpuVramCap').click();
+    assert.equal(dom.doc.getElementById('lgCustomSelectMenu').hidden, false);
+    await vm.runInContext('commitCustomSelectOption("sel-gpuVramCap", "4096")', dom.ctx);
+    await waitFor(() => loadState().gpuMaxVramMb === 4096, 3500, 15, 'vram 4GB');
+    await vm.runInContext('commitCustomSelectOption("sel-ramBudgetMain", "4096")', dom.ctx);
+    await waitFor(() => loadState().ramMaxBudgetMb === 4096, 3500, 15, 'ram 4GB');
+    await vm.runInContext('commitCustomSelectOption("sel-cpuThreadsCap", "2")', dom.ctx);
+    await waitFor(() => loadState().cpuMaxThreads === 2, 3500, 15, 'cpu 2t');
 
     // Custom select dropdown toggle + select option
     dom.doc.getElementById('btn-gpuChatModel').click();
@@ -1360,13 +1385,17 @@ test('1. Full Panel E2E: UI DOM click-through for themes, wizard, workspace, com
     if (atItem) atItem.click();
     assert.equal(dom.doc.getElementById('composerAtMenu').style.display, 'none');
 
-    // Ghost text Tab accept + RAG source insertion
-    await vm.runInContext(`
+    // Ghost text Tab accept chains next autocomplete without Space + RAG source insertion
+    const chainCheck = await vm.runInContext(`(() => {
+      const seqBefore = _smartReqSeq;
       _smartGhostText = ' и тесты';
       renderSmartComposerMirror();
       acceptSmartComposerGhost(false);
+      const chained = _smartReqSeq > seqBefore && (_smartFastTimer !== null || _smartGpuTimer !== null);
       insertRagSourceRef('app.mjs:L1-3');
-    `, dom.ctx);
+      return { chained };
+    })()`, dom.ctx);
+    assert.equal(chainCheck.chained, true, 'acceptSmartComposerGhost must schedule follow-up autocomplete without pressing Space');
     assert.ok(compInput.value.includes('и тесты'));
     assert.ok(compInput.value.includes('app.mjs:L1-3'));
 
@@ -1778,3 +1807,859 @@ test('4. Audit v3.32.1 regression: updateState merges panelCollapsedCards patche
     await app.close();
   }
 });
+
+// ---------------------------------------------------------------------------
+// E2E Test 5: Lite / Full Panel View Mode, Quick Controls & Wizard Preview Revert
+// ---------------------------------------------------------------------------
+
+test('5. Panel Lite/Full view mode: switcher, adaptive telemetry pruning, quick controls, RAM+GPU toggles & wizard revert', async () => {
+  const tmpRepo = makeTempGitRepo('amr-e2e-lite-');
+  const TestSidecarApp = createTestSidecarAppClass();
+  const app = await startSidecarPanel({ SidecarAppClass: TestSidecarApp });
+  assert.ok(app && app.port > 0);
+  const originUrl = `http://127.0.0.1:${app.port}`;
+
+  const htmlRes = await globalThis.fetch(`${originUrl}/`);
+  assert.equal(htmlRes.status, 200);
+  const html = await htmlRes.text();
+
+  const dom = createPanelDomHarness(html, originUrl, 'e2e-token-5', {
+    workspaceUris: [tmpRepo],
+  });
+
+  try {
+    await waitFor(() => dom.doc.getElementById('footerPluginVersion').textContent.includes(PKG_VERSION));
+    await dom.waitIdle();
+
+    assert.equal(dom.doc.body.getAttribute('data-panel-view'), 'full');
+    assert.equal(loadState().panelViewMode, 'full');
+
+    // Switch to Lite mode via header button
+    dom.doc.querySelector('#panelViewModeGroup button[data-view="lite"]').click();
+    await waitFor(() => loadState().panelViewMode === 'lite', 3500, 15, 'switch to lite');
+    await dom.waitIdle();
+    assert.equal(dom.doc.body.getAttribute('data-panel-view'), 'lite');
+    assert.ok(
+      dom.doc.querySelector('#liteQuickCard [data-role="drag-handle"][data-block-id="liteQuickCard"]'),
+      'liteQuickCard must have a drag handle for reordering in Lite mode'
+    );
+    assert.deepEqual(loadState().panelBlockOrder.slice(0, 4), [
+      'smartProjectBanner',
+      'agLiveProgressWrap',
+      'smartComposerCard',
+      'liteQuickCard',
+    ]);
+
+    // Adaptive telemetry polling in Lite requests only core, swarm, hw
+    const liteSecList = Array.from(await vm.runInContext('computeActiveTelemetrySections()', dom.ctx));
+    assert.deepEqual(liteSecList, ['core', 'swarm', 'hw']);
+
+    // Quick controls inside #liteQuickCard update state & sync active pills
+    dom.doc.querySelector('#liteConfirmThresholdGroup button[data-val="ALL"]').click();
+    await waitFor(() => loadState().confirmThreshold === 'ALL');
+    dom.doc.querySelector('#liteUiDesignGateGroup button[data-val="off"]').click();
+    await waitFor(() => loadState().uiDesignPreviewGate === false);
+    dom.doc.querySelector('#liteSwarmModeGroup button[data-val="manual_only"]').click();
+    await waitFor(() => loadState().swarmMode === 'manual_only');
+    await dom.waitIdle();
+    assert.equal(
+      dom.doc.querySelector('#confirmThresholdGroup button[data-val="ALL"]').classList.contains('active'),
+      true
+    );
+    assert.equal(
+      dom.doc.querySelector('#swarmModeGroup button[data-val="manual_only"]').classList.contains('active'),
+      true
+    );
+
+    // Master toggle pauses & restores RAM+GPU; Lite limit dropdowns update RAM/GPU/CPU limits
+    assert.equal(dom.doc.getElementById('composerEngineBadge'), null);
+    assert.equal(dom.doc.getElementById('liteRamTogglePill'), null);
+    assert.equal(dom.doc.getElementById('liteGpuTogglePill'), null);
+    const masterBtn = dom.doc.getElementById('liteRamGpuMasterBtn');
+    assert.ok(masterBtn);
+
+    await vm.runInContext('updateState({ ramCacheEnabled: true, gpuEnabled: true })', dom.ctx);
+    await waitFor(() => loadState().ramCacheEnabled === true && loadState().gpuEnabled === true, 3500, 15, 'seed ram+gpu on');
+    await dom.waitIdle();
+    assert.equal(masterBtn.getAttribute('aria-pressed'), 'true');
+
+    masterBtn.click();
+    await waitFor(
+      () => loadState().ramCacheEnabled === false && loadState().gpuEnabled === false,
+      3500,
+      15,
+      'master pause'
+    );
+    await dom.waitIdle();
+    assert.equal(masterBtn.getAttribute('aria-pressed'), 'false');
+
+    masterBtn.click();
+    await waitFor(
+      () => loadState().ramCacheEnabled === true && loadState().gpuEnabled === true,
+      3500,
+      15,
+      'master restore'
+    );
+    await dom.waitIdle();
+    assert.equal(masterBtn.getAttribute('aria-pressed'), 'true');
+
+    // Lite limit dropdowns open custom menu and persist changes
+    dom.doc.getElementById('btn-liteRamBudget').click();
+    assert.equal(dom.doc.getElementById('lgCustomSelectMenu').hidden, false);
+    await vm.runInContext('commitCustomSelectOption("sel-liteRamBudget", "2048")', dom.ctx);
+    await waitFor(() => loadState().ramMaxBudgetMb === 2048, 3500, 15, 'lite ram 2GB');
+    await vm.runInContext('commitCustomSelectOption("sel-liteCpuThreadsCap", "4")', dom.ctx);
+    await waitFor(() => loadState().cpuMaxThreads === 4, 3500, 15, 'lite cpu 4t');
+
+    // Wizard Step 1 view mode preview & Escape revert keeps Lite mode
+    dom.doc.querySelector('[data-action="openOnboardingWizard"]').click();
+    assert.equal(dom.doc.getElementById('onboardingWizardModal').classList.contains('visible'), true);
+    dom.doc.querySelector('[data-action="wizSetViewMode"][data-arg="full"]').click();
+    assert.equal(dom.doc.body.getAttribute('data-panel-view'), 'full');
+    dom.doc.dispatchEvent({ type: 'keydown', key: 'Escape', bubbles: true });
+    await waitFor(() => !dom.doc.getElementById('onboardingWizardModal').classList.contains('visible'));
+    assert.equal(dom.doc.body.getAttribute('data-panel-view'), 'lite');
+    assert.equal(loadState().panelViewMode, 'lite');
+
+    // Lite Sentinel summary + findings + 1-click Fix button dispatches directly to chat
+    assert.ok(dom.doc.getElementById('liteSentinelRow'), 'Lite mode must include #liteSentinelRow');
+    await vm.runInContext(`
+      renderSentinelStatus({
+        enabled: true,
+        state: 'idle',
+        shadowGuard: {
+          errorCount: 1,
+          warnCount: 0,
+          issues: [{ file: 'core/demo.mjs', line: 12, issueRu: 'Несоответствие аргументов', issueEn: 'Argument mismatch' }],
+          coChangeAlerts: [],
+        },
+        bugBot: { findingsCount: 0, findings: [] },
+      }, currentState);
+    `, dom.ctx);
+    const liteFixBtn = dom.doc.getElementById('btnLiteSentinelFix');
+    assert.equal(liteFixBtn.style.display, 'inline-flex');
+    assert.match(dom.doc.getElementById('liteSentinelSummary').textContent, /1/);
+    assert.equal(dom.doc.querySelectorAll('#liteSentinelFindings .lite-sentinel-finding-item').length, 1);
+    const msgBeforeLiteFix = dom.sentAgentMessages.length;
+    liteFixBtn.click();
+    await waitFor(() => dom.sentAgentMessages.length > msgBeforeLiteFix, 3500, 15, 'lite sentinel 1-click fix');
+    const lastSentLiteFix = dom.sentAgentMessages[dom.sentAgentMessages.length - 1];
+    assert.match(String(lastSentLiteFix?.msg || lastSentLiteFix || ''), /core\/demo\.mjs:L12/);
+
+    // Dark-theme active EN/RU & Lite/Full pill buttons must not use low-contrast --accent-cyan
+    assert.equal(
+      /\.lang-pill-btn\.active\s*\{[^}]*var\(--accent-cyan\)/.test(html),
+      false,
+      'Dark-theme .lang-pill-btn.active must not use low-contrast var(--accent-cyan)'
+    );
+
+    // Switch back to Full via header button
+    dom.doc.querySelector('#panelViewModeGroup button[data-view="full"]').click();
+    await waitFor(() => loadState().panelViewMode === 'full', 3500, 15, 'switch back to full');
+    assert.equal(dom.doc.body.getAttribute('data-panel-view'), 'full');
+  } finally {
+    dom.destroy();
+    await app.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// E2E Test 6: Wave 1 UX (Header Drag vs Click, Setup Doctor, Adaptive UI Scale)
+// ---------------------------------------------------------------------------
+
+test('6. Wave 1 UX: card header drag vs click collapse, Setup Doctor rescan & auto-collapse, adaptive UI scale 1080p/2K/4K', async () => {
+  const tmpRepo = makeTempGitRepo('amr-e2e-wave1-');
+  const TestSidecarApp = createTestSidecarAppClass();
+  const app = await startSidecarPanel({ SidecarAppClass: TestSidecarApp });
+  assert.ok(app && app.port > 0);
+  const originUrl = `http://127.0.0.1:${app.port}`;
+
+  const htmlRes = await globalThis.fetch(`${originUrl}/`);
+  assert.equal(htmlRes.status, 200);
+  const html = await htmlRes.text();
+
+  const dom = createPanelDomHarness(html, originUrl, 'e2e-token-6', {
+    workspaceUris: [tmpRepo],
+  });
+
+  try {
+    await waitFor(() => dom.doc.getElementById('footerPluginVersion').textContent.includes(PKG_VERSION));
+    await dom.waitIdle();
+
+    // Ensure documentElement has style object for --panel-ui-scale
+    if (!dom.doc.documentElement) {
+      dom.doc.documentElement = {
+        style: {},
+        setAttribute() {},
+      };
+    }
+
+    // 1. Card header: regular click collapses/expands collapsible title; drag >= 5px reorders without collapsing
+    const composerCard = dom.doc.getElementById('smartComposerCard');
+    const skillsCard = dom.doc.getElementById('skillsSectionCard');
+    const agentCard = dom.doc.getElementById('agentModeCard');
+    const composerTitle = composerCard.querySelector('.lg-card-title');
+    const agentTitle = agentCard.querySelector('.lg-card-title');
+    assert.ok(composerTitle && agentTitle, 'Collapsible cards must have .lg-card-title');
+
+    assert.equal(composerCard.classList.contains('is-collapsed'), false);
+    composerTitle.click();
+    assert.equal(composerCard.classList.contains('is-collapsed'), true, 'Regular click on card title must collapse card');
+    composerTitle.click();
+    assert.equal(composerCard.classList.contains('is-collapsed'), false, 'Second click on card title must expand card');
+
+    // Dragging composerTitle >= 5px must lift and suppress post-drag click collapse
+    composerTitle.dispatchEvent({
+      type: 'pointerdown',
+      button: 0,
+      pointerType: 'mouse',
+      pointerId: 76,
+      clientX: 40,
+      clientY: 120,
+      bubbles: true,
+    });
+    dom.windowObj.dispatchEvent({
+      type: 'pointermove',
+      pointerId: 76,
+      clientX: 40,
+      clientY: 100,
+      bubbles: true,
+    });
+    assert.equal(composerCard.classList.contains('is-dragging-lift'), true, 'Drag >= 5px from smartComposerCard title must lift card');
+    dom.windowObj.dispatchEvent({
+      type: 'pointerup',
+      pointerId: 76,
+      clientX: 40,
+      clientY: 100,
+      bubbles: true,
+    });
+    composerTitle.click();
+    assert.equal(composerCard.classList.contains('is-collapsed'), false, 'Click immediately after header drag must be suppressed');
+
+    // Dragging agentModeCard above skillsSectionCard (with <5px jitter check first)
+    const initialOrder = loadState().panelBlockOrder.slice();
+    const skillsIdxBefore = initialOrder.indexOf('skillsSectionCard');
+    const agentIdxBefore = initialOrder.indexOf('agentModeCard');
+    assert.ok(skillsIdxBefore >= 0 && agentIdxBefore > skillsIdxBefore);
+
+    agentTitle.dispatchEvent({
+      type: 'pointerdown',
+      button: 0,
+      pointerType: 'mouse',
+      pointerId: 77,
+      clientX: 40,
+      clientY: 200,
+      bubbles: true,
+    });
+    // Small jitter (< 5px) must not start dragging
+    dom.windowObj.dispatchEvent({
+      type: 'pointermove',
+      pointerId: 77,
+      clientX: 41,
+      clientY: 202,
+      bubbles: true,
+    });
+    assert.equal(agentCard.classList.contains('is-dragging-lift'), false);
+
+    // Move above skillsCard midpoint (MiniDOM getBoundingClientRect returns top=20, height=30 -> mid=35)
+    dom.windowObj.dispatchEvent({
+      type: 'pointermove',
+      pointerId: 77,
+      clientX: 40,
+      clientY: 5,
+      bubbles: true,
+    });
+    assert.equal(agentCard.classList.contains('is-dragging-lift'), true, 'Drag >= 5px from header title must lift card');
+    dom.windowObj.dispatchEvent({
+      type: 'pointerup',
+      pointerId: 77,
+      clientX: 40,
+      clientY: 5,
+      bubbles: true,
+    });
+
+    await waitFor(
+      () => {
+        const ord = loadState().panelBlockOrder;
+        return ord.indexOf('agentModeCard') < ord.indexOf('skillsSectionCard');
+      },
+      3500,
+      15,
+      'header drag reorder persisted'
+    );
+
+    // 2. Setup Doctor: smooth rescan keeps existing DOM + minHeight, close button closes, hook_profile auto-collapses
+    await vm.runInContext('loadSetupDoctor()', dom.ctx);
+    const doctorBox = dom.doc.getElementById('setupDoctorBox');
+    await waitFor(() => Boolean(doctorBox.querySelector('[data-setup-doctor-body]')), 3500, 15, 'setup doctor initial load');
+    assert.notEqual(doctorBox.style.display, 'none');
+    assert.ok(doctorBox.querySelector('[data-action="closeSetupDoctor"]'), 'Setup Doctor must render explicit close button');
+
+    // Verify rescan does NOT wipe existing body with 1-line placeholder while awaiting response
+    const rescanPromise = vm.runInContext(`(() => {
+      const box = document.getElementById('setupDoctorBox');
+      const p = loadSetupDoctor();
+      const bodyStillPresent = Boolean(box.querySelector('[data-setup-doctor-body]'));
+      const hasRescanClass = box.classList.contains('is-rescanning');
+      const minH = box.style.minHeight;
+      return p.then(() => ({ bodyStillPresent, hasRescanClass, minH }));
+    })()`, dom.ctx);
+    const rescanStats = await rescanPromise;
+    assert.equal(rescanStats.bodyStillPresent, true, 'Rescan must preserve existing report DOM until new data arrives');
+    assert.equal(rescanStats.hasRescanClass, true, 'Rescan must apply .is-rescanning visual state');
+    assert.ok(rescanStats.minH && rescanStats.minH.endsWith('px'), 'Rescan must lock minHeight while scanning');
+
+    // Close button collapses box
+    doctorBox.querySelector('[data-action="closeSetupDoctor"]').click();
+    assert.equal(doctorBox.style.display, 'none', 'Close button must hide Setup Doctor box');
+
+    // Reopen and apply hook_profile -> must auto-collapse after applying
+    await vm.runInContext('loadSetupDoctor()', dom.ctx);
+    await waitFor(() => doctorBox.style.display !== 'none' && Boolean(doctorBox.querySelector('[data-action="applySetupDoctorItem"]')));
+    await vm.runInContext('applySetupDoctorItem("hook_profile")', dom.ctx);
+    await waitFor(() => doctorBox.style.display === 'none', 2500, 20, 'setup doctor auto-collapse after hook_profile');
+
+    // 3. Adaptive UI scale: 1080p / 2K / 4K calculation & header cycle persistence
+    const scaleMetrics = await vm.runInContext(`({
+      fhd: computeAutoUiScale({ screenWidth: 1920, screenHeight: 1080, devicePixelRatio: 1, innerWidth: 780, innerHeight: 900 }),
+      qhd: computeAutoUiScale({ screenWidth: 2560, screenHeight: 1440, devicePixelRatio: 1, innerWidth: 780, innerHeight: 1000 }),
+      uhd: computeAutoUiScale({ screenWidth: 3840, screenHeight: 2160, devicePixelRatio: 1, innerWidth: 900, innerHeight: 1200 }),
+      uhdNarrow: computeAutoUiScale({ screenWidth: 3840, screenHeight: 2160, devicePixelRatio: 1, innerWidth: 320, innerHeight: 900 }),
+    })`, dom.ctx);
+    assert.equal(scaleMetrics.fhd, 1);
+    assert.equal(scaleMetrics.qhd, 1.12);
+    assert.equal(scaleMetrics.uhd, 1.25);
+    assert.ok(scaleMetrics.uhdNarrow <= 1.06, 'Narrow sidebar must cap auto UI scale');
+
+    const scaleBtn = dom.doc.getElementById('panelUiScaleBtn');
+    assert.ok(scaleBtn, '#panelUiScaleBtn must exist in header');
+    scaleBtn.click(); // auto -> 100
+    await waitFor(() => loadState().panelUiScale === '100', 3500, 15, 'scale 100');
+    scaleBtn.click(); // 100 -> 115
+    await waitFor(() => loadState().panelUiScale === '115', 3500, 15, 'scale 115');
+    assert.equal(dom.doc.body.getAttribute('data-panel-scale'), '115');
+    assert.equal(dom.doc.documentElement.style.getPropertyValue('--panel-ui-scale'), '1.15');
+  } finally {
+    dom.destroy();
+    await app.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// E2E Test 7: Wave 2 UX — Banner Project Switcher, Unscoped Chats, Waiting-User Click & Open IDE Projects
+// ---------------------------------------------------------------------------
+
+test('7. Wave 2 UX: banner workspace switcher, unscoped "Без проекта" chats, waiting_user jump & open IDE project discovery', async () => {
+  const { pathToFileURL } = await import('node:url');
+  const {
+    discoverAntigravityOpenWorkspaces,
+    discoverUserProjectsForGraph,
+  } = await import('../sidecars/panel/lib/panel-telemetry-collectors.mjs');
+  const {
+    initTaskProgressFromPrompt,
+    resetTaskProgress,
+    UNSCOPED_CHAT_PROJECT_RU,
+  } = await import('../core/task-progress.mjs');
+
+  const tmpRepoA = makeTempGitRepo('amr-e2e-w2-alpha-');
+  const tmpRepoB = makeTempGitRepo('amr-e2e-w2-beta-');
+  const tmpStorageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'amr-e2e-w2-storage-'));
+  tempDirs.push(tmpStorageDir);
+  const storageJsonPath = path.join(tmpStorageDir, 'storage.json');
+  fs.writeFileSync(
+    storageJsonPath,
+    JSON.stringify({
+      windowsState: {
+        lastActiveWindow: { folder: pathToFileURL(tmpRepoA).href },
+        openedWindows: [
+          { folder: pathToFileURL(tmpRepoA).href },
+          { folder: pathToFileURL(tmpRepoB).href },
+        ],
+      },
+    }),
+    'utf8'
+  );
+
+  // 1. Read-only Antigravity storage.json discovery & openWorkspaces URI parsing
+  const storageDiscovered = discoverAntigravityOpenWorkspaces({ storagePaths: [storageJsonPath], allowInTests: true });
+  assert.equal(storageDiscovered.length, 2);
+  assert.ok(storageDiscovered.some((p) => path.resolve(p) === path.resolve(tmpRepoA)));
+  assert.ok(storageDiscovered.some((p) => path.resolve(p) === path.resolve(tmpRepoB)));
+
+  const graphProjects = await discoverUserProjectsForGraph({
+    activeWs: tmpRepoA,
+    autoWs: tmpRepoA,
+    openWorkspaces: [pathToFileURL(tmpRepoB).href],
+    allowActiveEphemeral: true,
+  });
+  const betaProj = graphProjects.find((p) => path.resolve(p.workspaceRoot) === path.resolve(tmpRepoB));
+  assert.ok(betaProj, 'discoverUserProjectsForGraph must include openWorkspaces file:/// URI');
+  assert.equal(betaProj.isOpenInIde, true);
+  assert.equal(betaProj.source, 'open_ide');
+
+  // 2. Unscoped chat without workspaceRoot -> "Без проекта" (isUnscopedChat: true)
+  resetTaskProgress();
+  const unscopedSnap = initTaskProgressFromPrompt({
+    conversationId: 'unscoped-chat-wave2',
+    workspaceRoot: '',
+    userPrompt: 'Объясни разницу между TCP и UDP',
+    grade: 'S',
+    isReadOnlyQuestion: true,
+  });
+  const unscopedEntry = (unscopedSnap.activeChats || []).find((c) => c.conversationId === 'unscoped-chat-wave2');
+  assert.ok(unscopedEntry, 'Unscoped chat must be tracked in activeChats');
+  assert.equal(unscopedEntry.projectName, UNSCOPED_CHAT_PROJECT_RU);
+  assert.equal(unscopedEntry.isUnscopedChat, true);
+  assert.equal(unscopedEntry.workspaceRoot, '');
+  resetTaskProgress();
+
+  // 3. Panel DOM: workspace switcher in #smartProjectBanner, unscoped chats visible when pinned, waiting_user jump
+  const TestSidecarApp = createTestSidecarAppClass();
+  const app = await startSidecarPanel({ SidecarAppClass: TestSidecarApp });
+  assert.ok(app && app.port > 0);
+  const originUrl = `http://127.0.0.1:${app.port}`;
+  const htmlRes = await globalThis.fetch(`${originUrl}/`);
+  const html = await htmlRes.text();
+
+  const dom = createPanelDomHarness(html, originUrl, 'e2e-token-w2', {
+    workspaceUris: [pathToFileURL(tmpRepoA).href, pathToFileURL(tmpRepoB).href],
+  });
+
+  try {
+    await waitFor(() => dom.doc.getElementById('footerPluginVersion').textContent.includes(PKG_VERSION));
+    await dom.waitIdle();
+
+    // Switcher must live inside #smartProjectBanner
+    assert.ok(
+      dom.doc.querySelector('#smartProjectBanner #panelWorkspaceSelectWrap'),
+      '#panelWorkspaceSelectWrap must be embedded in #smartProjectBanner'
+    );
+    assert.ok(
+      dom.doc.querySelector('#smartProjectBanner #sel-panelWorkspace'),
+      '#sel-panelWorkspace must live inside #smartProjectBanner'
+    );
+
+    // Spy on window.sidecar.ui.toggleConversation
+    const toggledCids = [];
+    dom.ctx.window.sidecar.ui.toggleConversation = (cid) => {
+      toggledCids.push(String(cid));
+    };
+
+    // Pin tmpRepoA and render 1 waiting_user unscoped chat + 1 normal running chat in tmpRepoA
+    await vm.runInContext(`(() => {
+      _selectedWorkspaceMode = ${JSON.stringify(tmpRepoA)};
+      renderTaskProgressAndHud({
+        status: 'waiting_user',
+        projectName: 'alpha',
+        workspaceRoot: ${JSON.stringify(tmpRepoA)},
+        activeChats: [
+          {
+            conversationId: 'cid-waiting-unscoped-42',
+            chatNumber: 1,
+            projectName: 'Без проекта',
+            projectNameEn: 'No project',
+            isUnscopedChat: true,
+            workspaceRoot: '',
+            status: 'waiting_user',
+            currentStep: 1,
+            totalSteps: 2,
+            percent: 25,
+            stepTitle: 'Ожидание ответа пользователя',
+            formattedText: 'Ожидание ответа пользователя',
+            steps: [
+              { index: 1, title: 'Выбрать вариант', kind: 'question', status: 'waiting_user' },
+              { index: 2, title: 'Выполнение', status: 'pending' },
+            ],
+          },
+          {
+            conversationId: 'cid-running-alpha-99',
+            chatNumber: 2,
+            projectName: 'alpha',
+            workspaceRoot: ${JSON.stringify(tmpRepoA)},
+            status: 'running',
+            currentStep: 1,
+            totalSteps: 2,
+            percent: 45,
+            stepTitle: 'Правка кода',
+            formattedText: 'Правка кода',
+            steps: [
+              { index: 1, title: 'Правка кода', status: 'running' },
+              { index: 2, title: 'Тесты', status: 'pending' },
+            ],
+          },
+        ],
+      }, null, { uiLanguage: 'ru' });
+    })()`, dom.ctx);
+
+    const waitingRow = dom.doc.querySelector('.ag-chat-task-item[data-cid="cid-waiting-unscoped-42"]');
+    const runningRow = dom.doc.querySelector('.ag-chat-task-item[data-cid="cid-running-alpha-99"]');
+    assert.ok(waitingRow, 'Unscoped "Без проекта" chat must remain visible even when another workspace is pinned');
+    assert.ok(runningRow, 'Pinned workspace running chat must remain visible');
+
+    // Waiting row capsule & jump button & orange question chip must jump to chat
+    const waitingCap = waitingRow.querySelector('.ag-progress-capsule');
+    const waitingJumpBtn = waitingRow.querySelector('.ag-waiting-jump-btn');
+    const waitingChip = waitingRow.querySelector('.ag-step-chip.question.waiting');
+    assert.ok(waitingCap.classList.contains('is-waiting-user'));
+    assert.ok(waitingJumpBtn && waitingJumpBtn.style.display !== 'none', 'Waiting row must show jump button');
+    assert.equal(waitingChip.getAttribute('data-action'), 'focusWaitingProgressChat');
+
+    waitingJumpBtn.click();
+    assert.deepEqual(toggledCids, ['cid-waiting-unscoped-42']);
+    waitingChip.click();
+    assert.deepEqual(toggledCids, ['cid-waiting-unscoped-42', 'cid-waiting-unscoped-42']);
+
+    // Normal running row must NOT trigger toggleConversation
+    const runningCap = runningRow.querySelector('.ag-progress-capsule');
+    assert.equal(runningCap.classList.contains('is-waiting-user'), false);
+    assert.equal(runningCap.getAttribute('data-action'), null);
+    runningCap.click();
+    assert.equal(toggledCids.length, 2, 'Clicking normal running chat row must not call toggleConversation');
+  } finally {
+    dom.destroy();
+    await app.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// E2E Test 8: Wave 3 UX — Persistent Pull Errors, HF Mirror, Onboarding Dir Picker & Auto-Install
+// ---------------------------------------------------------------------------
+
+test('8. Wave 3 UX: persistent pull errors, HF mirror toggle, onboarding folder picker, Ollama install status & focusFile chat', async () => {
+  const tmpRepo = makeTempGitRepo('amr-e2e-w3-repo-');
+  const customInstallDir = fs.mkdtempSync(path.join(os.tmpdir(), 'amr-e2e-w3-ollama-'));
+  tempDirs.push(customInstallDir);
+
+  const TestSidecarApp = createTestSidecarAppClass();
+  const app = await startSidecarPanel({ SidecarAppClass: TestSidecarApp, rootDir: tmpRepo });
+  let dom = null;
+
+  try {
+    assert.ok(app && app.port > 0);
+    const originUrl = `http://127.0.0.1:${app.port}`;
+
+    // 1) Folder picker endpoint supports dryRun and path validation cleanly without opening native dialog
+    const dryRes = await globalThis.fetch(`${originUrl}/api/gpu/pick-folder`, {
+      method: 'POST',
+      headers: { Origin: originUrl, 'X-Router-Panel': 'antigravity-v38', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dryRun: true, mode: 'ollama' }),
+    });
+    const dryJson = await dryRes.json();
+    assert.equal(dryJson.ok, true);
+    assert.equal(dryJson.cancelled, true);
+
+    const pathRes = await globalThis.fetch(`${originUrl}/api/gpu/pick-folder`, {
+      method: 'POST',
+      headers: { Origin: originUrl, 'X-Router-Panel': 'antigravity-v38', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: customInstallDir, mode: 'ollama' }),
+    });
+    const pathJson = await pathRes.json();
+    assert.equal(pathJson.ok, true);
+    assert.equal(pathJson.dir, path.resolve(customInstallDir));
+
+    // Isolate GPU state from prior tests before asserting skippedGpuDisabled
+    const gpuOffRes = await globalThis.fetch(`${originUrl}/api/update`, {
+      method: 'POST',
+      headers: { Origin: originUrl, 'X-Router-Panel': 'antigravity-v38', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gpuEnabled: false }),
+    });
+    assert.equal(gpuOffRes.ok, true);
+
+    // 2) /api/local-chat accepts focusFile gracefully
+    const lcRes = await globalThis.fetch(`${originUrl}/api/local-chat`, {
+      method: 'POST',
+      headers: { Origin: originUrl, 'X-Router-Panel': 'antigravity-v38', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 'Объясни файл', focusFile: 'app.mjs' }),
+    });
+    const lcJson = await lcRes.json();
+    assert.equal(lcJson.skippedGpuDisabled, true);
+
+    const htmlRes = await globalThis.fetch(`${originUrl}/`);
+    const html = await htmlRes.text();
+    dom = createPanelDomHarness(html, originUrl, 'e2e-token-w3');
+
+    await waitFor(() => dom.doc.getElementById('footerPluginVersion').textContent.includes(PKG_VERSION));
+    await dom.waitIdle();
+
+    // 3) Persistent Ollama pull error box MUST stay visible even when finishedAt > 120s ago
+    await vm.runInContext(`(() => {
+      const oldTs = Date.now() - 120000;
+      renderGpuCascadePullStatus({
+        active: false,
+        finishedAt: oldTs,
+        totalCount: 2,
+        completedCount: 1,
+        source: 'ollama',
+        error: 'TLS handshake timeout',
+        statusTextRu: 'Завершено с ошибками (1/2)',
+        statusTextEn: 'Completed with errors (1/2)',
+        items: [
+          { name: 'qwen3:4b', status: 'done', percent: 100, source: 'ollama' },
+          { name: 'qwen3-embedding:4b', status: 'error', percent: 0, error: 'TLS handshake timeout', hfAvailable: true },
+        ],
+      }, { ollama: { installed: true, running: true } }, { gpuEnabled: true });
+    })()`, dom.ctx);
+
+    const pullBox = dom.doc.getElementById('gpuCascadePullBox');
+    assert.equal(pullBox.style.display, 'flex', 'Pull error box must stay persistently visible even >60s after error');
+    assert.ok(pullBox.classList.contains('is-error'), 'Pull box must carry .is-error class');
+    assert.ok(dom.doc.getElementById('gpuCascadePullErrorItems').innerHTML.includes('qwen3-embedding:4b'));
+    assert.equal(dom.doc.getElementById('gpuCascadePullActions').style.display, 'flex');
+    assert.equal(dom.doc.getElementById('btnRetryGpuCascadeHf').style.display, 'inline-flex');
+
+    dom.doc.getElementById('btnDismissGpuPullError').click();
+    await waitFor(() => dom.doc.getElementById('gpuCascadePullBox').style.display === 'none');
+    await dom.waitIdle();
+
+    // 4) Ollama install box shows when Ollama is missing & gpuEnabled is true
+    await vm.runInContext(`(() => {
+      renderGpuOllamaInstallStatus(null, { ollama: { installed: false, running: false } }, {
+        gpuEnabled: true,
+        gpuOllamaDir: ${JSON.stringify(customInstallDir)},
+        gpuModelsDir: ${JSON.stringify(path.join(customInstallDir, 'models'))},
+      });
+    })()`, dom.ctx);
+    assert.equal(dom.doc.getElementById('gpuOllamaInstallBox').style.display, 'flex');
+    assert.ok(dom.doc.getElementById('gpuOllamaInstallDirHint').textContent.includes(customInstallDir));
+
+    // 5) Onboarding Step 1 shows directory input, auto-install toggle & HF mirror checkbox and saves them
+    await vm.runInContext(`(() => {
+      currentHardwareProfile = {
+        system: { cpuModel: 'Test CPU', logicalCores: 8, totalRamMb: 16384, totalRamGb: 16 },
+        gpu: { available: true, name: 'RTX 4060', totalMb: 8192 },
+        ollama: { installed: false, running: false },
+        recommendation: {
+          recommendedPatch: { gpuEnabled: true, gpuMaxVramMb: 8192, gpuChatModel: 'qwen3:4b', gpuEmbedModel: 'qwen3-embedding:4b' },
+          gpuEnabledPreset: { gpuMaxVramMb: 8192, gpuChatModel: 'qwen3:4b', gpuEmbedModel: 'qwen3-embedding:4b' },
+          cascadeBundle: { models: [{ name: 'qwen3:4b', alreadyDownloaded: false }], approxMissingDiskGb: 2.5 },
+        },
+      };
+      openOnboardingWizard(1);
+      wizDraft.useGpu = true;
+      wizDraft.autoInstallOllama = true;
+      wizDraft.gpuPreferHfMirror = true;
+      wizSetGpuInstallDir(${JSON.stringify(customInstallDir)});
+      renderWizardStep();
+    })()`, dom.ctx);
+
+    const wizDirInp = dom.doc.getElementById('wizGpuInstallDir');
+    assert.ok(wizDirInp && wizDirInp.value === customInstallDir, 'Onboarding Step 1 must render #wizGpuInstallDir');
+    assert.ok(dom.doc.getElementById('wizBtnPickGpuDir'), 'Onboarding Step 1 must render folder picker button');
+    assert.ok(dom.doc.getElementById('inp-gpuOllamaDir'), 'Expert settings must include #inp-gpuOllamaDir');
+
+    // Save wizard cleanly (prevent live install_ollama network spawn by stubbing fetch for /api/gpu)
+    const wizardActions = await vm.runInContext(`(async () => {
+      const gpuInstallCalls = [];
+      const origStartOllama = startOllamaInstall;
+      startOllamaInstall = async (opts) => {
+        gpuInstallCalls.push(opts);
+      };
+      try {
+        await finishOnboardingWizard();
+      } finally {
+        startOllamaInstall = origStartOllama;
+      }
+      return gpuInstallCalls;
+    })()`, dom.ctx);
+
+    await dom.waitIdle();
+    const st = loadState();
+    assert.equal(st.gpuOllamaDir, customInstallDir);
+    assert.equal(st.gpuModelsDir, path.join(customInstallDir, 'models'));
+    assert.equal(st.gpuPreferHfMirror, true);
+    assert.equal(wizardActions.length, 1, 'Wizard finish must auto-trigger Ollama installer when GPU=on & Ollama missing');
+    assert.equal(wizardActions[0].installDir, customInstallDir);
+    assert.equal(wizardActions[0].mirrorMode, 'huggingface');
+  } finally {
+    if (dom) dom.destroy();
+    await app.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// E2E Test 9: Wave 4 UX — GitHub Update Auto-Check, Top Banner, 1-Click Apply & Dismiss
+// ---------------------------------------------------------------------------
+
+test('9. Wave 4 UX: startup update check shows top banner, 1-click apply transitions via polling, EN/RU & dismiss', async () => {
+  const tmpRepo = makeTempGitRepo('amr-e2e-w4-repo-');
+  const tmpPluginRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'amr-e2e-w4-plugin-'));
+  tempDirs.push(tmpPluginRoot);
+  fs.writeFileSync(
+    path.join(tmpPluginRoot, 'plugin.json'),
+    JSON.stringify({ name: 'antigravity-model-router', version: PKG_VERSION }, null, 2),
+    'utf8'
+  );
+
+  let advertisedVersion = '9.99.0';
+  const checkCalls = [];
+  let updateStatus = {
+    ok: true,
+    active: false,
+    phase: 'idle',
+    percent: 0,
+    needsRestart: false,
+    statusText: '',
+    statusTextRu: '',
+    statusTextEn: '',
+    error: '',
+    dismissed: false,
+  };
+  let mockDoneTimer = null;
+
+  const updateHandlers = {
+    checkForPluginUpdate: async ({ force = false } = {}) => {
+      checkCalls.push({ force });
+      const hasUpdate = Boolean(advertisedVersion && advertisedVersion !== PKG_VERSION);
+      return {
+        ok: true,
+        skipped: false,
+        repo: 'vaszuevvas-coder/antigravity-model-router',
+        currentVersion: PKG_VERSION,
+        latestVersion: advertisedVersion || PKG_VERSION,
+        updateAvailable: hasUpdate,
+        releaseUrl: hasUpdate ? `https://github.com/vaszuevvas-coder/antigravity-model-router/releases/tag/v${advertisedVersion}` : '',
+        downloadUrl: hasUpdate ? `https://codeload.github.com/vaszuevvas-coder/antigravity-model-router/zip/refs/tags/v${advertisedVersion}` : '',
+        releaseNotes: hasUpdate ? 'Wave 4 release notes' : '',
+        source: 'release',
+        checkedAt: Date.now(),
+      };
+    },
+    getPluginUpdateStatus: () => ({ ...updateStatus }),
+    applyPluginUpdate: async ({ targetVersion = advertisedVersion } = {}) => {
+      updateStatus = {
+        ok: true,
+        active: true,
+        phase: 'downloading',
+        percent: 35,
+        targetVersion: targetVersion || advertisedVersion,
+        needsRestart: false,
+        statusText: `Скачивание v${targetVersion || advertisedVersion}...`,
+        statusTextRu: `Скачивание v${targetVersion || advertisedVersion}...`,
+        statusTextEn: `Downloading v${targetVersion || advertisedVersion}...`,
+        error: '',
+        dismissed: false,
+      };
+      if (mockDoneTimer) clearTimeout(mockDoneTimer);
+      mockDoneTimer = setTimeout(() => {
+        updateStatus = {
+          ok: true,
+          active: false,
+          phase: 'done',
+          percent: 100,
+          targetVersion: targetVersion || advertisedVersion,
+          needsRestart: true,
+          statusText: `Обновлено до v${targetVersion || advertisedVersion} ✓ Перезапустите Google Antigravity.`,
+          statusTextRu: `Обновлено до v${targetVersion || advertisedVersion} ✓ Перезапустите Google Antigravity.`,
+          statusTextEn: `Updated to v${targetVersion || advertisedVersion} ✓ Restart Google Antigravity to apply.`,
+          error: '',
+          dismissed: false,
+        };
+      }, 80);
+      if (typeof mockDoneTimer.unref === 'function') mockDoneTimer.unref();
+      return { ...updateStatus };
+    },
+    clearPluginUpdateStatus: () => {
+      updateStatus = {
+        ok: true,
+        active: false,
+        phase: 'idle',
+        percent: 0,
+        needsRestart: false,
+        statusText: '',
+        statusTextRu: '',
+        statusTextEn: '',
+        error: '',
+        dismissed: true,
+      };
+      return { ...updateStatus };
+    },
+  };
+
+  const TestSidecarApp = createTestSidecarAppClass();
+  const app = await startSidecarPanel({
+    SidecarAppClass: TestSidecarApp,
+    rootDir: tmpRepo,
+    pluginRoot: tmpPluginRoot,
+    updateHandlers,
+  });
+  let dom = null;
+
+  try {
+    assert.ok(app && app.port > 0);
+    const originUrl = `http://127.0.0.1:${app.port}`;
+    await globalThis.fetch(`${originUrl}/api/update`, {
+      method: 'POST',
+      headers: { Origin: originUrl, 'X-Router-Panel': 'antigravity-v38', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uiLanguage: 'ru', onboardingCompleted: true }),
+    });
+
+    const htmlRes = await globalThis.fetch(`${originUrl}/`);
+    const html = await htmlRes.text();
+    dom = createPanelDomHarness(html, originUrl, 'e2e-token-w4');
+
+    // 1) Startup check reveals #pluginUpdateBanner at top & #headerUpdateDot
+    await waitFor(() => dom.doc.getElementById('pluginUpdateBanner').style.display === 'flex', 5000, 15, 'update banner visible');
+    assert.ok(checkCalls.length >= 1 && checkCalls[0].force === false);
+    assert.equal(dom.doc.getElementById('headerUpdateDot').style.display, 'inline-block');
+    assert.ok(dom.doc.getElementById('checkPluginUpdateBtn').classList.contains('has-update'));
+    assert.ok(dom.doc.getElementById('pluginUpdateBannerText').textContent.includes('9.99.0'));
+
+    // 2) Live EN <-> RU language switch translates #pluginUpdateBanner cleanly
+    dom.doc.querySelector('#uiLanguageGroup button[data-lang="en"]').click();
+    await waitFor(() => dom.doc.getElementById('pluginUpdateBannerText').textContent.includes('New version v9.99.0'));
+    assert.ok(dom.doc.getElementById('pluginUpdateReleaseLink').textContent.includes('What\'s new'));
+    dom.doc.querySelector('#uiLanguageGroup button[data-lang="ru"]').click();
+    await waitFor(() => dom.doc.getElementById('pluginUpdateBannerText').textContent.includes('Доступна версия v9.99.0'));
+
+    // 3) Click Apply -> polls status until phase === 'done' & restart notice appears
+    dom.doc.getElementById('pluginUpdateApplyBtn').click();
+    await waitFor(
+      () => dom.doc.getElementById('pluginUpdateBanner').classList.contains('is-done'),
+      5000,
+      20,
+      'update banner reaches is-done'
+    );
+    assert.ok(dom.doc.getElementById('pluginUpdateBannerText').textContent.includes('Перезапустите Google Antigravity'));
+    assert.equal(dom.doc.getElementById('headerUpdateDot').style.display, 'none');
+
+    // 4) Dismiss banner hides #pluginUpdateBanner
+    dom.doc.getElementById('pluginUpdateDismissBtn').click();
+    await waitFor(() => dom.doc.getElementById('pluginUpdateBanner').style.display === 'none');
+
+    // 5) Manual header button click forces re-check & surfaces next version
+    advertisedVersion = '9.99.1';
+    dom.doc.getElementById('checkPluginUpdateBtn').click();
+    await waitFor(() => dom.doc.getElementById('pluginUpdateBanner').style.display === 'flex', 5000, 20, 'manual check re-opens banner');
+    assert.ok(checkCalls.some((c) => c.force === true), 'Manual click must call ?force=1');
+    assert.ok(dom.doc.getElementById('pluginUpdateBannerText').textContent.includes('9.99.1'));
+
+    // 6) Manual header button click when up-to-date shows floating toast & translates RU <-> EN
+    advertisedVersion = PKG_VERSION;
+    dom.doc.getElementById('checkPluginUpdateBtn').click();
+    await waitFor(
+      () => dom.doc.getElementById('pluginUpdateToast').style.display === 'flex'
+        && dom.doc.getElementById('pluginUpdateToast').classList.contains('is-ok'),
+      5000,
+      20,
+      'up-to-date toast visible'
+    );
+    assert.equal(dom.doc.getElementById('pluginUpdateBanner').style.display, 'none');
+    assert.ok(dom.doc.getElementById('pluginUpdateToastText').textContent.includes('Доступных обновлений нет'));
+
+    dom.doc.querySelector('#uiLanguageGroup button[data-lang="en"]').click();
+    await waitFor(() => dom.doc.getElementById('pluginUpdateToastText').textContent.includes('No updates available'));
+    dom.doc.querySelector('#uiLanguageGroup button[data-lang="ru"]').click();
+    await waitFor(() => dom.doc.getElementById('pluginUpdateToastText').textContent.includes('Доступных обновлений нет'));
+
+    dom.doc.getElementById('pluginUpdateToastCloseBtn').click();
+    await waitFor(() => dom.doc.getElementById('pluginUpdateToast').style.display === 'none');
+
+    await dom.waitIdle();
+  } finally {
+    if (mockDoneTimer) clearTimeout(mockDoneTimer);
+    if (dom) dom.destroy();
+    await app.close();
+  }
+});
+
+
