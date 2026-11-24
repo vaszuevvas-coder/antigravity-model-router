@@ -303,6 +303,7 @@ test('buildReleasePackages({ zipOnly: true }) emits verified ZIP, SHA256SUMS.txt
     const manifest = JSON.parse(fs.readFileSync(packRes.manifestPath, 'utf8'));
     const zipArtifact = manifest.artifacts?.find((a) => a.fileName === zipFileName);
     assert.ok(zipArtifact, 'release-manifest.json missing zip artifact entry');
+    assert.equal(path.isAbsolute(String(zipArtifact.path || '')), false, 'release-manifest.json must not leak local absolute paths');
     assert.equal(zipArtifact.sha256, actualSha256);
     assert.equal(zipArtifact.bytes, zipBuf.length);
 

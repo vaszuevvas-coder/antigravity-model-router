@@ -1526,7 +1526,7 @@ export function buildReleasePackages(options = {}) {
       const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
       artifacts.push({
         fileName: path.basename(filePath),
-        path: filePath,
+        path: path.basename(filePath),
         bytes: buf.length,
         kb: Number((buf.length / 1024).toFixed(1)),
         sha256,
