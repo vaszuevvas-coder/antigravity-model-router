@@ -61,6 +61,7 @@ import {
 import {
   collectKnownWorkspacesForPanel,
   collectTelemetry,
+  discoverUserProjectsForGraph,
   gpuStatusPanelCache,
   mergeRamSavingsIntoTelemetry,
   resolveActiveWorkspaceForPanel,
@@ -146,6 +147,7 @@ export {
 
 export {
   collectTelemetry,
+  discoverUserProjectsForGraph,
   resolveActiveWorkspaceForPanel,
   safeGetRamCacheStatus,
   mergeRamSavingsIntoTelemetry,
@@ -201,7 +203,7 @@ function getPluginVersion() {
     const ver = typeof meta?.version === 'string' ? meta.version.trim() : '';
     if (ver) return ver;
   } catch {}
-  return '3.33.0';
+  return '3.33.1';
 }
 
 function getUiBuildVersion() {
@@ -1659,11 +1661,23 @@ export async function startSidecarPanel(options = {}) {
     const exe = findStandaloneBrowserExecutable();
     try {
       if (exe) {
-        const child = spawn(exe, [`--app=${targetUrl}`, '--window-size=1440,900', '--start-maximized'], {
-          detached: true,
-          stdio: 'ignore',
-          windowsHide: true,
-        });
+        // Never set windowsHide:true on GUI browser launch: on Windows cold start,
+        // CreateProcessW passes SW_HIDE and hides the first --app window.
+        const child = spawn(
+          exe,
+          [
+            `--app=${targetUrl}`,
+            '--window-size=1440,900',
+            '--start-maximized',
+            '--disable-features=Translate',
+            '--no-first-run',
+            '--no-default-browser-check',
+          ],
+          {
+            detached: true,
+            stdio: 'ignore',
+          }
+        );
         child.unref();
         return { ok: true, mode: 'app_window' };
       }
@@ -1742,6 +1756,185 @@ export async function startSidecarPanel(options = {}) {
         ok: false,
         fallbackModal: true,
         error: err?.message || pickLang(lang, 'Не удалось открыть отдельное окно карты', 'Failed to open standalone graph window'),
+      };
+    }
+  }, 'POST');
+
+  app.api('/api/project-graph/workspaces', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      const state = loadState();
+      const rawReqRoot = typeof data?.rootDir === 'string' ? data.rootDir.trim() : '';
+      const isPinnedReq = Boolean(rawReqRoot && rawReqRoot !== '__all__' && rawReqRoot !== '__auto__' && isValidWorkspaceDir(rawReqRoot));
+      const [activeWs, autoWs, ramCache, hudPack] = await Promise.all([
+        resolveActiveWorkspaceForPanel(rawReqRoot),
+        resolveActiveWorkspaceForPanel(''),
+        safeGetRamCacheStatus(state).catch(() => null),
+        safeGetHudAndProgressStatus(state, isPinnedReq ? resolve(rawReqRoot) : '').catch(() => null),
+      ]);
+      const extraRoots = Array.isArray(data?.extraRoots)
+        ? data.extraRoots
+        : (typeof data?.extraRoots === 'string' ? data.extraRoots.split('|').filter(Boolean) : []);
+      const workspaces = await discoverUserProjectsForGraph({
+        activeWs,
+        autoWs,
+        extraRoots,
+        taskProgress: hudPack?.progress || null,
+        ramCache,
+        allowActiveEphemeral: isPinnedReq,
+      });
+      return {
+        ok: true,
+        activeWorkspace: activeWs,
+        autoWorkspace: autoWs,
+        workspaces,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        workspaces: [],
+        error: err?.message || pickLang(lang, 'Не удалось получить список проектов', 'Failed to list projects'),
+      };
+    }
+  }, 'GET');
+
+  app.api('/api/project-graph/pick-folder', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      if (data && Object.prototype.hasOwnProperty.call(data, 'path') && typeof data.path === 'string') {
+        if (!isValidWorkspaceDir(data.path)) {
+          return {
+            ok: false,
+            error: pickLang(lang, 'Указанная папка не существует или недоступна', 'Specified folder does not exist or is inaccessible'),
+          };
+        }
+        const abs = resolve(data.path.trim());
+        return {
+          ok: true,
+          cancelled: false,
+          workspaceRoot: abs,
+          projectName: basename(abs) || abs,
+        };
+      }
+
+      if (data?.dryRun === true) {
+        return { ok: true, cancelled: true, dryRun: true, workspaceRoot: '' };
+      }
+
+      const rawInit = typeof data?.initialDir === 'string' ? data.initialDir.trim() : '';
+      const safeInitDir = rawInit && isValidWorkspaceDir(rawInit) ? resolve(rawInit) : '';
+      const pickerTitle = pickLang(lang, 'Выберите папку проекта для карты', 'Select project folder for map');
+      const pickerEnv = {
+        ...process.env,
+        AG_PICKER_INITIAL_DIR: safeInitDir,
+        AG_PICKER_TITLE: pickerTitle,
+      };
+
+      let picked = '';
+      if (process.platform === 'win32') {
+        const psScript = [
+          '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+          'Add-Type -AssemblyName System.Windows.Forms',
+          '[System.Windows.Forms.Application]::EnableVisualStyles()',
+          '$dlg = New-Object System.Windows.Forms.FolderBrowserDialog',
+          "$dlg.Description = if ($env:AG_PICKER_TITLE) { $env:AG_PICKER_TITLE } else { 'Select project folder' }",
+          '$dlg.ShowNewFolderButton = $false',
+          'if ($env:AG_PICKER_INITIAL_DIR -and (Test-Path -LiteralPath $env:AG_PICKER_INITIAL_DIR -PathType Container)) { $dlg.SelectedPath = $env:AG_PICKER_INITIAL_DIR }',
+          "$owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true; ShowInTaskbar = $false; FormBorderStyle = 'None'; Opacity = 0; Width = 1; Height = 1; StartPosition = 'CenterScreen' }",
+          '$owner.Show()',
+          '$owner.Activate()',
+          '$res = $dlg.ShowDialog($owner)',
+          '$owner.Close()',
+          '$owner.Dispose()',
+          'if ($res -eq [System.Windows.Forms.DialogResult]::OK -and $dlg.SelectedPath) { [Console]::Out.Write($dlg.SelectedPath) }',
+        ].join('; ');
+        const { stdout } = await execFileAsync(
+          'powershell.exe',
+          ['-NoProfile', '-NonInteractive', '-STA', '-Command', psScript],
+          { timeout: 120000, windowsHide: true, env: pickerEnv, maxBuffer: 1024 * 1024 }
+        );
+        picked = String(stdout || '').trim();
+      } else if (process.platform === 'darwin') {
+        const osaScript = [
+          'set initDir to system attribute "AG_PICKER_INITIAL_DIR"',
+          'set dlgTitle to system attribute "AG_PICKER_TITLE"',
+          'if initDir is not "" then',
+          '  POSIX path of (choose folder with prompt dlgTitle default location (POSIX file initDir))',
+          'else',
+          '  POSIX path of (choose folder with prompt dlgTitle)',
+          'end if',
+        ].join('\n');
+        try {
+          const { stdout } = await execFileAsync('osascript', ['-e', osaScript], {
+            timeout: 120000,
+            env: pickerEnv,
+            maxBuffer: 1024 * 1024,
+          });
+          picked = String(stdout || '').trim();
+        } catch (err) {
+          const msg = String(err?.stderr || err?.message || '');
+          if (err?.code === 1 || /user canceled|-128/i.test(msg)) {
+            return { ok: true, cancelled: true, workspaceRoot: '' };
+          }
+          throw err;
+        }
+      } else {
+        const zenityArgs = ['--file-selection', '--directory', `--title=${pickerTitle}`];
+        if (safeInitDir) zenityArgs.push(`--filename=${safeInitDir.replace(/\/+$/, '')}/`);
+        try {
+          const { stdout } = await execFileAsync('zenity', zenityArgs, {
+            timeout: 120000,
+            env: pickerEnv,
+            maxBuffer: 1024 * 1024,
+          });
+          picked = String(stdout || '').trim();
+        } catch (zenErr) {
+          if (zenErr?.code === 1) {
+            return { ok: true, cancelled: true, workspaceRoot: '' };
+          }
+          if (zenErr?.code === 'ENOENT') {
+            const kdArgs = ['--getexistingdirectory', safeInitDir || homedir(), '--title', pickerTitle];
+            try {
+              const { stdout } = await execFileAsync('kdialog', kdArgs, {
+                timeout: 120000,
+                env: pickerEnv,
+                maxBuffer: 1024 * 1024,
+              });
+              picked = String(stdout || '').trim();
+            } catch (kdErr) {
+              if (kdErr?.code === 1) {
+                return { ok: true, cancelled: true, workspaceRoot: '' };
+              }
+              throw kdErr;
+            }
+          } else {
+            throw zenErr;
+          }
+        }
+      }
+
+      if (!picked) {
+        return { ok: true, cancelled: true, workspaceRoot: '' };
+      }
+      if (!isValidWorkspaceDir(picked)) {
+        return {
+          ok: false,
+          error: pickLang(lang, 'Выбранная папка недоступна', 'Selected folder is inaccessible'),
+        };
+      }
+      const abs = resolve(picked);
+      return {
+        ok: true,
+        cancelled: false,
+        workspaceRoot: abs,
+        projectName: basename(abs) || abs,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err?.message || pickLang(lang, 'Не удалось открыть диалог выбора папки', 'Failed to open folder picker'),
       };
     }
   }, 'POST');

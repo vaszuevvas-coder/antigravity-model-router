@@ -967,6 +967,8 @@
         pgChangeDepth(target.value);
       } else if (target.getAttribute('data-change-action') === 'pgChangeNodeLimit') {
         pgChangeNodeLimit(target.value);
+      } else if (target.getAttribute('data-change-action') === 'pgSelectWorkspace') {
+        void pgSelectWorkspace(target.value);
       }
     });
 

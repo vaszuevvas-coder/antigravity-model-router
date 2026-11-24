@@ -4,7 +4,7 @@
     let currentUiLanguage = 'en';
     const I18N_ORIG_TEXT = new WeakMap();
     const I18N_ORIG_ATTRS = new WeakMap();
-    const I18N_ATTR_NAMES = ['title', 'placeholder', 'data-prompt', 'alt'];
+    const I18N_ATTR_NAMES = ['title', 'placeholder', 'data-prompt', 'alt', 'aria-label'];
 
     function normalizeUiLanguage(raw) {
       const s = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
@@ -624,7 +624,10 @@
       'Открыть 3-й уровень: граф AST-символов этого файла': 'Open level 3: AST symbol graph for this file',
       'Аппаратный рендер WebGL2 Instanced (авто при ≥1200 узлов)': 'Hardware WebGL2 Instanced renderer (auto at >=1200 nodes)',
       'Максимум узлов карты (5k–25k через WebGL2)': 'Max graph nodes (5k–25k via WebGL2)',
-      'Максимум узлов карты': 'Max graph nodes'
+      'Максимум узлов карты': 'Max graph nodes',
+      'Выбрать проект для карты': 'Select project for map',
+      'Открыть любую папку проекта на диске': 'Open any project folder from disk',
+      'Открыть папку проекта': 'Open project folder'
     };
 
     function translateUiString(raw, dict) {

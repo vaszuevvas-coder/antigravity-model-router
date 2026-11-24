@@ -1,10 +1,11 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" translate="no">
 <head>
   <meta charset="UTF-8" />
+  <meta name="google" content="notranslate" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%230a84ff'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%23ffffff'/%3E%3C/svg%3E" />
-  <title>The Tunnel v3.33.0</title>
+  <title>The Tunnel v3.33.1</title>
   <script src="/preload.js"></script>
   <style>
     :root {
@@ -5024,6 +5025,72 @@
       white-space: nowrap;
     }
 
+    .pg-ws-picker {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      max-width: 260px;
+    }
+
+    .pg-ws-select {
+      height: 26px;
+      max-width: 210px;
+      min-width: 112px;
+      border-radius: 8px;
+      border: 1px solid var(--border-subtle);
+      background: rgba(18, 24, 40, 0.9);
+      color: var(--text-main);
+      font-family: inherit;
+      font-size: 10.5px;
+      font-weight: 600;
+      padding: 0 7px;
+      cursor: pointer;
+      text-overflow: ellipsis;
+      overflow: hidden;
+      white-space: nowrap;
+      transition: border-color 0.16s ease, background 0.16s ease;
+    }
+
+    .pg-ws-select:hover,
+    .pg-ws-select:focus-visible {
+      border-color: rgba(100, 210, 255, 0.45);
+      outline: none;
+    }
+
+    .pg-ws-browse-btn {
+      appearance: none;
+      height: 26px;
+      padding: 0 7px;
+      border-radius: 8px;
+      border: 1px solid var(--border-subtle);
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-sub);
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+    }
+
+    .pg-ws-browse-btn:hover,
+    .pg-ws-browse-btn:focus-visible {
+      color: var(--text-main);
+      border-color: rgba(100, 210, 255, 0.45);
+      background: rgba(10, 132, 255, 0.16);
+      outline: none;
+    }
+
+    .pg-ws-browse-btn:disabled,
+    .pg-ws-select:disabled {
+      opacity: 0.48;
+      cursor: not-allowed;
+    }
+
     .pg-header-controls {
       display: flex;
       align-items: center;
@@ -6057,10 +6124,22 @@
 
     body[data-panel-theme="studio_titanium"] .pg-toggle-pill,
     body[data-panel-theme="studio_titanium"] .pg-mini-btn,
-    body[data-panel-theme="studio_titanium"] .pg-depth-select {
+    body[data-panel-theme="studio_titanium"] .pg-depth-select,
+    body[data-panel-theme="studio_titanium"] .pg-ws-select,
+    body[data-panel-theme="studio_titanium"] .pg-ws-browse-btn {
       background: rgba(255, 255, 255, 0.9);
       border-color: var(--border-subtle);
       color: var(--text-sub);
+    }
+
+    body[data-panel-theme="studio_titanium"] .pg-ws-select {
+      color: #2c1e16;
+    }
+
+    body[data-panel-theme="studio_titanium"] .pg-ws-browse-btn:hover,
+    body[data-panel-theme="studio_titanium"] .pg-ws-select:hover {
+      border-color: rgba(234, 88, 12, 0.45);
+      color: #7c2d12;
     }
 
     body[data-panel-theme="studio_titanium"] .pg-toggle-pill.active {
@@ -7569,7 +7648,7 @@
 
     <div class="status-bar">
       <div id="statusPill" class="status-pane">Готово · Синхронизировано</div>
-      <div class="status-pane" id="footerPluginVersion">The Tunnel v3.33.0</div>
+      <div class="status-pane" id="footerPluginVersion">The Tunnel v3.33.1</div>
     </div>
     <div style="text-align:center;font-size:10.5px;color:var(--text-sub);opacity:0.7;padding:4px 0 2px;letter-spacing:0.02em;">Created by Vasili Zuev</div>
   </div>
@@ -7580,7 +7659,7 @@
       <div class="wiz-head">
         <div class="lg-brand">
           <span class="lg-brand-orb"></span>
-          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v3.33.0</span>
+          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v3.33.1</span>
           <span class="lg-session-pill" id="wizLaunchBadge">Первый запуск</span>
         </div>
         <button class="lg-icon-btn round" type="button" data-action="closeOnboardingWizard" title="Отложить или закрыть окно настройки (Esc)">×</button>
@@ -7610,7 +7689,11 @@
       <div class="lg-brand">
         <span class="lg-brand-orb"></span>
         <span class="lg-brand-title" id="pgModalTitle">Карта проекта</span>
-        <span class="lg-session-pill" id="pgProjectBadge">Проект</span>
+        <div class="pg-ws-picker">
+          <select id="pgWorkspaceSelect" class="pg-ws-select" data-change-action="pgSelectWorkspace" title="Выбрать проект для карты" aria-label="Выбрать проект для карты"></select>
+          <button type="button" class="pg-ws-browse-btn" id="pgBrowseWorkspaceBtn" data-action="pgBrowseWorkspaceFolder" title="Открыть любую папку проекта на диске" aria-label="Открыть папку проекта">📁…</button>
+        </div>
+        <span class="lg-session-pill" id="pgProjectBadge" style="display: none;" aria-hidden="true">Проект</span>
         <span class="pg-stats-pill" id="pgStatsPill">0 узлов · 0 связей</span>
       </div>
       <div class="pg-header-controls">
@@ -7769,7 +7852,7 @@
     let currentUiLanguage = 'en';
     const I18N_ORIG_TEXT = new WeakMap();
     const I18N_ORIG_ATTRS = new WeakMap();
-    const I18N_ATTR_NAMES = ['title', 'placeholder', 'data-prompt', 'alt'];
+    const I18N_ATTR_NAMES = ['title', 'placeholder', 'data-prompt', 'alt', 'aria-label'];
 
     function normalizeUiLanguage(raw) {
       const s = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
@@ -8389,7 +8472,10 @@
       'Открыть 3-й уровень: граф AST-символов этого файла': 'Open level 3: AST symbol graph for this file',
       'Аппаратный рендер WebGL2 Instanced (авто при ≥1200 узлов)': 'Hardware WebGL2 Instanced renderer (auto at >=1200 nodes)',
       'Максимум узлов карты (5k–25k через WebGL2)': 'Max graph nodes (5k–25k via WebGL2)',
-      'Максимум узлов карты': 'Max graph nodes'
+      'Максимум узлов карты': 'Max graph nodes',
+      'Выбрать проект для карты': 'Select project for map',
+      'Открыть любую папку проекта на диске': 'Open any project folder from disk',
+      'Открыть папку проекта': 'Open project folder'
     };
 
     function translateUiString(raw, dict) {
@@ -15082,6 +15168,7 @@
         case 'pgExitSymbolsLevel': pgExitSymbolsLevel(arg); break;
         case 'pgChangeChurnDays': pgChangeChurnDays(arg); break;
         case 'pgAddTopHotspotsToCart': pgAddTopHotspotsToCart(); break;
+        case 'pgBrowseWorkspaceFolder': void pgBrowseWorkspaceFolder(); break;
         default: break;
       }
     }
@@ -16599,6 +16686,8 @@
         pgChangeDepth(target.value);
       } else if (target.getAttribute('data-change-action') === 'pgChangeNodeLimit') {
         pgChangeNodeLimit(target.value);
+      } else if (target.getAttribute('data-change-action') === 'pgSelectWorkspace') {
+        void pgSelectWorkspace(target.value);
       }
     });
 
@@ -17850,8 +17939,86 @@
       maxNodes: 220,
       renderMode: 'auto', // 'auto' | 'webgl2' | '2d'
       webglActive: false,
-      spatialTree: null
+      spatialTree: null,
+      workspaceRoot: '',
+      knownWorkspaces: [],
+      autoWorkspace: '',
+      workspacesLoaded: false,
+      workspacesSeq: 0
     };
+
+    const PG_RECENT_WORKSPACES_STORAGE_KEY = 'ag_tunnel_pg_recent_workspaces_v1';
+
+    function pgNormWsKey(p) {
+      if (typeof normalizeWsClientKey === 'function') return normalizeWsClientKey(p);
+      return String(p || '').trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    }
+
+    function pgWsBasename(p) {
+      if (typeof getWorkspaceBasename === 'function') return getWorkspaceBasename(p);
+      const clean = String(p || '').trim().replace(/[\\/]+$/, '');
+      if (!clean) return '';
+      const parts = clean.split(/[\\/]/).filter(Boolean);
+      return parts.length > 0 ? parts[parts.length - 1] : clean;
+    }
+
+    function pgLoadRecentWorkspaces() {
+      try {
+        if (typeof localStorage === 'undefined' || !localStorage || typeof localStorage.getItem !== 'function') return [];
+        const raw = localStorage.getItem(PG_RECENT_WORKSPACES_STORAGE_KEY);
+        if (!raw) return [];
+        const arr = JSON.parse(raw);
+        if (!Array.isArray(arr)) return [];
+        return arr.filter(function (s) { return typeof s === 'string' && s.trim(); }).slice(0, 12);
+      } catch {
+        return [];
+      }
+    }
+
+    function pgSaveRecentWorkspace(wsPath) {
+      const clean = String(wsPath || '').trim();
+      if (!clean) return;
+      try {
+        if (typeof localStorage === 'undefined' || !localStorage || typeof localStorage.setItem !== 'function') return;
+        const key = pgNormWsKey(clean);
+        const prev = pgLoadRecentWorkspaces();
+        const next = [clean];
+        for (let i = 0; i < prev.length && next.length < 12; i++) {
+          if (pgNormWsKey(prev[i]) !== key) next.push(prev[i]);
+        }
+        localStorage.setItem(PG_RECENT_WORKSPACES_STORAGE_KEY, JSON.stringify(next));
+      } catch {}
+    }
+
+    function pgGetEffectiveWorkspaceRoot() {
+      return String(pgState.workspaceRoot || '').trim();
+    }
+
+    function pgAppendWorkspaceParam(params) {
+      if (!params || typeof params.set !== 'function') return params;
+      const ws = pgGetEffectiveWorkspaceRoot();
+      if (ws) {
+        params.set('rootDir', ws);
+      }
+      return params;
+    }
+
+    function pgSyncStandaloneUrlParam(wsRoot) {
+      if (!pgIsStandaloneView()) return;
+      try {
+        if (typeof window === 'undefined' || !window.location || !window.history || typeof window.history.replaceState !== 'function') return;
+        const qs = new URLSearchParams(window.location.search || '');
+        if (wsRoot) {
+          qs.set('rootDir', wsRoot);
+        } else {
+          qs.delete('rootDir');
+        }
+        const qStr = qs.toString();
+        const pathname = typeof window.location.pathname === 'string' && window.location.pathname ? window.location.pathname : '/';
+        const hash = typeof window.location.hash === 'string' ? window.location.hash : '';
+        window.history.replaceState(null, '', pathname + (qStr ? '?' + qStr : '') + hash);
+      } catch {}
+    }
 
     function pgIsLightTheme() {
       return document.body && document.body.getAttribute('data-panel-theme') === 'studio_titanium';
@@ -19922,8 +20089,11 @@
       const depthSel = document.getElementById('pgDepthSelect');
 
       if (wsBadge) {
-        wsBadge.textContent = (data && data.workspaceName) ? data.workspaceName : getSelectedWorkspaceDisplayName();
+        wsBadge.textContent = (data && data.workspaceName)
+          ? data.workspaceName
+          : (pgState.workspaceRoot ? (pgWsBasename(pgState.workspaceRoot) || pgState.workspaceRoot) : getSelectedWorkspaceDisplayName());
       }
+      pgRenderWorkspaceSelect();
       if (statsEl) {
         if (data && data.ok) {
           const nCount = Number(data.shownNodes || 0);
@@ -20286,6 +20456,7 @@
 
       try {
         const params = new URLSearchParams();
+        pgAppendWorkspaceParam(params);
         if (pgState.mode === 'local' && pgState.focusFile) {
           params.set('focus', pgState.focusFile);
           params.set('depth', String(pgState.depth));
@@ -20306,6 +20477,10 @@
             if (emptySub) emptySub.textContent = (data && data.error) ? data.error : L('Ошибка сервера панели', 'Panel server error');
           }
           return;
+        }
+
+        if (!pgState.workspaceRoot && data.workspaceRoot && !pgState.autoWorkspace) {
+          pgState.autoWorkspace = data.workspaceRoot;
         }
 
         if (!Array.isArray(data.nodes) || data.nodes.length === 0) {
@@ -20608,13 +20783,298 @@
       } catch {}
     }
 
+    function pgBuildMergedWorkspacesList() {
+      const merged = [];
+      const seen = new Set();
+      const pushItem = function (raw) {
+        if (!raw) return;
+        const wsPath = typeof raw === 'string' ? raw.trim() : String(raw.workspaceRoot || '').trim();
+        if (!wsPath || wsPath === '__all__' || wsPath === '__auto__') return;
+        const key = pgNormWsKey(wsPath);
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        const base = pgWsBasename(wsPath) || wsPath;
+        if (typeof raw === 'string') {
+          merged.push({
+            workspaceRoot: wsPath,
+            projectName: base,
+            displayLabel: base,
+            status: 'idle',
+            source: 'recent',
+          });
+        } else {
+          merged.push({
+            workspaceRoot: wsPath,
+            projectName: raw.projectName || base,
+            displayLabel: raw.displayLabel || raw.projectName || base,
+            status: raw.status || 'idle',
+            source: raw.source || 'known',
+          });
+        }
+      };
+
+      if (pgState.workspaceRoot) pushItem(pgState.workspaceRoot);
+      const known = Array.isArray(pgState.knownWorkspaces) ? pgState.knownWorkspaces : [];
+      for (let i = 0; i < known.length; i++) pushItem(known[i]);
+      const recent = pgLoadRecentWorkspaces();
+      for (let i = 0; i < recent.length; i++) pushItem(recent[i]);
+      if (typeof _knownWorkspacesList !== 'undefined' && Array.isArray(_knownWorkspacesList)) {
+        for (let i = 0; i < _knownWorkspacesList.length; i++) pushItem(_knownWorkspacesList[i]);
+      }
+      if (pgState.graphData && pgState.graphData.workspaceRoot) {
+        pushItem({
+          workspaceRoot: pgState.graphData.workspaceRoot,
+          projectName: pgState.graphData.workspaceName || pgWsBasename(pgState.graphData.workspaceRoot),
+          displayLabel: pgState.graphData.workspaceName || pgWsBasename(pgState.graphData.workspaceRoot),
+          status: 'idle',
+          source: 'known',
+        });
+      }
+      return merged;
+    }
+
+    function pgRenderWorkspaceSelect() {
+      const sel = document.getElementById('pgWorkspaceSelect');
+      if (!sel) return;
+      const list = pgBuildMergedWorkspacesList();
+      const autoCandidate = pgState.autoWorkspace ||
+        (typeof _autoWorkspaceResolved === 'string' ? _autoWorkspaceResolved : '') ||
+        (typeof _activeWorkspaceResolved === 'string' ? _activeWorkspaceResolved : '') ||
+        (!pgState.workspaceRoot && pgState.graphData && pgState.graphData.workspaceRoot ? pgState.graphData.workspaceRoot : '');
+      const autoLabel = autoCandidate ? pgWsBasename(autoCandidate) : '';
+      const targetKey = pgNormWsKey(pgState.workspaceRoot);
+
+      const sigParts = [getUiLanguage(), autoLabel, pgState.workspaceRoot || ''];
+      for (let i = 0; i < list.length; i++) {
+        const w = list[i];
+        sigParts.push([w.workspaceRoot, w.displayLabel || w.projectName, w.status || ''].join(':'));
+      }
+      const nextSig = sigParts.join('|');
+      let matchedVal = '';
+      for (let i = 0; i < list.length; i++) {
+        if (targetKey && pgNormWsKey(list[i].workspaceRoot) === targetKey) {
+          matchedVal = list[i].workspaceRoot;
+          break;
+        }
+      }
+
+      if (!sel.dataset || sel.dataset.pgWsSig !== nextSig) {
+        if (sel.dataset) sel.dataset.pgWsSig = nextSig;
+        sel.innerHTML = '';
+
+        const autoOpt = document.createElement('option');
+        autoOpt.value = '';
+        autoOpt.textContent = autoLabel
+          ? L('🔄 Авто (' + autoLabel + ')', '🔄 Auto (' + autoLabel + ')')
+          : L('🔄 Авто (активный чат)', '🔄 Auto (active chat)');
+        autoOpt.title = autoCandidate || L('Автоопределение проекта по активному чату', 'Auto-detect project from active chat');
+        sel.appendChild(autoOpt);
+
+        for (let i = 0; i < list.length; i++) {
+          const item = list[i];
+          const opt = document.createElement('option');
+          opt.value = item.workspaceRoot;
+          const lbl = item.displayLabel || item.projectName || pgWsBasename(item.workspaceRoot);
+          const isLive = item.status === 'running' || item.status === 'waiting_user';
+          opt.textContent = (isLive ? '● ' : '📁 ') + lbl;
+          opt.title = item.workspaceRoot;
+          sel.appendChild(opt);
+        }
+      }
+
+      sel.value = matchedVal;
+      sel.title = matchedVal
+        ? (L('Проект карты: ', 'Map project: ') + matchedVal)
+        : (autoCandidate
+          ? (L('Авторежим: ', 'Auto mode: ') + autoCandidate)
+          : L('Выбрать проект для карты', 'Select project for map'));
+    }
+
+    async function pgLoadWorkspaces() {
+      const seq = ++pgState.workspacesSeq;
+      try {
+        const params = new URLSearchParams();
+        pgAppendWorkspaceParam(params);
+        const recent = pgLoadRecentWorkspaces();
+        if (recent.length > 0) {
+          params.set('extraRoots', recent.join('|'));
+        }
+        const q = params.toString();
+        const res = await panelFetch('/api/project-graph/workspaces' + (q ? '?' + q : ''));
+        const data = await res.json();
+        if (seq !== pgState.workspacesSeq) return;
+        if (data && data.ok) {
+          if (typeof data.autoWorkspace === 'string' && data.autoWorkspace) {
+            pgState.autoWorkspace = data.autoWorkspace;
+          }
+          if (Array.isArray(data.workspaces)) {
+            pgState.knownWorkspaces = data.workspaces;
+          }
+          pgState.workspacesLoaded = true;
+          pgRenderWorkspaceSelect();
+        }
+      } catch {
+        if (seq === pgState.workspacesSeq) {
+          pgRenderWorkspaceSelect();
+        }
+      }
+    }
+
+    function pgResetProjectTransientState() {
+      pgStopLoop();
+      pgUpdateHoverTooltip(null, 0, 0);
+      if (typeof pgHideWebglCanvas === 'function') pgHideWebglCanvas();
+      pgState.mode = 'global';
+      pgState.viewLevel = 'folders';
+      pgState.drillFolder = '';
+      pgState.focusFile = '';
+      pgState.selectedNodeId = '';
+      pgState.hoveredNodeId = '';
+      pgState.activeClusterId = '';
+      pgState.searchQuery = '';
+      const searchInp = document.getElementById('pgSearchInput');
+      if (searchInp) searchInp.value = '';
+      const searchClear = document.getElementById('pgSearchClearBtn');
+      if (searchClear) searchClear.style.display = 'none';
+      pgState.rawGraphData = null;
+      pgState.graphData = null;
+      pgState.nodes = [];
+      pgState.edges = [];
+      pgState.nodeById = new Map();
+      pgState.inNeighbors = new Map();
+      pgState.outNeighbors = new Map();
+      pgState.clusterColors = new Map();
+      pgState.layeredColumns = [];
+      pgState.spatialTree = null;
+      pgState.symbolFile = '';
+      pgState.symbolGraphData = null;
+      pgState.symbolLoading = false;
+      pgState.gitDiffLoaded = false;
+      pgState.gitDiffLoading = false;
+      pgState.gitDiffFiles = [];
+      pgState.gitDiffSet = new Set();
+      pgState.blastUseGitDiff = false;
+      pgState.blastWaveMap = new Map();
+      pgState.blastFileWaveMap = new Map();
+      pgState.blastByHop = { 0: [], 1: [], 2: [], 3: [] };
+      pgState.blastAffectedTests = [];
+      pgState.blastEstTokens = 0;
+      pgState.churnLoaded = false;
+      pgState.churnLoading = false;
+      pgState.churnByFile = {};
+      pgState.churnMax = 0;
+      pgState.hotspotScoreMap = new Map();
+      pgState.hotspotRankList = [];
+      pgState.churnSeq = (pgState.churnSeq || 0) + 1;
+      pgState.pathFrom = '';
+      pgState.pathTo = '';
+      pgState.pathResult = null;
+      pgState.pathLoading = false;
+      pgState.pathFileSequence = [];
+      pgState.pathNodeSet = new Set();
+      pgState.pathEdgeSet = new Set();
+      pgState.cycles = [];
+      pgState.activeCycleIdx = -1;
+      pgState.cycleNodeSet = new Set();
+      pgState.cycleEdgeSet = new Set();
+      pgState.macroCycleNodeSet = new Set();
+      pgState.macroCycleEdgeSet = new Set();
+      pgState.activeCycleNodeSet = new Set();
+      pgState.activeCycleEdgeSet = new Set();
+      pgState.orphanSet = new Set();
+      pgState.semanticScores = new Map();
+      pgState.semanticQuery = '';
+      pgState.semanticMode = '';
+      pgState.semanticLoading = false;
+      pgState.semanticSeq = (pgState.semanticSeq || 0) + 1;
+      pgState.contextCart = new Set();
+    }
+
+    async function pgSelectWorkspace(nextRoot) {
+      const clean = String(nextRoot || '').trim();
+      const prevKey = pgNormWsKey(pgState.workspaceRoot);
+      const nextKey = pgNormWsKey(clean);
+      pgState.workspaceRoot = clean;
+      if (clean) {
+        pgSaveRecentWorkspace(clean);
+        if (!Array.isArray(pgState.knownWorkspaces)) pgState.knownWorkspaces = [];
+        const exists = pgState.knownWorkspaces.some(function (w) {
+          return w && pgNormWsKey(w.workspaceRoot) === nextKey;
+        });
+        if (!exists) {
+          const base = pgWsBasename(clean) || clean;
+          pgState.knownWorkspaces.unshift({
+            workspaceRoot: clean,
+            projectName: base,
+            displayLabel: base,
+            status: 'idle',
+            source: 'recent',
+          });
+        }
+      }
+      pgResetProjectTransientState();
+      pgSyncStandaloneUrlParam(clean);
+      pgRenderWorkspaceSelect();
+      pgRenderToolbarAndStats();
+      pgRenderClusterPills();
+      if (typeof pgRenderContextCart === 'function') pgRenderContextCart();
+      pgRenderInspector();
+      pgDrawGraph();
+
+      if (prevKey !== nextKey || !pgState.workspacesLoaded) {
+        void pgLoadWorkspaces();
+      }
+      const label = clean ? (pgWsBasename(clean) || clean) : L('Авто (активный проект)', 'Auto (active project)');
+      if (typeof flashStatus === 'function') {
+        flashStatus(L('Загружаем карту проекта «' + label + '»…', 'Loading project map "' + label + '"…'));
+      }
+      await pgLoadGraph({ silent: false });
+    }
+
+    async function pgBrowseWorkspaceFolder() {
+      const browseBtn = document.getElementById('pgBrowseWorkspaceBtn');
+      if (browseBtn) browseBtn.disabled = true;
+      try {
+        if (typeof flashStatus === 'function') {
+          flashStatus(L('Открываем выбор папки проекта…', 'Opening project folder picker…'));
+        }
+        const initDir = pgGetEffectiveWorkspaceRoot() ||
+          pgState.autoWorkspace ||
+          (typeof _activeWorkspaceResolved === 'string' ? _activeWorkspaceResolved : '') ||
+          '';
+        const res = await panelFetch('/api/project-graph/pick-folder', {
+          method: 'POST',
+          body: JSON.stringify({ initialDir: initDir }),
+        });
+        const data = await res.json();
+        if (!data || !data.ok) {
+          if (typeof flashStatus === 'function') {
+            flashStatus((data && data.error) || L('Не удалось выбрать папку проекта', 'Failed to pick project folder'));
+          }
+          return;
+        }
+        if (data.cancelled || !data.workspaceRoot) {
+          return;
+        }
+        await pgSelectWorkspace(data.workspaceRoot);
+      } catch (err) {
+        if (typeof flashStatus === 'function') {
+          flashStatus((err && err.message) || L('Ошибка диалога выбора папки', 'Folder picker error'));
+        }
+      } finally {
+        if (browseBtn) browseBtn.disabled = false;
+      }
+    }
+
     function pgInitStandaloneIfNeeded() {
       if (!pgIsStandaloneView()) return false;
       try {
         const qs = new URLSearchParams(window.location.search);
-        const wsParam = qs.get('rootDir');
-        if (wsParam && typeof _selectedWorkspaceMode !== 'undefined') {
-          _selectedWorkspaceMode = wsParam;
+        const wsParam = String(qs.get('rootDir') || '').trim();
+        pgState.workspaceRoot = wsParam;
+        if (wsParam) pgSaveRecentWorkspace(wsParam);
+        if (typeof _selectedWorkspaceMode !== 'undefined') {
+          _selectedWorkspaceMode = '__auto__';
         }
       } catch {}
       if (document.body) {
@@ -20634,9 +21094,15 @@
           const tok = (window.sidecar && window.sidecar.token) ||
             new URLSearchParams(window.location.search).get('token') ||
             '';
-          const res = await panelFetch('/api/project-graph/open-window', {
+          const curGraphWs = pgGetEffectiveWorkspaceRoot();
+          const openBody = { token: tok };
+          if (curGraphWs) openBody.rootDir = curGraphWs;
+          const openUrl = curGraphWs
+            ? '/api/project-graph/open-window?rootDir=' + encodeURIComponent(curGraphWs)
+            : '/api/project-graph/open-window';
+          const res = await panelFetch(openUrl, {
             method: 'POST',
-            body: JSON.stringify({ token: tok }),
+            body: JSON.stringify(openBody),
           });
           const data = await res.json();
           if (data && data.ok) {
@@ -20661,11 +21127,13 @@
           pgDrawGraph();
         });
       }
+      pgRenderWorkspaceSelect();
       pgRenderToolbarAndStats();
       pgRenderInspector();
       if (typeof applyUiLanguageDom === 'function') {
         applyUiLanguageDom(getUiLanguage());
       }
+      void pgLoadWorkspaces();
       void pgLoadGraph({ silent: true });
     }
 
@@ -21339,6 +21807,7 @@
         const params = new URLSearchParams();
         params.set('days', String(reqDays));
         if (forceRefresh) params.set('refresh', '1');
+        if (typeof pgAppendWorkspaceParam === 'function') pgAppendWorkspaceParam(params);
         const res = await panelFetch('/api/project-graph/git-churn?' + params.toString());
         const data = await res.json();
         if (seq !== pgState.churnSeq) return;
@@ -21498,6 +21967,7 @@
       try {
         const params = new URLSearchParams();
         if (forceRefresh) params.set('refresh', '1');
+        if (typeof pgAppendWorkspaceParam === 'function') pgAppendWorkspaceParam(params);
         const q = params.toString();
         const res = await panelFetch('/api/project-graph/git-diff' + (q ? '?' + q : ''));
         const data = await res.json();
@@ -21639,6 +22109,7 @@
         params.set('to', toFile);
         params.set('maxDepth', '6');
         params.set('direction', 'both');
+        if (typeof pgAppendWorkspaceParam === 'function') pgAppendWorkspaceParam(params);
         const res = await panelFetch('/api/project-graph/path?' + params.toString());
         const data = await res.json();
         pgState.pathResult = data || { ok: false, found: false };
@@ -22374,6 +22845,7 @@
       try {
         const params = new URLSearchParams();
         params.set('file', target);
+        if (typeof pgAppendWorkspaceParam === 'function') pgAppendWorkspaceParam(params);
         const res = await panelFetch('/api/project-graph/symbols?' + params.toString());
         const data = await res.json();
         if (!data || !data.ok) {
@@ -22499,6 +22971,7 @@
       try {
         const params = new URLSearchParams();
         params.set('q', clean);
+        if (typeof pgAppendWorkspaceParam === 'function') pgAppendWorkspaceParam(params);
         const res = await panelFetch('/api/project-graph/semantic-search?' + params.toString());
         const data = await res.json();
         if (seq !== pgState.semanticSeq || !pgState.semanticSearchEnabled) return;

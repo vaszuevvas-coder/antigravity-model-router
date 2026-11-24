@@ -1,0 +1,14 @@
+{
+  "positive": [
+    "Push our latest changes to GitHub and verify no local machine paths or secrets leak",
+    "Sync the repository with GitHub and check that README, CHANGELOG, and release metadata match",
+    "Audit this repository for GitHub policy compliance, large files, and personal fingerprints before publishing",
+    "Prepare a GitHub release and verify version parity and remote tag alignment"
+  ],
+  "negative": [
+    "Rename a variable across five TypeScript files using an AST codemod",
+    "Design a dark glassmorphism UI theme with WCAG contrast checks",
+    "Trace variable mutations inside a 600-line parser file",
+    "Create an animated Remotion promo video rendered to MP4"
+  ]
+}

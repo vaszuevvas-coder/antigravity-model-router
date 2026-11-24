@@ -82,6 +82,12 @@ test('1. Panel UI build check, CSP cleanliness, and #projectGraphModal DOM place
     'function pgRenderWebgl2Scene(',
     'pg-standalone',
     'pgInitStandaloneIfNeeded',
+    'id="pgWorkspaceSelect"',
+    'id="pgBrowseWorkspaceBtn"',
+    'data-change-action="pgSelectWorkspace"',
+    'data-action="pgBrowseWorkspaceFolder"',
+    'function pgSelectWorkspace(',
+    'function pgBrowseWorkspaceFolder(',
   ]) {
     assert.ok(uiHtml.includes(marker), `ui.html missing ${marker}`);
   }
@@ -1762,3 +1768,442 @@ test('9. E2E UX polish: tooltip edge-flip, cluster-bar wrap, hull label dedup, h
   assert.equal(uxRes.limitDispSym, 'none', '#pgLimitSelect must hide in Symbols mode');
   assert.equal(uxRes.limitDispFiles, '', '#pgLimitSelect must be visible in Files mode');
 });
+
+test('10. Project switcher: /api/project-graph/workspaces, /api/project-graph/pick-folder, and pgSelectWorkspace state isolation', async () => {
+  const tmpParent = makeTmpDir('tunnel-pg-multi-');
+  const tmpPanelDir = makeTmpDir('tunnel-pg-multi-panel-');
+  const projAlpha = path.join(tmpParent, 'proj-alpha');
+  const projBeta = path.join(tmpParent, 'proj-beta');
+  const emptyDir = path.join(tmpParent, 'empty-scratch');
+  const prevIsolate = process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+  const prevStatePath = process.env.TUNNEL_TEST_STATE_PATH;
+  const prevCacheDir = process.env.TUNNEL_CACHE_DIR;
+
+  fs.mkdirSync(path.join(projAlpha, 'src'), { recursive: true });
+  fs.mkdirSync(path.join(projBeta, 'lib'), { recursive: true });
+  fs.mkdirSync(emptyDir, { recursive: true });
+  fs.writeFileSync(path.join(projAlpha, 'package.json'), '{"name":"proj-alpha"}\n', 'utf8');
+  fs.writeFileSync(path.join(projAlpha, 'src', 'index.mjs'), 'export const alpha = 1;\n', 'utf8');
+  fs.writeFileSync(path.join(projBeta, 'README.md'), '# Proj Beta\n', 'utf8');
+  fs.writeFileSync(path.join(projBeta, 'lib', 'main.mjs'), 'export const beta = 2;\n', 'utf8');
+
+  class MiniSidecarApp {
+    constructor() {
+      this._routes = new Map();
+    }
+    page() {}
+    api(p, handler, method = 'POST') {
+      if (!this._routes.has(p)) this._routes.set(p, new Map());
+      this._routes.get(p).set(method.toUpperCase(), handler);
+    }
+    run() {
+      return http.createServer();
+    }
+  }
+
+  process.env.TUNNEL_TEST_ISOLATE_INSTALLED = '1';
+  process.env.TUNNEL_TEST_STATE_PATH = path.join(tmpPanelDir, 'router-state.json');
+  process.env.TUNNEL_CACHE_DIR = path.join(tmpPanelDir, '.cache');
+
+  try {
+    const app = await startSidecarPanel({ SidecarAppClass: MiniSidecarApp });
+    const workspacesHandler = app._routes.get('/api/project-graph/workspaces')?.get('GET');
+    const pickFolderHandler = app._routes.get('/api/project-graph/pick-folder')?.get('POST');
+    assert.equal(typeof workspacesHandler, 'function', '/api/project-graph/workspaces GET route must be registered');
+    assert.equal(typeof pickFolderHandler, 'function', '/api/project-graph/pick-folder POST route must be registered');
+
+    const wsRes = await workspacesHandler(
+      { rootDir: projAlpha },
+      { method: 'GET', headers: { host: '127.0.0.1:41234' } }
+    );
+    assert.equal(wsRes.ok, true);
+    assert.ok(Array.isArray(wsRes.workspaces), 'workspaces must be an array');
+    const norm = (p) => path.resolve(String(p || '')).toLowerCase();
+    assert.equal(
+      wsRes.workspaces.some((w) => norm(w.workspaceRoot) === norm(projAlpha)),
+      true,
+      'Pinned project proj-alpha must be included in workspaces list'
+    );
+    assert.equal(
+      wsRes.workspaces.some((w) => norm(w.workspaceRoot) === norm(projBeta)),
+      true,
+      'Sibling project proj-beta with marker must be discovered'
+    );
+    assert.equal(
+      wsRes.workspaces.some((w) => norm(w.workspaceRoot) === norm(emptyDir)),
+      false,
+      'Sibling folder without project markers must be skipped'
+    );
+
+    const authHeaders = {
+      method: 'POST',
+      headers: {
+        host: '127.0.0.1:41234',
+        origin: 'http://127.0.0.1:41234',
+        'x-router-panel': 'antigravity-v38',
+        'x-sidecar-token': 'test-tok',
+      },
+    };
+    const badOriginRes = await pickFolderHandler(
+      { path: projBeta },
+      { method: 'POST', headers: { host: '127.0.0.1:41234', origin: 'https://evil.example' } }
+    );
+    assert.equal(badOriginRes.ok, false);
+    assert.equal(badOriginRes.status, 403);
+
+    const validPickRes = await pickFolderHandler({ path: projBeta }, authHeaders);
+    assert.equal(validPickRes.ok, true);
+    assert.equal(validPickRes.cancelled, false);
+    assert.equal(norm(validPickRes.workspaceRoot), norm(projBeta));
+
+    const badPickRes = await pickFolderHandler({ path: path.join(tmpParent, 'missing-dir-xyz') }, authHeaders);
+    assert.equal(badPickRes.ok, false);
+
+    const dryPickRes = await pickFolderHandler({ dryRun: true }, authHeaders);
+    assert.equal(dryPickRes.ok, true);
+    assert.equal(dryPickRes.cancelled, true);
+    assert.equal(dryPickRes.dryRun, true);
+
+    // Frontend VM check: pgSelectWorkspace resets transient state, isolates sidebar, syncs standalone URL, and pgBrowseWorkspaceFolder switches project
+    const uiHtml = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+    const scriptMatches = [...uiHtml.matchAll(/<script>([\s\S]*?)<\/script>/gi)];
+    const mainScriptMatch = scriptMatches.find((m) => m[1].includes('pgSelectWorkspace'));
+    assert.ok(mainScriptMatch, 'Compiled ui.html script containing pgSelectWorkspace must exist');
+
+    const makeClassList = () => {
+      const set = new Set();
+      return {
+        add: (...cls) => cls.filter(Boolean).forEach((c) => set.add(c)),
+        remove: (...cls) => cls.forEach((c) => set.delete(c)),
+        toggle: (c, force) => {
+          if (force === true) { set.add(c); return true; }
+          if (force === false) { set.delete(c); return false; }
+          if (set.has(c)) { set.delete(c); return false; }
+          set.add(c);
+          return true;
+        },
+        contains: (c) => set.has(c),
+      };
+    };
+
+    const makeMockEl = (tag = 'div', id = '') => {
+      const attrs = new Map();
+      const children = [];
+      const el = {
+        id,
+        tagName: tag.toUpperCase(),
+        className: '',
+        classList: makeClassList(),
+        style: { setProperty() {}, removeProperty() {} },
+        dataset: {},
+        value: '',
+        textContent: '',
+        _innerHTML: '',
+        disabled: false,
+        title: '',
+        clientWidth: 1200,
+        clientHeight: 800,
+        children,
+        options: children,
+        setAttribute: (k, v) => attrs.set(String(k), String(v)),
+        getAttribute: (k) => (attrs.has(String(k)) ? attrs.get(String(k)) : null),
+        removeAttribute: (k) => attrs.delete(String(k)),
+        addEventListener() {},
+        removeEventListener() {},
+        dispatchEvent() { return true; },
+        querySelector: () => null,
+        querySelectorAll: () => [],
+        appendChild: (c) => { children.push(c); return c; },
+        getBoundingClientRect: () => ({ width: 1200, height: 800, left: 0, top: 0 }),
+        focus() {},
+        blur() {},
+      };
+      Object.defineProperty(el, 'innerHTML', {
+        get: () => el._innerHTML,
+        set: (v) => {
+          el._innerHTML = String(v || '');
+          if (el._innerHTML === '') children.length = 0;
+        },
+      });
+      return el;
+    };
+
+    const fakeCtx2d = {
+      save() {}, restore() {}, setTransform() {}, clearRect() {}, fillRect() {}, strokeRect() {},
+      beginPath() {}, closePath() {}, moveTo() {}, lineTo() {}, quadraticCurveTo() {}, bezierCurveTo() {},
+      arc() {}, roundRect() {}, fill() {}, stroke() {}, fillText() {}, strokeText() {}, setLineDash() {}, clip() {},
+      measureText: (t) => ({ width: String(t || '').length * 7 }),
+      createLinearGradient: () => ({ addColorStop() {} }),
+      createRadialGradient: () => ({ addColorStop() {} }),
+      fillStyle: '', strokeStyle: '', lineWidth: 1, font: '', textAlign: 'left', textBaseline: 'alphabetic', globalAlpha: 1,
+    };
+
+    const elements = new Map();
+    for (const id of [
+      'projectGraphModal', 'projectGraphCanvas', 'pgInspector', 'pgInspFilename', 'pgInspPath',
+      'pgInspBadges', 'pgInspMetrics', 'pgInspTabs', 'pgInspLensPanel', 'pgInspList', 'pgInspActions',
+      'pgContextCart', 'pgCartSummary', 'pgStatsPill', 'pgProjectBadge', 'pgWorkspaceSelect',
+      'pgBrowseWorkspaceBtn', 'pgSearchInput', 'pgSearchClearBtn', 'pgClusterPills', 'pgLegendExtra',
+      'pgLensArchBtn', 'pgLensBlastBtn', 'pgLensCyclesBtn', 'pgLensHotspotsBtn', 'pgLensPathBtn',
+      'pgLevelFoldersBtn', 'pgLevelFilesBtn', 'pgLevelSymbolsBtn', 'pgEmptyState', 'pgEmptyTitle', 'pgEmptySub',
+    ]) {
+      elements.set(id, makeMockEl(id === 'projectGraphCanvas' ? 'canvas' : (id === 'pgWorkspaceSelect' ? 'select' : 'div'), id));
+    }
+    const canvasEl = elements.get('projectGraphCanvas');
+    canvasEl.parentElement = makeMockEl('div', 'pgCanvasStage');
+    canvasEl.getContext = () => fakeCtx2d;
+
+    const doc = {
+      visibilityState: 'visible',
+      activeElement: null,
+      title: 'The Tunnel',
+      body: makeMockEl('body'),
+      documentElement: makeMockEl('html'),
+      getElementById: (id) => elements.get(id) || null,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      createElement: (tag) => makeMockEl(tag),
+      addEventListener() {},
+      removeEventListener() {},
+    };
+
+    const storageMap = new Map();
+    const localStorageMock = {
+      getItem: (k) => (storageMap.has(k) ? storageMap.get(k) : null),
+      setItem: (k, v) => storageMap.set(String(k), String(v)),
+      removeItem: (k) => storageMap.delete(String(k)),
+    };
+
+    const fetchedUrls = [];
+    const historyUrls = [];
+    const fetchMock = async (url) => {
+      const u = String(url || '');
+      fetchedUrls.push(u);
+      if (u.startsWith('/api/project-graph/workspaces')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            activeWorkspace: projAlpha,
+            autoWorkspace: projAlpha,
+            workspaces: [
+              { workspaceRoot: projAlpha, projectName: 'proj-alpha', displayLabel: 'proj-alpha', status: 'idle', source: 'known' },
+              { workspaceRoot: projBeta, projectName: 'proj-beta', displayLabel: 'proj-beta', status: 'idle', source: 'discovered' },
+            ],
+          }),
+        };
+      }
+      if (u.startsWith('/api/project-graph/pick-folder')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            cancelled: false,
+            workspaceRoot: projAlpha,
+            projectName: 'proj-alpha',
+          }),
+        };
+      }
+      if (u.startsWith('/api/project-graph?')) {
+        const qPart = u.split('?')[1] || '';
+        const qs = new URLSearchParams(qPart);
+        const r = qs.get('rootDir') || projAlpha;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            workspaceRoot: r,
+            workspaceName: path.basename(r),
+            totalFiles: 1,
+            shownNodes: 1,
+            shownEdges: 0,
+            clusters: [{ id: 'src', label: 'src', size: 1 }],
+            nodes: [{ id: 'src/index.mjs', label: 'index.mjs', clusterId: 'src', clusterLabel: 'src', inDeg: 0, outDeg: 0 }],
+            edges: [],
+            cycles: [],
+            cycleNodeIds: [],
+            cycleEdgeKeys: [],
+            orphanIds: ['src/index.mjs'],
+            testFilesByTarget: {},
+          }),
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+
+    const windowObj = {
+      innerWidth: 1440,
+      innerHeight: 900,
+      devicePixelRatio: 1,
+      location: { search: '', pathname: '/', hash: '', reload() {} },
+      history: {
+        replaceState(_st, _t, nextUrl) {
+          historyUrls.push(String(nextUrl));
+          const qIdx = String(nextUrl).indexOf('?');
+          windowObj.location.search = qIdx >= 0 ? String(nextUrl).slice(qIdx) : '';
+        },
+      },
+      fetch: fetchMock,
+      localStorage: localStorageMock,
+      navigator: { clipboard: { writeText: async () => {} } },
+      addEventListener() {},
+      removeEventListener() {},
+      requestAnimationFrame: () => 0,
+      cancelAnimationFrame() {},
+      ResizeObserver: class { observe() {} disconnect() {} },
+      IntersectionObserver: class { observe() {} disconnect() {} },
+      matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+    };
+
+    const ctx = vm.createContext({
+      window: windowObj,
+      document: doc,
+      localStorage: localStorageMock,
+      navigator: windowObj.navigator,
+      location: windowObj.location,
+      CSS: { escape: (s) => String(s) },
+      URL, URLSearchParams, AbortController, performance,
+      ResizeObserver: windowObj.ResizeObserver,
+      IntersectionObserver: windowObj.IntersectionObserver,
+      Event: class { constructor(type) { this.type = type; } },
+      CustomEvent: class { constructor(type, opts = {}) { this.type = type; this.detail = opts.detail; } },
+      requestAnimationFrame: windowObj.requestAnimationFrame,
+      cancelAnimationFrame: windowObj.cancelAnimationFrame,
+      setTimeout: () => 0, clearTimeout() {},
+      setInterval: () => 0, clearInterval() {},
+      fetch: fetchMock,
+      console,
+      Promise, Set, Map, WeakMap, Array, Object, String, Number, Boolean, Math, Date, JSON, RegExp, Error,
+      encodeURIComponent, decodeURIComponent,
+    });
+
+    vm.runInContext(mainScriptMatch[1], ctx, { filename: 'sidecars/panel/ui.html' });
+
+    const vmRes = await vm.runInContext(`(async () => {
+      _selectedWorkspaceMode = 'C:/sidebar-pinned-project';
+      pgState.open = true;
+      pgState.mode = 'local';
+      pgState.viewLevel = 'files';
+      pgState.drillFolder = 'src';
+      pgState.focusFile = 'src/old.mjs';
+      pgState.selectedNodeId = 'src/old.mjs';
+      pgState.gitDiffLoaded = true;
+      pgState.churnLoaded = true;
+      pgState.pathFrom = 'src/old.mjs';
+      pgState.searchQuery = 'old';
+      pgState.contextCart.add('src/old.mjs');
+
+      pgResetProjectTransientState();
+      const resetSelectedNodeId = pgState.selectedNodeId;
+
+      pgState.mode = 'local';
+      pgState.viewLevel = 'files';
+      pgState.drillFolder = 'src';
+      pgState.focusFile = 'src/old.mjs';
+      pgState.selectedNodeId = 'src/old.mjs';
+      pgState.gitDiffLoaded = true;
+      pgState.churnLoaded = true;
+      pgState.pathFrom = 'src/old.mjs';
+      pgState.searchQuery = 'old';
+      pgState.contextCart.add('src/old.mjs');
+
+      await pgSelectWorkspace(${JSON.stringify(projBeta)});
+
+      const afterSwitch = {
+        resetSelectedNodeId,
+        pgWs: pgState.workspaceRoot,
+        sidebarWs: _selectedWorkspaceMode,
+        mode: pgState.mode,
+        viewLevel: pgState.viewLevel,
+        drillFolder: pgState.drillFolder,
+        focusFile: pgState.focusFile,
+        selectedNodeId: pgState.selectedNodeId,
+        gitDiffLoaded: pgState.gitDiffLoaded,
+        churnLoaded: pgState.churnLoaded,
+        pathFrom: pgState.pathFrom,
+        searchQuery: pgState.searchQuery,
+        cartSize: pgState.contextCart.size,
+        selectVal: document.getElementById('pgWorkspaceSelect').value,
+        optionValues: document.getElementById('pgWorkspaceSelect').options.map((o) => o.value),
+      };
+
+      await pgBrowseWorkspaceFolder();
+      const afterBrowseWs = pgState.workspaceRoot;
+
+      window.location.search = '?view=graph&rootDir=' + encodeURIComponent(${JSON.stringify(projAlpha)});
+      await pgSelectWorkspace(${JSON.stringify(projBeta)});
+      await pgSelectWorkspace('');
+
+      return {
+        afterSwitch,
+        afterBrowseWs,
+        finalStandaloneWs: pgState.workspaceRoot,
+        recentStored: localStorage.getItem('ag_tunnel_pg_recent_workspaces_v1'),
+      };
+    })()`, ctx);
+
+    assert.equal(vmRes.afterSwitch.pgWs, projBeta);
+    assert.equal(vmRes.afterSwitch.sidebarWs, 'C:/sidebar-pinned-project', 'Sidebar workspace must stay isolated from graph project switch');
+    assert.equal(vmRes.afterSwitch.mode, 'global');
+    assert.equal(vmRes.afterSwitch.viewLevel, 'folders');
+    assert.equal(vmRes.afterSwitch.resetSelectedNodeId, '', 'pgResetProjectTransientState must clear selectedNodeId');
+    assert.equal(vmRes.afterSwitch.drillFolder, '');
+    assert.equal(vmRes.afterSwitch.focusFile, '');
+    assert.notEqual(vmRes.afterSwitch.selectedNodeId, 'src/old.mjs', 'Old selected node must not survive workspace switch');
+    assert.equal(vmRes.afterSwitch.selectedNodeId, 'folder:src', 'New graph must auto-select its own initial folder node');
+    assert.equal(vmRes.afterSwitch.gitDiffLoaded, false);
+    assert.equal(vmRes.afterSwitch.churnLoaded, false);
+    assert.equal(vmRes.afterSwitch.pathFrom, '');
+    assert.equal(vmRes.afterSwitch.searchQuery, '');
+    assert.equal(vmRes.afterSwitch.cartSize, 0);
+    assert.equal(vmRes.afterSwitch.selectVal, projBeta);
+    assert.ok(vmRes.afterSwitch.optionValues.includes(''), 'Select must include Auto option');
+    assert.ok(vmRes.afterSwitch.optionValues.includes(projBeta), 'Select must include selected projBeta option');
+    assert.ok(
+      fetchedUrls.some((u) => u.startsWith('/api/project-graph?') && u.includes('rootDir=' + encodeURIComponent(projBeta))),
+      'pgSelectWorkspace must fetch /api/project-graph with selected rootDir'
+    );
+    assert.equal(vmRes.afterBrowseWs, projAlpha, 'pgBrowseWorkspaceFolder must switch graph to picked folder');
+    assert.equal(vmRes.finalStandaloneWs, '');
+    assert.ok(
+      historyUrls.some((h) => h.includes('rootDir=' + encodeURIComponent(projBeta))),
+      'Standalone URL must update rootDir via history.replaceState'
+    );
+    assert.ok(
+      historyUrls.some((h) => h.includes('view=graph') && !h.includes('rootDir=')),
+      'Switching back to Auto in standalone must remove rootDir from URL'
+    );
+    assert.ok(vmRes.recentStored && vmRes.recentStored.includes('proj-beta'), 'Recent workspace list must persist in localStorage');
+  } finally {
+    try {
+      knowledgeHub.close();
+    } catch {}
+    if (prevIsolate === undefined) delete process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+    else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIsolate;
+    if (prevStatePath === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
+    else process.env.TUNNEL_TEST_STATE_PATH = prevStatePath;
+    if (prevCacheDir === undefined) delete process.env.TUNNEL_CACHE_DIR;
+    else process.env.TUNNEL_CACHE_DIR = prevCacheDir;
+    fs.rmSync(tmpParent, { recursive: true, force: true });
+    fs.rmSync(tmpPanelDir, { recursive: true, force: true });
+  }
+});
+
+test('15. Standalone graph window launch avoids windowsHide cold-start bug and suppresses browser Translate popup', () => {
+  const serverSrc = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'server.mjs'), 'utf8');
+  const launchMatch = serverSrc.match(/const launchStandaloneGraphWindow = [\s\S]*?\n  \};/);
+  assert.ok(launchMatch, 'launchStandaloneGraphWindow must exist in sidecars/panel/server.mjs');
+  const exeBranchMatch = launchMatch[0].match(/if \(exe\) \{[\s\S]*?return \{ ok: true, mode: 'app_window' \};/);
+  assert.ok(exeBranchMatch, 'exe launch branch must exist in launchStandaloneGraphWindow');
+  const exeBranchNoComments = exeBranchMatch[0].replace(/\/\/.*$/gm, '');
+  assert.ok(!/windowsHide\s*:\s*true/.test(exeBranchNoComments), 'GUI browser launch must not set windowsHide: true');
+  assert.ok(exeBranchMatch[0].includes('--disable-features=Translate'), 'GUI browser launch must pass --disable-features=Translate');
+
+  const uiHtml = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+  assert.ok(/<html\b[^>]*\btranslate="no"/.test(uiHtml), 'ui.html <html> must carry translate="no"');
+  assert.ok(/<meta\s+name="google"\s+content="notranslate"/i.test(uiHtml), 'ui.html must include google notranslate meta tag');
+});
+

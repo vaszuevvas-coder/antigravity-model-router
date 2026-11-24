@@ -1225,6 +1225,205 @@ export async function collectKnownWorkspacesForPanel({
   return items.slice(0, 24);
 }
 
+const GRAPH_PROJECT_MARKERS = [
+  '.git',
+  'package.json',
+  'plugin.json',
+  'book.json',
+  'pyproject.toml',
+  'Cargo.toml',
+  'go.mod',
+  'composer.json',
+  'pom.xml',
+  'Makefile',
+  'CMakeLists.txt',
+  'README.md',
+  'Cargo.lock',
+  'requirements.txt',
+  'tsconfig.json',
+];
+
+const SKIPPED_SCAN_PARENTS = new Set(['desktop', 'downloads', 'documents']);
+
+function hasGraphProjectMarker(dirPath = '') {
+  if (!dirPath) return false;
+  for (const marker of GRAPH_PROJECT_MARKERS) {
+    try {
+      if (existsSync(join(dirPath, marker))) return true;
+    } catch {}
+  }
+  return false;
+}
+
+function shouldSkipGraphParentScan(parentDir = '') {
+  if (!parentDir) return true;
+  try {
+    const abs = resolve(parentDir);
+    if (dirname(abs) === abs) return true;
+    const key = normalizeWorkspaceUriKey(abs);
+    if (!key) return true;
+    const homeKey = normalizeWorkspaceUriKey(homedir());
+    if (homeKey && key === homeKey) return true;
+    if (SKIPPED_SCAN_PARENTS.has(basename(abs).toLowerCase())) return true;
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+export async function discoverUserProjectsForGraph({
+  activeWs = '',
+  autoWs = '',
+  extraRoots = [],
+  taskProgress = null,
+  ramCache = null,
+  allowActiveEphemeral = false,
+} = {}) {
+  const [known, hMod, khMod] = await Promise.all([
+    collectKnownWorkspacesForPanel({ activeWs, autoWs, taskProgress, ramCache }),
+    getSessionHandoffMod().catch(() => null),
+    getKnowledgeHubMod().catch(() => null),
+  ]);
+
+  const byKey = new Map();
+  const activeKey = activeWs ? normalizeWorkspaceUriKey(activeWs) : '';
+  const activeParentKey = activeWs ? normalizeWorkspaceUriKey(dirname(resolve(activeWs))) : '';
+
+  const upsertProject = (rawPath, { source = 'discovered', seed = null, allowEphemeral = false } = {}) => {
+    if (!rawPath || typeof rawPath !== 'string') return;
+    const trimmed = rawPath.trim();
+    if (!trimmed || trimmed === '__all__' || trimmed === '__auto__') return;
+    if (!isValidWorkspaceDir(trimmed)) return;
+    if (!allowEphemeral && isEphemeralPanelCandidatePath(trimmed, hMod)) return;
+    const abs = resolve(trimmed);
+    const key = normalizeWorkspaceUriKey(abs);
+    if (!key) return;
+    if (!byKey.has(key)) {
+      byKey.set(key, {
+        workspaceRoot: abs,
+        projectName: seed?.projectName || basename(abs) || abs,
+        parentHint: seed?.parentHint || basename(dirname(abs)) || '',
+        checkpointsCount: Number(seed?.checkpointsCount || 0),
+        activeCheckpointsCount: Number(seed?.activeCheckpointsCount || 0),
+        lastTimestamp: seed?.lastTimestamp || '',
+        status: seed?.status || 'idle',
+        activeChatsCount: Number(seed?.activeChatsCount || 0),
+        percent: Number(seed?.percent || 0),
+        source: seed?.source || source,
+      });
+    }
+  };
+
+  for (const item of known) {
+    if (item?.workspaceRoot) {
+      upsertProject(item.workspaceRoot, {
+        source: 'known',
+        seed: { ...item, source: 'known' },
+        allowEphemeral: allowActiveEphemeral && normalizeWorkspaceUriKey(item.workspaceRoot) === activeKey,
+      });
+    }
+  }
+
+  if (activeWs) {
+    upsertProject(activeWs, { source: 'known', allowEphemeral: allowActiveEphemeral });
+  }
+  if (autoWs) {
+    upsertProject(autoWs, { source: 'known', allowEphemeral: false });
+  }
+
+  if (Array.isArray(extraRoots)) {
+    for (const raw of extraRoots) {
+      upsertProject(raw, { source: 'known', allowEphemeral: allowActiveEphemeral });
+    }
+  }
+
+  try {
+    const hub = khMod?.knowledgeHub;
+    if (activeWs && typeof hub?.getFederatedWorkspaces === 'function') {
+      const peers = hub.getFederatedWorkspaces(activeWs);
+      if (Array.isArray(peers)) {
+        for (const p of peers) {
+          if (p?.path) upsertProject(p.path, { source: 'federated' });
+        }
+      }
+    }
+  } catch {}
+
+  const scanChildProjects = (parentDir, { source = 'discovered', allowEphemeral = false } = {}) => {
+    if (!parentDir || !existsSync(parentDir)) return;
+    try {
+      const entries = readdirSync(parentDir, { withFileTypes: true });
+      let checked = 0;
+      for (const ent of entries) {
+        if (checked >= 40) break;
+        if (!ent || typeof ent.name !== 'string' || !ent.isDirectory()) continue;
+        const name = ent.name;
+        if (name.startsWith('.') || name === 'node_modules' || SKIPPED_SCAN_PARENTS.has(name.toLowerCase())) continue;
+        checked += 1;
+        const childAbs = join(parentDir, name);
+        if (!isValidWorkspaceDir(childAbs)) continue;
+        if (!allowEphemeral && isEphemeralPanelCandidatePath(childAbs, hMod)) continue;
+        if (!hasGraphProjectMarker(childAbs)) continue;
+        upsertProject(childAbs, { source, allowEphemeral });
+      }
+    } catch {}
+  };
+
+  try {
+    const scratchDir = join(homedir(), '.gemini', 'antigravity', 'scratch');
+    if (existsSync(scratchDir)) {
+      scanChildProjects(scratchDir, { source: 'scratch', allowEphemeral: false });
+    }
+  } catch {}
+
+  const parentSeeds = [];
+  if (activeWs) parentSeeds.push(dirname(resolve(activeWs)));
+  if (autoWs) parentSeeds.push(dirname(resolve(autoWs)));
+  for (const item of known.slice(0, 3)) {
+    if (item?.workspaceRoot) parentSeeds.push(dirname(resolve(item.workspaceRoot)));
+  }
+
+  const scannedParents = new Set();
+  for (const pDir of parentSeeds) {
+    if (!pDir || shouldSkipGraphParentScan(pDir)) continue;
+    const absParent = resolve(pDir);
+    const pKey = normalizeWorkspaceUriKey(absParent);
+    if (!pKey || scannedParents.has(pKey)) continue;
+    scannedParents.add(pKey);
+    const isPinnedParent = Boolean(allowActiveEphemeral && activeParentKey && pKey === activeParentKey);
+    scanChildProjects(absParent, { source: 'discovered', allowEphemeral: isPinnedParent });
+  }
+
+  const items = Array.from(byKey.values());
+  const nameCounts = new Map();
+  for (const item of items) {
+    const n = String(item.projectName || '').toLowerCase();
+    nameCounts.set(n, (nameCounts.get(n) || 0) + 1);
+  }
+  for (const item of items) {
+    const dup = (nameCounts.get(String(item.projectName || '').toLowerCase()) || 0) > 1;
+    item.displayLabel = (dup && item.parentHint) ? `${item.projectName} (${item.parentHint})` : item.projectName;
+  }
+
+  items.sort((a, b) => {
+    const aActive = activeKey && normalizeWorkspaceUriKey(a.workspaceRoot) === activeKey ? 0 : 1;
+    const bActive = activeKey && normalizeWorkspaceUriKey(b.workspaceRoot) === activeKey ? 0 : 1;
+    if (aActive !== bActive) return aActive - bActive;
+    const aLive = (a.status === 'running' || a.status === 'waiting_user') ? 0 : 1;
+    const bLive = (b.status === 'running' || b.status === 'waiting_user') ? 0 : 1;
+    if (aLive !== bLive) return aLive - bLive;
+    const aKnown = a.source === 'known' ? 0 : 1;
+    const bKnown = b.source === 'known' ? 0 : 1;
+    if (aKnown !== bKnown) return aKnown - bKnown;
+    const ta = a.lastTimestamp ? (new Date(a.lastTimestamp).getTime() || 0) : 0;
+    const tb = b.lastTimestamp ? (new Date(b.lastTimestamp).getTime() || 0) : 0;
+    if (ta !== tb) return tb - ta;
+    return String(a.displayLabel || a.projectName || '').localeCompare(String(b.displayLabel || b.projectName || ''));
+  });
+
+  return items.slice(0, 48);
+}
+
 const ramDeltaTrackerByPid = new Map();
 
 export async function safeGetRamCacheStatus(state = {}) {

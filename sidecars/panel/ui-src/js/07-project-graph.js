@@ -110,8 +110,86 @@
       maxNodes: 220,
       renderMode: 'auto', // 'auto' | 'webgl2' | '2d'
       webglActive: false,
-      spatialTree: null
+      spatialTree: null,
+      workspaceRoot: '',
+      knownWorkspaces: [],
+      autoWorkspace: '',
+      workspacesLoaded: false,
+      workspacesSeq: 0
     };
+
+    const PG_RECENT_WORKSPACES_STORAGE_KEY = 'ag_tunnel_pg_recent_workspaces_v1';
+
+    function pgNormWsKey(p) {
+      if (typeof normalizeWsClientKey === 'function') return normalizeWsClientKey(p);
+      return String(p || '').trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    }
+
+    function pgWsBasename(p) {
+      if (typeof getWorkspaceBasename === 'function') return getWorkspaceBasename(p);
+      const clean = String(p || '').trim().replace(/[\\/]+$/, '');
+      if (!clean) return '';
+      const parts = clean.split(/[\\/]/).filter(Boolean);
+      return parts.length > 0 ? parts[parts.length - 1] : clean;
+    }
+
+    function pgLoadRecentWorkspaces() {
+      try {
+        if (typeof localStorage === 'undefined' || !localStorage || typeof localStorage.getItem !== 'function') return [];
+        const raw = localStorage.getItem(PG_RECENT_WORKSPACES_STORAGE_KEY);
+        if (!raw) return [];
+        const arr = JSON.parse(raw);
+        if (!Array.isArray(arr)) return [];
+        return arr.filter(function (s) { return typeof s === 'string' && s.trim(); }).slice(0, 12);
+      } catch {
+        return [];
+      }
+    }
+
+    function pgSaveRecentWorkspace(wsPath) {
+      const clean = String(wsPath || '').trim();
+      if (!clean) return;
+      try {
+        if (typeof localStorage === 'undefined' || !localStorage || typeof localStorage.setItem !== 'function') return;
+        const key = pgNormWsKey(clean);
+        const prev = pgLoadRecentWorkspaces();
+        const next = [clean];
+        for (let i = 0; i < prev.length && next.length < 12; i++) {
+          if (pgNormWsKey(prev[i]) !== key) next.push(prev[i]);
+        }
+        localStorage.setItem(PG_RECENT_WORKSPACES_STORAGE_KEY, JSON.stringify(next));
+      } catch {}
+    }
+
+    function pgGetEffectiveWorkspaceRoot() {
+      return String(pgState.workspaceRoot || '').trim();
+    }
+
+    function pgAppendWorkspaceParam(params) {
+      if (!params || typeof params.set !== 'function') return params;
+      const ws = pgGetEffectiveWorkspaceRoot();
+      if (ws) {
+        params.set('rootDir', ws);
+      }
+      return params;
+    }
+
+    function pgSyncStandaloneUrlParam(wsRoot) {
+      if (!pgIsStandaloneView()) return;
+      try {
+        if (typeof window === 'undefined' || !window.location || !window.history || typeof window.history.replaceState !== 'function') return;
+        const qs = new URLSearchParams(window.location.search || '');
+        if (wsRoot) {
+          qs.set('rootDir', wsRoot);
+        } else {
+          qs.delete('rootDir');
+        }
+        const qStr = qs.toString();
+        const pathname = typeof window.location.pathname === 'string' && window.location.pathname ? window.location.pathname : '/';
+        const hash = typeof window.location.hash === 'string' ? window.location.hash : '';
+        window.history.replaceState(null, '', pathname + (qStr ? '?' + qStr : '') + hash);
+      } catch {}
+    }
 
     function pgIsLightTheme() {
       return document.body && document.body.getAttribute('data-panel-theme') === 'studio_titanium';
@@ -2182,8 +2260,11 @@
       const depthSel = document.getElementById('pgDepthSelect');
 
       if (wsBadge) {
-        wsBadge.textContent = (data && data.workspaceName) ? data.workspaceName : getSelectedWorkspaceDisplayName();
+        wsBadge.textContent = (data && data.workspaceName)
+          ? data.workspaceName
+          : (pgState.workspaceRoot ? (pgWsBasename(pgState.workspaceRoot) || pgState.workspaceRoot) : getSelectedWorkspaceDisplayName());
       }
+      pgRenderWorkspaceSelect();
       if (statsEl) {
         if (data && data.ok) {
           const nCount = Number(data.shownNodes || 0);
@@ -2546,6 +2627,7 @@
 
       try {
         const params = new URLSearchParams();
+        pgAppendWorkspaceParam(params);
         if (pgState.mode === 'local' && pgState.focusFile) {
           params.set('focus', pgState.focusFile);
           params.set('depth', String(pgState.depth));
@@ -2566,6 +2648,10 @@
             if (emptySub) emptySub.textContent = (data && data.error) ? data.error : L('Ошибка сервера панели', 'Panel server error');
           }
           return;
+        }
+
+        if (!pgState.workspaceRoot && data.workspaceRoot && !pgState.autoWorkspace) {
+          pgState.autoWorkspace = data.workspaceRoot;
         }
 
         if (!Array.isArray(data.nodes) || data.nodes.length === 0) {
@@ -2868,13 +2954,298 @@
       } catch {}
     }
 
+    function pgBuildMergedWorkspacesList() {
+      const merged = [];
+      const seen = new Set();
+      const pushItem = function (raw) {
+        if (!raw) return;
+        const wsPath = typeof raw === 'string' ? raw.trim() : String(raw.workspaceRoot || '').trim();
+        if (!wsPath || wsPath === '__all__' || wsPath === '__auto__') return;
+        const key = pgNormWsKey(wsPath);
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        const base = pgWsBasename(wsPath) || wsPath;
+        if (typeof raw === 'string') {
+          merged.push({
+            workspaceRoot: wsPath,
+            projectName: base,
+            displayLabel: base,
+            status: 'idle',
+            source: 'recent',
+          });
+        } else {
+          merged.push({
+            workspaceRoot: wsPath,
+            projectName: raw.projectName || base,
+            displayLabel: raw.displayLabel || raw.projectName || base,
+            status: raw.status || 'idle',
+            source: raw.source || 'known',
+          });
+        }
+      };
+
+      if (pgState.workspaceRoot) pushItem(pgState.workspaceRoot);
+      const known = Array.isArray(pgState.knownWorkspaces) ? pgState.knownWorkspaces : [];
+      for (let i = 0; i < known.length; i++) pushItem(known[i]);
+      const recent = pgLoadRecentWorkspaces();
+      for (let i = 0; i < recent.length; i++) pushItem(recent[i]);
+      if (typeof _knownWorkspacesList !== 'undefined' && Array.isArray(_knownWorkspacesList)) {
+        for (let i = 0; i < _knownWorkspacesList.length; i++) pushItem(_knownWorkspacesList[i]);
+      }
+      if (pgState.graphData && pgState.graphData.workspaceRoot) {
+        pushItem({
+          workspaceRoot: pgState.graphData.workspaceRoot,
+          projectName: pgState.graphData.workspaceName || pgWsBasename(pgState.graphData.workspaceRoot),
+          displayLabel: pgState.graphData.workspaceName || pgWsBasename(pgState.graphData.workspaceRoot),
+          status: 'idle',
+          source: 'known',
+        });
+      }
+      return merged;
+    }
+
+    function pgRenderWorkspaceSelect() {
+      const sel = document.getElementById('pgWorkspaceSelect');
+      if (!sel) return;
+      const list = pgBuildMergedWorkspacesList();
+      const autoCandidate = pgState.autoWorkspace ||
+        (typeof _autoWorkspaceResolved === 'string' ? _autoWorkspaceResolved : '') ||
+        (typeof _activeWorkspaceResolved === 'string' ? _activeWorkspaceResolved : '') ||
+        (!pgState.workspaceRoot && pgState.graphData && pgState.graphData.workspaceRoot ? pgState.graphData.workspaceRoot : '');
+      const autoLabel = autoCandidate ? pgWsBasename(autoCandidate) : '';
+      const targetKey = pgNormWsKey(pgState.workspaceRoot);
+
+      const sigParts = [getUiLanguage(), autoLabel, pgState.workspaceRoot || ''];
+      for (let i = 0; i < list.length; i++) {
+        const w = list[i];
+        sigParts.push([w.workspaceRoot, w.displayLabel || w.projectName, w.status || ''].join(':'));
+      }
+      const nextSig = sigParts.join('|');
+      let matchedVal = '';
+      for (let i = 0; i < list.length; i++) {
+        if (targetKey && pgNormWsKey(list[i].workspaceRoot) === targetKey) {
+          matchedVal = list[i].workspaceRoot;
+          break;
+        }
+      }
+
+      if (!sel.dataset || sel.dataset.pgWsSig !== nextSig) {
+        if (sel.dataset) sel.dataset.pgWsSig = nextSig;
+        sel.innerHTML = '';
+
+        const autoOpt = document.createElement('option');
+        autoOpt.value = '';
+        autoOpt.textContent = autoLabel
+          ? L('🔄 Авто (' + autoLabel + ')', '🔄 Auto (' + autoLabel + ')')
+          : L('🔄 Авто (активный чат)', '🔄 Auto (active chat)');
+        autoOpt.title = autoCandidate || L('Автоопределение проекта по активному чату', 'Auto-detect project from active chat');
+        sel.appendChild(autoOpt);
+
+        for (let i = 0; i < list.length; i++) {
+          const item = list[i];
+          const opt = document.createElement('option');
+          opt.value = item.workspaceRoot;
+          const lbl = item.displayLabel || item.projectName || pgWsBasename(item.workspaceRoot);
+          const isLive = item.status === 'running' || item.status === 'waiting_user';
+          opt.textContent = (isLive ? '● ' : '📁 ') + lbl;
+          opt.title = item.workspaceRoot;
+          sel.appendChild(opt);
+        }
+      }
+
+      sel.value = matchedVal;
+      sel.title = matchedVal
+        ? (L('Проект карты: ', 'Map project: ') + matchedVal)
+        : (autoCandidate
+          ? (L('Авторежим: ', 'Auto mode: ') + autoCandidate)
+          : L('Выбрать проект для карты', 'Select project for map'));
+    }
+
+    async function pgLoadWorkspaces() {
+      const seq = ++pgState.workspacesSeq;
+      try {
+        const params = new URLSearchParams();
+        pgAppendWorkspaceParam(params);
+        const recent = pgLoadRecentWorkspaces();
+        if (recent.length > 0) {
+          params.set('extraRoots', recent.join('|'));
+        }
+        const q = params.toString();
+        const res = await panelFetch('/api/project-graph/workspaces' + (q ? '?' + q : ''));
+        const data = await res.json();
+        if (seq !== pgState.workspacesSeq) return;
+        if (data && data.ok) {
+          if (typeof data.autoWorkspace === 'string' && data.autoWorkspace) {
+            pgState.autoWorkspace = data.autoWorkspace;
+          }
+          if (Array.isArray(data.workspaces)) {
+            pgState.knownWorkspaces = data.workspaces;
+          }
+          pgState.workspacesLoaded = true;
+          pgRenderWorkspaceSelect();
+        }
+      } catch {
+        if (seq === pgState.workspacesSeq) {
+          pgRenderWorkspaceSelect();
+        }
+      }
+    }
+
+    function pgResetProjectTransientState() {
+      pgStopLoop();
+      pgUpdateHoverTooltip(null, 0, 0);
+      if (typeof pgHideWebglCanvas === 'function') pgHideWebglCanvas();
+      pgState.mode = 'global';
+      pgState.viewLevel = 'folders';
+      pgState.drillFolder = '';
+      pgState.focusFile = '';
+      pgState.selectedNodeId = '';
+      pgState.hoveredNodeId = '';
+      pgState.activeClusterId = '';
+      pgState.searchQuery = '';
+      const searchInp = document.getElementById('pgSearchInput');
+      if (searchInp) searchInp.value = '';
+      const searchClear = document.getElementById('pgSearchClearBtn');
+      if (searchClear) searchClear.style.display = 'none';
+      pgState.rawGraphData = null;
+      pgState.graphData = null;
+      pgState.nodes = [];
+      pgState.edges = [];
+      pgState.nodeById = new Map();
+      pgState.inNeighbors = new Map();
+      pgState.outNeighbors = new Map();
+      pgState.clusterColors = new Map();
+      pgState.layeredColumns = [];
+      pgState.spatialTree = null;
+      pgState.symbolFile = '';
+      pgState.symbolGraphData = null;
+      pgState.symbolLoading = false;
+      pgState.gitDiffLoaded = false;
+      pgState.gitDiffLoading = false;
+      pgState.gitDiffFiles = [];
+      pgState.gitDiffSet = new Set();
+      pgState.blastUseGitDiff = false;
+      pgState.blastWaveMap = new Map();
+      pgState.blastFileWaveMap = new Map();
+      pgState.blastByHop = { 0: [], 1: [], 2: [], 3: [] };
+      pgState.blastAffectedTests = [];
+      pgState.blastEstTokens = 0;
+      pgState.churnLoaded = false;
+      pgState.churnLoading = false;
+      pgState.churnByFile = {};
+      pgState.churnMax = 0;
+      pgState.hotspotScoreMap = new Map();
+      pgState.hotspotRankList = [];
+      pgState.churnSeq = (pgState.churnSeq || 0) + 1;
+      pgState.pathFrom = '';
+      pgState.pathTo = '';
+      pgState.pathResult = null;
+      pgState.pathLoading = false;
+      pgState.pathFileSequence = [];
+      pgState.pathNodeSet = new Set();
+      pgState.pathEdgeSet = new Set();
+      pgState.cycles = [];
+      pgState.activeCycleIdx = -1;
+      pgState.cycleNodeSet = new Set();
+      pgState.cycleEdgeSet = new Set();
+      pgState.macroCycleNodeSet = new Set();
+      pgState.macroCycleEdgeSet = new Set();
+      pgState.activeCycleNodeSet = new Set();
+      pgState.activeCycleEdgeSet = new Set();
+      pgState.orphanSet = new Set();
+      pgState.semanticScores = new Map();
+      pgState.semanticQuery = '';
+      pgState.semanticMode = '';
+      pgState.semanticLoading = false;
+      pgState.semanticSeq = (pgState.semanticSeq || 0) + 1;
+      pgState.contextCart = new Set();
+    }
+
+    async function pgSelectWorkspace(nextRoot) {
+      const clean = String(nextRoot || '').trim();
+      const prevKey = pgNormWsKey(pgState.workspaceRoot);
+      const nextKey = pgNormWsKey(clean);
+      pgState.workspaceRoot = clean;
+      if (clean) {
+        pgSaveRecentWorkspace(clean);
+        if (!Array.isArray(pgState.knownWorkspaces)) pgState.knownWorkspaces = [];
+        const exists = pgState.knownWorkspaces.some(function (w) {
+          return w && pgNormWsKey(w.workspaceRoot) === nextKey;
+        });
+        if (!exists) {
+          const base = pgWsBasename(clean) || clean;
+          pgState.knownWorkspaces.unshift({
+            workspaceRoot: clean,
+            projectName: base,
+            displayLabel: base,
+            status: 'idle',
+            source: 'recent',
+          });
+        }
+      }
+      pgResetProjectTransientState();
+      pgSyncStandaloneUrlParam(clean);
+      pgRenderWorkspaceSelect();
+      pgRenderToolbarAndStats();
+      pgRenderClusterPills();
+      if (typeof pgRenderContextCart === 'function') pgRenderContextCart();
+      pgRenderInspector();
+      pgDrawGraph();
+
+      if (prevKey !== nextKey || !pgState.workspacesLoaded) {
+        void pgLoadWorkspaces();
+      }
+      const label = clean ? (pgWsBasename(clean) || clean) : L('Авто (активный проект)', 'Auto (active project)');
+      if (typeof flashStatus === 'function') {
+        flashStatus(L('Загружаем карту проекта «' + label + '»…', 'Loading project map "' + label + '"…'));
+      }
+      await pgLoadGraph({ silent: false });
+    }
+
+    async function pgBrowseWorkspaceFolder() {
+      const browseBtn = document.getElementById('pgBrowseWorkspaceBtn');
+      if (browseBtn) browseBtn.disabled = true;
+      try {
+        if (typeof flashStatus === 'function') {
+          flashStatus(L('Открываем выбор папки проекта…', 'Opening project folder picker…'));
+        }
+        const initDir = pgGetEffectiveWorkspaceRoot() ||
+          pgState.autoWorkspace ||
+          (typeof _activeWorkspaceResolved === 'string' ? _activeWorkspaceResolved : '') ||
+          '';
+        const res = await panelFetch('/api/project-graph/pick-folder', {
+          method: 'POST',
+          body: JSON.stringify({ initialDir: initDir }),
+        });
+        const data = await res.json();
+        if (!data || !data.ok) {
+          if (typeof flashStatus === 'function') {
+            flashStatus((data && data.error) || L('Не удалось выбрать папку проекта', 'Failed to pick project folder'));
+          }
+          return;
+        }
+        if (data.cancelled || !data.workspaceRoot) {
+          return;
+        }
+        await pgSelectWorkspace(data.workspaceRoot);
+      } catch (err) {
+        if (typeof flashStatus === 'function') {
+          flashStatus((err && err.message) || L('Ошибка диалога выбора папки', 'Folder picker error'));
+        }
+      } finally {
+        if (browseBtn) browseBtn.disabled = false;
+      }
+    }
+
     function pgInitStandaloneIfNeeded() {
       if (!pgIsStandaloneView()) return false;
       try {
         const qs = new URLSearchParams(window.location.search);
-        const wsParam = qs.get('rootDir');
-        if (wsParam && typeof _selectedWorkspaceMode !== 'undefined') {
-          _selectedWorkspaceMode = wsParam;
+        const wsParam = String(qs.get('rootDir') || '').trim();
+        pgState.workspaceRoot = wsParam;
+        if (wsParam) pgSaveRecentWorkspace(wsParam);
+        if (typeof _selectedWorkspaceMode !== 'undefined') {
+          _selectedWorkspaceMode = '__auto__';
         }
       } catch {}
       if (document.body) {
@@ -2894,9 +3265,15 @@
           const tok = (window.sidecar && window.sidecar.token) ||
             new URLSearchParams(window.location.search).get('token') ||
             '';
-          const res = await panelFetch('/api/project-graph/open-window', {
+          const curGraphWs = pgGetEffectiveWorkspaceRoot();
+          const openBody = { token: tok };
+          if (curGraphWs) openBody.rootDir = curGraphWs;
+          const openUrl = curGraphWs
+            ? '/api/project-graph/open-window?rootDir=' + encodeURIComponent(curGraphWs)
+            : '/api/project-graph/open-window';
+          const res = await panelFetch(openUrl, {
             method: 'POST',
-            body: JSON.stringify({ token: tok }),
+            body: JSON.stringify(openBody),
           });
           const data = await res.json();
           if (data && data.ok) {
@@ -2921,11 +3298,13 @@
           pgDrawGraph();
         });
       }
+      pgRenderWorkspaceSelect();
       pgRenderToolbarAndStats();
       pgRenderInspector();
       if (typeof applyUiLanguageDom === 'function') {
         applyUiLanguageDom(getUiLanguage());
       }
+      void pgLoadWorkspaces();
       void pgLoadGraph({ silent: true });
     }
 

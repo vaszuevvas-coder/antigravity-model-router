@@ -563,6 +563,7 @@
         case 'pgExitSymbolsLevel': pgExitSymbolsLevel(arg); break;
         case 'pgChangeChurnDays': pgChangeChurnDays(arg); break;
         case 'pgAddTopHotspotsToCart': pgAddTopHotspotsToCart(); break;
+        case 'pgBrowseWorkspaceFolder': void pgBrowseWorkspaceFolder(); break;
         default: break;
       }
     }

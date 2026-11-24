@@ -47,7 +47,7 @@ function clampInt(val, min, max, fallback) {
 export function createDefaultProgressState() {
   const now = Date.now();
   return {
-    version: '3.33.0',
+    version: '3.33.1',
     activeConversationId: 'default',
     projectName: 'antigravity-model-router',
     workspaceRoot: '',

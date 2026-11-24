@@ -286,6 +286,7 @@
       try {
         const params = new URLSearchParams();
         params.set('file', target);
+        if (typeof pgAppendWorkspaceParam === 'function') pgAppendWorkspaceParam(params);
         const res = await panelFetch('/api/project-graph/symbols?' + params.toString());
         const data = await res.json();
         if (!data || !data.ok) {
@@ -411,6 +412,7 @@
       try {
         const params = new URLSearchParams();
         params.set('q', clean);
+        if (typeof pgAppendWorkspaceParam === 'function') pgAppendWorkspaceParam(params);
         const res = await panelFetch('/api/project-graph/semantic-search?' + params.toString());
         const data = await res.json();
         if (seq !== pgState.semanticSeq || !pgState.semanticSearchEnabled) return;

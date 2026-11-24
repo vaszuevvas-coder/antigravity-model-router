@@ -2,7 +2,20 @@
 
 Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
 
-> Хронология с `v3.8.0` по `v3.33.0` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`55` основных / `63` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `12` навыков и `37` наборов автотестов).
+> Хронология с `v3.8.0` по `v3.33.1` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`55` основных / `63` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `13` навыков и `38` наборов автотестов).
+
+---
+
+## [3.33.1] — 2026-11-24
+
+### Добавлено и исправлено (Навык `github-publish-guard` и улучшения «Карты проекта»)
+- **Навык защиты публикаций GitHub ([skills/github-publish-guard/SKILL.md](skills/github-publish-guard/SKILL.md), [scripts/audit-github-publish.mjs](skills/github-publish-guard/scripts/audit-github-publish.mjs), [tests/github-publish-guard.test.mjs](tests/github-publish-guard.test.mjs))**:
+  - Универсальный нуль-зависимый пре-аудитор (`npm run audit:github`) перед отправкой в GitHub: проверяет отсутствие отпечатков ПК и абсолютных путей пользователя (`C:\Users\<user>`, `/Users/<user>`, `/home/<user>`), локальных хостов/LAN IP, секретов и токенов, а также чистоту шаблонного `router-state.json`.
+  - Проверяет соблюдение правил GitHub (лимиты размеров файлов `50/100 МБ`, запрет трекинга `.env`, ключей, кэшей и OS-мусора, наличие `LICENSE` / `.gitignore` / `README.md`) и точность метаданных (совпадение версий в `package.json`, `plugin.json`, `README.md`, `CHANGELOG.md`, `assets/banner.svg`, целостность относительных Markdown-ссылок, счётчиков и опциональную сверку `--remote` с `origin` и GitHub Releases).
+  - Добавлены двуязычные названия/подсказки в каталоге панели ([sidecars/panel/lib/panel-state-skills.mjs](sidecars/panel/lib/panel-state-skills.mjs)) и регистрация в `install.js`; все `13` навыков проходят `npm run lint:skills` на `100/100 (Grade A)`.
+- **Интерактивная «Карта проекта» — выбор воркспейса и исправления запуска ([sidecars/panel/server.mjs](sidecars/panel/server.mjs), [sidecars/panel/lib/panel-telemetry-collectors.mjs](sidecars/panel/lib/panel-telemetry-collectors.mjs), [sidecars/panel/ui-src/js/07-project-graph.js](sidecars/panel/ui-src/js/07-project-graph.js), [tests/project-graph-panel.test.mjs](tests/project-graph-panel.test.mjs))**:
+  - Добавлен маршрут `/api/project-graph/workspaces` и обнаружение пользовательских проектов (`discoverUserProjectsForGraph`) для переключения воркспейсов прямо из карты проекта.
+  - Исправлен холодный старт автономного окна `--app` на Windows (убран `windowsHide: true`, который скрывал первое окно) и устранена проблема с появлением свёрнутой левой панели при первом открытии карты.
 
 ---
 

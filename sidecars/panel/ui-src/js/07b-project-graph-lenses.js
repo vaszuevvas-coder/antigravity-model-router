@@ -329,6 +329,7 @@
         const params = new URLSearchParams();
         params.set('days', String(reqDays));
         if (forceRefresh) params.set('refresh', '1');
+        if (typeof pgAppendWorkspaceParam === 'function') pgAppendWorkspaceParam(params);
         const res = await panelFetch('/api/project-graph/git-churn?' + params.toString());
         const data = await res.json();
         if (seq !== pgState.churnSeq) return;
@@ -488,6 +489,7 @@
       try {
         const params = new URLSearchParams();
         if (forceRefresh) params.set('refresh', '1');
+        if (typeof pgAppendWorkspaceParam === 'function') pgAppendWorkspaceParam(params);
         const q = params.toString();
         const res = await panelFetch('/api/project-graph/git-diff' + (q ? '?' + q : ''));
         const data = await res.json();
@@ -629,6 +631,7 @@
         params.set('to', toFile);
         params.set('maxDepth', '6');
         params.set('direction', 'both');
+        if (typeof pgAppendWorkspaceParam === 'function') pgAppendWorkspaceParam(params);
         const res = await panelFetch('/api/project-graph/path?' + params.toString());
         const data = await res.json();
         pgState.pathResult = data || { ok: false, found: false };
