@@ -12,6 +12,7 @@ import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Script } from 'node:vm';
 import { Worker, isMainThread, parentPort } from 'node:worker_threads';
+import { createBaseLiveActivityState, isPidAlive } from './cache-dir.mjs';
 import { safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -700,29 +701,15 @@ export async function shutdownCpuPool() {
 }
 
 function isProcessAliveSafe(pid) {
-  const num = Number(pid);
-  if (!Number.isInteger(num) || num <= 0) return false;
-  if (num === process.pid) return true;
-  try {
-    process.kill(num, 0);
-    return true;
-  } catch (err) {
-    return err && err.code === 'EPERM';
-  }
+  return isPidAlive(pid, { treatSelfAsAlive: true });
 }
 
 function defaultCpuLiveState() {
-  return {
-    opSeq: 0,
-    inFlight: [],
-    lastCompletedAt: 0,
-    lastOp: '',
-    lastDetail: '',
+  return createBaseLiveActivityState({
     lastDetailEn: '',
     lastWorkers: 0,
     lastItems: 0,
-    lastLatencyMs: 0,
-  };
+  });
 }
 
 function describeCpuBatchDetailRu(type, count = 0) {

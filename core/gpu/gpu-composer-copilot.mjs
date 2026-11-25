@@ -19,6 +19,7 @@ import {
   loadGpuConfig,
   ollamaHttpJson,
   parseStrictBackgroundJson,
+  readFreshTtlLruEntry,
 } from './gpu-shared-state.mjs';
 import {
   VRAM_CAP_TOLERANCE_MB,
@@ -279,15 +280,7 @@ export function sanitizeGhostContinuation(draft = '', rawSuggestion = '') {
 }
 
 function getFreshContinuationCacheEntry(key) {
-  const entry = continuationCache.get(key);
-  if (!entry) return null;
-  if ((Date.now() - (entry.ts || 0)) >= CONTINUATION_CACHE_TTL_MS) {
-    continuationCache.delete(key);
-    return null;
-  }
-  continuationCache.delete(key);
-  continuationCache.set(key, entry);
-  return entry;
+  return readFreshTtlLruEntry(continuationCache, key, CONTINUATION_CACHE_TTL_MS);
 }
 
 function setContinuationCacheEntry(key, entry) {

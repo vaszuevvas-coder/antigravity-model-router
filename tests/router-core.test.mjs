@@ -4187,7 +4187,8 @@ test('31. Stage 1-4 Polish Regressions: TAP/Stop/Badge/MCP/GPU/Drift/Pricing/Age
     assert.ok(uiHtml.includes('.ag-ctx-pill.is-ram'), 'ui.html must define .ag-ctx-pill.is-ram');
     assert.ok(uiHtml.includes('body.is-tab-hidden'), 'ui.html must define body.is-tab-hidden animation pause');
     assert.ok(uiHtml.includes('animation-play-state: paused'), 'ui.html must pause animations when tab hidden');
-    assert.ok(uiHtml.includes('c.activeSkills') && uiHtml.includes('c.ramSavedTokens'), 'ui.html must render activeSkills and ramSavedTokens');
+    assert.ok(uiHtml.includes('c.activeSkills'), 'ui.html must render activeSkills');
+    assert.equal(/\bc\.ramSavedTokens\b/.test(uiHtml), false, 'ui.html must not render ramSavedTokens HUD pill');
     assert.ok(uiHtml.includes("document.body.classList.toggle('is-tab-hidden'"), 'ui.html must toggle is-tab-hidden');
     assert.equal(uiHtml.includes('toggleBlockEditBtn'), false, 'toggleBlockEditBtn must be removed for direct drag handles');
     assert.equal(uiHtml.includes('is-layout-editing'), false, 'is-layout-editing mode must be removed');
@@ -4453,6 +4454,7 @@ test('32b. Background Task (task running) keeps progress running across Stop and
     recordTaskProgressOnPostTool,
     inspectTranscriptTurnState,
     localizeProgressLabelToEn,
+    markHostRestartAndReapActiveTasks,
     resetTaskProgress,
   } = await import('../core/task-progress.mjs');
 
@@ -4654,6 +4656,258 @@ test('32b. Background Task (task running) keeps progress running across Stop and
     const restartTurn = inspectTranscriptTurnState(restartLog);
     assert.equal(restartTurn.hasRunningBackgroundTask, false);
     assert.equal(restartTurn.state, 'cancelled');
+    assert.equal(restartTurn.backgroundTasks.length, 1);
+    assert.equal(restartTurn.backgroundTasks[0].status, 'cancelled');
+
+    // Verify full backgroundTasks history: running/done/error/cancelled, toolSummary pairing, task-*.log merge, redaction & UI markers
+    const histCid = 'chat-bg-history';
+    const histLog = path.join(tmpBrain, histCid, '.system_generated', 'logs', 'transcript.jsonl');
+    const histTasksDir = path.join(tmpBrain, histCid, '.system_generated', 'tasks');
+    fs.mkdirSync(path.dirname(histLog), { recursive: true });
+    fs.mkdirSync(histTasksDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(histTasksDir, 'task-orphan-log.log'),
+      'Command: npm run lint\nAll checks passed.\nCommand exited with code 0.\n',
+      'utf8'
+    );
+    const fakeOpenAiKey = ['sk', 'proj', 'abcdefghijklmnopqrstuvwxyz12345'].join('-');
+    const histLines = [
+      JSON.stringify({ step_index: 1, source: 'USER_EXPLICIT', type: 'USER_INPUT', created_at: '2026-11-24T18:00:00Z', content: 'Запусти несколько фоновых задач' }),
+      JSON.stringify({
+        step_index: 2,
+        type: 'PLANNER_RESPONSE',
+        created_at: '2026-11-24T18:00:01Z',
+        tool_calls: [{ name: 'run_command', args: { CommandLine: `curl -H "Authorization: Bearer ${fakeOpenAiKey}" http://localhost:8765`, toolSummary: 'Проверка сервера мониторинга', IsDaemon: true } }],
+      }),
+      JSON.stringify({
+        step_index: 3,
+        type: 'GENERIC',
+        created_at: '2026-11-24T18:00:02Z',
+        content: `Tool is running as a background task with task id: bg-run-1\nTask Description: curl -H "Authorization: Bearer ${fakeOpenAiKey}" http://localhost:8765`,
+      }),
+      JSON.stringify({
+        step_index: 4,
+        type: 'PLANNER_RESPONSE',
+        created_at: '2026-11-24T18:00:03Z',
+        tool_calls: [{ name: 'run_command', args: { CommandLine: 'node broken.mjs', toolSummary: 'Упавший скрипт' } }],
+      }),
+      JSON.stringify({
+        step_index: 5,
+        type: 'GENERIC',
+        created_at: '2026-11-24T18:00:04Z',
+        content: 'Tool is running as a background task with task id: bg-err-1\nTask Description: node broken.mjs',
+      }),
+      JSON.stringify({
+        step_index: 6,
+        source: 'SYSTEM',
+        type: 'SYSTEM_MESSAGE',
+        created_at: '2026-11-24T18:00:05Z',
+        content: '[Message] sender=bg-err-1 content=Task id "bg-err-1" failed with error: exit code 1',
+      }),
+      JSON.stringify({
+        step_index: 7,
+        type: 'PLANNER_RESPONSE',
+        created_at: '2026-11-24T18:00:06Z',
+        tool_calls: [{ name: 'manage_task', args: { Action: 'kill', TaskId: 'bg-cancel-1' } }],
+      }),
+    ];
+    for (let k = 1; k <= 26; k++) {
+      histLines.push(JSON.stringify({
+        step_index: 10 + k,
+        type: 'GENERIC',
+        created_at: `2026-11-24T17:58:${String(k).padStart(2, '0')}Z`,
+        content: `Tool is running as a background task with task id: bg-done-${k}\nTask Description: echo job-${k}\nTask: bg-done-${k} Status: COMPLETED`,
+      }));
+    }
+    histLines.push(JSON.stringify({
+      step_index: 40,
+      type: 'PLANNER_RESPONSE',
+      status: 'DONE',
+      tool_calls: [],
+      content: 'Монитор работает в фоне.',
+    }));
+    fs.writeFileSync(histLog, histLines.join('\n') + '\n', 'utf8');
+
+    const histTurn = inspectTranscriptTurnState(histLog);
+    assert.equal(histTurn.hasRunningBackgroundTask, true);
+    assert.equal(histTurn.backgroundTasksTotalCount, 30);
+    assert.equal(histTurn.backgroundTasks.length, 25, 'backgroundTasks must cap at 25 entries');
+    assert.equal(histTurn.backgroundTasks[0].taskId, 'bg-run-1', 'Running task must sort first');
+    assert.equal(histTurn.backgroundTasks[0].label, 'Проверка сервера мониторинга');
+    assert.equal(histTurn.backgroundTasks[0].isDaemon, true);
+    assert.ok(!histTurn.backgroundTasks[0].commandPreview.includes(['sk', 'proj', ''].join('-')), 'Secret token must be redacted');
+    assert.equal(Object.hasOwn(histTurn.backgroundTasks[0], 'logPath'), false, 'Raw logPath must not be exposed');
+    assert.ok(histTurn.backgroundTasks.some((t) => t.taskId === 'bg-err-1' && t.status === 'error'));
+    assert.ok(histTurn.backgroundTasks.some((t) => t.taskId === 'bg-cancel-1' && t.status === 'cancelled'));
+    assert.ok(histTurn.backgroundTasks.some((t) => t.taskId === 'orphan-log' && t.status === 'done'));
+
+    const histSnap = getTaskProgressSnapshot({
+      workspaceRoot: ROOT_DIR,
+      brainDirs: [tmpBrain],
+      now: Date.now() + 500,
+    });
+    const histChat = histSnap.activeChats.find((c) => c.conversationId === histCid);
+    assert.ok(histChat, 'History chat with running background task must appear in activeChats');
+    assert.ok(histChat.backgroundTasks.some((t) => t.taskId === 'bg-run-1' && t.status === 'running'));
+    assert.ok(histChat.backgroundTasks.some((t) => t.taskId === 'orphan-log' && t.status === 'done'), 'Just-finished task stays visible inside completedHoldMs');
+    assert.equal(histChat.backgroundTasks.some((t) => t.taskId === 'bg-done-1'), false, 'Old finished tasks must auto-hide');
+    assert.equal(histChat.backgroundTasks.some((t) => t.taskId === 'bg-err-1'), false, 'Old error tasks must auto-hide');
+    assert.equal(histChat.backgroundTasks.some((t) => t.taskId === 'bg-cancel-1'), false, 'Old cancelled tasks must auto-hide');
+
+    // After completedHoldMs (2.8s) elapses, finished task disappears leaving only running task
+    const histFadeSnap = getTaskProgressSnapshot({
+      workspaceRoot: ROOT_DIR,
+      brainDirs: [tmpBrain],
+      now: Date.now() + 5000,
+    });
+    const histFadeChat = histFadeSnap.activeChats.find((c) => c.conversationId === histCid);
+    assert.ok(histFadeChat);
+    assert.equal(histFadeChat.backgroundTasks.length, 1);
+    assert.equal(histFadeChat.backgroundTasksTotalCount, 1);
+    assert.equal(histFadeChat.backgroundTasks[0].taskId, 'bg-run-1');
+
+    const uiHtml = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+    assert.ok(uiHtml.includes("case 'toggleBgTasksList':"), 'Missing toggleBgTasksList dispatcher case');
+    assert.ok(uiHtml.includes("case 'toggleBgTasksShowAll':"), 'Missing toggleBgTasksShowAll dispatcher case');
+    assert.ok(uiHtml.includes('ag-bgtask-toggle-btn'), 'Missing cyan background tasks toggle button class');
+    assert.ok(uiHtml.includes('ag-bgtasks-drawer'), 'Missing collapsible background tasks drawer');
+    assert.ok(uiHtml.includes('body[data-panel-theme="studio_titanium"] .ag-bgtask-toggle-btn'), 'Missing light theme background tasks style');
+
+    // Regression 1: False-positive code slice / ram_slice output must NOT spawn background tasks
+    const fpLog = path.join(tmpBrain, 'chat-bg-fp', '.system_generated', 'logs', 'transcript.jsonl');
+    fs.mkdirSync(path.dirname(fpLog), { recursive: true });
+    fs.writeFileSync(
+      fpLog,
+      [
+        JSON.stringify({ step_index: 1, source: 'USER_EXPLICIT', type: 'USER_INPUT', content: 'Проверь тесты' }),
+        JSON.stringify({
+          step_index: 2,
+          type: 'GENERIC',
+          status: 'DONE',
+          content: "Created At: 2026-11-25T03:00:00+03:00\nCompleted At: 2026-11-25T03:00:01+03:00\n// [RAM Lines 4620-4670/8917] tests/router-core.test.mjs\nL4635: content: 'Tool is running as a background task with task id: chat-bg/task-3\\nTask Description: npm run build',",
+        }),
+        JSON.stringify({
+          step_index: 3,
+          type: 'PLANNER_RESPONSE',
+          status: 'DONE',
+          tool_calls: [],
+          content: 'Готово.',
+        }),
+      ].join('\n') + '\n',
+      'utf8'
+    );
+    const fpTurn = inspectTranscriptTurnState(fpLog);
+    assert.equal(fpTurn.hasRunningBackgroundTask, false, 'ram_slice snippet must not create running background task');
+    assert.equal(fpTurn.backgroundTasks.length, 0);
+    assert.equal(fpTurn.state, 'completed');
+
+    // Regression 2: Quoted toolSummary unwrapping & sync run_command isolation
+    const quoteLog = path.join(tmpBrain, 'chat-bg-quotes', '.system_generated', 'logs', 'transcript.jsonl');
+    fs.mkdirSync(path.dirname(quoteLog), { recursive: true });
+    fs.writeFileSync(
+      quoteLog,
+      [
+        JSON.stringify({ step_index: 1, source: 'USER_EXPLICIT', type: 'USER_INPUT', content: 'Собери и проверь' }),
+        JSON.stringify({
+          step_index: 2,
+          type: 'PLANNER_RESPONSE',
+          tool_calls: [{ name: 'run_command', args: { CommandLine: '"node scripts/build-panel-ui.mjs"', toolSummary: '"Сборка UI"' } }],
+        }),
+        JSON.stringify({
+          step_index: 3,
+          type: 'GENERIC',
+          status: 'DONE',
+          content: 'Created At: 2026-11-25T03:01:00+03:00\nCompleted At: 2026-11-25T03:01:01+03:00\nCommand exited with code 0.\n\nCommand output:\n[✓] ui.html собран',
+        }),
+        JSON.stringify({
+          step_index: 4,
+          type: 'PLANNER_RESPONSE',
+          tool_calls: [{ name: 'run_command', args: { CommandLine: '"node --test tests/router-core.test.mjs"', toolSummary: '"Прогон тестов"' } }],
+        }),
+        JSON.stringify({
+          step_index: 5,
+          type: 'GENERIC',
+          status: 'RUNNING',
+          content: 'Created At: 2026-11-25T03:01:05+03:00\nTool is running as a background task with task id: real-bg-1\nTask Description: node --test tests/router-core.test.mjs',
+        }),
+      ].join('\n') + '\n',
+      'utf8'
+    );
+    const quoteTurn = inspectTranscriptTurnState(quoteLog);
+    assert.equal(quoteTurn.hasRunningBackgroundTask, true);
+    assert.equal(quoteTurn.backgroundTasks.length, 1);
+    assert.equal(quoteTurn.backgroundTasks[0].label, 'Прогон тестов');
+
+    // Regression 3: Host restart reaping closes pre-restart chat & marks running tasks cancelled on resume
+    const reapCid = 'chat-bg-reap';
+    const reapLog = path.join(tmpBrain, reapCid, '.system_generated', 'logs', 'transcript.jsonl');
+    fs.mkdirSync(path.dirname(reapLog), { recursive: true });
+    const preBootIso = new Date(Date.now() - 20000).toISOString();
+    fs.writeFileSync(
+      reapLog,
+      [
+        JSON.stringify({ step_index: 1, source: 'USER_EXPLICIT', type: 'USER_INPUT', created_at: preBootIso, content: 'Запусти сервер' }),
+        JSON.stringify({
+          step_index: 2,
+          type: 'PLANNER_RESPONSE',
+          created_at: preBootIso,
+          tool_calls: [{ name: 'run_command', args: { CommandLine: '"node server.mjs"', toolSummary: '"Старт сервера"' } }],
+        }),
+        JSON.stringify({
+          step_index: 3,
+          type: 'GENERIC',
+          status: 'RUNNING',
+          created_at: preBootIso,
+          content: 'Tool is running as a background task with task id: reap-task-1\nTask Description: node server.mjs',
+        }),
+      ].join('\n') + '\n',
+      'utf8'
+    );
+    const preBootMtime = new Date(Date.now() - 15000);
+    fs.utimesSync(reapLog, preBootMtime, preBootMtime);
+
+    initTaskProgressFromPrompt({
+      conversationId: reapCid,
+      workspaceRoot: ROOT_DIR,
+      transcriptPath: reapLog,
+      userPrompt: 'Запусти сервер',
+      grade: 'M',
+      brainDirs: [tmpBrain],
+    });
+    await new Promise((r) => setTimeout(r, 25));
+    const bootAt = Date.now();
+    markHostRestartAndReapActiveTasks({ bootAt, brainDirs: [tmpBrain] });
+
+    const reapedSnap = getTaskProgressSnapshot({
+      workspaceRoot: ROOT_DIR,
+      brainDirs: [tmpBrain],
+      now: Date.now(),
+    });
+    assert.equal(reapedSnap.activeChats.some((c) => c.conversationId === reapCid), false, 'Pre-restart chat must stay closed after restart');
+
+    // Resuming chat after restart shows pre-restart background task as cancelled
+    await new Promise((r) => setTimeout(r, 25));
+    const postBootIso = new Date(Date.now()).toISOString();
+    fs.appendFileSync(
+      reapLog,
+      [
+        JSON.stringify({ step_index: 4, source: 'USER_EXPLICIT', type: 'USER_INPUT', created_at: postBootIso, content: 'Продолжи' }),
+        JSON.stringify({ step_index: 5, type: 'PLANNER_RESPONSE', created_at: postBootIso, tool_calls: [{ name: 'read_file', args: { Path: 'package.json' } }] }),
+      ].join('\n') + '\n',
+      'utf8'
+    );
+    const resumedSnap = getTaskProgressSnapshot({
+      workspaceRoot: ROOT_DIR,
+      brainDirs: [tmpBrain],
+      now: Date.now() + 100,
+    });
+    const resumedChat = resumedSnap.activeChats.find((c) => c.conversationId === reapCid);
+    assert.ok(resumedChat, 'Resumed chat must reappear in activeChats');
+    assert.equal(resumedChat.hasRunningBackgroundTask, false);
+    assert.equal(resumedChat.backgroundTasks.length, 0, 'Expired pre-restart cancelled tasks must stay hidden from live capsule');
+    assert.equal(resumedChat.backgroundTasksTotalCount, 0);
+    const reapTurn = inspectTranscriptTurnState(reapLog, Date.now(), { hostBootAt: bootAt });
+    assert.ok(reapTurn.backgroundTasks.some((t) => t.taskId === 'reap-task-1' && t.status === 'cancelled'));
   } finally {
     resetTaskProgress();
     if (prevTaskCacheEnv === undefined) delete process.env.TUNNEL_CACHE_DIR;
@@ -8142,7 +8396,7 @@ test('Bayesian Router v4: security domain, anti-confounding tier isolation, prec
     const initSummary = getBayesianSummary();
     assert.ok(initSummary.domains.some((d) => d.key === 'security'), 'security domain must be surfaced in getBayesianSummary()');
 
-    // 2) Anti-confounding: mid/heavy tier success must NOT inflate light-tier domain prior, while mid failure penalizes
+    // 2) Anti-confounding (v4.1 symmetric): mid/heavy outcomes must NOT distort light-tier domain/dir priors
     const dIso = `v4_iso_${Date.now()}`;
     const afterLightFail = recordModelOutcome({ domain: dIso, modelTier: 'light', success: false, signalType: 'micro_test' });
     const afterMidSuccess = recordModelOutcome({ domain: dIso, modelTier: 'neon', success: true, signalType: 'micro_test' });
@@ -8154,7 +8408,12 @@ test('Bayesian Router v4: security domain, anti-confounding tier isolation, prec
     assert.ok(routeMid.confidence > routeLight.confidence, `Expected mid tier confidence (${routeMid.confidence}) > light tier (${routeLight.confidence})`);
 
     const afterMidFail = recordModelOutcome({ domain: dIso, modelTier: 'neon', success: false, signalType: 'micro_test' });
-    assert.ok(afterMidFail.beta > afterMidSuccess.beta, 'Strong-tier failure must still increase beta penalty');
+    assert.equal(afterMidFail.beta, afterMidSuccess.beta, 'Strong-tier failure must NOT poison light-tier domain beta');
+    const routeMidAfterFail = evaluateBayesianRoute({ domain: dIso, modelTier: 'mid' });
+    assert.ok(
+      routeMidAfterFail.confidence < routeMid.confidence,
+      `Expected mid tier confidence after mid failure (${routeMidAfterFail.confidence}) < prior mid (${routeMid.confidence})`
+    );
 
     // 3) Precision-weighted pooling: empty dir: prior with 0 runs must not dilute domain prior
     const dPool = `v4_pool_${Date.now()}`;
@@ -8214,6 +8473,42 @@ test('Bayesian Router v4: security domain, anti-confounding tier isolation, prec
       `Expected risky XL contextual confidence (${riskyCtxRoute.effectiveConfidence}) < safe M (${safeCtxRoute.effectiveConfidence})`
     );
     assert.ok(getBayesianSummary().contextualUpdates >= 8);
+
+    // 7) High-success mid-tier workload must NOT accumulate negative domain/dir drift
+    const dMidHealthy = `v41_mid_healthy_${Date.now()}`;
+    for (let i = 0; i < 26; i++) {
+      recordModelOutcome({ domain: dMidHealthy, filePath: 'core/sample.mjs', modelTier: 'neon', success: true, signalType: 'micro_test' });
+    }
+    for (let i = 0; i < 4; i++) {
+      recordModelOutcome({ domain: dMidHealthy, filePath: 'core/sample.mjs', modelTier: 'neon', success: false, signalType: 'micro_test' });
+    }
+    const healthyMidRoute = evaluateBayesianRoute({ domain: dMidHealthy, filePath: 'core/sample.mjs', modelTier: 'mid' });
+    assert.ok(healthyMidRoute.confidence >= 0.72, `Expected healthy mid-tier confidence >= 0.72, got ${healthyMidRoute.confidence}`);
+    assert.equal(healthyMidRoute.depthBoost, 0);
+    const generalCoreRoute = evaluateBayesianRoute({ domain: 'general', filePath: 'core/sample.mjs', modelTier: 'mid' });
+    assert.equal(generalCoreRoute.depthBoost, 0);
+
+    // 8) v4.0 -> v4.1 auto-heal restores poisoned domain/dir priors from light tier / default
+    fs.writeFileSync(
+      priorsPath,
+      JSON.stringify({
+        version: '4.0',
+        priors: {
+          backend_db: { alpha: 0.25, beta: 45.7, runs: 227, successes: 12, failures: 215, updatedAt: new Date().toISOString() },
+          'dir:core': { alpha: 0.32, beta: 47.0, runs: 154, successes: 4, failures: 150, updatedAt: new Date().toISOString() },
+        },
+        tierPriors: {
+          'backend_db::light': { alpha: 10, beta: 3.4, runs: 13, successes: 12, failures: 1, updatedAt: new Date().toISOString() },
+          'backend_db::mid': { alpha: 27.3, beta: 22.0, runs: 846, successes: 675, failures: 171, updatedAt: new Date().toISOString() },
+        },
+        gradePriors: {},
+        fileFragility: {},
+      }),
+      'utf8'
+    );
+    const healedRoute = evaluateBayesianRoute({ domain: 'backend_db', filePath: 'core/foo.mjs', modelTier: 'mid' });
+    assert.ok(healedRoute.confidence >= 0.72, `Expected auto-healed v4.0->v4.1 confidence >= 0.72, got ${healedRoute.confidence}`);
+    assert.equal(healedRoute.depthBoost, 0);
   } finally {
     if (prevPriors === null) {
       try { fs.rmSync(priorsPath, { force: true }); } catch {}

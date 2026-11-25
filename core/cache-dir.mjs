@@ -88,3 +88,38 @@ export function pruneObjectMapByTimestamp(
   }
   return out;
 }
+
+/**
+ * Checks whether a process PID is alive via signal 0 probe.
+ * @param {number|string} pid
+ * @param {{ treatSelfAsAlive?: boolean }} [options]
+ * @returns {boolean}
+ */
+export function isPidAlive(pid, { treatSelfAsAlive = false } = {}) {
+  const num = Number(pid);
+  if (!Number.isInteger(num) || num <= 0) return false;
+  if (treatSelfAsAlive && num === process.pid) return true;
+  try {
+    process.kill(num, 0);
+    return true;
+  } catch (err) {
+    return err?.code === 'EPERM';
+  }
+}
+
+/**
+ * Builds the shared live-activity telemetry structure for CPU/GPU coprocessors.
+ * @param {Record<string, unknown>} [extra={}]
+ * @returns {Record<string, unknown>}
+ */
+export function createBaseLiveActivityState(extra = {}) {
+  return {
+    opSeq: 0,
+    inFlight: [],
+    lastCompletedAt: 0,
+    lastOp: '',
+    lastDetail: '',
+    lastLatencyMs: 0,
+    ...(extra && typeof extra === 'object' ? extra : {}),
+  };
+}

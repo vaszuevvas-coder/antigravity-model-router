@@ -31,16 +31,7 @@ function ensureCacheDir() {
   }
 }
 
-export function isPidAlive(pid) {
-  const num = Number(pid);
-  if (!Number.isInteger(num) || num <= 0) return false;
-  try {
-    process.kill(num, 0);
-    return true;
-  } catch (err) {
-    return err?.code === 'EPERM';
-  }
-}
+export { isPidAlive } from './cache-dir.mjs';
 
 function isRunningUnderAutomatedTest() {
   if (process.env.NODE_TEST_CONTEXT) return true;

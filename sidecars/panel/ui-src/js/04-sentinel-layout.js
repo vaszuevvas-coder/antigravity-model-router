@@ -48,8 +48,15 @@
         const fileStr = String(rawItem.file || rawItem.filePath || rawItem.sourceFile || '').trim();
         const partnerStr = String(rawItem.partnerFile || rawItem.partner || rawItem.coupledFile || rawItem.targetFile || '').trim();
         const lineNum = Number(rawItem.line || rawItem.startLine || 0);
+        const targetLineNum = Number(rawItem.targetLine || 0);
         const lineHintStr = String(rawItem.lineHint || '').trim();
-        if (fileStr && partnerStr) {
+        if (category === 'clone' && fileStr && partnerStr) {
+          const leftSym = rawItem.symbol ? ('#' + rawItem.symbol) : '';
+          const rightSym = rawItem.targetSymbol ? ('#' + rawItem.targetSymbol) : '';
+          const leftLine = lineNum > 0 ? (':L' + lineNum) : '';
+          const rightLine = targetLineNum > 0 ? (':L' + targetLineNum) : '';
+          loc = fileStr + leftSym + leftLine + ' ↔ ' + partnerStr + rightSym + rightLine;
+        } else if (fileStr && partnerStr) {
           loc = fileStr + ' ↔ ' + partnerStr;
         } else if (fileStr) {
           if (lineNum > 0) {
@@ -81,8 +88,12 @@
         }
       }
       if (!desc && !loc) return null;
-      const tagLabel = category === 'bugbot' ? 'BugBot' : (category === 'cochange' ? 'Co-Change' : L('Контракт', 'Contract'));
-      const tagClass = category === 'bugbot' ? 'tag-bugbot' : (category === 'cochange' ? 'tag-cochange' : 'tag-contract');
+      const tagLabel = category === 'bugbot'
+        ? 'BugBot'
+        : (category === 'cochange' ? 'Co-Change' : (category === 'clone' ? L('Клон', 'Clone') : L('Контракт', 'Contract')));
+      const tagClass = category === 'bugbot'
+        ? 'tag-bugbot'
+        : (category === 'cochange' || category === 'clone' ? 'tag-cochange' : 'tag-contract');
       if (!prompt) {
         prompt = isRu()
           ? ('Проверь находку Фонового Дозора (' + tagLabel + ')' + (loc ? (' в ' + loc) : '') + ': ' + desc + '. Предложи или внеси точечное исправление.')
@@ -140,6 +151,7 @@
 
       const rawIssues = Array.isArray(sg.issues) ? sg.issues : [];
       const rawCoChange = Array.isArray(sg.coChangeAlerts) ? sg.coChangeAlerts : [];
+      const rawClones = Array.isArray(sg.clonePairs) ? sg.clonePairs : [];
       const rawBugBot = Array.isArray(bb.findings) ? bb.findings : [];
 
       const errCount = Math.max(0, Number(sg.errorCount || 0));
@@ -207,6 +219,10 @@
       }
       for (let i = 0; i < rawBugBot.length && normalizedFindings.length < 18; i++) {
         const item = normalizeSentinelFindingEntry(rawBugBot[i], 'bugbot');
+        if (item) normalizedFindings.push(item);
+      }
+      for (let i = 0; i < rawClones.length && normalizedFindings.length < 18; i++) {
+        const item = normalizeSentinelFindingEntry(rawClones[i], 'clone');
         if (item) normalizedFindings.push(item);
       }
 
@@ -314,6 +330,7 @@
               const locEl = document.createElement('span');
               locEl.className = 'sentinel-finding-loc';
               locEl.textContent = lf.loc;
+              locEl.title = lf.loc;
               textWrap.appendChild(locEl);
             }
 
@@ -373,6 +390,7 @@
               const locSpan = document.createElement('span');
               locSpan.className = 'sentinel-finding-loc';
               locSpan.textContent = f.loc;
+              locSpan.title = f.loc;
               head.appendChild(locSpan);
             }
             body.appendChild(head);
@@ -668,6 +686,8 @@
         case 'setRamBudget': setRamBudget(Number(arg)); break;
         case 'saveExpertGpuConfig': saveExpertGpuConfig(); break;
         case 'toggleSubagentsList': toggleSubagentsList(arg, actionEl); break;
+        case 'toggleBgTasksList': toggleBgTasksList(arg, actionEl); break;
+        case 'toggleBgTasksShowAll': toggleBgTasksShowAll(arg, actionEl); break;
         case 'resetStaleProgressChats': resetStaleProgressChats(arg); break;
         case 'focusWaitingProgressChat': focusWaitingProgressChat(actionEl.getAttribute('data-cid') || arg); break;
         case 'toggleStepChip': toggleStepChip(actionEl.getAttribute('data-cid'), actionEl.getAttribute('data-step'), actionEl); break;

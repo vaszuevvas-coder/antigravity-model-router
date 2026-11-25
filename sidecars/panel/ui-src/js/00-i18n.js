@@ -483,7 +483,9 @@
       '⬇ Обновить': '⬇ Update',
       '🛡️ Фоновый Дозор:': '🛡️ Background Sentinel:',
       'Контракты: чисто · BugBot: чисто': 'Contracts: clean · BugBot: clean',
-      '🛠️ Исправить': '🛠️ Fix'
+      '🛠️ Исправить': '🛠️ Fix',
+      'Субагенты': 'Subagents',
+      'Фоновые': 'Tasks'
     };
 
     const UI_RU_TO_EN_ATTR = {
@@ -509,6 +511,10 @@
       'Статус локальной видеомодели Ollama (клик — открыть блок ресурсов)': 'Local Ollama GPU model status (click to open Resources)',
       'Статус пула потоков процессора на внутренних задачах (клик — открыть блок ресурсов)': 'CPU worker pool status for background tasks (click to open Resources)',
       'Раскрыть список субагентов': 'Expand subagents list',
+      'Раскрыть список фоновых задач': 'Expand background tasks list',
+      'Фоновые задачи': 'Background Tasks',
+      'Показать все': 'See all',
+      'Свернуть': 'Collapse',
       'Включить детальный опрос по дереву решений (Grill-Me) перед выполнением следующего запроса': 'Enable detailed decision-tree interview (Grill-Me) before the next request',
       'Двухступенчатое локальное автодополнение (RAM + Ollama GPU) без затрат облачных токенов': 'Two-stage local autocomplete (RAM + Ollama GPU) with zero cloud tokens',
       'Вставить ошибку и фрагмент кода в Умный Композер': 'Insert error and code snippet into Smart Composer',

@@ -654,6 +654,75 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
       );
     }
 
+    // Regression: long BugBot finding path in Lite Sentinel must truncate without horizontal overflow
+    const liteSentinelOverflowAudit = await cdp.evaluate(async () => {
+      const prevView = document.body.getAttribute('data-panel-view') || 'full';
+      const liteBtn = document.querySelector('#panelViewModeGroup button[data-view="lite"]');
+      if (liteBtn) liteBtn.click();
+      await new Promise((r) => setTimeout(r, 40));
+      renderSentinelStatus({
+        enabled: true,
+        state: 'idle',
+        shadowGuard: { errorCount: 0, warnCount: 25, issues: [], coChangeAlerts: [] },
+        bugBot: {
+          findingsCount: 1,
+          findings: [{
+            file: '.agents/workflows/video-prep.md',
+            lineHint: 'AutoStudio/GoogleFlow_Bot/config/settings.mjs',
+            issueRu: 'Длинное описание потенциальной ошибки конфигурации в файле',
+          }],
+        },
+      }, currentState);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const cw = document.documentElement.clientWidth;
+      const sw = document.documentElement.scrollWidth;
+      const cardRect = document.getElementById('liteQuickCard')?.getBoundingClientRect();
+      const rowRect = document.getElementById('liteSentinelRow')?.getBoundingClientRect();
+      const findingsRect = document.getElementById('liteSentinelFindings')?.getBoundingClientRect();
+      const checkBtnRect = document.getElementById('btnLiteSentinelCheck')?.getBoundingClientRect();
+      const fixBtnRect = document.getElementById('btnLiteSentinelFix')?.getBoundingClientRect();
+      const itemBtnRect = document.querySelector('#liteSentinelFindings .lite-sentinel-item-fix-btn')?.getBoundingClientRect();
+      const locTitle = document.querySelector('#liteSentinelFindings .sentinel-finding-loc')?.getAttribute('title') || '';
+
+      // Restore previous view mode & clean findings
+      renderSentinelStatus({ enabled: true, state: 'idle', shadowGuard: { errorCount: 0, warnCount: 0, issues: [], coChangeAlerts: [] }, bugBot: { findingsCount: 0, findings: [] } }, currentState);
+      const restoreBtn = document.querySelector(`#panelViewModeGroup button[data-view="${prevView}"]`);
+      if (restoreBtn) restoreBtn.click();
+      await new Promise((r) => setTimeout(r, 40));
+
+      return {
+        clientWidth: cw,
+        scrollWidth: sw,
+        cardRight: cardRect ? cardRect.right : 0,
+        rowRight: rowRect ? rowRect.right : 0,
+        findingsRight: findingsRect ? findingsRect.right : 0,
+        checkBtnRight: checkBtnRect ? checkBtnRect.right : 0,
+        fixBtnRight: fixBtnRect ? fixBtnRect.right : 0,
+        itemBtnRight: itemBtnRect ? itemBtnRect.right : 0,
+        locTitle,
+      };
+    });
+
+    assert.ok(
+      liteSentinelOverflowAudit.scrollWidth <= liteSentinelOverflowAudit.clientWidth + 2,
+      `Lite Sentinel long path caused horizontal overflow: scrollWidth=${liteSentinelOverflowAudit.scrollWidth} > clientWidth+2 (${liteSentinelOverflowAudit.clientWidth + 2})`,
+    );
+    assert.ok(
+      liteSentinelOverflowAudit.rowRight <= liteSentinelOverflowAudit.cardRight + 1,
+      `#liteSentinelRow overflowed #liteQuickCard: rowRight=${liteSentinelOverflowAudit.rowRight} > cardRight+1 (${liteSentinelOverflowAudit.cardRight + 1})`,
+    );
+    assert.ok(
+      liteSentinelOverflowAudit.findingsRight <= liteSentinelOverflowAudit.cardRight + 1,
+      `#liteSentinelFindings overflowed #liteQuickCard: findingsRight=${liteSentinelOverflowAudit.findingsRight} > cardRight+1 (${liteSentinelOverflowAudit.cardRight + 1})`,
+    );
+    assert.ok(
+      liteSentinelOverflowAudit.checkBtnRight <= liteSentinelOverflowAudit.clientWidth + 1 &&
+        liteSentinelOverflowAudit.fixBtnRight <= liteSentinelOverflowAudit.clientWidth + 1 &&
+        liteSentinelOverflowAudit.itemBtnRight <= liteSentinelOverflowAudit.clientWidth + 1,
+      `Lite Sentinel action buttons overflowed viewport: ${JSON.stringify(liteSentinelOverflowAudit)}`,
+    );
+    assert.match(liteSentinelOverflowAudit.locTitle, /AutoStudio\/GoogleFlow_Bot\/config\/settings\.mjs/);
+
     const wizardLayoutAudit = await cdp.evaluate(async () => {
       const setupBtn = document.getElementById('smartBannerSetupBtn');
       if (!setupBtn) throw new Error('smartBannerSetupBtn not found');

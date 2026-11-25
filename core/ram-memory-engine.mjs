@@ -46,7 +46,7 @@ import {
   queryCoChangePartners,
   verifyExportArityAndKeyContracts,
 } from './cpu-graph-contracts.mjs';
-import { skimAstBranchesWithBraceBalance } from './cpu-sbfl-healer.mjs';
+import { offsetToLine1, skimAstBranchesWithBraceBalance } from './cpu-sbfl-healer.mjs';
 import { checkFileSecurity } from './security-guard.mjs';
 import { formatRepoMapToon } from './toon-formatter.mjs';
 import { expandRuQueryToEnTerms } from './ru-en-lexicon.mjs';
@@ -1295,17 +1295,6 @@ export class RamMemoryEngine {
       : [];
     const mmrCandidates = [];
 
-    const byteOffsetToLine = (lineOffsets, bytePos) => {
-      let lo = 0;
-      let hi = lineOffsets.length - 1;
-      while (lo <= hi) {
-        const mid = (lo + hi) >>> 1;
-        if (lineOffsets[mid] <= bytePos) lo = mid + 1;
-        else hi = mid - 1;
-      }
-      return Math.max(1, lo);
-    };
-
     for (const item of ranked) {
       const entry = item.entry;
       let matchLine = 1;
@@ -1344,7 +1333,7 @@ export class RamMemoryEngine {
             }
           }
           if (foundByte !== -1) {
-            matchLine = byteOffsetToLine(entry.lineOffsets, foundByte);
+            matchLine = offsetToLine1(entry.lineOffsets, foundByte);
           } else if (entry.buf.byteLength <= 192 * 1024 && topFastTokens.length > 0) {
             const lowerTxt = entry.buf.toString('utf8').toLowerCase();
             for (const tok of topFastTokens) {

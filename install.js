@@ -745,7 +745,7 @@ export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun =
   const log = silent ? () => {} : (...args) => console.log(...args);
 
   const srcManifest = safeParseJsonObject(path.join(resolvedSrc, 'plugin.json'));
-  const version = srcManifest?.version ? String(srcManifest.version) : '3.34.0';
+  const version = srcManifest?.version ? String(srcManifest.version) : '3.34.1';
   const srcStatePath = path.join(resolvedSrc, 'router-state.json');
   const destStatePath = path.join(destRoot, 'router-state.json');
   const externalBackupPath = getExternalBackupPath(destRoot);
@@ -835,7 +835,7 @@ export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun =
 
   const globalDupesRemoved = isDefaultTarget ? purgeDuplicateGlobalSkills(destRoot) : 0;
 
-  // Чистка и обновление кэшей (.cache) The Tunnel v3.34.0: legacy priors/ledgers, старый f32bin-v1, нулевые repomap/digest
+  // Чистка и обновление кэшей (.cache) The Tunnel v3.34.1: legacy priors/ledgers, старый f32bin-v1, нулевые repomap/digest
   const targetCacheStats = maintainCacheDir(path.join(destRoot, '.cache'));
   const localCacheStats = inPlace || !isDefaultTarget
     ? { repomapsRemoved: 0, vectorsPurged: 0, digestsPruned: 0, legacyRemoved: 0 }
@@ -847,8 +847,8 @@ export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun =
 
   log(
     isRu
-      ? `[✓] Обслуживание The Tunnel v3.34.0: удалено сирот=${orphansRemoved}, дублей скиллов v3.0=${globalDupesRemoved}, legacy-кэшей=${totalLegacyRemoved}, устаревших f32bin/json векторов=${totalVectorsPurged}, устаревших repomap=${totalRepomapsRemoved}, старых дайджестов=${totalDigestsPruned}`
-      : `[OK] The Tunnel v3.34.0 maintenance: orphansRemoved=${orphansRemoved}, dupSkills=${globalDupesRemoved}, legacyCaches=${totalLegacyRemoved}, staleVectors=${totalVectorsPurged}, staleRepomaps=${totalRepomapsRemoved}, prunedDigests=${totalDigestsPruned}`
+      ? `[✓] Обслуживание The Tunnel v3.34.1: удалено сирот=${orphansRemoved}, дублей скиллов v3.0=${globalDupesRemoved}, legacy-кэшей=${totalLegacyRemoved}, устаревших f32bin/json векторов=${totalVectorsPurged}, устаревших repomap=${totalRepomapsRemoved}, старых дайджестов=${totalDigestsPruned}`
+      : `[OK] The Tunnel v3.34.1 maintenance: orphansRemoved=${orphansRemoved}, dupSkills=${globalDupesRemoved}, legacyCaches=${totalLegacyRemoved}, staleVectors=${totalVectorsPurged}, staleRepomaps=${totalRepomapsRemoved}, prunedDigests=${totalDigestsPruned}`
   );
   if (fallbackBackupState) {
     log(isRu ? `[✓] Пользовательские настройки восстановлены из резервной копии: ${externalBackupPath}` : `[OK] User settings restored from backup: ${externalBackupPath}`);

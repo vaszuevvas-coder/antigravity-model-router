@@ -37,6 +37,7 @@ function buildDefaultSentinelSnapshot(currentState = {}) {
       errorCount: 0,
       warnCount: 0,
       cloneCount: 0,
+      clonePairs: [],
       issues: [],
       coChangeAlerts: [],
     },

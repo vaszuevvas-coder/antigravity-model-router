@@ -674,6 +674,7 @@ function defaultHealthRecord() {
     errorCount: 0,
     warnCount: 0,
     cloneCount: 0,
+    clonePairs: [],
     issues: [],
     coChangeAlerts: [],
     lastRunAt: null,
@@ -1188,8 +1189,9 @@ export class BackgroundSentinel {
       }
     }
 
-    // 4. SimHash Clone Count
+    // 4. SimHash Clone Count & Pair Details
     let cloneCount = 0;
+    const clonePairs = [];
     try {
       const simIndex = buildWorkspaceSimHashIndex(filesMap);
       if (simIndex.size > 1) {
@@ -1205,7 +1207,23 @@ export class BackgroundSentinel {
             const a = `${f}#${cl.symbol}`;
             const b = `${cl.targetFile}#${cl.targetSymbol}`;
             const pairKey = a < b ? `${a}<->${b}` : `${b}<->${a}`;
-            seenPairs.add(pairKey);
+            if (!seenPairs.has(pairKey)) {
+              seenPairs.add(pairKey);
+              if (clonePairs.length < 10) {
+                const pct = Math.max(0, Math.min(100, Number(cl.similarityPct) || 0));
+                clonePairs.push({
+                  file: f,
+                  symbol: cl.symbol || '',
+                  line: Number(cl.line) || 1,
+                  targetFile: cl.targetFile || '',
+                  targetSymbol: cl.targetSymbol || '',
+                  targetLine: Number(cl.targetLine) || 1,
+                  similarityPct: pct,
+                  detailRu: `Дубликат SimHash (${pct}%): ${f}#${cl.symbol} ↔ ${cl.targetFile}#${cl.targetSymbol}`,
+                  detailEn: `SimHash duplicate (${pct}%): ${f}#${cl.symbol} ↔ ${cl.targetFile}#${cl.targetSymbol}`,
+                });
+              }
+            }
           }
         }
         cloneCount = seenPairs.size;
@@ -1230,6 +1248,7 @@ export class BackgroundSentinel {
       errorCount,
       warnCount,
       cloneCount,
+      clonePairs,
       issues: issues.slice(0, 20),
       coChangeAlerts: coChangeAlerts.slice(0, 10),
       lastRunAt: new Date().toISOString(),
@@ -2014,6 +2033,8 @@ export class BackgroundSentinel {
             [wsKey]: {
               ...prev,
               warnCount: 0,
+              cloneCount: 0,
+              clonePairs: [],
               coChangeAlerts: [],
               status: errCount > 0 ? 'error' : 'clean',
             },

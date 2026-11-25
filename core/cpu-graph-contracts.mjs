@@ -886,7 +886,7 @@ function normalizeFunctionTokens(bodyText = '') {
   });
 }
 
-function hashShingle64(str) {
+export function hashShingle64(str) {
   let hi = 0x811c9dc5;
   let lo = 0x9e3779b9;
   for (let i = 0; i < str.length; i++) {

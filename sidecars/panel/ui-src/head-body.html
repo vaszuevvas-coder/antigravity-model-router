@@ -5,7 +5,7 @@
   <meta name="google" content="notranslate" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%230a84ff'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%23ffffff'/%3E%3C/svg%3E" />
-  <title>The Tunnel v3.34.0</title>
+  <title>The Tunnel v3.34.1</title>
   <script src="/preload.js"></script>
   <style>
 /*__PANEL_STYLES__*/
@@ -140,12 +140,6 @@
         <div class="ag-chats-stack" id="agActiveChatsStack">
           <div class="ag-chat-task-item" data-cid="__primary_slot__">
             <div class="ag-progress-capsule">
-              <button type="button" class="ag-subagent-toggle-btn" data-action="toggleSubagentsList" data-arg="__primary_slot__" aria-expanded="false" style="display: none;" title="Раскрыть список субагентов">
-                <svg class="ag-subagent-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path d="M6 3.75L10.25 8L6 12.25" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-                <span class="ag-subagent-count">0</span>
-              </button>
               <span class="ag-bloom-dot idle"></span>
               <span class="ag-chat-num-badge" style="display: none;"></span>
               <span class="ag-progress-title is-idle">Ожидание задачи</span>
@@ -155,9 +149,31 @@
               <span class="ag-progress-pct is-idle"><span class="ag-pct-num">0</span>%</span>
             </div>
             <div class="ag-steps-mini-list" style="display: none;"></div>
+            <div class="ag-hud-meta-row" style="display: none;">
+              <button type="button" class="ag-subagent-toggle-btn" data-action="toggleSubagentsList" data-arg="__primary_slot__" aria-expanded="false" style="display: none;" title="Раскрыть список субагентов">
+                <svg class="ag-subagent-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M6 3.75L10.25 8L6 12.25" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span class="ag-hud-pill-lbl" data-i18n-ru="Субагенты" data-i18n-en="Subagents">Субагенты</span>
+                <span class="ag-subagent-count">0</span>
+              </button>
+              <button type="button" class="ag-bgtask-toggle-btn" data-action="toggleBgTasksList" data-arg="__primary_slot__" aria-expanded="false" style="display: none;" title="Раскрыть список фоновых задач">
+                <svg class="ag-bgtask-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M6 3.75L10.25 8L6 12.25" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span class="ag-bgtask-term-ico" aria-hidden="true">&gt;_</span>
+                <span class="ag-hud-pill-lbl" data-i18n-ru="Фоновые" data-i18n-en="Tasks">Фоновые</span>
+                <span class="ag-bgtask-count">0</span>
+              </button>
+            </div>
             <div class="ag-subagents-drawer" aria-hidden="true">
               <div class="ag-subagents-drawer-inner">
                 <div class="ag-subagents-list"></div>
+              </div>
+            </div>
+            <div class="ag-bgtasks-drawer" aria-hidden="true">
+              <div class="ag-bgtasks-drawer-inner">
+                <div class="ag-bgtasks-list"></div>
               </div>
             </div>
           </div>
@@ -1362,7 +1378,7 @@
 
     <div class="status-bar">
       <div id="statusPill" class="status-pane">Готово · Синхронизировано</div>
-      <div class="status-pane" id="footerPluginVersion">The Tunnel v3.34.0</div>
+      <div class="status-pane" id="footerPluginVersion">The Tunnel v3.34.1</div>
     </div>
     <div style="text-align:center;font-size:10.5px;color:var(--text-sub);opacity:0.7;padding:4px 0 2px;letter-spacing:0.02em;">Created by Vasili Zuev</div>
   </div>
@@ -1373,7 +1389,7 @@
       <div class="wiz-head">
         <div class="lg-brand">
           <span class="lg-brand-orb"></span>
-          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v3.34.0</span>
+          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v3.34.1</span>
           <span class="lg-session-pill" id="wizLaunchBadge">Первый запуск</span>
         </div>
         <button class="lg-icon-btn round" type="button" data-action="closeOnboardingWizard" title="Отложить или закрыть окно настройки (Esc)">×</button>

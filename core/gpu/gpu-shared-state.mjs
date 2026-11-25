@@ -11,6 +11,7 @@ import os from 'node:os';
 import path, { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { computeMaxVramCapMb, probeAnyGpu } from '../hardware-profiler.mjs';
+import { createBaseLiveActivityState, isPidAlive } from '../cache-dir.mjs';
 import { safeReadJsonSync, updateJsonAtomicSync } from '../safe-json.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -344,27 +345,31 @@ export function loadGpuConfig(override = {}) {
  * @param {string} [endpoint='http://127.0.0.1:11434']
  */
 export function isProcessAliveSafe(pid) {
-  const n = Number(pid);
-  if (!Number.isInteger(n) || n <= 0) return false;
-  if (n === process.pid) return true;
-  try {
-    process.kill(n, 0);
-    return true;
-  } catch (err) {
-    return err?.code === 'EPERM';
-  }
+  return isPidAlive(pid, { treatSelfAsAlive: true });
 }
 
 function defaultGpuLiveState() {
-  return {
-    opSeq: 0,
-    inFlight: [],
-    lastCompletedAt: 0,
-    lastOp: '',
-    lastModel: '',
-    lastDetail: '',
-    lastLatencyMs: 0,
-  };
+  return createBaseLiveActivityState({ lastModel: '' });
+}
+
+/**
+ * Reads a fresh entry from a Map-backed TTL+LRU cache and refreshes its recency.
+ * @template T
+ * @param {Map<string, T & { ts?: number }>} cacheMap
+ * @param {string} key
+ * @param {number} ttlMs
+ * @returns {(T & { ts?: number }) | null}
+ */
+export function readFreshTtlLruEntry(cacheMap, key, ttlMs) {
+  const entry = cacheMap.get(key);
+  if (!entry) return null;
+  if ((Date.now() - (entry.ts || 0)) >= ttlMs) {
+    cacheMap.delete(key);
+    return null;
+  }
+  cacheMap.delete(key);
+  cacheMap.set(key, entry);
+  return entry;
 }
 
 /**

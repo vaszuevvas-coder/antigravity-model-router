@@ -129,7 +129,7 @@ function buildOffsetToLineLookup(filePath, cache) {
   return offsets;
 }
 
-function offsetToLine1(offsets, byteOrCharOffset) {
+export function offsetToLine1(offsets, byteOrCharOffset) {
   let lo = 0;
   let hi = offsets.length - 1;
   while (lo <= hi) {

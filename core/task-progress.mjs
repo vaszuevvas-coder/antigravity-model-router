@@ -47,7 +47,7 @@ function clampInt(val, min, max, fallback) {
 export function createDefaultProgressState() {
   const now = Date.now();
   return {
-    version: '3.34.0',
+    version: '3.34.1',
     activeConversationId: 'default',
     projectName: 'antigravity-model-router',
     workspaceRoot: '',
@@ -76,6 +76,7 @@ export function createDefaultProgressState() {
     editedFilesCount: 0,
     activeProjects: [],
     recentProjects: [],
+    hostBootAt: 0,
     startedAt: now,
     updatedAt: now,
   };
@@ -395,6 +396,10 @@ function mergeChatRecords(a, b) {
       ...(Array.isArray(primary.activeSkills) ? primary.activeSkills : []),
     ])).slice(0, 6),
     ramSavedTokens: Math.max(Number(a.ramSavedTokens || 0), Number(b.ramSavedTokens || 0)),
+    backgroundTasks: Array.isArray(primary.backgroundTasks) && primary.backgroundTasks.length >= (Array.isArray(secondary.backgroundTasks) ? secondary.backgroundTasks.length : 0)
+      ? primary.backgroundTasks
+      : (Array.isArray(secondary.backgroundTasks) ? secondary.backgroundTasks : []),
+    backgroundTasksTotalCount: Math.max(Number(a.backgroundTasksTotalCount || 0), Number(b.backgroundTasksTotalCount || 0)),
     startedAt: Math.min(Number(a.startedAt || Infinity), Number(b.startedAt || Infinity)) || Date.now(),
     updatedAt: Math.max(Number(a.updatedAt || 0), Number(b.updatedAt || 0)),
   };
@@ -515,6 +520,67 @@ function dedupeAndNormalizeChatsMap(chatsObj = {}, registryObj = {}, brainDirs =
   return { chatsMap: nextChats, registry: nextReg, mutated };
 }
 
+const VALID_BG_TASK_STATUSES = new Set(['running', 'done', 'error', 'cancelled']);
+const MAX_PUBLIC_BG_TASKS = 25;
+
+function normalizeBackgroundTasksList(rawList = [], { forceFinishRunning = false, forceCancelRunning = false } = {}) {
+  if (!Array.isArray(rawList) || rawList.length === 0) return [];
+  const out = [];
+  for (const item of rawList.slice(0, MAX_PUBLIC_BG_TASKS)) {
+    if (!item || typeof item !== 'object') continue;
+    const taskId = String(item.taskId || item.id || '').trim();
+    if (!taskId) continue;
+    let status = VALID_BG_TASK_STATUSES.has(item.status) ? item.status : 'done';
+    if (forceCancelRunning && status === 'running') status = 'cancelled';
+    else if (forceFinishRunning && status === 'running') status = 'done';
+    const stripQ = (s) => String(s || '').trim().replace(/^["']+/, '').replace(/["']+$/, '').trim();
+    const label = stripQ(sanitizeStepText(item.label || item.description || 'Фоновая задача')).slice(0, 120) || 'Фоновая задача';
+    const labelEn = stripQ(sanitizeStepText(item.labelEn || localizeProgressLabelToEn(label))).slice(0, 120) || 'Background task';
+    const commandPreview = stripQ(String(item.commandPreview || '').replace(/\s+/g, ' ')).slice(0, 120);
+    out.push({
+      id: taskId,
+      taskId,
+      label,
+      labelEn,
+      commandPreview,
+      status,
+      isDaemon: Boolean(item.isDaemon),
+      startedAt: Math.max(0, Math.round(Number(item.startedAt || 0))),
+      updatedAt: Math.max(0, Math.round(Number(item.updatedAt || 0))),
+    });
+  }
+  return out;
+}
+
+function filterVisibleBackgroundTasks(rawList = [], { now = Date.now(), completedHoldMs = DEFAULT_COMPLETED_HOLD_MS } = {}) {
+  const list = normalizeBackgroundTasksList(rawList);
+  if (list.length === 0) return [];
+  const holdMs = Math.max(0, Number(completedHoldMs ?? DEFAULT_COMPLETED_HOLD_MS));
+  return list.filter((t) => {
+    if (t.status === 'running') return true;
+    return t.updatedAt > 0 && (now - t.updatedAt) < holdMs;
+  });
+}
+
+function buildBackgroundTasksSig(list = [], totalCount = 0) {
+  const head = Array.isArray(list)
+    ? list.map((t) => `${t.taskId}:${t.status}:${t.updatedAt}:${t.label}`).join('|')
+    : '';
+  return `${Math.max(0, Number(totalCount || 0))}::${head}`;
+}
+
+function syncChatBackgroundTasksFromTranscript(chat, tInfo, { forceFinishRunning = false } = {}) {
+  if (!chat || !tInfo || !tInfo.exists || !Array.isArray(tInfo.backgroundTasks)) return false;
+  const nextList = normalizeBackgroundTasksList(tInfo.backgroundTasks, { forceFinishRunning });
+  const nextTotal = Math.max(nextList.length, Math.round(Number(tInfo.backgroundTasksTotalCount || 0)));
+  const prevSig = buildBackgroundTasksSig(chat.backgroundTasks, chat.backgroundTasksTotalCount);
+  const nextSig = buildBackgroundTasksSig(nextList, nextTotal);
+  if (prevSig === nextSig) return false;
+  chat.backgroundTasks = nextList;
+  chat.backgroundTasksTotalCount = nextTotal;
+  return true;
+}
+
 function buildPublicSubagentView(sub, idx) {
   const subNum = idx + 1;
   const isSwarm = sub.agentKind === 'swarm_worker';
@@ -558,13 +624,19 @@ function buildPublicSubagentView(sub, idx) {
   };
 }
 
-function buildPublicChatView(chat, subagents = []) {
+function buildPublicChatView(chat, subagents = [], { now = Date.now(), completedHoldMs = DEFAULT_COMPLETED_HOLD_MS } = {}) {
   const num = clampInt(chat.chatNumber, 1, 99, 1);
   const chatLabel = `Чат #${num}`;
   const chatLabelEn = `Chat #${num}`;
   const topic = String(chat.topicLabel || '').trim();
   const subs = Array.isArray(subagents) ? subagents : [];
   const runningSubagentsCount = subs.filter((s) => s && (s.status === 'running' || s.status === 'waiting_user')).length;
+  const visibleBgTasks = filterVisibleBackgroundTasks(chat.backgroundTasks, { now, completedHoldMs });
+  const runningBgCount = visibleBgTasks.filter((t) => t.status === 'running').length;
+  const hasLegacyRunningBg = Boolean(chat.hasRunningBackgroundTask) && (!Array.isArray(chat.backgroundTasks) || chat.backgroundTasks.length === 0);
+  const effectiveRunningBgCount = runningBgCount > 0
+    ? runningBgCount
+    : (hasLegacyRunningBg ? Math.max(0, Math.round(Number(chat.backgroundTasksCount || 0))) : 0);
   const stepTitle = sanitizeStepText(chat.stepTitle || '');
   const stepTitleEn = localizeProgressLabelToEn(chat.stepTitleEn || stepTitle);
   const stageLabel = chat.stageLabel || '';
@@ -602,8 +674,10 @@ function buildPublicChatView(chat, subagents = []) {
     subagents: subs,
     subagentsCount: subs.length,
     runningSubagentsCount,
-    hasRunningBackgroundTask: Boolean(chat.hasRunningBackgroundTask),
-    backgroundTasksCount: Math.max(0, Math.round(Number(chat.backgroundTasksCount || 0))),
+    hasRunningBackgroundTask: effectiveRunningBgCount > 0,
+    backgroundTasksCount: effectiveRunningBgCount,
+    backgroundTasks: visibleBgTasks,
+    backgroundTasksTotalCount: visibleBgTasks.length,
     completedAt: chat.completedAt || 0,
     updatedAt: chat.updatedAt || 0,
   };
@@ -617,6 +691,7 @@ function groupVisibleChatsWithSubagents({
   workspaceRoot = '',
   brainDirs = null,
   now = Date.now(),
+  completedHoldMs = DEFAULT_COMPLETED_HOLD_MS,
 } = {}) {
   const mainById = new Map();
   const subEntries = [];
@@ -638,7 +713,7 @@ function groupVisibleChatsWithSubagents({
   }
 
   if (subEntries.length === 0) {
-    return Array.from(mainById.values()).map((c) => buildPublicChatView(c, []));
+    return Array.from(mainById.values()).map((c) => buildPublicChatView(c, [], { now, completedHoldMs }));
   }
 
   const resolveRootParentCid = (sub) => {
@@ -781,7 +856,7 @@ function groupVisibleChatsWithSubagents({
       return String(a.conversationId || '').localeCompare(String(b.conversationId || ''));
     });
     const publicSubs = rawSubs.map((s, idx) => buildPublicSubagentView(s, idx));
-    out.push(buildPublicChatView(mainChat, publicSubs));
+    out.push(buildPublicChatView(mainChat, publicSubs, { now, completedHoldMs }));
   }
   return out;
 }
@@ -953,6 +1028,7 @@ function expireChatToIdle(chat, stepKey = '') {
     status: 'idle',
     hasRunningBackgroundTask: false,
     backgroundTasksCount: 0,
+    backgroundTasks: normalizeBackgroundTasksList(chat?.backgroundTasks, { forceCancelRunning: true }),
     bgInFlight: false,
     inFlightTool: false,
     inFlightToolName: '',
@@ -1009,6 +1085,7 @@ function sweepAndBuildVisibleChats(
     workspaceRoot,
     brainDirs,
     now,
+    completedHoldMs: holdMs,
   });
 }
 
@@ -1154,13 +1231,14 @@ export function getTaskProgressSnapshot(opts = {}) {
     };
   }
 
+  const hostBootAt = Math.max(0, Number(opts?.hostBootAt ?? state.hostBootAt ?? 0));
   const parentTurnCache = new Map();
   const getCachedParentTurn = (rawPid) => {
     const pid = normalizeConversationId(rawPid || '');
     if (!pid || pid === 'default') return null;
     if (parentTurnCache.has(pid)) return parentTurnCache.get(pid);
     const pPath = resolveTranscriptPathForChat(pid, chatsMap[pid]?.transcriptPath || '', brainDirs);
-    const pInfo = pPath ? inspectTranscriptTurnState(pPath, now) : { exists: false };
+    const pInfo = pPath ? inspectTranscriptTurnState(pPath, now, { hostBootAt }) : { exists: false };
     parentTurnCache.set(pid, pInfo);
     return pInfo;
   };
@@ -1243,9 +1321,10 @@ export function getTaskProgressSnapshot(opts = {}) {
           continue;
         }
         if (!st.size || now - st.mtimeMs > AUTO_DISCOVER_RECENCY_MS) continue;
+        if (hostBootAt > 0 && st.mtimeMs < hostBootAt) continue;
         const subMeta = inspectSubagentTranscriptMeta(tPath);
 
-        const tInfo = inspectTranscriptTurnState(tPath, now);
+        const tInfo = inspectTranscriptTurnState(tPath, now, { hostBootAt });
         if (!tInfo.exists || (tInfo.state !== 'running' && tInfo.state !== 'waiting_user')) continue;
         if (existing?.lastHandledStepKey && existing.lastHandledStepKey === tInfo.stepKey) continue;
 
@@ -1373,6 +1452,11 @@ export function getTaskProgressSnapshot(opts = {}) {
           steps: syncStepsArray(freshSteps, curStep, chatStatus),
           hasRunningBackgroundTask: hasDiscoveredBgTask,
           backgroundTasksCount: hasDiscoveredBgTask && Array.isArray(tInfo.runningBackgroundTasks) ? tInfo.runningBackgroundTasks.length : 0,
+          backgroundTasks: normalizeBackgroundTasksList(tInfo.backgroundTasks),
+          backgroundTasksTotalCount: Math.max(
+            Array.isArray(tInfo.backgroundTasks) ? tInfo.backgroundTasks.length : 0,
+            Math.round(Number(tInfo.backgroundTasksTotalCount || 0))
+          ),
           inFlightTool: hasDiscoveredBgTask,
           inFlightToolName: hasDiscoveredBgTask ? 'run_command' : '',
           bgInFlight: hasDiscoveredBgTask,
@@ -1413,9 +1497,17 @@ export function getTaskProgressSnapshot(opts = {}) {
           dirty = true;
         }
       }
-      const tInfo = tPath ? inspectTranscriptTurnState(tPath, now) : { exists: false };
+      const tInfo = tPath ? inspectTranscriptTurnState(tPath, now, { hostBootAt }) : { exists: false };
       if (tPath && chat.transcriptPath === tPath) {
         parentTurnCache.set(cid, tInfo);
+      }
+
+      const freshestActivity = Math.max(Number(tInfo?.mtimeMs || 0), Number(chat.updatedAt || 0));
+      if (hostBootAt > 0 && !chat.isDemo && freshestActivity > 0 && freshestActivity < hostBootAt) {
+        Object.assign(chat, expireChatToIdle(chat, tInfo?.stepKey || chat.lastHandledStepKey || ''));
+        dirty = true;
+        chatsMap[cid] = chat;
+        continue;
       }
 
       const rootPid = chat.isSubagent ? resolveSubagentRootPid(chat.parentConversationId, cid) : '';
@@ -1464,6 +1556,9 @@ export function getTaskProgressSnapshot(opts = {}) {
         if (!chat.isSubagent && !chat.topicLabel && tInfo.lastUserPrompt) {
           chat.topicLabel = extractTopicLabelFromPrompt(tInfo.lastUserPrompt);
         }
+        if (syncChatBackgroundTasksFromTranscript(chat, tInfo)) {
+          dirty = true;
+        }
         if (
           tInfo.state === 'completed' &&
           tInfo.stepKey &&
@@ -1482,6 +1577,9 @@ export function getTaskProgressSnapshot(opts = {}) {
           chat.formattedText = `Завершено ✓ · Этап ${total} из ${total}`;
           chat.hasRunningBackgroundTask = false;
           chat.backgroundTasksCount = 0;
+          if (Array.isArray(chat.backgroundTasks) && chat.backgroundTasks.some((t) => t?.status === 'running')) {
+            chat.backgroundTasks = normalizeBackgroundTasksList(chat.backgroundTasks, { forceFinishRunning: true });
+          }
           chat.bgInFlight = false;
           chat.inFlightTool = false;
           chat.inFlightToolName = '';
@@ -1676,6 +1774,7 @@ export function getTaskProgressSnapshot(opts = {}) {
     workspaceRoot: cleanWs,
     brainDirs,
     now,
+    completedHoldMs,
   });
 
   // Prune old idle chat records beyond 32 entries
@@ -1711,6 +1810,48 @@ export function getTaskProgressSnapshot(opts = {}) {
   }
 
   return hydrated;
+}
+
+/**
+ * Records a host/sidecar restart timestamp and expires all pre-restart active chats
+ * and running background tasks back to idle (marking running tasks as cancelled).
+ * @param {object} [opts]
+ * @param {number} [opts.bootAt=Date.now()]
+ * @param {string[]|null} [opts.brainDirs=null]
+ * @returns {object}
+ */
+export function markHostRestartAndReapActiveTasks({ bootAt = Date.now(), brainDirs = null } = {}) {
+  ensureCacheDir();
+  const nextBootAt = Math.max(0, Math.round(Number(bootAt) || Date.now()));
+  return updateJsonAtomicSync(getTaskProgressFile(), createDefaultProgressState, (prev) => {
+    const state = prev && typeof prev === 'object' ? { ...createDefaultProgressState(), ...prev } : createDefaultProgressState();
+    const effectiveBootAt = Math.max(Number(state.hostBootAt || 0), nextBootAt);
+    state.hostBootAt = effectiveBootAt;
+
+    const deduped = dedupeAndNormalizeChatsMap(state.chats, state.chatRegistry, brainDirs, effectiveBootAt);
+    const chatsMap = deduped.chatsMap;
+    state.chatRegistry = deduped.registry;
+
+    for (const [cid, rawChat] of Object.entries(chatsMap)) {
+      if (!rawChat || typeof rawChat !== 'object') continue;
+      const chatLastTs = Math.max(
+        Number(rawChat.updatedAt || 0),
+        Number(rawChat.lastPreToolAt || 0),
+        Number(rawChat.lastPostToolAt || 0)
+      );
+      if (chatLastTs < effectiveBootAt) {
+        const tPath = resolveTranscriptPathForChat(cid, rawChat.transcriptPath || '', brainDirs);
+        const tInfo = tPath ? inspectTranscriptTurnState(tPath, effectiveBootAt, { hostBootAt: effectiveBootAt }) : null;
+        chatsMap[cid] = expireChatToIdle(rawChat, tInfo?.stepKey || rawChat.lastHandledStepKey || '');
+      }
+    }
+
+    const cleanWs = sanitizeWorkspaceRoot(state.workspaceRoot || '');
+    const defaultProj = extractProjectName(cleanWs || '');
+    state.chats = chatsMap;
+    const visible = sweepAndBuildVisibleChats(chatsMap, state, '', effectiveBootAt, DEFAULT_COMPLETED_HOLD_MS, brainDirs, defaultProj, cleanWs);
+    return hydrateStateWithPrimary(state, visible, defaultProj, cleanWs);
+  });
 }
 
 /**
@@ -1752,7 +1893,9 @@ export function initTaskProgressFromPrompt({
     let parentCid = normalizeConversationId(subMeta.parentConversationId || existingChat?.parentConversationId || '');
     if (parentCid === 'default' || parentCid === cid) parentCid = '';
 
-    const tailSnapshot = resolvedTranscript ? inspectTranscriptTurnState(resolvedTranscript) : { exists: false };
+    const tailSnapshot = resolvedTranscript
+      ? inspectTranscriptTurnState(resolvedTranscript, now, { hostBootAt: Number(state.hostBootAt || 0) })
+      : { exists: false };
     const effectiveInitWsRaw = sanitizeWorkspaceRoot(
       cleanWs || existingChat?.workspaceRoot || tailSnapshot?.detectedWorkspace || ''
     );
@@ -1949,6 +2092,10 @@ export function initTaskProgressFromPrompt({
       editedSymbols: [],
       activeSkills: [],
       ramSavedTokens: 0,
+      backgroundTasks: tailSnapshot.exists ? normalizeBackgroundTasksList(tailSnapshot.backgroundTasks) : (Array.isArray(existingChat?.backgroundTasks) ? normalizeBackgroundTasksList(existingChat.backgroundTasks) : []),
+      backgroundTasksTotalCount: tailSnapshot.exists
+        ? Math.max(Array.isArray(tailSnapshot.backgroundTasks) ? tailSnapshot.backgroundTasks.length : 0, Math.round(Number(tailSnapshot.backgroundTasksTotalCount || 0)))
+        : Math.max(0, Math.round(Number(existingChat?.backgroundTasksTotalCount || 0))),
       stepTitle,
       stageLabel: `Этап ${currentStep} из ${totalSteps}`,
       formattedText: buildFormattedProgressText({ status: 'running', currentStep, totalSteps, stepTitle }),
@@ -2062,7 +2209,9 @@ export function advanceTaskProgressOnPreTool({
         completedAt: 0,
       };
     } else if (!chat || chat.totalSteps <= 0 || chat.status === 'idle' || chat.status === 'completed') {
-      const tailSnapshot = resolvedTranscript ? inspectTranscriptTurnState(resolvedTranscript) : { exists: false };
+      const tailSnapshot = resolvedTranscript
+      ? inspectTranscriptTurnState(resolvedTranscript, now, { hostBootAt: Number(state.hostBootAt || 0) })
+      : { exists: false };
       const baselineDoneStepKey =
         tailSnapshot.exists && (tailSnapshot.state === 'completed' || tailSnapshot.state === 'waiting_user' || tailSnapshot.state === 'cancelled')
           ? tailSnapshot.stepKey
@@ -3078,7 +3227,9 @@ export function finalizeTaskProgressOnStop({
     const stopTranscript = (!isErr && !isCanceled)
       ? resolveTranscriptPathForChat(cid, transcriptPath || existing.transcriptPath || '', brainDirs)
       : '';
-    const stopTurnInfo = stopTranscript ? inspectTranscriptTurnState(stopTranscript, now) : { exists: false };
+    const stopTurnInfo = stopTranscript
+      ? inspectTranscriptTurnState(stopTranscript, now, { hostBootAt: Number(state.hostBootAt || 0) })
+      : { exists: false };
     const hasBgRunning = Boolean(!isErr && !isCanceled && stopTurnInfo?.hasRunningBackgroundTask);
     const isTerminalHandoff = !isErr && !isCanceled && !hasBgRunning && (
       isPendingPlanHandoffActive(existing, now) ||
@@ -3107,6 +3258,11 @@ export function finalizeTaskProgressOnStop({
         percent: nextPct,
         hasRunningBackgroundTask: true,
         backgroundTasksCount: bgCount,
+        backgroundTasks: normalizeBackgroundTasksList(stopTurnInfo.backgroundTasks),
+        backgroundTasksTotalCount: Math.max(
+          Array.isArray(stopTurnInfo.backgroundTasks) ? stopTurnInfo.backgroundTasks.length : 0,
+          Math.round(Number(stopTurnInfo.backgroundTasksTotalCount || 0))
+        ),
         stepTitle: bgTitle,
         stageLabel: `Этап ${curStep} из ${totalSteps}`,
         formattedText: buildFormattedProgressText({
@@ -3192,6 +3348,12 @@ export function finalizeTaskProgressOnStop({
       steps: finalizedSteps,
       hasRunningBackgroundTask: false,
       backgroundTasksCount: 0,
+      backgroundTasks: stopTurnInfo?.exists
+        ? normalizeBackgroundTasksList(stopTurnInfo.backgroundTasks, { forceFinishRunning: !isErr && !isCanceled })
+        : normalizeBackgroundTasksList(existing.backgroundTasks, { forceFinishRunning: !isErr && !isCanceled }),
+      backgroundTasksTotalCount: stopTurnInfo?.exists
+        ? Math.max(Array.isArray(stopTurnInfo.backgroundTasks) ? stopTurnInfo.backgroundTasks.length : 0, Math.round(Number(stopTurnInfo.backgroundTasksTotalCount || 0)))
+        : Math.max(0, Math.round(Number(existing.backgroundTasksTotalCount || 0))),
       bgInFlight: false,
       inFlightTool: false,
       inFlightToolName: '',

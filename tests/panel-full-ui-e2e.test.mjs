@@ -1340,7 +1340,7 @@ test('1. Full Panel E2E: UI DOM click-through for themes, wizard, workspace, com
     dom.doc.querySelector('[data-action="cancelGpuCascadePull"]').click();
     await waitFor(() => dom.doc.getElementById('statusPill').textContent.includes('отменена'));
 
-    // Progress HUD: subagents drawer & step chip toggles
+    // Progress HUD: subagents drawer, background tasks drawer & step chip toggles
     await vm.runInContext(`
       renderTaskProgressAndHud({
         status: 'running',
@@ -1358,6 +1358,17 @@ test('1. Full Panel E2E: UI DOM click-through for themes, wizard, workspace, com
           stepTitle: 'Проверка UI',
           steps: [{ title: 'Шаг 1', status: 'running' }],
           subagents: [{ conversationId: 'sub_1', roleLabel: 'Verifier', percent: 40, status: 'running', stepTitle: 'Анализ' }],
+          backgroundTasksTotalCount: 17,
+          backgroundTasksCount: 1,
+          hasRunningBackgroundTask: true,
+          backgroundTasks: [
+            { id: 'bg_1', taskId: 'bg_1', label: 'Запуск сервера мониторинга', commandPreview: 'node monitor.mjs', status: 'running', isDaemon: true, startedAt: Date.now() - 5000, updatedAt: Date.now() },
+            { id: 'bg_2', taskId: 'bg_2', label: 'Сборка бандла UI', commandPreview: 'node scripts/build-panel-ui.mjs', status: 'done', startedAt: Date.now() - 20000, updatedAt: Date.now() - 12000 },
+            { id: 'bg_3', taskId: 'bg_3', label: 'Проверка контрактов', commandPreview: 'node --test tests/router-core.test.mjs', status: 'error', startedAt: Date.now() - 30000, updatedAt: Date.now() - 25000 },
+            { id: 'bg_4', taskId: 'bg_4', label: 'Остановленный воркер', commandPreview: 'npm run watch', status: 'cancelled', startedAt: Date.now() - 40000, updatedAt: Date.now() - 35000 },
+            { id: 'bg_5', taskId: 'bg_5', label: 'Старая задача 5', commandPreview: 'echo 5', status: 'done', startedAt: Date.now() - 50000, updatedAt: Date.now() - 45000 },
+            { id: 'bg_6', taskId: 'bg_6', label: 'Старая задача 6', commandPreview: 'echo 6', status: 'done', startedAt: Date.now() - 60000, updatedAt: Date.now() - 55000 }
+          ]
         }],
       });
     `, dom.ctx);
@@ -1365,6 +1376,57 @@ test('1. Full Panel E2E: UI DOM click-through for themes, wizard, workspace, com
     assert.ok(subToggleBtn);
     subToggleBtn.click();
     assert.equal(subToggleBtn.getAttribute('aria-expanded'), 'true');
+
+    const bgToggleBtn = dom.doc.querySelector('[data-action="toggleBgTasksList"]');
+    assert.ok(bgToggleBtn, 'Background tasks toggle button must be rendered');
+    assert.equal(bgToggleBtn.querySelector('.ag-bgtask-count').textContent, '1/17');
+    assert.ok(bgToggleBtn.classList.contains('is-active-glow'));
+    bgToggleBtn.click();
+    assert.equal(bgToggleBtn.getAttribute('aria-expanded'), 'true');
+    const bgDrawer = dom.doc.querySelector('.ag-bgtasks-drawer');
+    assert.ok(bgDrawer && bgDrawer.classList.contains('is-open'));
+    assert.equal(dom.doc.querySelectorAll('.ag-bgtask-item').length, 6);
+    assert.equal(dom.doc.querySelectorAll('.ag-bgtask-item.is-overflow-hidden').length, 2);
+    const seeAllBtn = dom.doc.querySelector('[data-action="toggleBgTasksShowAll"]');
+    assert.ok(seeAllBtn, 'See all button must appear when >4 tasks');
+    seeAllBtn.click();
+    assert.equal(dom.doc.querySelectorAll('.ag-bgtask-item.is-overflow-hidden').length, 0);
+
+    // Re-render on simulated telemetry poll: drawer and See all expansion must persist
+    await vm.runInContext(`
+      renderTaskProgressAndHud({
+        status: 'running',
+        projectName: ${JSON.stringify(path.basename(tmpRepo))},
+        workspaceRoot: ${JSON.stringify(tmpRepo)},
+        activeChats: [{
+          conversationId: 'e2e_chat_1',
+          chatNumber: 1,
+          projectName: ${JSON.stringify(path.basename(tmpRepo))},
+          workspaceRoot: ${JSON.stringify(tmpRepo)},
+          status: 'running',
+          currentStep: 1,
+          totalSteps: 2,
+          percent: 60,
+          stepTitle: 'Проверка UI',
+          steps: [{ title: 'Шаг 1', status: 'running' }],
+          subagents: [{ conversationId: 'sub_1', roleLabel: 'Verifier', percent: 55, status: 'running', stepTitle: 'Анализ' }],
+          backgroundTasksTotalCount: 17,
+          backgroundTasksCount: 1,
+          hasRunningBackgroundTask: true,
+          backgroundTasks: [
+            { id: 'bg_1', taskId: 'bg_1', label: 'Запуск сервера мониторинга', commandPreview: 'node monitor.mjs', status: 'running', isDaemon: true, startedAt: Date.now() - 5000, updatedAt: Date.now() },
+            { id: 'bg_2', taskId: 'bg_2', label: 'Сборка бандла UI', commandPreview: 'node scripts/build-panel-ui.mjs', status: 'done', startedAt: Date.now() - 20000, updatedAt: Date.now() - 12000 },
+            { id: 'bg_3', taskId: 'bg_3', label: 'Проверка контрактов', commandPreview: 'node --test tests/router-core.test.mjs', status: 'error', startedAt: Date.now() - 30000, updatedAt: Date.now() - 25000 },
+            { id: 'bg_4', taskId: 'bg_4', label: 'Остановленный воркер', commandPreview: 'npm run watch', status: 'cancelled', startedAt: Date.now() - 40000, updatedAt: Date.now() - 35000 },
+            { id: 'bg_5', taskId: 'bg_5', label: 'Старая задача 5', commandPreview: 'echo 5', status: 'done', startedAt: Date.now() - 50000, updatedAt: Date.now() - 45000 },
+            { id: 'bg_6', taskId: 'bg_6', label: 'Старая задача 6', commandPreview: 'echo 6', status: 'done', startedAt: Date.now() - 60000, updatedAt: Date.now() - 55000 }
+          ]
+        }],
+      });
+    `, dom.ctx);
+    assert.equal(dom.doc.querySelector('[data-action="toggleBgTasksList"]').getAttribute('aria-expanded'), 'true');
+    assert.equal(dom.doc.querySelectorAll('.ag-bgtask-item.is-overflow-hidden').length, 0);
+
     const stepChipBtn = dom.doc.querySelector('[data-action="toggleStepChip"]');
     assert.ok(stepChipBtn);
     stepChipBtn.click();

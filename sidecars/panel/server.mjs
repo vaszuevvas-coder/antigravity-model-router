@@ -209,7 +209,7 @@ function getPluginVersion() {
     const ver = typeof meta?.version === 'string' ? meta.version.trim() : '';
     if (ver) return ver;
   } catch {}
-  return '3.34.0';
+  return '3.34.1';
 }
 
 function getUiBuildVersion() {
@@ -3196,6 +3196,9 @@ if (isMainEntry() && SidecarApp) {
     sidecarShutdownPromise = Promise.allSettled([
       activeSidecarApp?.close ? activeSidecarApp.close() : Promise.resolve(),
       handleSidecarExitCleanup(),
+      getTaskProgressMod()
+        .then((progMod) => progMod?.markHostRestartAndReapActiveTasks?.({ bootAt: Date.now() }))
+        .catch(() => {}),
     ])
       .catch(() => {})
       .finally(() => {
@@ -3212,6 +3215,9 @@ if (isMainEntry() && SidecarApp) {
     .then((app) => {
       activeSidecarApp = app;
       if (app) {
+        getTaskProgressMod()
+          .then((progMod) => progMod?.markHostRestartAndReapActiveTasks?.({ bootAt: Date.now() }))
+          .catch(() => {});
         hostWatchdog = startSidecarHostWatchdog({
           onHostLost: () => {
             void triggerSidecarExitCleanup();

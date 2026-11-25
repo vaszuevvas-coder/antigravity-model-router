@@ -6,6 +6,7 @@
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import path, { join } from 'node:path';
+import { hashShingle64 } from '../cpu-graph-contracts.mjs';
 import { atomicWriteJsonSync, safeReadJsonSync } from '../safe-json.mjs';
 import { checkFileSecurity, redactSecretsInText } from '../security-guard.mjs';
 import { normalizeLang, readActiveUiLanguage } from '../i18n.mjs';
@@ -20,6 +21,7 @@ import {
   loadGpuConfig,
   ollamaHttpJson,
   ramDistillCache,
+  readFreshTtlLruEntry,
   recordGpuTelemetryPatch,
 } from './gpu-shared-state.mjs';
 import {
@@ -44,19 +46,6 @@ function hammingDistance64(aHi, aLo, bHi, bLo) {
   return popcnt32((aHi ^ bHi) >>> 0) + popcnt32((aLo ^ bLo) >>> 0);
 }
 
-function hashToken64(str) {
-  let hi = 0x811c9dc5;
-  let lo = 0x9e3779b9;
-  for (let i = 0; i < str.length; i++) {
-    const c = str.charCodeAt(i);
-    lo = Math.imul(lo ^ c, 0x01000193) >>> 0;
-    hi = Math.imul(hi ^ (c + (lo & 0xff)), 0x85ebca6b) >>> 0;
-  }
-  lo ^= lo >>> 15;
-  hi ^= hi >>> 13;
-  return [hi >>> 0, lo >>> 0];
-}
-
 function computeErrorLogSimHash64(text = '') {
   const norm = String(text || '')
     .toLowerCase()
@@ -67,7 +56,7 @@ function computeErrorLogSimHash64(text = '') {
   if (!tokens || tokens.length < 6) return null;
   const weights = new Int32Array(64);
   for (let i = 0; i < tokens.length; i++) {
-    const [hi, lo] = hashToken64(tokens[i]);
+    const [hi, lo] = hashShingle64(tokens[i]);
     for (let b = 0; b < 32; b++) {
       weights[b] += ((lo >>> b) & 1) ? 1 : -1;
       weights[32 + b] += ((hi >>> b) & 1) ? 1 : -1;
@@ -129,16 +118,7 @@ function schedulePersistDistillCache() {
 }
 
 export function getFreshDistillCacheEntry(key) {
-  const entry = ramDistillCache.get(key);
-  if (!entry) return null;
-  if ((Date.now() - (entry.ts || 0)) >= RAM_DISTILL_CACHE_TTL_MS) {
-    ramDistillCache.delete(key);
-    return null;
-  }
-  // Refresh LRU order
-  ramDistillCache.delete(key);
-  ramDistillCache.set(key, entry);
-  return entry;
+  return readFreshTtlLruEntry(ramDistillCache, key, RAM_DISTILL_CACHE_TTL_MS);
 }
 
 export function setDistillCacheEntry(key, entry) {

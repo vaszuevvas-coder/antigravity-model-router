@@ -56,6 +56,30 @@ export async function safeGetHudAndProgressStatus(state = {}, activeWs = '') {
     const progress = progMod?.getTaskProgressSnapshot
       ? progMod.getTaskProgressSnapshot({ workspaceRoot: activeWs })
       : null;
+    if (progress && Array.isArray(progress.activeChats)) {
+      for (const chat of progress.activeChats) {
+        if (!chat || typeof chat !== 'object') continue;
+        if (Array.isArray(chat.backgroundTasks)) {
+          chat.backgroundTasks = chat.backgroundTasks.slice(0, 25).map((t) => ({
+            id: String(t?.id || t?.taskId || '').slice(0, 80),
+            taskId: String(t?.taskId || t?.id || '').slice(0, 80),
+            label: String(t?.label || '').slice(0, 120),
+            labelEn: String(t?.labelEn || '').slice(0, 120),
+            commandPreview: String(t?.commandPreview || '').slice(0, 120),
+            status: String(t?.status || 'done'),
+            isDaemon: Boolean(t?.isDaemon),
+            startedAt: Number(t?.startedAt || 0),
+            updatedAt: Number(t?.updatedAt || 0),
+          }));
+        } else {
+          chat.backgroundTasks = [];
+        }
+        chat.backgroundTasksTotalCount = Math.max(
+          chat.backgroundTasks.length,
+          Math.round(Number(chat.backgroundTasksTotalCount || 0))
+        );
+      }
+    }
     return { hud: { running: false, enabled: false }, progress };
   } catch {
     return { hud: { running: false, enabled: false }, progress: null };

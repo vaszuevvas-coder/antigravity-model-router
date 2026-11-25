@@ -2,7 +2,22 @@
 
 Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
 
-> Хронология с `v3.8.0` по `v3.34.0` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`56` основных / `64` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `13` навыков и `40` наборов автотестов).
+> Хронология с `v3.8.0` по `v3.34.1` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`56` основных / `64` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `13` навыков и `40` наборов автотестов).
+
+---
+
+## [3.34.1] — 2026-11-25
+
+### Добавлено и исправлено (Фоновые задачи в HUD прогресса, детализация SimHash-дубликатов, калибровка маршрутизатора v4.2 и дедупликация утилит)
+- **Трекинг фоновых задач и обновлённый HUD прогресса ([core/progress/progress-parsers.mjs](core/progress/progress-parsers.mjs), [core/task-progress.mjs](core/task-progress.mjs), [sidecars/panel/lib/panel-telemetry-collectors.mjs](sidecars/panel/lib/panel-telemetry-collectors.mjs), [sidecars/panel/ui-src/head-body.html](sidecars/panel/ui-src/head-body.html), [sidecars/panel/ui-src/js/05-progress-hud.js](sidecars/panel/ui-src/js/05-progress-hud.js), [sidecars/panel/ui-src/styles.css](sidecars/panel/ui-src/styles.css), [sidecars/panel/ui-src/js/00-i18n.js](sidecars/panel/ui-src/js/00-i18n.js), [sidecars/panel/ui.html](sidecars/panel/ui.html), [tests/router-core.test.mjs](tests/router-core.test.mjs), [tests/panel-browser-layout-cdp.test.mjs](tests/panel-browser-layout-cdp.test.mjs), [tests/panel-full-ui-e2e.test.mjs](tests/panel-full-ui-e2e.test.mjs))**:
+  - Реализована полная история фоновых задач в транскриптах (`running`/`done`/`error`/`cancelled`, склейка `toolSummary` и `task-*.log`, маскирование секретов и авто-скрытие завершённых задач по `completedHoldMs`).
+  - Кнопки **«Субагенты»** и **«Фоновые»** вынесены в отдельную строку под списком шагов с раскрывающимися списками, а лишняя капсула сэкономленных токенов убрана из HUD.
+- **Калибровка байесовского маршрутизатора v4.2 ([core/bayesian-router.mjs](core/bayesian-router.mjs))**:
+  - Перебалансированы веса сигналов `SIGNAL_WEIGHTS` и добавлена автоматическая миграция асимметричных приоров `v4.0 -> v4.2` (`migrateV40AsymmetricPriorsInPlace`).
+- **Детализация пар дубликатов SimHash в Background Sentinel ([core/background-sentinel.mjs](core/background-sentinel.mjs), [sidecars/panel/lib/panel-sentinel-adapter.mjs](sidecars/panel/lib/panel-sentinel-adapter.mjs), [sidecars/panel/ui-src/js/04-sentinel-layout.js](sidecars/panel/ui-src/js/04-sentinel-layout.js), [tests/background-sentinel.test.mjs](tests/background-sentinel.test.mjs))**:
+  - Добавлен сбор и отображение подробностей `clonePairs` (файл, символ, строка, % совпадения, `detailRu`/`detailEn`) и их сброс при очистке находок.
+- **Дедупликация общих утилит кэша, PID и live-активности ([core/cache-dir.mjs](core/cache-dir.mjs), [core/cpu-worker-pool.mjs](core/cpu-worker-pool.mjs), [core/floating-hud.mjs](core/floating-hud.mjs), [core/gpu/gpu-composer-copilot.mjs](core/gpu/gpu-composer-copilot.mjs), [core/gpu/gpu-distill.mjs](core/gpu/gpu-distill.mjs), [core/gpu/gpu-shared-state.mjs](core/gpu/gpu-shared-state.mjs), [core/history-compactor.mjs](core/history-compactor.mjs), [core/hook-runner.mjs](core/hook-runner.mjs), [core/ram-memory-engine.mjs](core/ram-memory-engine.mjs), [core/cpu-graph-contracts.mjs](core/cpu-graph-contracts.mjs), [core/cpu-sbfl-healer.mjs](core/cpu-sbfl-healer.mjs), [sidecars/panel/server.mjs](sidecars/panel/server.mjs))**:
+  - Общие функции `pruneObjectMapByTimestamp`, `isPidAlive` и `createBaseLiveActivityState` вынесены в `core/cache-dir.mjs`.
 
 ---
 

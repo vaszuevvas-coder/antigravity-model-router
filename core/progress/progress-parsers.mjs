@@ -3,9 +3,10 @@
  * @description Pure workspace/transcript/plan/step parsing & label formatting helpers for task-progress.
  */
 
-import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { redactSecretsInText } from '../security-guard.mjs';
 
 const REGISTRY_TTL_MS = 2 * 60 * 60 * 1000;
 export const MAX_TIMELINE_STEPS = 30;
@@ -973,7 +974,226 @@ export function extractSkillSlugFromPath(rawPath = '') {
   return m && m[1] ? m[1] : '';
 }
 
-export function inspectTranscriptTurnState(transcriptPath = '', now = Date.now()) {
+const MAX_PUBLIC_BACKGROUND_TASKS = 25;
+const MAX_TASK_LOGS_TO_SCAN = 60;
+
+function parseTranscriptEntryTs(entry, fallback = 0) {
+  const raw = entry?.created_at || entry?.timestamp || '';
+  if (typeof raw === 'number' && Number.isFinite(raw)) return Math.round(raw);
+  if (typeof raw === 'string' && raw) {
+    const ms = Date.parse(raw);
+    if (Number.isFinite(ms)) return Math.round(ms);
+  }
+  return fallback;
+}
+
+function unwrapTranscriptStringArg(raw = '') {
+  let s = String(raw ?? '').trim();
+  if (!s) return '';
+  if (s.startsWith('"') && s.endsWith('"') && s.length >= 2) {
+    try {
+      const parsed = JSON.parse(s);
+      if (typeof parsed === 'string') return parsed.trim();
+    } catch {}
+  }
+  s = s.replace(/^["']+/, '').replace(/["']+$/, '');
+  return s.replace(/\\"/g, '"').trim();
+}
+
+function extractGenericToolOutputBody(content = '') {
+  const lines = String(content || '').replace(/\r\n/g, '\n').split('\n');
+  let idx = 0;
+  let hasCompletedAt = false;
+  while (idx < lines.length && idx < 4) {
+    const trimmed = lines[idx].trim();
+    if (/^Created At:\s*/i.test(trimmed)) {
+      idx += 1;
+      continue;
+    }
+    if (/^Completed At:\s*/i.test(trimmed)) {
+      hasCompletedAt = true;
+      idx += 1;
+      continue;
+    }
+    break;
+  }
+  return { body: lines.slice(idx).join('\n').trimStart(), hasCompletedAt };
+}
+
+function isCodeOrFileReadPayload(body = '') {
+  if (!body) return false;
+  if (
+    body.startsWith('// [RAM Lines ') ||
+    body.startsWith('[🎮 ') ||
+    body.startsWith('Showing lines ') ||
+    body.startsWith('Partial read (') ||
+    body.startsWith('Made ') ||
+    body.startsWith('### `')
+  ) {
+    return true;
+  }
+  if (body.startsWith("The tool's output was truncated") && (/^\s*L\d+:\s/m.test(body) || /^\s*\d+:\s/m.test(body))) {
+    return true;
+  }
+  return false;
+}
+
+function classifyBgTerminalStatus(rawText = '', defaultStatus = 'done') {
+  const s = String(rawText || '').toLowerCase();
+  if (/\b(?:failed|error|errored)\b|finished with error:/i.test(s)) return 'error';
+  if (/\b(?:killed|cancelled|canceled|stopped|terminated|aborted)\b/i.test(s)) return 'cancelled';
+  if (/\b(?:finished|completed|done|exited)\b|finished with result:/i.test(s)) return 'done';
+  return defaultStatus;
+}
+
+function sanitizeBgPreviewText(raw = '', maxLen = 120) {
+  const clean = redactSecretsInText(String(raw || ''))
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!clean) return '';
+  return clean.length > maxLen ? `${clean.slice(0, Math.max(8, maxLen - 1)).trimEnd()}…` : clean;
+}
+
+function readBoundedLogHeadAndTail(filePath, maxHeadBytes = 512, maxTailBytes = 1024) {
+  let st;
+  try {
+    st = statSync(filePath);
+  } catch {
+    return null;
+  }
+  const size = Number(st.size || 0);
+  let fd = null;
+  let headText = '';
+  let tailText = '';
+  try {
+    if (size > 0) {
+      fd = openSync(filePath, 'r');
+      const headLen = Math.min(size, maxHeadBytes);
+      const headBuf = Buffer.allocUnsafe(headLen);
+      readSync(fd, headBuf, 0, headLen, 0);
+      headText = headBuf.toString('utf-8');
+
+      if (size <= maxHeadBytes) {
+        tailText = headText;
+      } else {
+        const tailLen = Math.min(size, maxTailBytes);
+        const tailBuf = Buffer.allocUnsafe(tailLen);
+        readSync(fd, tailBuf, 0, tailLen, size - tailLen);
+        tailText = tailBuf.toString('utf-8');
+      }
+    }
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try { closeSync(fd); } catch {}
+    }
+  }
+  return {
+    size,
+    birthtimeMs: Math.round(Number(st.birthtimeMs || st.mtimeMs || 0)),
+    mtimeMs: Math.round(Number(st.mtimeMs || 0)),
+    headText,
+    tailText,
+  };
+}
+
+function inferBgStatusFromLogTail(tailText = '') {
+  const s = String(tailText || '');
+  if (!s) return '';
+  if (/\bexit(?:ed)?(?:\s+with)?\s+(?:code|status)[:=\s]+0\b/i.test(s)) return 'done';
+  if (/\bexit(?:ed)?(?:\s+with)?\s+(?:code|status)[:=\s]+[1-9]\d*\b/i.test(s)) return 'error';
+  if (/\b(?:killed|cancelled|canceled|terminated|aborted)\b/i.test(s)) return 'cancelled';
+  if (/\b(?:completed|finished)\b/i.test(s)) return 'done';
+  return '';
+}
+
+function extractBgLabelFromLogHead(headText = '') {
+  const lines = String(headText || '').split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const cmdMatch = /^(?:command|cmd|description|task)\s*:\s*(.+)$/i.exec(line);
+    if (cmdMatch?.[1]) return sanitizeBgPreviewText(cmdMatch[1], 110);
+    const cleaned = line.replace(/^[>$#]\s*/, '').trim();
+    if (cleaned.length >= 3) return sanitizeBgPreviewText(cleaned, 110);
+  }
+  return '';
+}
+
+function scanConversationBackgroundTaskLogs(transcriptPath, bgTasksMap, upsertBgTask) {
+  try {
+    const tasksDir = join(dirname(dirname(transcriptPath)), 'tasks');
+    if (!existsSync(tasksDir)) return;
+    const entries = readdirSync(tasksDir, { withFileTypes: true });
+    const logCandidates = [];
+    for (const d of entries) {
+      if (!d.isFile()) continue;
+      const m = /^task-(.+)\.log$/i.exec(d.name);
+      if (!m?.[1]) continue;
+      const fullPath = join(tasksDir, d.name);
+      let st;
+      try {
+        st = statSync(fullPath);
+      } catch {
+        continue;
+      }
+      logCandidates.push({
+        taskId: m[1].trim(),
+        fullPath,
+        mtimeMs: Math.round(Number(st.mtimeMs || 0)),
+        birthtimeMs: Math.round(Number(st.birthtimeMs || st.mtimeMs || 0)),
+      });
+    }
+    if (logCandidates.length === 0) return;
+    logCandidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    const slice = logCandidates.slice(0, MAX_TASK_LOGS_TO_SCAN);
+
+    for (const item of slice) {
+      const sample = readBoundedLogHeadAndTail(item.fullPath, 512, 1024);
+      if (!sample) continue;
+      const tailStatus = inferBgStatusFromLogTail(sample.tailText);
+      let matchedKey = '';
+      if (bgTasksMap.has(item.taskId)) {
+        matchedKey = item.taskId;
+      } else {
+        for (const existingKey of bgTasksMap.keys()) {
+          if (existingKey.endsWith(`/${item.taskId}`) || existingKey.endsWith(`-${item.taskId}`) || existingKey === `task-${item.taskId}`) {
+            matchedKey = existingKey;
+            break;
+          }
+        }
+      }
+
+      if (matchedKey) {
+        const prev = bgTasksMap.get(matchedKey);
+        const nextStatus = prev.status === 'running' && tailStatus ? tailStatus : prev.status;
+        const headHint = !prev.commandPreview ? extractBgLabelFromLogHead(sample.headText) : '';
+        upsertBgTask(matchedKey, {
+          status: nextStatus,
+          ...(headHint ? { commandPreview: headHint } : {}),
+          startedAt: prev.startedAt || sample.birthtimeMs || sample.mtimeMs,
+          updatedAt: Math.max(prev.updatedAt || 0, sample.mtimeMs),
+        });
+      } else {
+        const headHint = extractBgLabelFromLogHead(sample.headText);
+        const formatted = headHint ? formatCommandStepLabel(headHint, '', false).title : '';
+        const label = formatted || headHint || `Задача ${item.taskId.slice(0, 8)}`;
+        upsertBgTask(item.taskId, {
+          status: tailStatus || 'done',
+          label,
+          commandPreview: headHint || label,
+          isDaemon: false,
+          startedAt: sample.birthtimeMs || sample.mtimeMs,
+          updatedAt: sample.mtimeMs,
+        });
+      }
+    }
+  } catch {}
+}
+
+export function inspectTranscriptTurnState(transcriptPath = '', now = Date.now(), opts = {}) {
+  const hostBootAt = Math.max(0, Number(opts?.hostBootAt || 0));
   if (!transcriptPath || typeof transcriptPath !== 'string' || !existsSync(transcriptPath)) {
     return { exists: false };
   }
@@ -1040,35 +1260,93 @@ export function inspectTranscriptTurnState(transcriptPath = '', now = Date.now()
   const swarmNameToCids = new Map();
   const killedSubagentCids = new Set();
   const killedSwarmNames = new Set();
-  const activeBackgroundTasks = new Map();
+  const backgroundTasksMap = new Map();
+  const pendingRunCommands = [];
+  let bgSeq = 0;
   let killedAllSubagents = false;
   let coordinatorPostedDone = false;
   let allSubagentsStoppedByRestart = false;
+
+  const upsertBgTask = (rawId, patch = {}) => {
+    const id = String(rawId || '').trim();
+    if (!id) return;
+    const prev = backgroundTasksMap.get(id);
+    const nextSeq = prev ? prev.seq : ++bgSeq;
+    const prevStarted = Number(prev?.startedAt || 0);
+    const patchStarted = Number(patch.startedAt || 0);
+    const prevUpdated = Number(prev?.updatedAt || 0);
+    const patchUpdated = Number(patch.updatedAt || 0);
+    const nextLabel = unwrapTranscriptStringArg(patch.label || prev?.label || 'Фоновая задача')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 120) || 'Фоновая задача';
+    const nextPreview = unwrapTranscriptStringArg(patch.commandPreview || prev?.commandPreview || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 120);
+    backgroundTasksMap.set(id, {
+      taskId: id,
+      label: nextLabel,
+      commandPreview: nextPreview,
+      description: nextPreview || nextLabel,
+      status: patch.status || prev?.status || 'running',
+      isDaemon: typeof patch.isDaemon === 'boolean' ? patch.isDaemon : Boolean(prev?.isDaemon),
+      startedAt: prevStarted > 0 ? prevStarted : patchStarted,
+      updatedAt: Math.max(prevUpdated, patchUpdated, patchStarted),
+      seq: nextSeq,
+    });
+  };
 
   // Cross-turn scan of Swarm / subagent roster, kills, background tasks, and server-restart stop notices
   for (let i = 0; i < parsed.length; i++) {
     const entry = parsed[i];
     if (!entry) continue;
+    const entryTs = parseTranscriptEntryTs(entry, 0);
     if (entry.source === 'SYSTEM' && typeof entry.content === 'string') {
       if (/All your subagents and background tasks have been stopped/i.test(entry.content)) {
         allSubagentsStoppedByRestart = true;
-        activeBackgroundTasks.clear();
+        for (const [bgId, bgVal] of backgroundTasksMap.entries()) {
+          if (bgVal.status === 'running') {
+            upsertBgTask(bgId, { status: 'cancelled', updatedAt: entryTs || bgVal.updatedAt });
+          }
+        }
       } else {
-        const finIdMatch = /Task id\s+"([^"]+)"\s+(?:finished|completed|failed|killed|cancelled|canceled|stopped|exited|terminated)/i.exec(entry.content);
-        const senderFinMatch = /sender=([^\s]+)[\s\S]*?(?:finished with (?:result|error):|task\s+(?:completed|failed|killed|cancelled|canceled|stopped|exited|terminated))/i.exec(entry.content);
-        if (finIdMatch?.[1]) activeBackgroundTasks.delete(finIdMatch[1].trim());
-        if (senderFinMatch?.[1]) activeBackgroundTasks.delete(senderFinMatch[1].trim());
+        const finIdMatch = /Task id\s+"([^"]+)"\s+(finished|completed|failed|killed|cancelled|canceled|stopped|exited|terminated)/i.exec(entry.content);
+        const senderFinMatch = /sender=([^\s]+)[\s\S]*?(finished with (?:result|error):|task\s+(?:completed|failed|killed|cancelled|canceled|stopped|exited|terminated))/i.exec(entry.content);
+        if (finIdMatch?.[1]) {
+          const finId = finIdMatch[1].trim();
+          const hasNonZeroExit = /Command exited with code\s+[1-9]\d*/i.test(entry.content);
+          upsertBgTask(finId, {
+            status: hasNonZeroExit ? 'error' : classifyBgTerminalStatus(finIdMatch[2], 'done'),
+            updatedAt: entryTs || undefined,
+          });
+        }
+        if (senderFinMatch?.[1]) {
+          const senderId = senderFinMatch[1].trim();
+          if (backgroundTasksMap.has(senderId)) {
+            const hasNonZeroExit = /Command exited with code\s+[1-9]\d*/i.test(entry.content);
+            upsertBgTask(senderId, {
+              status: hasNonZeroExit ? 'error' : classifyBgTerminalStatus(senderFinMatch[2], 'done'),
+              updatedAt: entryTs || undefined,
+            });
+          }
+        }
         if (!finIdMatch && !senderFinMatch) {
           const stillRunningMatch = /sender=([^\s]+)[\s\S]*?Background command is still running(?:\s+after\s+\d+s)?:\s*([^\r\n<]*)/i.exec(entry.content);
           if (stillRunningMatch?.[1]) {
             const bgId = stillRunningMatch[1].trim();
             const bgDesc = String(stillRunningMatch[2] || '').replace(/\s+Task logs are available at:.*$/i, '').trim().slice(0, 160);
-            const prevBg = activeBackgroundTasks.get(bgId);
-            if (!prevBg) {
-              activeBackgroundTasks.set(bgId, { taskId: bgId, description: bgDesc });
-            } else if (!prevBg.description && bgDesc) {
-              prevBg.description = bgDesc;
-            }
+            const prevBg = backgroundTasksMap.get(bgId);
+            const safePreview = sanitizeBgPreviewText(bgDesc, 120);
+            const niceLabel = (!prevBg?.label && safePreview)
+              ? (formatCommandStepLabel(safePreview, '', false).title || safePreview)
+              : '';
+            upsertBgTask(bgId, {
+              status: 'running',
+              ...(niceLabel ? { label: niceLabel } : {}),
+              ...(!prevBg?.commandPreview && safePreview ? { commandPreview: safePreview } : {}),
+              updatedAt: entryTs || undefined,
+            });
           }
         }
       }
@@ -1078,14 +1356,23 @@ export function inspectTranscriptTurnState(transcriptPath = '', now = Date.now()
       for (const tc of entry.tool_calls) {
         const tName = String(tc?.name || '');
         const tArgs = tc?.args && typeof tc.args === 'object' ? tc.args : {};
-        if (tName === 'invoke_subagent') {
+        if (tName === 'run_command') {
+          const rawDaemon = unwrapTranscriptStringArg(tArgs.IsDaemon ?? tArgs.isDaemon ?? '').toLowerCase();
+          pendingRunCommands.push({
+            summary: unwrapTranscriptStringArg(tArgs.toolSummary || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+            command: unwrapTranscriptStringArg(tArgs.CommandLine || tArgs.command || tArgs.cmd || '').trim(),
+            isDaemon: tArgs.IsDaemon === true || tArgs.isDaemon === true || rawDaemon === 'true',
+            createdAt: entryTs,
+          });
+          if (pendingRunCommands.length > 20) pendingRunCommands.shift();
+        } else if (tName === 'invoke_subagent') {
           allSubagentsStoppedByRestart = false;
           killedAllSubagents = false;
         } else if (tName === 'manage_task') {
           const mtAct = String(tArgs.Action || tArgs.action || '').replace(/^["'\s]+|["'\s]+$/g, '').toLowerCase();
           const mtId = String(tArgs.TaskId || tArgs.taskId || '').replace(/^["'\s]+|["'\s]+$/g, '').trim();
           if (mtAct === 'kill' && mtId) {
-            activeBackgroundTasks.delete(mtId);
+            upsertBgTask(mtId, { status: 'cancelled', updatedAt: entryTs || undefined });
           }
         } else if (tName === 'swarm') {
           const act = String(tArgs.action || '').replace(/^["'\s]+|["'\s]+$/g, '').toLowerCase();
@@ -1132,20 +1419,67 @@ export function inspectTranscriptTurnState(transcriptPath = '', now = Date.now()
         }
       }
     } else if (entry.type === 'GENERIC' && typeof entry.content === 'string') {
-      const bgStartMatch = /Tool is running as a background task with task id:\s*([^\s\r\n]+)/i.exec(entry.content);
+      const { body: gBody, hasCompletedAt } = extractGenericToolOutputBody(entry.content);
+      const isCodeDump = isCodeOrFileReadPayload(gBody);
+      const entryStatusUpper = String(entry.status || '').toUpperCase();
+      const bgStartMatch = (!isCodeDump && !(hasCompletedAt && entryStatusUpper === 'DONE'))
+        ? /^Tool is running as a background task with task id:\s*([A-Za-z0-9_./:-]+)/i.exec(gBody)
+        : null;
       if (bgStartMatch?.[1]) {
         const bgTaskId = bgStartMatch[1].trim();
-        const bgDescMatch = /Task Description:\s*([^\r\n]+)/i.exec(entry.content);
+        const gHead = gBody.slice(0, 500);
+        const bgDescMatch = /^Task Description:\s*([^\r\n]+)/im.exec(gHead);
         const bgDesc = String(bgDescMatch?.[1] || '').replace(/\s+Task logs are available at:.*$/i, '').trim().slice(0, 160);
-        activeBackgroundTasks.set(bgTaskId, { taskId: bgTaskId, description: bgDesc });
+        let pairedCmd = null;
+        if (pendingRunCommands.length > 0) {
+          const normDesc = bgDesc.replace(/\s+/g, ' ').trim();
+          let matchIdx = -1;
+          if (normDesc) {
+            for (let pi = pendingRunCommands.length - 1; pi >= 0; pi--) {
+              const normCmd = String(pendingRunCommands[pi]?.command || '').replace(/\s+/g, ' ').trim();
+              if (normCmd && (normCmd === normDesc || normCmd.includes(normDesc) || normDesc.includes(normCmd))) {
+                matchIdx = pi;
+                break;
+              }
+            }
+          }
+          pairedCmd = matchIdx !== -1 ? pendingRunCommands.splice(matchIdx, 1)[0] : pendingRunCommands.pop();
+        }
+        const safePreview = sanitizeBgPreviewText(pairedCmd?.command || bgDesc, 120);
+        const cmdFormatted = bgDesc ? formatCommandStepLabel(bgDesc, '', false).title : (pairedCmd?.command ? formatCommandStepLabel(pairedCmd.command, '', false).title : '');
+        const bgLabel = (pairedCmd?.summary)
+          || (bgDesc && !/^[a-z0-9_.-]+[\\/]/i.test(bgDesc) && bgDesc.length <= 96 ? sanitizeBgPreviewText(bgDesc, 110) : '')
+          || cmdFormatted
+          || sanitizeBgPreviewText(bgDesc, 110)
+          || 'Фоновая задача';
+        upsertBgTask(bgTaskId, {
+          status: 'running',
+          label: bgLabel,
+          commandPreview: safePreview || bgLabel,
+          isDaemon: Boolean(pairedCmd?.isDaemon),
+          startedAt: entryTs || pairedCmd?.createdAt || undefined,
+          updatedAt: entryTs || pairedCmd?.createdAt || undefined,
+        });
+      } else if (!isCodeDump && /^Command exited with code\b/im.test(gBody) && pendingRunCommands.length > 0) {
+        pendingRunCommands.shift();
       }
-      const bgStatusDoneMatch = /Task:\s*([^\s\r\n]+)\s+Status:\s*(?:COMPLETED|DONE|FAILED|KILLED|CANCELLED|CANCELED|EXITED|STOPPED)\b/i.exec(entry.content);
+      const bgStatusDoneMatch = !isCodeDump
+        ? /^Task:\s*([A-Za-z0-9_./:-]+)\s+Status:\s*(COMPLETED|DONE|FAILED|ERROR|KILLED|CANCELLED|CANCELED|EXITED|STOPPED|TERMINATED)\b/im.exec(gBody)
+        : null;
       if (bgStatusDoneMatch?.[1]) {
-        activeBackgroundTasks.delete(bgStatusDoneMatch[1].trim());
+        upsertBgTask(bgStatusDoneMatch[1].trim(), {
+          status: classifyBgTerminalStatus(bgStatusDoneMatch[2], 'done'),
+          updatedAt: entryTs || undefined,
+        });
       }
-      const bgKilledMatch = /(?:Killed|Stopped|Cancelled|Canceled)\s+task(?:\s+id)?[:\s"]+([^\s"\r\n]+)/i.exec(entry.content);
+      const bgKilledMatch = !isCodeDump
+        ? /^(?:Killed|Stopped|Cancelled|Canceled)\s+task(?:\s+id)?[:\s"]+([A-Za-z0-9_./:-]+)/im.exec(gBody)
+        : null;
       if (bgKilledMatch?.[1]) {
-        activeBackgroundTasks.delete(bgKilledMatch[1].trim());
+        upsertBgTask(bgKilledMatch[1].trim(), {
+          status: 'cancelled',
+          updatedAt: entryTs || undefined,
+        });
       }
       if (entry.content.includes('"added"') && entry.content.includes('"conversation_id"')) {
         const addedMatches = entry.content.matchAll(
@@ -1289,14 +1623,56 @@ export function inspectTranscriptTurnState(transcriptPath = '', now = Date.now()
     ? lastMeaningful.tool_calls
     : [];
   const lastToolIsExitPlan = lastToolCalls.some((tc) => tc?.name === 'exit_plan_mode');
-  const runningBackgroundTasks = stoppedByServerRestart ? [] : Array.from(activeBackgroundTasks.values());
+  scanConversationBackgroundTaskLogs(transcriptPath, backgroundTasksMap, upsertBgTask);
+  if (stoppedByServerRestart) {
+    for (const [bgId, bgVal] of backgroundTasksMap.entries()) {
+      if (bgVal.status === 'running') {
+        upsertBgTask(bgId, { status: 'cancelled', updatedAt: bgVal.updatedAt || Math.round(st.mtimeMs || 0) });
+      }
+    }
+  }
+  if (hostBootAt > 0) {
+    for (const [bgId, bgVal] of backgroundTasksMap.entries()) {
+      if (bgVal.status === 'running') {
+        const bgLastTs = Math.max(Number(bgVal.updatedAt || 0), Number(bgVal.startedAt || 0));
+        if ((bgLastTs > 0 && bgLastTs < hostBootAt) || (bgLastTs === 0 && Number(st.mtimeMs || 0) < hostBootAt)) {
+          upsertBgTask(bgId, { status: 'cancelled', updatedAt: bgLastTs || Math.round(st.mtimeMs || 0) });
+        }
+      }
+    }
+  }
+  const allBgTasks = Array.from(backgroundTasksMap.values()).sort((a, b) => {
+    const aRun = a.status === 'running' ? 0 : 1;
+    const bRun = b.status === 'running' ? 0 : 1;
+    if (aRun !== bRun) return aRun - bRun;
+    const updDiff = Number(b.updatedAt || 0) - Number(a.updatedAt || 0);
+    if (updDiff !== 0) return updDiff;
+    const startDiff = Number(b.startedAt || 0) - Number(a.startedAt || 0);
+    if (startDiff !== 0) return startDiff;
+    return Number(b.seq || 0) - Number(a.seq || 0);
+  });
+  const backgroundTasksTotalCount = allBgTasks.length;
+  const backgroundTasks = allBgTasks.slice(0, MAX_PUBLIC_BACKGROUND_TASKS).map((t) => ({
+    id: t.taskId,
+    taskId: t.taskId,
+    label: t.label,
+    labelEn: localizeProgressLabelToEn(t.label),
+    commandPreview: t.commandPreview,
+    status: t.status,
+    isDaemon: Boolean(t.isDaemon),
+    startedAt: Number(t.startedAt || 0),
+    updatedAt: Number(t.updatedAt || 0),
+  }));
+  const runningBackgroundTasks = stoppedByServerRestart
+    ? []
+    : allBgTasks.filter((t) => t.status === 'running');
   const hasRunningBackgroundTask = runningBackgroundTasks.length > 0;
   let backgroundTaskLabel = '';
   if (hasRunningBackgroundTask) {
-    const latestBg = runningBackgroundTasks[runningBackgroundTasks.length - 1];
+    const latestBg = runningBackgroundTasks[0];
     const cmdShort = latestBg?.description
       ? formatCommandStepLabel(latestBg.description, '', false).title
-      : '';
+      : (latestBg?.label || '');
     const rawBgLabel = runningBackgroundTasks.length > 1
       ? `Фон (${runningBackgroundTasks.length}): ${cmdShort || 'Фоновые задачи'}`
       : `Фон: ${cmdShort || 'Фоновая задача'}`;
@@ -1317,6 +1693,8 @@ export function inspectTranscriptTurnState(transcriptPath = '', now = Date.now()
     killedAllSubagents,
     coordinatorPostedDone,
     allSubagentsStoppedByRestart,
+    backgroundTasks,
+    backgroundTasksTotalCount,
     runningBackgroundTasks,
     hasRunningBackgroundTask,
     backgroundTaskLabel,

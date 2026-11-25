@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { isSubagentTranscriptFile, peekActiveModelFromTranscript, resolveEffectiveCompactionThreshold } from './model-profile.mjs';
 import { invalidateReadCacheForConvo } from './read-dedup.mjs';
 import { atomicWriteJsonSync, safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
-import { ensureTunnelCacheDir, resolveTunnelCacheDir } from './cache-dir.mjs';
+import { ensureTunnelCacheDir, isPidAlive, resolveTunnelCacheDir } from './cache-dir.mjs';
 import { extractDeterministicFactTable } from './cpu-sbfl-healer.mjs';
 import { normalizeLang, pickLang } from './i18n.mjs';
 
@@ -410,17 +410,6 @@ function parseTranscript(transcriptPath) {
   }
 }
 
-function isDaemonPidAlive(pid) {
-  const num = Number(pid);
-  if (!Number.isInteger(num) || num <= 0) return false;
-  try {
-    process.kill(num, 0);
-    return true;
-  } catch (err) {
-    return err?.code === 'EPERM';
-  }
-}
-
 /**
  * Best-effort non-blocking archive of pre-compaction digest to live RAM daemon for RepairKV recall.
  * @param {object} [params]
@@ -438,12 +427,12 @@ export function postCompactionArchiveBestEffort(opts = {}) {
     const candidates = [];
     if (info.instances && typeof info.instances === 'object') {
       for (const inst of Object.values(info.instances)) {
-        if (inst && inst.port && inst.token && isDaemonPidAlive(inst.pid)) {
+        if (inst && inst.port && inst.token && isPidAlive(inst.pid)) {
           candidates.push(inst);
         }
       }
     }
-    if (candidates.length === 0 && info.port && info.token && isDaemonPidAlive(info.pid)) {
+    if (candidates.length === 0 && info.port && info.token && isPidAlive(info.pid)) {
       candidates.push(info);
     }
     if (candidates.length === 0) return Promise.resolve(false);

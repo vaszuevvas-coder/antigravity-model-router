@@ -45,8 +45,8 @@ function buildStaticSessionStartHeader(state = {}) {
   const isEn = resolveUserLanguage(state) === 'en';
   const lines = [
     isEn
-      ? '# The Tunnel v3.34.0 (EN-Internal / EN-Chat)'
-      : '# The Tunnel v3.34.0 (EN-Internal / RU-Chat)',
+      ? '# The Tunnel v3.34.1 (EN-Internal / EN-Chat)'
+      : '# The Tunnel v3.34.1 (EN-Internal / RU-Chat)',
     isEn
       ? '- User replies/UI/Role/toolSummary: 100% English.'
       : '- User replies/UI/Role/toolSummary: 100% Russian.',
@@ -683,12 +683,12 @@ export function buildZeroTokenUserBadgeStep(rawOpts = {}) {
         ? `Pro Architect${subSuffix}`
         : strat === 'flash_dispatcher' || strat === 'economy'
           ? `Flash Dispatcher${subSuffix}`
-          : `Autopilot v3.34.0${subSuffix}`)
+          : `Autopilot v3.34.1${subSuffix}`)
     : (strat === 'pro_architect' || strat === 'performance'
         ? `Pro-Архитектор${subSuffix}`
         : strat === 'flash_dispatcher' || strat === 'economy'
           ? `Flash-Диспетчер${subSuffix}`
-          : `Автопилот v3.34.0${subSuffix}`);
+          : `Автопилот v3.34.1${subSuffix}`);
   const executor = isEn
     ? (modelProfile?.displayEn || modelProfile?.shortLabel || modelProfile?.displayRu || modelProfile?.displayNameRu || 'Current executor')
     : (modelProfile?.displayRu || modelProfile?.displayNameRu || modelProfile?.shortLabel || 'Текущий исполнитель');
@@ -1230,7 +1230,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
       }
     }
 
-    // 2. Когнитивный ИИ-Автопилот v3.34.0 (3D-матрица Breadth × Depth × Risk + безлимитное EN-мышление на Gemini 4)
+    // 2. Когнитивный ИИ-Автопилот v3.34.1 (3D-матрица Breadth × Depth × Risk + безлимитное EN-мышление на Gemini 4)
     if (baseState.thinkingLimiter !== false && toolPruner && typeof toolPruner.estimateTaskGradeAndThinkingBudget === 'function') {
       try {
         const budgetRes = toolPruner.estimateTaskGradeAndThinkingBudget(userInput, effectiveState, {
@@ -1533,8 +1533,8 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
             : ` [AGY 2.35+ Split-Turn] Если после разведки смена модели на ${prevTurnSnapshot.selectorRecommended || 'оптимальную модель'} нужна, НЕ вызывай ask_question — выведи план + 3 пронумерованных варианта + "💡 Совет по режиму" обычным текстом и заверши ход для разблокировки селектора (либо добавь вариант "⏸ Завершить ход, чтобы я переключил модель", если ask_question нужен для развилок).`)
         : '';
       const carryLine = isEnLang
-        ? `🧭 [Post-Scout AI Triage | Active Selector: ${activeDisp}] Base final scope (S/M/L/XL) & optimal model strictly on the files you just inspected (override pre-read ~${prevTurnSnapshot.grade || 'M'} if code is simpler or deeper), and keep EN chat, ask_question ("Scope", "Recommended power", "💡 Mode tip" if optimal != ${activeDisp}), and option #1 100% synchronized; ALWAYS include explicit thinking/planner depth for BOTH standalone models AND Orchestrator (e.g. Hydrogen · Medium/High, Neon · High/XHigh, Carbon · High, Orchestrator (Neon · Medium/High/XHigh), Orchestrator (Carbon · Medium/High) — never bare model or bare Orchestrator names).${orchReminder}${splitTurnReminder}`
-        : `🧭 [Post-Scout AI Triage | Active Selector: ${activeDisp}] Base final scope (S/M/L/XL) & optimal model strictly on the files you just inspected (override pre-read ~${prevTurnSnapshot.grade || 'M'} if code is simpler or deeper), and keep RU chat, ask_question ("Объём", "Рекомендуемая мощность", "💡 Совет по режиму" if optimal != ${activeDisp}), and option #1 100% synchronized; ALWAYS include explicit thinking/planner depth for BOTH standalone models AND Orchestrator (e.g. Hydrogen · Средний/Высокий, Neon · Высокий/XHigh, Carbon · Высокий, Orchestrator (Neon · Средний/Высокий/XHigh), Orchestrator (Carbon · Средний/Высокий) — never bare model or bare Orchestrator names).${orchReminder}${splitTurnReminder}`;
+        ? `🧭 [Post-Scout AI Triage | Active Selector: ${activeDisp}] Base final scope (S/M/L/XL) & optimal model strictly on the files you just inspected (override pre-read ~${prevTurnSnapshot.grade || 'M'} if code is simpler or deeper), and keep EN chat, ask_question ("Scope", "Recommended power", "💡 Mode tip" if optimal != ${activeDisp}), and option #1 100% synchronized; ALWAYS include explicit thinking/planner depth for BOTH standalone models AND Orchestrator (e.g. Hydrogen · Medium/High, Neon · High/XHigh, Carbon · High, Orchestrator (Neon · Medium/High/XHigh), Orchestrator (Carbon · Medium/High) — never bare model or bare Orchestrator names). If post-scout downgrades scope to S (or routine M), MUST also downgrade Recommended power to Hydrogen · Medium (for S) or Hydrogen · Medium/High (for routine M) — NEVER echo a heavy active selector (Neon · High/XHigh, Carbon, Orchestrator (Neon · High)) for an S task, and append "💡 Mode tip" when active selector is heavier.${orchReminder}${splitTurnReminder}`
+        : `🧭 [Post-Scout AI Triage | Active Selector: ${activeDisp}] Base final scope (S/M/L/XL) & optimal model strictly on the files you just inspected (override pre-read ~${prevTurnSnapshot.grade || 'M'} if code is simpler or deeper), and keep RU chat, ask_question ("Объём", "Рекомендуемая мощность", "💡 Совет по режиму" if optimal != ${activeDisp}), and option #1 100% synchronized; ALWAYS include explicit thinking/planner depth for BOTH standalone models AND Orchestrator (e.g. Hydrogen · Средний/Высокий, Neon · Высокий/XHigh, Carbon · Высокий, Orchestrator (Neon · Средний/Высокий/XHigh), Orchestrator (Carbon · Средний/Высокий) — never bare model or bare Orchestrator names). Если после разведки объём понижен до S (или рутинного M), ОБЯЗАЛЬНО понизь и «Рекомендуемая мощность» до Hydrogen · Средний (для S) или Hydrogen · Средний/Высокий (для рутинного M) — НИКОГДА не копируй тяжёлый активный селектор (Neon · Высокий/XHigh, Carbon, Orchestrator (Neon · Высокий)) для задачи S, и добавь «💡 Совет по режиму» при избыточном селекторе.${orchReminder}${splitTurnReminder}`;
       thinkingBudgetHint = thinkingBudgetHint ? `${thinkingBudgetHint}\n${carryLine}` : carryLine;
       if (!prevTurnSnapshot.carryOverSent) {
         try {
@@ -2117,11 +2117,28 @@ function evaluateAskQuestionSelectorGuard({ args = {}, convoId = 'default', stat
         effectiveIsDeep = Boolean(prev.isDeepAuditOrArch || prevMatrix?.depth === 'deep_arch');
       }
 
+      let updatedRecommended = prev.selectorRecommended;
+      if (declaredGrade && modelProfileMod) {
+        const isEnLang = resolveUserLanguage(state) === 'en';
+        const targetResolver = isEnLang
+          ? modelProfileMod.resolveOptimalModelTargetEn
+          : modelProfileMod.resolveOptimalModelTargetRu;
+        if (typeof targetResolver === 'function') {
+          updatedRecommended = targetResolver({
+            grade: effectiveGrade,
+            isDeepAuditOrArch: effectiveIsDeep,
+            matrix2D: effectiveMatrix2D,
+            subscriptionTier: state?.subscriptionTier || null,
+          });
+        }
+      }
+
       turns[convoId] = {
         ...prev,
         grade: effectiveGrade,
         matrix2D: effectiveMatrix2D,
         isDeepAuditOrArch: effectiveIsDeep,
+        ...(updatedRecommended !== undefined ? { selectorRecommended: updatedRecommended } : {}),
         askQuestionCalled: true,
         modelSwitchPending: false,
         preTaskGateRequired: false,

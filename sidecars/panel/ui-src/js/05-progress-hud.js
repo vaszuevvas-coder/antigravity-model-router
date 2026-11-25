@@ -1,7 +1,10 @@
     const _agDisplayedPctByChat = Object.create(null);
     const _agPctAnimFrameByChat = Object.create(null);
     const _agExpandedSubagentsByChat = Object.create(null);
+    const _agExpandedBgTasksByChat = Object.create(null);
+    const _agShowAllBgTasksByChat = Object.create(null);
     const _agExpandedStepsByChat = Object.create(null);
+    const AG_BG_TASKS_PREVIEW_LIMIT = 4;
 
     function toggleStepChip(cid, stepKey, chipEl) {
       const cleanCid = String(cid || '').trim();
@@ -65,6 +68,53 @@
         drawerEl.classList.toggle('is-open', nextExpanded);
         drawerEl.setAttribute('aria-hidden', nextExpanded ? 'false' : 'true');
       }
+    }
+
+    function toggleBgTasksList(cid, btnEl) {
+      const cleanCid = String(cid || '').trim();
+      if (!cleanCid) return;
+      const nextExpanded = !_agExpandedBgTasksByChat[cleanCid];
+      _agExpandedBgTasksByChat[cleanCid] = nextExpanded;
+      const itemEl = btnEl && btnEl.closest
+        ? btnEl.closest('.ag-chat-task-item')
+        : document.querySelector('.ag-chat-task-item[data-cid="' + CSS.escape(cleanCid) + '"]');
+      if (!itemEl) return;
+      const toggleBtn = itemEl.querySelector('.ag-bgtask-toggle-btn');
+      const drawerEl = itemEl.querySelector('.ag-bgtasks-drawer');
+      if (toggleBtn) {
+        toggleBtn.classList.toggle('is-expanded', nextExpanded);
+        toggleBtn.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
+      }
+      if (drawerEl) {
+        drawerEl.classList.toggle('is-open', nextExpanded);
+        drawerEl.setAttribute('aria-hidden', nextExpanded ? 'false' : 'true');
+      }
+    }
+
+    function toggleBgTasksShowAll(cid, btnEl) {
+      const cleanCid = String(cid || '').trim();
+      if (!cleanCid) return;
+      const nextShowAll = !_agShowAllBgTasksByChat[cleanCid];
+      _agShowAllBgTasksByChat[cleanCid] = nextShowAll;
+      const itemEl = btnEl && btnEl.closest
+        ? btnEl.closest('.ag-chat-task-item')
+        : document.querySelector('.ag-chat-task-item[data-cid="' + CSS.escape(cleanCid) + '"]');
+      if (!itemEl) return;
+      const listEl = itemEl.querySelector('.ag-bgtasks-list');
+      if (!listEl) return;
+      const rows = Array.from(listEl.querySelectorAll('.ag-bgtask-item'));
+      rows.forEach(function (rowEl, idx) {
+        rowEl.classList.toggle('is-overflow-hidden', !nextShowAll && idx >= AG_BG_TASKS_PREVIEW_LIMIT);
+      });
+      const seeAllBtn = listEl.querySelector('.ag-bgtasks-see-all-btn');
+      if (seeAllBtn) {
+        const totalHint = Number(seeAllBtn.getAttribute('data-total') || rows.length);
+        seeAllBtn.textContent = nextShowAll
+          ? L('Свернуть', 'Collapse')
+          : (L('Показать все (', 'See all (') + totalHint + ')');
+        seeAllBtn.setAttribute('aria-expanded', nextShowAll ? 'true' : 'false');
+      }
+      listEl.dataset.sig = '';
     }
 
     function animateChatPctNode(cid, numEl, targetPct) {
@@ -265,12 +315,6 @@
         el.setAttribute('data-cid', slotKey);
         el.innerHTML =
           '<div class="ag-progress-capsule">' +
-            '<button type="button" class="ag-subagent-toggle-btn" data-action="toggleSubagentsList" data-arg="' + escapeHtml(slotKey) + '" aria-expanded="false" style="display: none;" title="' + L('Раскрыть список субагентов', 'Expand subagents list') + '">' +
-              '<svg class="ag-subagent-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
-                '<path d="M6 3.75L10.25 8L6 12.25" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>' +
-              '</svg>' +
-              '<span class="ag-subagent-count">0</span>' +
-            '</button>' +
             '<span class="ag-bloom-dot idle"></span>' +
             '<span class="ag-chat-num-badge" style="display: none;"></span>' +
             '<span class="ag-progress-title">' + L('Ожидание задачи', 'Waiting for task') + '</span>' +
@@ -281,9 +325,31 @@
           '</div>' +
           '<div class="ag-steps-mini-list" style="display: none;"></div>' +
           '<div class="ag-context-pills-row" style="display: none;"></div>' +
+          '<div class="ag-hud-meta-row" style="display: none;">' +
+            '<button type="button" class="ag-subagent-toggle-btn" data-action="toggleSubagentsList" data-arg="' + escapeHtml(slotKey) + '" aria-expanded="false" style="display: none;" title="' + L('Раскрыть список субагентов', 'Expand subagents list') + '">' +
+              '<svg class="ag-subagent-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
+                '<path d="M6 3.75L10.25 8L6 12.25" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>' +
+              '</svg>' +
+              '<span class="ag-hud-pill-lbl">' + L('Субагенты', 'Subagents') + '</span>' +
+              '<span class="ag-subagent-count">0</span>' +
+            '</button>' +
+            '<button type="button" class="ag-bgtask-toggle-btn" data-action="toggleBgTasksList" data-arg="' + escapeHtml(slotKey) + '" aria-expanded="false" style="display: none;" title="' + L('Раскрыть список фоновых задач', 'Expand background tasks list') + '">' +
+              '<svg class="ag-bgtask-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
+                '<path d="M6 3.75L10.25 8L6 12.25" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>' +
+              '</svg>' +
+              '<span class="ag-bgtask-term-ico" aria-hidden="true">&gt;_</span>' +
+              '<span class="ag-hud-pill-lbl">' + L('Фоновые', 'Tasks') + '</span>' +
+              '<span class="ag-bgtask-count">0</span>' +
+            '</button>' +
+          '</div>' +
           '<div class="ag-subagents-drawer" aria-hidden="true">' +
             '<div class="ag-subagents-drawer-inner">' +
               '<div class="ag-subagents-list"></div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="ag-bgtasks-drawer" aria-hidden="true">' +
+            '<div class="ag-bgtasks-drawer-inner">' +
+              '<div class="ag-bgtasks-list"></div>' +
             '</div>' +
           '</div>';
         return el;
@@ -306,10 +372,20 @@
         return el;
       }
 
+      function syncHudMetaRowVisibility(itemEl) {
+        if (!itemEl) return;
+        const metaRow = itemEl.querySelector('.ag-hud-meta-row');
+        if (!metaRow) return;
+        const subBtn = metaRow.querySelector('.ag-subagent-toggle-btn');
+        const bgBtn = metaRow.querySelector('.ag-bgtask-toggle-btn');
+        const hasVisible = (subBtn && subBtn.style.display !== 'none') || (bgBtn && bgBtn.style.display !== 'none');
+        metaRow.style.display = hasVisible ? 'flex' : 'none';
+      }
+
       function syncSubagentsDrawerForChat(itemEl, cid, subagents) {
-        const mainCap = itemEl.querySelector('.ag-progress-capsule') || itemEl;
-        const toggleBtn = mainCap.querySelector('.ag-subagent-toggle-btn');
+        const toggleBtn = itemEl.querySelector('.ag-subagent-toggle-btn');
         const countEl = toggleBtn ? toggleBtn.querySelector('.ag-subagent-count') : null;
+        const lblEl = toggleBtn ? toggleBtn.querySelector('.ag-hud-pill-lbl') : null;
         const drawerEl = itemEl.querySelector('.ag-subagents-drawer');
         const listEl = itemEl.querySelector('.ag-subagents-list');
         const subs = Array.isArray(subagents) ? subagents : [];
@@ -321,6 +397,7 @@
             toggleBtn.classList.remove('is-expanded', 'is-active-glow');
             toggleBtn.setAttribute('aria-expanded', 'false');
           }
+          syncHudMetaRowVisibility(itemEl);
           if (drawerEl) {
             drawerEl.classList.remove('is-open');
             drawerEl.setAttribute('aria-hidden', 'true');
@@ -353,6 +430,10 @@
         if (countEl) {
           countEl.textContent = String(subs.length);
         }
+        if (lblEl) {
+          lblEl.textContent = L('Субагенты', 'Subagents');
+        }
+        syncHudMetaRowVisibility(itemEl);
         if (drawerEl) {
           drawerEl.classList.toggle('is-open', isExpanded);
           drawerEl.setAttribute('aria-hidden', isExpanded ? 'false' : 'true');
@@ -427,6 +508,169 @@
         });
       }
 
+      function formatBgTaskMeta(task) {
+        const st = String((task && task.status) || 'done');
+        const started = Number((task && task.startedAt) || 0);
+        const updated = Number((task && task.updatedAt) || 0);
+        let durText = '';
+        if (started > 0) {
+          const endMs = st === 'running' ? Math.max(Date.now(), started) : (updated > started ? updated : 0);
+          if (endMs >= started) {
+            const sec = Math.max(0, Math.round((endMs - started) / 1000));
+            if (sec >= 3600) durText = Math.floor(sec / 3600) + L('ч', 'h');
+            else if (sec >= 60) durText = Math.floor(sec / 60) + L('м', 'm');
+            else if (sec > 0 || st === 'running') durText = sec + L('с', 's');
+          }
+        }
+        if (st === 'running') {
+          if (task && task.isDaemon) return durText ? ('daemon · ' + durText) : 'daemon';
+          return durText || L('в работе', 'running');
+        }
+        if (st === 'error') return durText ? (L('ошиб · ', 'err · ') + durText) : L('ошибка', 'error');
+        if (st === 'cancelled') return durText ? (L('отм · ', 'stop · ') + durText) : L('отменена', 'cancelled');
+        return durText || L('готово', 'done');
+      }
+
+      function syncBgTasksDrawerForChat(itemEl, cid, bgTasks, totalCount, runningCountHint) {
+        const toggleBtn = itemEl.querySelector('.ag-bgtask-toggle-btn');
+        const countEl = toggleBtn ? toggleBtn.querySelector('.ag-bgtask-count') : null;
+        const lblEl = toggleBtn ? toggleBtn.querySelector('.ag-hud-pill-lbl') : null;
+        const drawerEl = itemEl.querySelector('.ag-bgtasks-drawer');
+        const listEl = itemEl.querySelector('.ag-bgtasks-list');
+        const tasks = Array.isArray(bgTasks) ? bgTasks : [];
+        const total = Math.max(tasks.length, Math.round(Number(totalCount || 0)));
+
+        if (total === 0 && tasks.length === 0) {
+          delete _agExpandedBgTasksByChat[cid];
+          delete _agShowAllBgTasksByChat[cid];
+          if (toggleBtn) {
+            toggleBtn.style.display = 'none';
+            toggleBtn.classList.remove('is-expanded', 'is-active-glow');
+            toggleBtn.setAttribute('aria-expanded', 'false');
+          }
+          syncHudMetaRowVisibility(itemEl);
+          if (drawerEl) {
+            drawerEl.classList.remove('is-open');
+            drawerEl.setAttribute('aria-hidden', 'true');
+          }
+          if (listEl) {
+            listEl.dataset.sig = '';
+            if (listEl.children.length > 0) listEl.textContent = '';
+          }
+          return;
+        }
+
+        const runningInList = tasks.filter(function (t) { return t && t.status === 'running'; }).length;
+        const runningCount = Math.max(runningInList, Math.round(Number(runningCountHint || 0)));
+        const isExpanded = Boolean(_agExpandedBgTasksByChat[cid]);
+        const isShowAll = Boolean(_agShowAllBgTasksByChat[cid]);
+        const badgeText = runningCount > 0 ? (runningCount + '/' + total) : String(total);
+
+        if (toggleBtn) {
+          toggleBtn.style.display = 'inline-flex';
+          toggleBtn.setAttribute('data-arg', cid);
+          toggleBtn.classList.toggle('is-expanded', isExpanded);
+          toggleBtn.classList.toggle('is-active-glow', runningCount > 0);
+          toggleBtn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+          toggleBtn.title = isExpanded
+            ? (L('Свернуть список фоновых задач (', 'Collapse background tasks (') + total + ')')
+            : (runningCount > 0
+                ? (L('Фоновые задачи: ', 'Background tasks: ') + runningCount + L(' в работе из ', ' running of ') + total)
+                : (L('Фоновые задачи (', 'Background tasks (') + total + L(') — нажмите, чтобы раскрыть', ') — click to expand')));
+        }
+        if (countEl && countEl.textContent !== badgeText) {
+          countEl.textContent = badgeText;
+        }
+        if (lblEl) {
+          lblEl.textContent = L('Фоновые', 'Tasks');
+        }
+        syncHudMetaRowVisibility(itemEl);
+        if (drawerEl) {
+          drawerEl.classList.toggle('is-open', isExpanded);
+          drawerEl.setAttribute('aria-hidden', isExpanded ? 'false' : 'true');
+        }
+        if (!listEl) return;
+
+        const sig = [
+          getUiLanguage(),
+          total,
+          runningCount,
+          isShowAll ? '1' : '0',
+          tasks.map(function (t) {
+            return (t.taskId || t.id || '') + ':' + (t.status || '') + ':' + (t.updatedAt || 0) + ':' + (t.label || '');
+          }).join('|'),
+        ].join('::');
+
+        if (listEl.dataset.sig === sig) return;
+        listEl.dataset.sig = sig;
+        listEl.textContent = '';
+
+        const headerEl = document.createElement('div');
+        headerEl.className = 'ag-bgtasks-header';
+        const headerTitle = document.createElement('span');
+        headerTitle.className = 'ag-bgtasks-header-title';
+        headerTitle.textContent = L('Фоновые задачи', 'Background Tasks');
+        const headerBadge = document.createElement('span');
+        headerBadge.className = 'ag-bgtasks-header-badge';
+        headerBadge.textContent = String(total);
+        headerEl.appendChild(headerTitle);
+        headerEl.appendChild(headerBadge);
+        listEl.appendChild(headerEl);
+
+        tasks.forEach(function (t, tIdx) {
+          const st = String((t && t.status) || 'done');
+          const statusCls = st === 'running'
+            ? 'is-running'
+            : (st === 'error' ? 'is-error' : (st === 'cancelled' ? 'is-cancelled' : 'is-done'));
+          const rowItem = document.createElement('div');
+          rowItem.className = 'ag-bgtask-item ' + statusCls + ((!isShowAll && tIdx >= AG_BG_TASKS_PREVIEW_LIMIT) ? ' is-overflow-hidden' : '');
+          rowItem.setAttribute('data-task-id', String((t && (t.taskId || t.id)) || ('bg-' + tIdx)));
+
+          const rowInner = document.createElement('div');
+          rowInner.className = 'ag-bgtask-row';
+
+          const icoEl = document.createElement('span');
+          icoEl.className = 'ag-bgtask-ico ' + statusCls;
+          icoEl.setAttribute('aria-hidden', 'true');
+          icoEl.textContent = (st === 'error' || st === 'cancelled') ? '×' : '>_';
+
+          const titleText = pickText(t, 'label', 'labelEn', '') || (t && t.commandPreview) || L('Фоновая задача', 'Background task');
+          const previewText = String((t && t.commandPreview) || '').trim();
+          const fullTip = previewText && previewText !== titleText
+            ? (titleText + '\n' + previewText)
+            : titleText;
+
+          const titleEl = document.createElement('span');
+          titleEl.className = 'ag-bgtask-title';
+          titleEl.textContent = titleText;
+          titleEl.title = fullTip;
+
+          const metaEl = document.createElement('span');
+          metaEl.className = 'ag-bgtask-meta ' + statusCls;
+          metaEl.textContent = formatBgTaskMeta(t);
+
+          rowInner.appendChild(icoEl);
+          rowInner.appendChild(titleEl);
+          rowInner.appendChild(metaEl);
+          rowItem.appendChild(rowInner);
+          listEl.appendChild(rowItem);
+        });
+
+        if (tasks.length > AG_BG_TASKS_PREVIEW_LIMIT) {
+          const seeAllBtn = document.createElement('button');
+          seeAllBtn.type = 'button';
+          seeAllBtn.className = 'ag-bgtasks-see-all-btn';
+          seeAllBtn.setAttribute('data-action', 'toggleBgTasksShowAll');
+          seeAllBtn.setAttribute('data-arg', cid);
+          seeAllBtn.setAttribute('data-total', String(total));
+          seeAllBtn.setAttribute('aria-expanded', isShowAll ? 'true' : 'false');
+          seeAllBtn.textContent = isShowAll
+            ? L('Свернуть', 'Collapse')
+            : (L('Показать все (', 'See all (') + total + ')');
+          listEl.appendChild(seeAllBtn);
+        }
+      }
+
       // Always keep at least 1 stable status-bar capsule on screen; morph it into "Ожидание задачи" when 0 tasks are active
       if (chats.length === 0) {
         const existingItems = Array.from(stackEl.querySelectorAll('.ag-chat-task-item:not(.closing)'));
@@ -435,6 +679,8 @@
           const oldCid = extraNode.getAttribute('data-cid');
           delete _agDisplayedPctByChat[oldCid];
           delete _agExpandedSubagentsByChat[oldCid];
+          delete _agExpandedBgTasksByChat[oldCid];
+          delete _agShowAllBgTasksByChat[oldCid];
           delete _agExpandedStepsByChat[oldCid];
           extraNode.classList.add('closing');
           setTimeout(function () { if (extraNode.parentNode) extraNode.remove(); }, 260);
@@ -448,6 +694,8 @@
             _agDisplayedPctByChat['__primary_slot__'] = _agDisplayedPctByChat[prevCid] || 0;
             delete _agDisplayedPctByChat[prevCid];
             delete _agExpandedSubagentsByChat[prevCid];
+            delete _agExpandedBgTasksByChat[prevCid];
+            delete _agShowAllBgTasksByChat[prevCid];
             delete _agExpandedStepsByChat[prevCid];
           }
           primaryEl.setAttribute('data-cid', '__primary_slot__');
@@ -468,6 +716,7 @@
         const stepsEl = primaryEl.querySelector('.ag-steps-mini-list');
 
         syncSubagentsDrawerForChat(primaryEl, '__primary_slot__', []);
+        syncBgTasksDrawerForChat(primaryEl, '__primary_slot__', [], 0, 0);
 
         if (dotEl) dotEl.className = 'ag-bloom-dot idle';
         if (badgeEl) badgeEl.style.display = 'none';
@@ -541,6 +790,7 @@
         const stepsEl = itemEl.querySelector('.ag-steps-mini-list');
 
         syncSubagentsDrawerForChat(itemEl, cid, c.subagents);
+        syncBgTasksDrawerForChat(itemEl, cid, c.backgroundTasks, c.backgroundTasksTotalCount, c.backgroundTasksCount);
 
         const pct = Math.max(0, Math.min(100, Math.round(Number(c.percent || 0))));
         animateChatPctNode(cid, numEl, pct);
@@ -699,9 +949,8 @@
         const ctxRowEl = itemEl.querySelector('.ag-context-pills-row');
         if (ctxRowEl) {
           const skills = Array.isArray(c.activeSkills) ? c.activeSkills.slice(0, 4) : [];
-          const savedTok = Math.max(0, Math.round(Number(c.ramSavedTokens || 0)));
-          const sig = skills.join(',') + '|' + savedTok + '|' + getUiLanguage();
-          if (skills.length === 0 && savedTok <= 0) {
+          const sig = skills.join(',') + '|' + getUiLanguage();
+          if (skills.length === 0) {
             ctxRowEl.style.display = 'none';
             if (ctxRowEl.children.length > 0) ctxRowEl.textContent = '';
             ctxRowEl.dataset.sig = '';
@@ -717,16 +966,6 @@
                 pill.title = L('Активный скилл: ', 'Active skill: ') + slug;
                 ctxRowEl.appendChild(pill);
               });
-              if (savedTok > 0) {
-                const ramPill = document.createElement('span');
-                ramPill.className = 'ag-ctx-pill is-ram';
-                const compactTok = savedTok >= 1000
-                  ? (savedTok / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
-                  : String(savedTok);
-                ramPill.textContent = '💾 −' + compactTok + L(' тк', ' tok');
-                ramPill.title = L('Сэкономлено токенов через In-RAM и GPU: ~', 'Tokens saved via In-RAM & GPU: ~') + savedTok;
-                ctxRowEl.appendChild(ramPill);
-              }
             }
           }
         }
@@ -799,6 +1038,8 @@
           if (!activeIds.has(cid)) {
             delete _agDisplayedPctByChat[cid];
             delete _agExpandedSubagentsByChat[cid];
+            delete _agExpandedBgTasksByChat[cid];
+            delete _agShowAllBgTasksByChat[cid];
             delete _agExpandedStepsByChat[cid];
             node.classList.add('closing');
             setTimeout(function () { if (node.parentNode) node.remove(); }, 260);
@@ -826,6 +1067,8 @@
           if (!activeIds.has(cid)) {
             delete _agDisplayedPctByChat[cid];
             delete _agExpandedSubagentsByChat[cid];
+            delete _agExpandedBgTasksByChat[cid];
+            delete _agShowAllBgTasksByChat[cid];
             delete _agExpandedStepsByChat[cid];
             node.classList.add('closing');
             setTimeout(function () { if (node.parentNode) node.remove(); }, 260);

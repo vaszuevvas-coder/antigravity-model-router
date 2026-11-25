@@ -48,12 +48,12 @@ const DOMAIN_KEYS = ['algo_refactor', 'ui_browser', 'backend_db', 'security', 'd
 const DIR_KEYS = ['dir:core', 'dir:sidecars', 'dir:skills', 'dir:root'];
 
 const SIGNAL_WEIGHTS = {
-  syntax: { success: 0.25, failure: 1.0 },
-  micro_test: { success: 1.0, failure: 1.5 },
-  test: { success: 1.0, failure: 1.5 },
-  contract_break: { success: 0.5, failure: 1.6 },
-  rollback: { success: 0.5, failure: 2.0 },
-  circuit_breaker: { success: 0.5, failure: 2.0 },
+  syntax: { success: 0.65, failure: 0.75 },
+  micro_test: { success: 1.0, failure: 1.1 },
+  test: { success: 1.0, failure: 1.1 },
+  contract_break: { success: 0.5, failure: 1.3 },
+  rollback: { success: 0.5, failure: 1.6 },
+  circuit_breaker: { success: 0.5, failure: 1.6 },
 };
 
 /**
@@ -264,7 +264,7 @@ function createInitialState() {
     priors[k] = createDefaultPrior();
   }
   return {
-    version: '4.0',
+    version: '4.2',
     updatedAt: new Date().toISOString(),
     priors,
     tierPriors: {},
@@ -370,6 +370,56 @@ function decayBucketInPlace(bucket, now, nowIso, persistTs) {
   return modified;
 }
 
+function migrateV40AsymmetricPriorsInPlace(state) {
+  if (!state || typeof state !== 'object' || state.version === '4.2') return false;
+  const priors = state.priors && typeof state.priors === 'object' ? state.priors : {};
+  const tierPriors = state.tierPriors && typeof state.tierPriors === 'object' ? state.tierPriors : {};
+
+  for (const key of Object.keys(priors)) {
+    const rec = priors[key];
+    if (!rec || typeof rec !== 'object' || typeof rec.alpha !== 'number') continue;
+    if (key.startsWith('dir:')) {
+      const a = Number(rec.alpha || 4);
+      const b = Number(rec.beta || 1);
+      const succ = Number(rec.successes || 0);
+      const fail = Number(rec.failures || 0);
+      if (fail > succ * 2 && (a / Math.max(0.05, a + b)) < 0.35) {
+        priors[key] = createDefaultPrior();
+      }
+      continue;
+    }
+
+    const lightRec = tierPriors[`${key}::light`];
+    if (lightRec && typeof lightRec.alpha === 'number' && Number(lightRec.runs || 0) > 0) {
+      priors[key] = { ...lightRec };
+    } else {
+      const midFails = Number(tierPriors[`${key}::mid`]?.failures || 0);
+      const heavyFails = Number(tierPriors[`${key}::heavy`]?.failures || 0);
+      if (Number(rec.failures || 0) > 0 && (midFails + heavyFails) > 0) {
+        priors[key] = createDefaultPrior();
+      }
+    }
+  }
+
+  for (const bucket of [tierPriors, state.gradePriors && typeof state.gradePriors === 'object' ? state.gradePriors : {}]) {
+    for (const rec of Object.values(bucket)) {
+      if (!rec || typeof rec !== 'object' || typeof rec.alpha !== 'number' || typeof rec.beta !== 'number') continue;
+      const runs = Number(rec.runs || 0);
+      const succ = Number(rec.successes || 0);
+      if (runs >= 10 && succ / runs >= 0.75 && (rec.alpha / Math.max(0.05, rec.alpha + rec.beta)) < 0.70) {
+        const empRate = Math.min(0.96, Math.max(0.75, succ / runs));
+        const n = Math.min(30, runs + 5);
+        rec.alpha = Number((empRate * n).toFixed(3));
+        rec.beta = Number(((1 - empRate) * n).toFixed(3));
+      }
+    }
+  }
+
+  state.contextualModel = createDefaultContextualModel();
+  state.version = '4.2';
+  return true;
+}
+
 function ensureV4StateCollections(state) {
   if (!state.tierPriors || typeof state.tierPriors !== 'object' || Array.isArray(state.tierPriors)) {
     state.tierPriors = {};
@@ -381,6 +431,7 @@ function ensureV4StateCollections(state) {
     state.fileFragility = {};
   }
   state.contextualModel = sanitizeContextualModel(state.contextualModel);
+  migrateV40AsymmetricPriorsInPlace(state);
   return state;
 }
 
@@ -518,8 +569,9 @@ export function recordModelOutcome(opts = {}) {
   }
   const tierKey = `${domainKey}::${tierBucket}`;
   const gradeKey = `${domainKey}::${gradeBucket}`;
-  // Anti-confounding: strong-tier success must NOT artificially rehabilitate light-tier domain/dir priors
-  const isStrongTierSuccess = Boolean(success && modelTier && (tierBucket === 'mid' || tierBucket === 'heavy'));
+  // Symmetric anti-confounding: mid/heavy outcomes (both successes and failures) stay isolated in tierPriors/gradePriors/contextualModel
+  // so strong-tier failures never poison light-tier domain/dir priors to ~0% while strong-tier successes are skipped.
+  const isStrongTier = Boolean(modelTier && (tierBucket === 'mid' || tierBucket === 'heavy'));
   const ctxFeatures = buildContextualFeatures({
     domainKey,
     grade,
@@ -534,7 +586,7 @@ export function recordModelOutcome(opts = {}) {
         ? rawState
         : createInitialState()
     );
-    state.version = '4.0';
+    state.version = '4.2';
 
     const now = new Date().toISOString();
     const updatePayload = {
@@ -545,7 +597,7 @@ export function recordModelOutcome(opts = {}) {
       nowIso: now,
     };
 
-    if (!isStrongTierSuccess) {
+    if (!isStrongTier) {
       for (const key of keysToUpdate) {
         if (!Object.hasOwn(state.priors, key) || typeof state.priors[key]?.alpha !== 'number') {
           state.priors[key] = createDefaultPrior();
@@ -630,7 +682,7 @@ export function evaluateBayesianRoute(opts = {}) {
     const b = Math.max(0.05, prior.beta);
     const mean = a / (a + b);
     const std = computeBetaStd(a, b);
-    const variance = Math.max(1e-4, std * std);
+    const variance = Math.max(0.0025, std * std);
     poolComponents.push({ mean, variance, precision: scale / variance, alpha: a, beta: b });
   };
 
