@@ -75,7 +75,7 @@ const SECRET_RULES = [
 ];
 
 // Match Windows / macOS / Linux absolute home directories
-const WIN_USER_PATH_RE = /\b([A-Za-z]:(?:\\|\/)+Users(?:\\|\/)+)([^\\\/\s"'`<>|;,)\]}]+)/gi;
+const WIN_USER_PATH_RE = /\b([A-Za-z]:[\\/]+Users[\\/]+)([^\\/\s"'`<>|;,)\]}]+)/gi;
 const UNIX_HOME_PATH_RE = /(?:^|[\s"'`(=:])(\/(?:Users|home)\/)([A-Za-z0-9._-]+)/g;
 const LAN_IP_RE = /\b(?:192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b/g;
 

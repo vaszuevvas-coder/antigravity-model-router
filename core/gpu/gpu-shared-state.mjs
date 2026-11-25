@@ -112,6 +112,7 @@ export const gpuRuntime = {
   lastOllamaSpawnTs: 0,
   bgEmbedWarmInFlight: false,
   bgSkillIndexInFlight: false,
+  lastSkillSyncCheckTs: 0,
   ramDistillCacheLoaded: false,
   distillCacheSaveTimer: null,
   lastHostRamWarmTs: 0,

@@ -2,7 +2,24 @@
 
 Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
 
-> Хронология с `v3.8.0` по `v3.34.1` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`56` основных / `64` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `13` навыков и `40` наборов автотестов).
+> Хронология с `v3.8.0` по `v3.35.0` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`56` основных / `64` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `13` навыков и `43` наборов автотестов).
+
+---
+
+## [3.35.0] — 2026-11-25
+
+### Добавлено и улучшено (Модальный оверлей живого автообновления, мульти-источниковые авто-скиллы, Мега-диагностика 360° и стабильность HUD/панели)
+- **Модальный оверлей живого автообновления в панели ([core/plugin-updater.mjs](core/plugin-updater.mjs), [install.js](install.js), [sidecars/panel/ui-src/head-body.html](sidecars/panel/ui-src/head-body.html), [sidecars/panel/ui-src/js/04-sentinel-layout.js](sidecars/panel/ui-src/js/04-sentinel-layout.js), [sidecars/panel/ui-src/js/00-i18n.js](sidecars/panel/ui-src/js/00-i18n.js), [sidecars/panel/ui-src/styles.css](sidecars/panel/ui-src/styles.css), [sidecars/panel/ui.html](sidecars/panel/ui.html), [tests/plugin-updater.test.mjs](tests/plugin-updater.test.mjs), [tests/panel-full-ui-e2e.test.mjs](tests/panel-full-ui-e2e.test.mjs))**:
+  - Добавлен полноэкранный модальный оверлей `#pluginUpdateOverlay` с живой шкалой прогресса скачивания, распаковки и установки обновления, а баннер уведомления перенесён в верхнюю часть панели.
+  - Реализована двуязычная диагностика ошибок обновления (`formatUpdateError`) и retry-копирование `copyFileWithRetrySync` в `install.js` при временных блокировках файлов на Windows (`EBUSY`/`EPERM`/`EACCES`).
+- **Мульти-источниковое авто-обнаружение и векторный подбор скиллов ([core/gpu/gpu-vector-skills.mjs](core/gpu/gpu-vector-skills.mjs), [core/tool-pruner.mjs](core/tool-pruner.mjs), [core/hook-runner.mjs](core/hook-runner.mjs), [core/ram-memory-mcp.mjs](core/ram-memory-mcp.mjs), [tests/auto-skills.test.mjs](tests/auto-skills.test.mjs))**:
+  - Внедрена функция `resolveSkillDiscoveryDirs` для сканирования активных плагинов, воркспейса (`.agents/skills`, `.gemini/skills`), личных и встроенных каталогов скиллов с уважением `enabled: false` и исключением внутренних swarm-скиллов (`INTERNAL_AUTO_SKIP_SLUGS`).
+  - Добавлен детектор дрифта векторного индекса `hasSkillIndexDrift` и сквозная интеграция в `PreInvocation` и `tool-pruner`.
+- **Единый 6-контурный CLI «Мега-диагностика 360°» ([scripts/run-mega-diagnostic.mjs](scripts/run-mega-diagnostic.mjs), [package.json](package.json), [tests/mega-cross-system-e2e.test.mjs](tests/mega-cross-system-e2e.test.mjs))**:
+  - Добавлен скрипт `npm run audit:mega` для комплексной проверки: гигиена и манифесты, `deep-stress-auditor --fuzz`, 8 практических кросс-системных E2E-миссий, полная регрессия, живой GPU/CPU-прогон и живой CDP-обход панели.
+- **Стабильность HUD, быстродействие панели и регрессионные тесты ([core/task-progress.mjs](core/task-progress.mjs), [core/progress/progress-parsers.mjs](core/progress/progress-parsers.mjs), [sidecars/panel/server.mjs](sidecars/panel/server.mjs), [core/gpu/gpu-critic-chat.mjs](core/gpu/gpu-critic-chat.mjs), [core/gpu/gpu-distill.mjs](core/gpu/gpu-distill.mjs), [tests/panel-ui-audit-regressions.test.mjs](tests/panel-ui-audit-regressions.test.mjs))**:
+  - Введены TTL авто-закрытия зависших фоновых задач (`STALE_BG_TASK_TTL_MS` и `STALE_DAEMON_BG_TASK_TTL_MS`) и ускоренный путь сохранения настроек панели (`canUseFastPath`).
+  - Набор автотестов расширен до `43` файлов (`tests/auto-skills.test.mjs`, `tests/mega-cross-system-e2e.test.mjs`, `tests/panel-ui-audit-regressions.test.mjs`).
 
 ---
 

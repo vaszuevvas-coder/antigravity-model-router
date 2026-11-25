@@ -356,7 +356,7 @@ function warmWorkspaceVectorsOnce(absRoot, filesMap, { maxNewFiles = 300, includ
     if (includeSkills) {
       const [resWarm, skillIndex] = await Promise.all([
         vectorPromise,
-        indexSkillVectors().catch((err) => ({ ok: false, error: err?.message || 'skill index error' })),
+        indexSkillVectors({ wsAbsRoot: absRoot }).catch((err) => ({ ok: false, error: err?.message || 'skill index error' })),
       ]);
       if (ensureEmbed && resWarm?.ok && resWarm.cached) {
         await ensureEmbedModelWarm({ minFreeVramMb: 1500 });
@@ -1000,11 +1000,11 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
       const skillRes = body.includeSemantic === false
         ? { semanticSkills: [], skillIndexWarm: false }
         : await Promise.race([
-            peekWarmSemanticSkills(query, { topK: 3, timeoutMs: 120 }).finally(() => {
+            peekWarmSemanticSkills(query, { topK: 3, timeoutMs: 180, wsAbsRoot: wsPath }).finally(() => {
               if (skillTimer) clearTimeout(skillTimer);
             }),
             new Promise((resolveRace) => {
-              skillTimer = setTimeout(() => resolveRace({ semanticSkills: [], skillIndexWarm: false }), 130);
+              skillTimer = setTimeout(() => resolveRace({ semanticSkills: [], skillIndexWarm: false }), 195);
               if (typeof skillTimer.unref === 'function') skillTimer.unref();
             }),
           ]);
@@ -1024,11 +1024,11 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
     const bundle = body.includeSemantic === false
       ? { semanticFiles: [], semanticSkills: [], skillIndexWarm: false }
       : await Promise.race([
-          peekWarmSemanticBundle(ws.absRoot, query, { topK: 6, minSim: 0.38, skillTopK: 3, timeoutMs: 150, recordTelemetry: true }).finally(() => {
+          peekWarmSemanticBundle(ws.absRoot, query, { topK: 6, minSim: 0.38, skillTopK: 3, timeoutMs: 220, recordTelemetry: true }).finally(() => {
             if (raceTimer) clearTimeout(raceTimer);
           }),
           new Promise((resolveRace) => {
-            raceTimer = setTimeout(() => resolveRace({ semanticFiles: [], semanticSkills: [], skillIndexWarm: false }), 160);
+            raceTimer = setTimeout(() => resolveRace({ semanticFiles: [], semanticSkills: [], skillIndexWarm: false }), 235);
             if (typeof raceTimer.unref === 'function') raceTimer.unref();
           }),
         ]);

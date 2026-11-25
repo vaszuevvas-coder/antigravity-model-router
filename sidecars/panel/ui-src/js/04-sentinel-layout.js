@@ -786,6 +786,7 @@
         case 'checkPluginUpdateManual': void checkPluginUpdate({ force: true, silent: false }); break;
         case 'applyPluginUpdateFromPanel': void applyPluginUpdateFromPanel(); break;
         case 'dismissPluginUpdateBanner': void dismissPluginUpdateBanner(); break;
+        case 'closePluginUpdateOverlay': closePluginUpdateOverlay(); break;
         case 'hidePluginUpdateToast': hidePluginUpdateToast(); break;
         default: break;
       }
@@ -1339,6 +1340,7 @@
     let _pluginUpdatePollTimer = null;
     let _pluginUpdateToastState = null;
     let _pluginUpdateToastTimer = null;
+    let _pluginUpdateOverlayDismissed = false;
 
     function getDismissedUpdateVersion() {
       try {
@@ -1435,7 +1437,7 @@
       if (document.visibilityState === 'hidden') return;
       _pluginUpdatePollTimer = setTimeout(() => {
         void pollPluginUpdateStatus();
-      }, 900);
+      }, 350);
     }
 
     if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
@@ -1443,6 +1445,123 @@
         clearPluginUpdatePollTimer();
         clearPluginUpdateToastTimer();
       });
+    }
+
+    function closePluginUpdateOverlay() {
+      _pluginUpdateOverlayDismissed = true;
+      const overlay = document.getElementById('pluginUpdateOverlay');
+      if (overlay) {
+        overlay.style.display = 'none';
+        overlay.classList.remove('is-busy', 'is-done', 'is-error');
+      }
+      if (document.body) {
+        document.body.classList.remove('is-plugin-updating');
+      }
+    }
+
+    function renderPluginUpdateOverlay(st, info) {
+      const overlay = document.getElementById('pluginUpdateOverlay');
+      if (!overlay) return;
+
+      const iconEl = document.getElementById('pluginUpdateOverlayIcon');
+      const titleEl = document.getElementById('pluginUpdateOverlayTitle');
+      const descEl = document.getElementById('pluginUpdateOverlayDesc');
+      const progressWrap = document.getElementById('pluginUpdateProgressWrap');
+      const progressFill = document.getElementById('pluginUpdateProgressFill');
+      const stageEl = document.getElementById('pluginUpdateProgressStage');
+      const pctEl = document.getElementById('pluginUpdateProgressPct');
+      const errorEl = document.getElementById('pluginUpdateOverlayError');
+      const actionsEl = document.getElementById('pluginUpdateOverlayActions');
+      const retryBtn = document.getElementById('pluginUpdateOverlayRetryBtn');
+      const closeBtn = document.getElementById('pluginUpdateOverlayCloseBtn');
+
+      const isBusy = Boolean(st && st.active);
+      const isDone = Boolean(!isBusy && st && st.phase === 'done' && st.needsRestart && !st.dismissed);
+      const isErr = Boolean(!isBusy && st && st.phase === 'error' && st.error && !st.dismissed);
+
+      if (isBusy) {
+        _pluginUpdateOverlayDismissed = false;
+      }
+
+      if ((!isBusy && !isDone && !isErr) || (!isBusy && _pluginUpdateOverlayDismissed)) {
+        overlay.style.display = 'none';
+        overlay.classList.remove('is-busy', 'is-done', 'is-error');
+        if (document.body) document.body.classList.remove('is-plugin-updating');
+        return;
+      }
+
+      overlay.style.display = 'flex';
+      overlay.classList.toggle('is-busy', isBusy);
+      overlay.classList.toggle('is-done', isDone);
+      overlay.classList.toggle('is-error', isErr);
+      if (document.body) document.body.classList.add('is-plugin-updating');
+
+      const verStr = String((st && st.targetVersion) || (info && info.latestVersion) || '').trim();
+      const verSuffix = verStr ? (' v' + verStr) : '';
+      const localizedStatusText = st
+        ? (isRu() ? (st.statusTextRu || st.statusText) : (st.statusTextEn || st.statusText))
+        : '';
+
+      if (isBusy) {
+        const rawPct = Number(st.percent || 0);
+        const pct = Math.max(5, Math.min(100, Number.isFinite(rawPct) ? Math.round(rawPct) : 5));
+        let stageLabel = L('Подготовка…', 'Preparing…');
+        if (st.phase === 'downloading') {
+          stageLabel = L('Скачивание с GitHub', 'Downloading from GitHub');
+        } else if (st.phase === 'extracting') {
+          stageLabel = L('Проверка и распаковка', 'Verifying & extracting');
+        } else if (st.phase === 'installing') {
+          stageLabel = L('Установка с сохранением настроек', 'Installing (preserving settings)');
+        }
+        if (iconEl) iconEl.textContent = '⬇';
+        if (titleEl) titleEl.textContent = L('Идёт обновление', 'Updating') + verSuffix;
+        if (descEl) descEl.textContent = localizedStatusText || L('Пожалуйста, не закрывайте окно…', 'Please keep this window open…');
+        if (progressWrap) progressWrap.style.display = 'flex';
+        if (progressFill) progressFill.style.width = pct + '%';
+        if (stageEl) stageEl.textContent = stageLabel;
+        if (pctEl) pctEl.textContent = pct + '%';
+        if (errorEl) {
+          errorEl.style.display = 'none';
+          errorEl.textContent = '';
+        }
+        if (actionsEl) actionsEl.style.display = 'none';
+        if (retryBtn) retryBtn.style.display = 'none';
+      } else if (isDone) {
+        if (iconEl) iconEl.textContent = '✓';
+        if (titleEl) titleEl.textContent = L('Обновление' + verSuffix + ' установлено', 'Updated to' + verSuffix);
+        if (descEl) {
+          descEl.textContent = L(
+            'Настройки сохранены. Перезагрузите Google Antigravity, чтобы применить изменения.',
+            'Settings preserved. Restart Google Antigravity to apply changes.'
+          );
+        }
+        if (progressWrap) progressWrap.style.display = 'flex';
+        if (progressFill) progressFill.style.width = '100%';
+        if (stageEl) stageEl.textContent = L('Готово · Требуется перезагрузка', 'Done · Restart required');
+        if (pctEl) pctEl.textContent = '100%';
+        if (errorEl) {
+          errorEl.style.display = 'none';
+          errorEl.textContent = '';
+        }
+        if (actionsEl) actionsEl.style.display = 'flex';
+        if (retryBtn) retryBtn.style.display = 'none';
+        if (closeBtn) closeBtn.textContent = L('Понятно', 'Got it');
+      } else if (isErr) {
+        if (iconEl) iconEl.textContent = '✕';
+        if (titleEl) titleEl.textContent = L('Ошибка при установке обновления', 'Update installation failed');
+        if (descEl) descEl.textContent = L('Настройки не затронуты.', 'Your settings were not affected.');
+        if (progressWrap) progressWrap.style.display = 'none';
+        if (errorEl) {
+          errorEl.style.display = 'block';
+          errorEl.textContent = localizedStatusText || String(st.error || L('Неизвестная ошибка', 'Unknown error'));
+        }
+        if (actionsEl) actionsEl.style.display = 'flex';
+        if (retryBtn) {
+          retryBtn.style.display = 'inline-flex';
+          retryBtn.textContent = L('↻ Повторить', '↻ Retry');
+        }
+        if (closeBtn) closeBtn.textContent = L('Закрыть', 'Close');
+      }
     }
 
     function renderPluginUpdateBanner(checkInfo, statusInfo) {
@@ -1475,12 +1594,14 @@
       }
 
       if (!banner) {
+        renderPluginUpdateOverlay(st, info);
         renderPluginUpdateToast();
         return;
       }
       if (!isBusy && !isDone && !isErr && (!hasUpdate || isSuppressed)) {
         banner.style.display = 'none';
         banner.classList.remove('is-busy', 'is-done', 'is-error');
+        renderPluginUpdateOverlay(st, info);
         renderPluginUpdateToast();
         return;
       }
@@ -1540,9 +1661,13 @@
         if (applyBtn) {
           applyBtn.style.display = 'inline-flex';
           applyBtn.disabled = false;
-          applyBtn.textContent = L('⬇ Обновить', '⬇ Update');
+          applyBtn.textContent = L('Да, обновить', 'Yes, update');
+          applyBtn.title = L('Скачать и установить обновление с GitHub с сохранением настроек', 'Download and install update from GitHub while preserving settings');
         }
-        if (dismissBtn) dismissBtn.style.display = 'inline-flex';
+        if (dismissBtn) {
+          dismissBtn.style.display = 'inline-flex';
+          dismissBtn.title = L('Позже', 'Later');
+        }
       }
 
       if (linkEl) {
@@ -1556,6 +1681,7 @@
           linkEl.style.display = 'none';
         }
       }
+      renderPluginUpdateOverlay(st, info);
       renderPluginUpdateToast();
     }
 
@@ -1649,6 +1775,18 @@
     async function applyPluginUpdateFromPanel() {
       const info = _latestPluginUpdateCheck || {};
       setDismissedUpdateVersion('');
+      _pluginUpdateOverlayDismissed = false;
+      renderPluginUpdateBanner(undefined, {
+        ok: true,
+        active: true,
+        phase: 'downloading',
+        percent: 5,
+        targetVersion: info.latestVersion || '',
+        statusTextRu: 'Запуск загрузки обновления с GitHub…',
+        statusTextEn: 'Starting plugin update from GitHub…',
+        error: '',
+        dismissed: false,
+      });
       try {
         flashStatus(L('Запуск загрузки обновления с GitHub...', 'Starting plugin update from GitHub...'));
         const res = await panelFetch('/api/plugin/update-apply', {
@@ -1673,15 +1811,38 @@
             }
           }
         } else if (!data || !data.ok) {
-          flashStatus(L('Ошибка обновления: ', 'Update error: ') + ((data && data.error) || L('сбой', 'failed')));
+          const errMsg = (data && data.error) || L('сбой запуска обновления', 'failed to start update');
+          renderPluginUpdateBanner(undefined, {
+            ok: false,
+            active: false,
+            phase: 'error',
+            targetVersion: info.latestVersion || '',
+            error: errMsg,
+            statusTextRu: errMsg,
+            statusTextEn: errMsg,
+            dismissed: false,
+          });
+          flashStatus(L('Ошибка обновления: ', 'Update error: ') + errMsg);
         }
       } catch {
-        flashStatus(L('Ошибка связи при установке обновления', 'Connection error installing update'));
+        const netMsg = L('Ошибка связи при установке обновления', 'Connection error installing update');
+        renderPluginUpdateBanner(undefined, {
+          ok: false,
+          active: false,
+          phase: 'error',
+          targetVersion: info.latestVersion || '',
+          error: netMsg,
+          statusTextRu: netMsg,
+          statusTextEn: netMsg,
+          dismissed: false,
+        });
+        flashStatus(netMsg);
       }
     }
 
     async function dismissPluginUpdateBanner() {
       clearPluginUpdatePollTimer();
+      _pluginUpdateOverlayDismissed = true;
       if (_latestPluginUpdateCheck && _latestPluginUpdateCheck.latestVersion) {
         setDismissedUpdateVersion(_latestPluginUpdateCheck.latestVersion);
       }

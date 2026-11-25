@@ -29,11 +29,9 @@
       );
     }
 
-    function updateComposerEngineBadge(mode, label) {
-      const badgeEl = document.getElementById('composerEngineBadge');
-      if (!badgeEl) return;
-      badgeEl.className = 'composer-engine-badge' + (mode ? (' is-' + mode) : '');
-      badgeEl.textContent = label || L('RAM + GPU · 0 тк', 'RAM + GPU · 0 tok');
+    function updateComposerEngineBadge(_mode, _label) {
+      // Badge element was removed from header; kept as safe no-op for legacy callers.
+      return;
     }
 
     function syncSmartComposerSizeAndScroll() {

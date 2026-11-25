@@ -1013,15 +1013,18 @@ const CONTRASTIVE_SKILL_ANCHORS = [
 
 const UNSAFE_SKILL_SLUGS = new Set(['__proto__', 'constructor', 'prototype', 'tostring', 'valueof', 'hasownproperty']);
 
+const INTERNAL_AUTO_SKIP_SLUGS = new Set(['swarm_monitor', 'swarm_narrator', 'swarm_pane', 'native_swarm']);
+const SKILL_SYNC_CHECK_TTL_MS = 60_000;
+
 function normalizeSkillSlug(raw = '') {
   const slug = String(raw || '')
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/[^a-z0-9_-]+/g, '-')
     .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48)
-    .replace(/^-+|-+$/g, '');
+    .replace(/^[-_]+|[-_]+$/g, '')
+    .slice(0, 64)
+    .replace(/^[-_]+|[-_]+$/g, '');
   if (!slug || UNSAFE_SKILL_SLUGS.has(slug) || slug === 'proto') return '';
   return slug;
 }
@@ -1069,20 +1072,97 @@ function parseSkillFrontmatterSimple(content = '') {
   return { name, description, body };
 }
 
+function resolveSkillDiscoveryDirs(customRoot = '', options = {}) {
+  if (customRoot) {
+    return [path.resolve(customRoot)];
+  }
+  const homeDir = options?.homeDir ? path.resolve(options.homeDir) : os.homedir();
+  const candidates = [];
+  const seen = new Set();
+  const pushDir = (dirPath) => {
+    if (!dirPath || typeof dirPath !== 'string') return;
+    const resolved = path.resolve(dirPath);
+    const key = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push(resolved);
+  };
+
+  if (!options?.homeDir) {
+    pushDir(join(PLUGIN_ROOT, 'skills'));
+  }
+  pushDir(join(homeDir, '.gemini', 'config', 'plugins', 'antigravity-model-router', 'skills'));
+
+  if (options?.wsAbsRoot) {
+    const wsRoot = path.resolve(options.wsAbsRoot);
+    pushDir(join(wsRoot, '.agents', 'skills'));
+    pushDir(join(wsRoot, '.gemini', 'skills'));
+  }
+
+  let cfgPlugins = null;
+  const configPath = options?.configPath || join(homeDir, '.gemini', 'config', 'config.json');
+  if (existsSync(configPath)) {
+    try {
+      const parsedCfg = JSON.parse(readFileSync(configPath, 'utf8'));
+      if (parsedCfg?.plugins && typeof parsedCfg.plugins === 'object') {
+        cfgPlugins = parsedCfg.plugins;
+      }
+    } catch {}
+  }
+
+  const pluginsDir = options?.pluginsDir || join(homeDir, '.gemini', 'config', 'plugins');
+  if (existsSync(pluginsDir)) {
+    try {
+      const pluginEntries = readdirSync(pluginsDir, { withFileTypes: true })
+        .filter((p) => p?.isDirectory?.())
+        .sort((a, b) => a.name.localeCompare(b.name));
+      for (const p of pluginEntries) {
+        const pluginDir = join(pluginsDir, p.name);
+        if (!existsSync(join(pluginDir, 'plugin.json'))) continue;
+        if (cfgPlugins && Object.hasOwn(cfgPlugins, p.name) && cfgPlugins[p.name]?.enabled === false) {
+          continue;
+        }
+        pushDir(join(pluginDir, 'skills'));
+      }
+    } catch {}
+  }
+
+  pushDir(join(homeDir, '.gemini', 'config', 'skills'));
+  pushDir(join(homeDir, '.gemini', 'antigravity', 'skills'));
+
+  const builtinSkillsDir = options?.builtinSkillsDir || join(homeDir, '.gemini', 'antigravity', 'builtin', 'skills');
+  pushDir(builtinSkillsDir);
+
+  const builtinPluginsDir = options?.builtinPluginsDir || join(homeDir, '.gemini', 'antigravity', 'builtin', 'plugins');
+  if (existsSync(builtinPluginsDir)) {
+    try {
+      const bpEntries = readdirSync(builtinPluginsDir, { withFileTypes: true })
+        .filter((bp) => bp?.isDirectory?.())
+        .sort((a, b) => a.name.localeCompare(b.name));
+      for (const bp of bpEntries) {
+        pushDir(join(builtinPluginsDir, bp.name, 'skills'));
+      }
+    } catch {}
+  }
+
+  if (Array.isArray(options?.extraDirs)) {
+    for (const extra of options.extraDirs) {
+      pushDir(extra);
+    }
+  }
+
+  return candidates;
+}
+
 /**
- * Сканирует каталог скиллов и формирует мульти-секционные текстовые профили (desc + sections + evals)
- * без привязки к словарям ключевых слов. При указании customRoot читает ТОЛЬКО его.
+ * Сканирует каталоги скиллов (текущий плагин, воркспейс, активные плагины, личные и встроенные)
+ * и формирует мульти-секционные текстовые профили (desc + sections + evals).
+ * При указании customRoot читает ТОЛЬКО его.
  * @param {string} [customRoot='']
+ * @param {object} [options={}]
  */
-export function discoverSkillSemanticEntries(customRoot = '') {
-  const dirs = customRoot
-    ? [path.resolve(customRoot)]
-    : [
-        join(PLUGIN_ROOT, 'skills'),
-        join(os.homedir(), '.gemini', 'config', 'plugins', 'antigravity-model-router', 'skills'),
-        join(os.homedir(), '.gemini', 'config', 'skills'),
-        join(os.homedir(), '.gemini', 'antigravity', 'skills'),
-      ];
+export function discoverSkillSemanticEntries(customRoot = '', options = {}) {
+  const dirs = resolveSkillDiscoveryDirs(customRoot, options);
 
   const bySlug = new Map();
   for (const dir of dirs) {
@@ -1096,8 +1176,6 @@ export function discoverSkillSemanticEntries(customRoot = '') {
 
     for (const entry of subEntries) {
       if (!entry?.isDirectory?.()) continue;
-      const slug = normalizeSkillSlug(entry.name);
-      if (!slug || bySlug.has(slug)) continue;
 
       const folder = join(dir, entry.name);
       const skillFile = join(folder, 'SKILL.md');
@@ -1111,6 +1189,9 @@ export function discoverSkillSemanticEntries(customRoot = '') {
       }
 
       const fm = parseSkillFrontmatterSimple(rawSkillMd);
+      const slug = normalizeSkillSlug(fm.name) || normalizeSkillSlug(entry.name);
+      if (!slug || bySlug.has(slug) || INTERNAL_AUTO_SKIP_SLUGS.has(slug)) continue;
+
       const cleanBody = fm.body.replace(/```[\s\S]*?```/g, '');
       const chunks = [
         { kind: 'desc', text: `${slug}: ${fm.description || fm.name || entry.name}` },
@@ -1156,6 +1237,7 @@ export function discoverSkillSemanticEntries(customRoot = '') {
         name: fm.name || entry.name,
         description: fm.description || '',
         path: folder,
+        skillFile: skillFile.replace(/\\/g, '/'),
         sha1,
         chunks,
       });
@@ -1223,7 +1305,11 @@ function loadSkillVectorStore(embedModel, customRoot = '') {
           });
         }
         if (hydratedChunks.length > 0) {
-          entries.set(slug, { sha1: String(val.sha1 || ''), chunks: hydratedChunks });
+          entries.set(slug, {
+            sha1: String(val.sha1 || ''),
+            skillFile: typeof val.skillFile === 'string' ? val.skillFile : '',
+            chunks: hydratedChunks,
+          });
         }
       }
     }
@@ -1250,6 +1336,7 @@ function saveSkillVectorStore(store) {
     for (const [slug, val] of store.entries.entries()) {
       serialized[slug] = {
         sha1: val.sha1 || '',
+        skillFile: val.skillFile || '',
         chunks: (val.chunks || []).map((c) => ({
           kind: c.kind || 'sec',
           vec: Array.from(c.vec || []),
@@ -1274,12 +1361,32 @@ function saveSkillVectorStore(store) {
 }
 
 /**
+ * Проверяет, разошёлся ли кэш векторов скиллов с текущими установленными SKILL.md (новые, удалённые, изменённые или без skillFile).
+ * @param {object} skillStore
+ * @param {object} [opts={}]
+ */
+export function hasSkillIndexDrift(skillStore, { wsAbsRoot = '', discoveryOptions = null } = {}) {
+  if (!skillStore || !skillStore.entries || skillStore.skillsCount === 0) return true;
+  const entries = discoverSkillSemanticEntries('', { wsAbsRoot, ...(discoveryOptions || {}) });
+  if (skillStore.skillsCount !== entries.length) return true;
+  for (const e of entries) {
+    const cached = skillStore.entries.get(e.slug);
+    if (!cached || cached.sha1 !== e.sha1 || (cached.skillFile || '') !== (e.skillFile || '') || !Array.isArray(cached.chunks) || cached.chunks.length === 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Инкрементально строит и кэширует мульти-секционный векторный индекс скиллов в памяти/на диске
  * с контрастными анти-якорями __none__ (поддерживает инъекцию embedBatchFn для оффлайн-тестов).
  * @param {object} [opts={}]
  */
 export async function indexSkillVectors({
   customRoot = '',
+  wsAbsRoot = '',
+  discoveryOptions = null,
   cfgOverride = null,
   timeoutMs = 15000,
   embedBatchFn = null,
@@ -1289,7 +1396,7 @@ export async function indexSkillVectors({
     return { ok: false, error: 'GPU semantic search disabled' };
   }
 
-  const skillEntries = discoverSkillSemanticEntries(customRoot);
+  const skillEntries = discoverSkillSemanticEntries(customRoot, { wsAbsRoot, ...(discoveryOptions || {}) });
   const store = loadSkillVectorStore(cfg.gpuEmbedModel, customRoot);
 
   if (skillEntries.length === 0) {
@@ -1304,6 +1411,7 @@ export async function indexSkillVectors({
     {
       slug: '__none__',
       sha1: anchorSha1,
+      skillFile: '',
       chunks: CONTRASTIVE_SKILL_ANCHORS.map((text) => ({ kind: 'anchor', text })),
     },
   ];
@@ -1317,10 +1425,17 @@ export async function indexSkillVectors({
     }
   }
 
-  const toEmbedEntries = desiredEntries.filter((e) => {
+  let metaDirty = false;
+  const toEmbedEntries = [];
+  for (const e of desiredEntries) {
     const cached = store.entries.get(e.slug);
-    return !cached || cached.sha1 !== e.sha1 || !Array.isArray(cached.chunks) || cached.chunks.length === 0;
-  });
+    if (!cached || cached.sha1 !== e.sha1 || !Array.isArray(cached.chunks) || cached.chunks.length === 0) {
+      toEmbedEntries.push(e);
+    } else if ((cached.skillFile || '') !== (e.skillFile || '')) {
+      cached.skillFile = e.skillFile || '';
+      metaDirty = true;
+    }
+  }
 
   if (toEmbedEntries.length > 0) {
     if (!embedBatchFn) {
@@ -1333,7 +1448,7 @@ export async function indexSkillVectors({
     const flatItems = [];
     for (const e of toEmbedEntries) {
       for (const ch of e.chunks) {
-        flatItems.push({ slug: e.slug, sha1: e.sha1, kind: ch.kind, text: ch.text });
+        flatItems.push({ slug: e.slug, sha1: e.sha1, skillFile: e.skillFile || '', kind: ch.kind, text: ch.text });
       }
     }
 
@@ -1377,7 +1492,7 @@ export async function indexSkillVectors({
       if (!store.dim && normVec.length > 0) store.dim = normVec.length;
       const qVec = quantizeUnitToInt8(normVec);
       if (!grouped.has(metaItem.slug)) {
-        grouped.set(metaItem.slug, { sha1: metaItem.sha1, chunks: [] });
+        grouped.set(metaItem.slug, { sha1: metaItem.sha1, skillFile: metaItem.skillFile || '', chunks: [] });
       }
       grouped.get(metaItem.slug).chunks.push({ kind: metaItem.kind, vec: qVec });
     }
@@ -1388,7 +1503,7 @@ export async function indexSkillVectors({
 
   store.skillsCount = countRealSkills(store.entries);
   ramSkillVectorCache.set(store.cacheKey, store);
-  if (store.storePath && (toEmbedEntries.length > 0 || prunedCount > 0)) {
+  if (store.storePath && (toEmbedEntries.length > 0 || prunedCount > 0 || metaDirty)) {
     saveSkillVectorStore(store);
   }
 
@@ -1462,6 +1577,7 @@ export function scoreSkillVectorsWithQueryVec(
 
     rawScores.push({
       slug,
+      skillFile: entry.skillFile || '',
       score: Number(baseScore.toFixed(4)),
       descSim: Number(effectiveDesc.toFixed(4)),
       maxSecSim: Number((maxSecSim > 0 ? maxSecSim : effectiveDesc).toFixed(4)),
@@ -1528,17 +1644,25 @@ export async function peekWarmSemanticBundle(
       : null;
     const skillStore = includeSkills ? loadSkillVectorStore(cfg.gpuEmbedModel) : null;
 
-    if (includeSkills && (!skillStore || skillStore.skillsCount === 0) && !gpuRuntime.bgSkillIndexInFlight) {
-      gpuRuntime.bgSkillIndexInFlight = true;
-      indexSkillVectors({ cfgOverride: cfg }).catch(() => {}).finally(() => {
-        gpuRuntime.bgSkillIndexInFlight = false;
-      });
+    if (includeSkills && !gpuRuntime.bgSkillIndexInFlight) {
+      const nowTs = Date.now();
+      const needsEmptyWarm = !skillStore || skillStore.skillsCount === 0;
+      const shouldCheckDrift = needsEmptyWarm || (nowTs - (gpuRuntime.lastSkillSyncCheckTs || 0) >= SKILL_SYNC_CHECK_TTL_MS);
+      if (shouldCheckDrift) {
+        gpuRuntime.lastSkillSyncCheckTs = nowTs;
+        if (needsEmptyWarm || hasSkillIndexDrift(skillStore, { wsAbsRoot })) {
+          gpuRuntime.bgSkillIndexInFlight = true;
+          indexSkillVectors({ wsAbsRoot, cfgOverride: cfg }).catch(() => {}).finally(() => {
+            gpuRuntime.bgSkillIndexInFlight = false;
+          });
+        }
+      }
     }
 
     const hasCode = Boolean(codeStore && codeStore.files.size > 0);
     const hasSkills = Boolean(skillStore && skillStore.skillsCount > 0);
     if (!hasCode && !hasSkills) {
-      return { ...empty, skillIndexWarm: hasSkills };
+      return { ...empty, skillIndexWarm: false };
     }
 
     const inputs = [];
@@ -1573,7 +1697,7 @@ export async function peekWarmSemanticBundle(
           gpuRuntime.bgEmbedWarmInFlight = false;
         });
       }
-      return { ...empty, skillIndexWarm: hasSkills };
+      return { ...empty, skillIndexWarm: false };
     }
 
     let semanticFiles = [];
@@ -1584,11 +1708,13 @@ export async function peekWarmSemanticBundle(
     }
 
     let semanticSkills = [];
+    let skillScoredOk = false;
     if (skillIdx >= 0 && Array.isArray(res.data.embeddings[skillIdx])) {
       const rawSkill = res.data.embeddings[skillIdx];
       const qSkillVec = normalizeVector(rawSkill, resolveMrlTargetDim(rawSkill.length, cfg.gpuEmbedModel, cfg));
       const scored = scoreSkillVectorsWithQueryVec(qSkillVec, skillStore, { topK: skillTopK });
       semanticSkills = scored.candidates;
+      skillScoredOk = true;
     }
 
     if (recordTelemetry && (semanticFiles.length > 0 || semanticSkills.length > 0)) {
@@ -1602,19 +1728,19 @@ export async function peekWarmSemanticBundle(
       }));
     }
 
-    return { semanticFiles, semanticSkills, skillIndexWarm: hasSkills };
+    return { semanticFiles, semanticSkills, skillIndexWarm: hasSkills && skillScoredOk };
   } catch {
     return empty;
   }
 }
 
 /**
- * Прямой быстрый поиск семантических скиллов по тёплому индексу (<120 мс).
+ * Прямой быстрый поиск семантических скиллов по тёплому индексу (<180 мс).
  * @param {string} query
  * @param {object} [opts={}]
  */
-export async function peekWarmSemanticSkills(query, { topK = 3, timeoutMs = 120 } = {}) {
-  const bundle = await peekWarmSemanticBundle('', query, {
+export async function peekWarmSemanticSkills(query, { topK = 3, timeoutMs = 180, wsAbsRoot = '' } = {}) {
+  const bundle = await peekWarmSemanticBundle(wsAbsRoot, query, {
     skillTopK: topK,
     timeoutMs,
     includeCode: false,

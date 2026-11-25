@@ -3027,10 +3027,10 @@
         if (listEl) {
           const renderedWave = pgState.lens === 'blast' && typeof pgRenderBlastWaveList === 'function' && pgRenderBlastWaveList(listEl);
           if (!renderedWave) {
-            listEl.innerHTML = '<div class="pg-insp-placeholder">' + L(
+            listEl.innerHTML = '<div class="pg-insp-placeholder">' + escapeHtml(L(
               'Наведите курсор для подсветки связей. Двойной клик по папке откроет её файлы, по файлу — локальный граф (1–2 хопа).',
               'Hover to highlight links. Double-click a folder to drill into its files, or a file for its 1–2 hop neighborhood.'
-            ) + '</div>';
+            )) + '</div>';
           }
         }
         return;
@@ -5328,7 +5328,8 @@
             '</button>' +
           '</div>'
         : '';
-      msgEl.innerHTML = messagesHtml + thinkingHtml;
+      const combinedAiHtml = [messagesHtml, thinkingHtml].join('');
+      msgEl.innerHTML = combinedAiHtml;
       msgEl.scrollTop = msgEl.scrollHeight;
     }
 

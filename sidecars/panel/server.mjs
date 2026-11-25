@@ -209,7 +209,7 @@ function getPluginVersion() {
     const ver = typeof meta?.version === 'string' ? meta.version.trim() : '';
     if (ver) return ver;
   } catch {}
-  return '3.34.1';
+  return '3.35.0';
 }
 
 function getUiBuildVersion() {
@@ -505,13 +505,20 @@ export async function startSidecarPanel(options = {}) {
     }
     let next = saveState(data);
     const rawReqRoot = typeof data?.rootDir === 'string' ? data.rootDir.trim() : '';
-    const isAllScope = data?.workspaceScope === 'all' || rawReqRoot === '__all__';
-    const isPinned = Boolean(rawReqRoot && rawReqRoot !== '__all__' && rawReqRoot !== '__auto__' && isValidWorkspaceDir(rawReqRoot));
-    const autoWs = await resolveActiveWorkspaceForPanel('');
-    const activeWs = isPinned ? resolve(rawReqRoot) : autoWs;
-    const cpWs = resolveCheckpointScopeWs(data, activeWs);
-    const telemetry = collectTelemetry(next.compactionTokenThreshold || 120000, { workspaceRoot: activeWs });
-    const hasGpuPatch = Boolean(data && typeof data === 'object' && Object.keys(data).some((k) => k.startsWith('gpu')));
+    const isFastUpdate =
+      data?.fast === '1' ||
+      data?.fast === true ||
+      data?.fast === 'true' ||
+      String(req?.headers?.['x-panel-fast-update'] || '') === '1';
+    const canUseFastPath = Boolean(
+      isFastUpdate &&
+      !rawReqRoot &&
+      !data?.workspaceScope &&
+      !data?.skillModes &&
+      !data?.replaceSkillModes
+    );
+    const patchKeys = data && typeof data === 'object' ? Object.keys(data) : [];
+    const hasGpuPatch = patchKeys.some((k) => k.startsWith('gpu'));
     const touchesVramOrModel = Boolean(
       data &&
       typeof data === 'object' &&
@@ -576,12 +583,10 @@ export async function startSidecarPanel(options = {}) {
         }
       } catch {}
       gpuStatusPanelCache.ts = 0;
+    } else if (hasGpuPatch) {
+      gpuStatusPanelCache.ts = 0;
     }
-    const hasSentinelPatch = Boolean(
-      data &&
-      typeof data === 'object' &&
-      (Object.keys(data).some((k) => k.startsWith('sentinel')) || Object.hasOwn(data, 'hookProfile'))
-    );
+    const hasSentinelPatch = patchKeys.some((k) => k.startsWith('sentinel')) || Boolean(data && typeof data === 'object' && Object.hasOwn(data, 'hookProfile'));
     if (hasSentinelPatch) {
       sentinelPanelCache.ts = 0;
     }
@@ -598,6 +603,40 @@ export async function startSidecarPanel(options = {}) {
     ) {
       await Promise.all(readRamDaemonCandidates().map((c) => querySingleRamDaemon(c))).catch(() => {});
     }
+
+    if (canUseFastPath) {
+      const hasRamOrCpuPatch = patchKeys.some(
+        (k) => k.startsWith('ram') || k.startsWith('cpu') || k === 'hookProfile' || k === 'lspBridgeEnabled'
+      );
+      const [gpu, sentinel, ramCache] = await Promise.all([
+        hasGpuPatch ? safeGetGpuStatus({ force: true }) : Promise.resolve(undefined),
+        hasSentinelPatch
+          ? resolveActiveWorkspaceForPanel('').then((ws) => fetchSentinelPanelStatus(ws, next, { force: true }))
+          : Promise.resolve(undefined),
+        hasRamOrCpuPatch ? safeGetRamCacheStatus(next) : Promise.resolve(undefined),
+      ]);
+      const cpu = hasRamOrCpuPatch ? safeGetCpuStatus(next, ramCache) : undefined;
+      return {
+        ok: true,
+        fast: true,
+        state: next,
+        ...(gpu !== undefined ? { gpu } : {}),
+        ...(capEnforcement ? { capEnforcement } : {}),
+        ...(sentinel !== undefined ? { sentinel } : {}),
+        ...(ramCache !== undefined ? { ramCache } : {}),
+        ...(cpu !== undefined ? { cpu } : {}),
+        subscriptionCapabilities: getSubscriptionCapabilities(next?.subscriptionTier),
+        pluginVersion: getPluginVersion(),
+        uiBuildVersion: getUiBuildVersion(),
+      };
+    }
+
+    const isAllScope = data?.workspaceScope === 'all' || rawReqRoot === '__all__';
+    const isPinned = Boolean(rawReqRoot && rawReqRoot !== '__all__' && rawReqRoot !== '__auto__' && isValidWorkspaceDir(rawReqRoot));
+    const autoWs = await resolveActiveWorkspaceForPanel('');
+    const activeWs = isPinned ? resolve(rawReqRoot) : autoWs;
+    const cpWs = resolveCheckpointScopeWs(data, activeWs);
+    const telemetry = collectTelemetry(next.compactionTokenThreshold || 120000, { workspaceRoot: activeWs });
     const [checkpoints, turnCheckpoints, shadowWorktrees, wiretapFaults, quotaPacer, circuitBreaker, compaction, pitfalls, bayesian, ramCache, gpu, hardwareProfile, hudPack, sentinel, knowledgeSnap] = await Promise.all([
       safeListCheckpoints(isAllScope ? 20 : 10, cpWs),
       safeListTurnCheckpoints(isAllScope ? 16 : 10, cpWs),

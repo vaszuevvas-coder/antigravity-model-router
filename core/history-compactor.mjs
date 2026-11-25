@@ -772,16 +772,17 @@ export async function enrichCompactionDigestWithGpu(digestRes, { timeoutMs = 450
  */
 const VALID_PHASE_TRANSITIONS = new Set(['explore_to_edit', 'verify_passed', 'milestone_done']);
 
-export async function checkHistoryCompaction({
-  conversationId = '',
-  transcriptPath = '',
-  thresholdTokens = 120000,
-  readOnly = false,
-  workspaceRoot = '',
-  phaseTransition = '',
-  strategicMinFillRatio = 0.55,
-  lang = 'ru',
-} = {}) {
+export async function checkHistoryCompaction(rawOpts = {}) {
+  const {
+    conversationId = '',
+    transcriptPath = '',
+    thresholdTokens = 120000,
+    readOnly = false,
+    workspaceRoot = '',
+    phaseTransition = '',
+    strategicMinFillRatio = 0.55,
+    lang = 'ru',
+  } = (rawOpts && typeof rawOpts === 'object' ? rawOpts : {});
   const resolvedLang = normalizeLang(lang, 'ru');
   const isEn = resolvedLang === 'en';
   const resolved = resolveTranscriptPath(transcriptPath, conversationId);

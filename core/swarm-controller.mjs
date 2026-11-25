@@ -315,16 +315,18 @@ export function applySwarmWorkerStateOverrides(state = {}, swarmCtx = {}) {
  * @param {object} params
  * @returns {{ shouldActivateSwarm: boolean, swarmMode: string, directiveEn: string }}
  */
-export function evaluateSwarmRoutingDirective({
-  state = {},
-  modelProfile = null,
-  grade = 'M',
-  matchedFilesCount = 0,
-  subsystemHits = 0,
-  isReadOnlyQuestion = false,
-  swarmCtx = {},
-  cacheDir = '',
-} = {}) {
+export function evaluateSwarmRoutingDirective(rawOpts = {}) {
+  const {
+    state: rawState = {},
+    modelProfile = null,
+    grade = 'M',
+    matchedFilesCount = 0,
+    subsystemHits = 0,
+    isReadOnlyQuestion = false,
+    swarmCtx = {},
+    cacheDir = '',
+  } = (rawOpts && typeof rawOpts === 'object' ? rawOpts : {});
+  const state = rawState && typeof rawState === 'object' ? rawState : {};
   const rawMode = String(state.swarmMode || 'auto_xl').toLowerCase();
   const swarmMode = SWARM_MODES.has(rawMode) ? rawMode : 'auto_xl';
   const rawTier = String(state.swarmWorkerTier || 'hydrogen_auto').toLowerCase();

@@ -5,7 +5,7 @@
   <meta name="google" content="notranslate" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%230a84ff'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%23ffffff'/%3E%3C/svg%3E" />
-  <title>The Tunnel v3.34.1</title>
+  <title>The Tunnel v3.35.0</title>
   <script src="/preload.js"></script>
   <style>
     :root {
@@ -8202,20 +8202,26 @@
     }
 
     .plugin-update-banner {
+      position: sticky;
+      top: 0;
+      z-index: 950;
       display: flex;
       align-items: center;
       justify-content: space-between;
       flex-wrap: wrap;
       gap: 6px 10px;
-      padding: 8px 12px;
-      border-radius: 14px;
-      background: linear-gradient(135deg, rgba(10, 132, 255, 0.16) 0%, rgba(48, 209, 88, 0.13) 100%);
-      border: 1px solid rgba(100, 210, 255, 0.36);
+      padding: 6px 12px;
+      margin-bottom: 6px;
+      border-radius: 12px 12px 10px 10px;
+      background: linear-gradient(135deg, rgba(10, 132, 255, 0.22) 0%, rgba(48, 209, 88, 0.16) 100%);
+      border: 1px solid rgba(100, 210, 255, 0.38);
       color: var(--text-main);
       font-size: 11px;
       min-width: 0;
       max-width: 100%;
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.2);
     }
 
     .plugin-update-banner.is-busy {
@@ -8425,6 +8431,205 @@
       color: #9a3412 !important;
     }
 
+    body.is-plugin-updating .lg-shell {
+      filter: blur(4px);
+      pointer-events: none;
+      user-select: none;
+      transition: filter 0.2s ease;
+    }
+
+    .plugin-update-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1500;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background: rgba(8, 12, 22, 0.56);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+
+    .plugin-update-modal {
+      width: calc(100% - 32px);
+      max-width: 380px;
+      border-radius: 20px;
+      padding: 20px 20px 18px;
+      background: linear-gradient(165deg, rgba(26, 33, 52, 0.96) 0%, rgba(15, 19, 32, 0.98) 100%);
+      border: 1px solid rgba(100, 210, 255, 0.34);
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.58), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+      color: var(--text-main);
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .plugin-update-modal-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      font-weight: 700;
+      background: rgba(10, 132, 255, 0.2);
+      border: 1px solid rgba(100, 210, 255, 0.45);
+      color: #64d2ff;
+    }
+
+    .plugin-update-overlay.is-done .plugin-update-modal {
+      border-color: rgba(48, 209, 88, 0.48);
+    }
+
+    .plugin-update-overlay.is-done .plugin-update-modal-icon {
+      background: rgba(48, 209, 88, 0.22);
+      border-color: rgba(48, 209, 88, 0.5);
+      color: #30d158;
+    }
+
+    .plugin-update-overlay.is-error .plugin-update-modal {
+      border-color: rgba(255, 69, 58, 0.48);
+    }
+
+    .plugin-update-overlay.is-error .plugin-update-modal-icon {
+      background: rgba(255, 69, 58, 0.2);
+      border-color: rgba(255, 69, 58, 0.5);
+      color: #ff6961;
+    }
+
+    .plugin-update-modal-title {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.3;
+      color: var(--text-main);
+    }
+
+    .plugin-update-modal-desc {
+      margin: 0;
+      font-size: 11.5px;
+      line-height: 1.45;
+      color: var(--text-sub);
+      overflow-wrap: anywhere;
+    }
+
+    .plugin-update-progress-wrap {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 2px;
+    }
+
+    .plugin-update-progress-track {
+      width: 100%;
+      height: 7px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .plugin-update-progress-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #0a84ff 0%, #64d2ff 100%);
+      transition: width 0.25s ease;
+    }
+
+    .plugin-update-overlay.is-done .plugin-update-progress-fill {
+      background: linear-gradient(90deg, #30d158 0%, #64d2ff 100%);
+    }
+
+    .plugin-update-progress-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 10.5px;
+      color: var(--text-sub);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .plugin-update-modal-error {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: rgba(255, 69, 58, 0.14);
+      border: 1px solid rgba(255, 69, 58, 0.36);
+      color: #ff9c97;
+      font-size: 11px;
+      line-height: 1.4;
+      text-align: left;
+      overflow-wrap: anywhere;
+    }
+
+    .plugin-update-modal-actions {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    body[data-panel-theme="studio_titanium"] .plugin-update-overlay {
+      background: rgba(247, 244, 239, 0.68);
+    }
+
+    body[data-panel-theme="studio_titanium"] .plugin-update-modal {
+      background: rgba(255, 252, 248, 0.97);
+      border-color: rgba(234, 88, 12, 0.34);
+      box-shadow: 0 22px 54px rgba(15, 23, 42, 0.18), inset 0 1px 0 #ffffff;
+      color: #1f2937;
+    }
+
+    body[data-panel-theme="studio_titanium"] .plugin-update-modal-icon {
+      background: rgba(234, 88, 12, 0.14);
+      border-color: rgba(234, 88, 12, 0.38);
+      color: #c2410c;
+    }
+
+    body[data-panel-theme="studio_titanium"] .plugin-update-overlay.is-done .plugin-update-modal {
+      border-color: rgba(22, 163, 74, 0.42);
+    }
+
+    body[data-panel-theme="studio_titanium"] .plugin-update-overlay.is-done .plugin-update-modal-icon {
+      background: rgba(22, 163, 74, 0.14);
+      border-color: rgba(22, 163, 74, 0.42);
+      color: #15803d;
+    }
+
+    body[data-panel-theme="studio_titanium"] .plugin-update-overlay.is-error .plugin-update-modal {
+      border-color: rgba(220, 38, 38, 0.42);
+    }
+
+    body[data-panel-theme="studio_titanium"] .plugin-update-overlay.is-error .plugin-update-modal-icon {
+      background: rgba(220, 38, 38, 0.12);
+      border-color: rgba(220, 38, 38, 0.4);
+      color: #b91c1c;
+    }
+
+    body[data-panel-theme="studio_titanium"] .plugin-update-progress-track {
+      background: rgba(15, 23, 42, 0.08);
+      border-color: rgba(15, 23, 42, 0.1);
+    }
+
+    body[data-panel-theme="studio_titanium"] .plugin-update-progress-fill {
+      background: linear-gradient(90deg, #ea580c 0%, #f59e0b 100%);
+    }
+
+    body[data-panel-theme="studio_titanium"] .plugin-update-modal-error {
+      background: rgba(220, 38, 38, 0.08);
+      border-color: rgba(220, 38, 38, 0.32);
+      color: #991b1b;
+    }
+
     body[data-panel-theme="studio_titanium"] .plugin-update-toast {
       background: rgba(255, 251, 247, 0.96);
       color: #1f2937;
@@ -8478,6 +8683,19 @@
   </svg>
 
   <div class="lg-shell">
+    <!-- Верхняя закреплённая линия доступного обновления плагина с GitHub -->
+    <div class="plugin-update-banner" id="pluginUpdateBanner" style="display: none;">
+      <div class="plugin-update-main">
+        <span class="plugin-update-badge" id="pluginUpdateBadge">Обновление</span>
+        <span class="plugin-update-text" id="pluginUpdateBannerText">Доступна новая версия расширения на GitHub</span>
+        <a class="plugin-update-link" id="pluginUpdateReleaseLink" href="https://github.com/vaszuevvas-coder/antigravity-model-router/releases" target="_blank" rel="noopener noreferrer">Что нового ↗</a>
+      </div>
+      <div class="plugin-update-actions">
+        <button type="button" class="win-btn plugin-update-apply-btn" id="pluginUpdateApplyBtn" data-action="applyPluginUpdateFromPanel" title="Скачать и установить обновление с GitHub с сохранением настроек">Да, обновить</button>
+        <button type="button" class="win-btn plugin-update-dismiss-btn" id="pluginUpdateDismissBtn" data-action="dismissPluginUpdateBanner" title="Позже" aria-label="Позже">✕</button>
+      </div>
+    </div>
+
     <header class="lg-header">
       <div class="lg-brand">
         <span class="lg-brand-orb"></span>
@@ -8528,19 +8746,6 @@
     </div>
 
     <div class="window-body">
-      <!-- Верхняя плашка доступного обновления плагина с GitHub -->
-      <div class="plugin-update-banner" id="pluginUpdateBanner" style="display: none;">
-        <div class="plugin-update-main">
-          <span class="plugin-update-badge" id="pluginUpdateBadge">Обновление</span>
-          <span class="plugin-update-text" id="pluginUpdateBannerText">Доступна новая версия расширения на GitHub</span>
-          <a class="plugin-update-link" id="pluginUpdateReleaseLink" href="https://github.com/vaszuevvas-coder/antigravity-model-router/releases" target="_blank" rel="noopener noreferrer">Что нового ↗</a>
-        </div>
-        <div class="plugin-update-actions">
-          <button type="button" class="win-btn plugin-update-apply-btn" id="pluginUpdateApplyBtn" data-action="applyPluginUpdateFromPanel" title="Скачать и установить обновление с GitHub с сохранением настроек">⬇ Обновить</button>
-          <button type="button" class="win-btn plugin-update-dismiss-btn" id="pluginUpdateDismissBtn" data-action="dismissPluginUpdateBanner" title="Скрыть уведомление до следующей версии">✕</button>
-        </div>
-      </div>
-
       <!-- Статус-баннер разговорного ИИ-пилота -->
       <div class="smart-banner" id="smartProjectBanner">
         <div class="smart-banner-main">
@@ -9828,7 +10033,7 @@
 
     <div class="status-bar">
       <div id="statusPill" class="status-pane">Готово · Синхронизировано</div>
-      <div class="status-pane" id="footerPluginVersion">The Tunnel v3.34.1</div>
+      <div class="status-pane" id="footerPluginVersion">The Tunnel v3.35.0</div>
     </div>
     <div style="text-align:center;font-size:10.5px;color:var(--text-sub);opacity:0.7;padding:4px 0 2px;letter-spacing:0.02em;">Created by Vasili Zuev</div>
   </div>
@@ -9839,7 +10044,7 @@
       <div class="wiz-head">
         <div class="lg-brand">
           <span class="lg-brand-orb"></span>
-          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v3.34.1</span>
+          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v3.35.0</span>
           <span class="lg-session-pill" id="wizLaunchBadge">Первый запуск</span>
         </div>
         <button class="lg-icon-btn round" type="button" data-action="closeOnboardingWizard" title="Отложить или закрыть окно настройки (Esc)">×</button>
@@ -10054,6 +10259,28 @@
           </div>
         </div>
       </aside>
+    </div>
+  </div>
+
+  <div class="plugin-update-overlay" id="pluginUpdateOverlay" role="dialog" aria-modal="true" aria-labelledby="pluginUpdateOverlayTitle" style="display: none;">
+    <div class="plugin-update-modal">
+      <div class="plugin-update-modal-icon" id="pluginUpdateOverlayIcon" aria-hidden="true">⬇</div>
+      <h3 class="plugin-update-modal-title" id="pluginUpdateOverlayTitle">Идёт обновление расширения</h3>
+      <p class="plugin-update-modal-desc" id="pluginUpdateOverlayDesc">Подготовка загрузки с GitHub…</p>
+      <div class="plugin-update-progress-wrap" id="pluginUpdateProgressWrap">
+        <div class="plugin-update-progress-track">
+          <div class="plugin-update-progress-fill" id="pluginUpdateProgressFill" style="width: 0%;"></div>
+        </div>
+        <div class="plugin-update-progress-meta">
+          <span id="pluginUpdateProgressStage">Проверка…</span>
+          <span id="pluginUpdateProgressPct">0%</span>
+        </div>
+      </div>
+      <div class="plugin-update-modal-error" id="pluginUpdateOverlayError" style="display: none;"></div>
+      <div class="plugin-update-modal-actions" id="pluginUpdateOverlayActions" style="display: none;">
+        <button type="button" class="win-btn plugin-update-apply-btn" id="pluginUpdateOverlayRetryBtn" data-action="applyPluginUpdateFromPanel" style="display: none;">↻ Повторить</button>
+        <button type="button" class="win-btn" id="pluginUpdateOverlayCloseBtn" data-action="closePluginUpdateOverlay">Закрыть</button>
+      </div>
     </div>
   </div>
 
@@ -10543,6 +10770,11 @@
       'Доступных обновлений нет': 'No updates available',
       'Что нового ↗': 'What\'s new ↗',
       '⬇ Обновить': '⬇ Update',
+      'Да, обновить': 'Yes, update',
+      'Идёт обновление расширения': 'Updating extension',
+      'Подготовка загрузки с GitHub…': 'Preparing GitHub download…',
+      'Проверка…': 'Checking…',
+      'Закрыть': 'Close',
       '🛡️ Фоновый Дозор:': '🛡️ Background Sentinel:',
       'Контракты: чисто · BugBot: чисто': 'Contracts: clean · BugBot: clean',
       '🛠️ Исправить': '🛠️ Fix',
@@ -10561,6 +10793,7 @@
       'Проверить обновления расширения на GitHub': 'Check GitHub for plugin updates',
       'Скачать и установить обновление с GitHub с сохранением настроек': 'Download and install update from GitHub while preserving settings',
       'Скрыть уведомление до следующей версии': 'Dismiss notification until next version',
+      'Позже': 'Later',
       'Закрыть уведомление': 'Dismiss notification',
       'Обновить всё (телеметрия обновляется автоматически раз в ~3 сек)': 'Refresh all (telemetry auto-refreshes every ~3s)',
       'Автодиагностика стека проекта, .agentignore, DESIGN.md и GATES.md': 'Auto-diagnose project stack, .agentignore, DESIGN.md & GATES.md',
@@ -10879,6 +11112,9 @@
     async function setUiLanguage(lang) {
       const valid = normalizeUiLanguage(lang);
       applyUiLanguageDom(valid);
+      if (typeof flashStatus === 'function') {
+        flashStatus(valid === 'ru' ? 'Язык интерфейса: Русский' : 'Interface language: English');
+      }
       if (currentState && typeof currentState === 'object') {
         currentState.uiLanguage = valid;
       }
@@ -13797,9 +14033,17 @@
           _updateBatchWaiters = [];
           const rollbackSnap = _batchRollbackSnap || cloneRollbackSnap(currentState);
           let ok = false;
+          const useFastUpdate = Boolean(
+            patchToSend &&
+            !patchToSend.rootDir &&
+            !patchToSend.workspaceScope &&
+            !patchToSend.skillModes &&
+            !patchToSend.replaceSkillModes
+          );
           try {
             const res = await panelFetch('/api/update', {
               method: 'POST',
+              headers: useFastUpdate ? { 'x-panel-fast-update': '1' } : undefined,
               body: JSON.stringify(patchToSend),
             });
             if (!res || !res.ok) {
@@ -13811,8 +14055,14 @@
             }
             // Refresh rollback baseline to confirmed server state for any trailing queued batch.
             _batchRollbackSnap = cloneRollbackSnap(updated.state);
+            const payloadForRender = updated.fast === true && lastPayloadCache
+              ? Object.assign({}, lastPayloadCache, updated)
+              : updated;
+            if (updated.fast === true && lastPayloadCache) {
+              lastPayloadCache = payloadForRender;
+            }
             if (!_pendingUpdatePatch) {
-              renderPayload(updated);
+              renderPayload(payloadForRender);
               flashStatus(L('Сохранено в router-state.json ✓', 'Saved to router-state.json ✓'));
             } else if (updated.state) {
               currentState = mergeStatePatches(updated.state, _pendingUpdatePatch);
@@ -18533,6 +18783,7 @@
         case 'checkPluginUpdateManual': void checkPluginUpdate({ force: true, silent: false }); break;
         case 'applyPluginUpdateFromPanel': void applyPluginUpdateFromPanel(); break;
         case 'dismissPluginUpdateBanner': void dismissPluginUpdateBanner(); break;
+        case 'closePluginUpdateOverlay': closePluginUpdateOverlay(); break;
         case 'hidePluginUpdateToast': hidePluginUpdateToast(); break;
         default: break;
       }
@@ -19086,6 +19337,7 @@
     let _pluginUpdatePollTimer = null;
     let _pluginUpdateToastState = null;
     let _pluginUpdateToastTimer = null;
+    let _pluginUpdateOverlayDismissed = false;
 
     function getDismissedUpdateVersion() {
       try {
@@ -19182,7 +19434,7 @@
       if (document.visibilityState === 'hidden') return;
       _pluginUpdatePollTimer = setTimeout(() => {
         void pollPluginUpdateStatus();
-      }, 900);
+      }, 350);
     }
 
     if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
@@ -19190,6 +19442,123 @@
         clearPluginUpdatePollTimer();
         clearPluginUpdateToastTimer();
       });
+    }
+
+    function closePluginUpdateOverlay() {
+      _pluginUpdateOverlayDismissed = true;
+      const overlay = document.getElementById('pluginUpdateOverlay');
+      if (overlay) {
+        overlay.style.display = 'none';
+        overlay.classList.remove('is-busy', 'is-done', 'is-error');
+      }
+      if (document.body) {
+        document.body.classList.remove('is-plugin-updating');
+      }
+    }
+
+    function renderPluginUpdateOverlay(st, info) {
+      const overlay = document.getElementById('pluginUpdateOverlay');
+      if (!overlay) return;
+
+      const iconEl = document.getElementById('pluginUpdateOverlayIcon');
+      const titleEl = document.getElementById('pluginUpdateOverlayTitle');
+      const descEl = document.getElementById('pluginUpdateOverlayDesc');
+      const progressWrap = document.getElementById('pluginUpdateProgressWrap');
+      const progressFill = document.getElementById('pluginUpdateProgressFill');
+      const stageEl = document.getElementById('pluginUpdateProgressStage');
+      const pctEl = document.getElementById('pluginUpdateProgressPct');
+      const errorEl = document.getElementById('pluginUpdateOverlayError');
+      const actionsEl = document.getElementById('pluginUpdateOverlayActions');
+      const retryBtn = document.getElementById('pluginUpdateOverlayRetryBtn');
+      const closeBtn = document.getElementById('pluginUpdateOverlayCloseBtn');
+
+      const isBusy = Boolean(st && st.active);
+      const isDone = Boolean(!isBusy && st && st.phase === 'done' && st.needsRestart && !st.dismissed);
+      const isErr = Boolean(!isBusy && st && st.phase === 'error' && st.error && !st.dismissed);
+
+      if (isBusy) {
+        _pluginUpdateOverlayDismissed = false;
+      }
+
+      if ((!isBusy && !isDone && !isErr) || (!isBusy && _pluginUpdateOverlayDismissed)) {
+        overlay.style.display = 'none';
+        overlay.classList.remove('is-busy', 'is-done', 'is-error');
+        if (document.body) document.body.classList.remove('is-plugin-updating');
+        return;
+      }
+
+      overlay.style.display = 'flex';
+      overlay.classList.toggle('is-busy', isBusy);
+      overlay.classList.toggle('is-done', isDone);
+      overlay.classList.toggle('is-error', isErr);
+      if (document.body) document.body.classList.add('is-plugin-updating');
+
+      const verStr = String((st && st.targetVersion) || (info && info.latestVersion) || '').trim();
+      const verSuffix = verStr ? (' v' + verStr) : '';
+      const localizedStatusText = st
+        ? (isRu() ? (st.statusTextRu || st.statusText) : (st.statusTextEn || st.statusText))
+        : '';
+
+      if (isBusy) {
+        const rawPct = Number(st.percent || 0);
+        const pct = Math.max(5, Math.min(100, Number.isFinite(rawPct) ? Math.round(rawPct) : 5));
+        let stageLabel = L('Подготовка…', 'Preparing…');
+        if (st.phase === 'downloading') {
+          stageLabel = L('Скачивание с GitHub', 'Downloading from GitHub');
+        } else if (st.phase === 'extracting') {
+          stageLabel = L('Проверка и распаковка', 'Verifying & extracting');
+        } else if (st.phase === 'installing') {
+          stageLabel = L('Установка с сохранением настроек', 'Installing (preserving settings)');
+        }
+        if (iconEl) iconEl.textContent = '⬇';
+        if (titleEl) titleEl.textContent = L('Идёт обновление', 'Updating') + verSuffix;
+        if (descEl) descEl.textContent = localizedStatusText || L('Пожалуйста, не закрывайте окно…', 'Please keep this window open…');
+        if (progressWrap) progressWrap.style.display = 'flex';
+        if (progressFill) progressFill.style.width = pct + '%';
+        if (stageEl) stageEl.textContent = stageLabel;
+        if (pctEl) pctEl.textContent = pct + '%';
+        if (errorEl) {
+          errorEl.style.display = 'none';
+          errorEl.textContent = '';
+        }
+        if (actionsEl) actionsEl.style.display = 'none';
+        if (retryBtn) retryBtn.style.display = 'none';
+      } else if (isDone) {
+        if (iconEl) iconEl.textContent = '✓';
+        if (titleEl) titleEl.textContent = L('Обновление' + verSuffix + ' установлено', 'Updated to' + verSuffix);
+        if (descEl) {
+          descEl.textContent = L(
+            'Настройки сохранены. Перезагрузите Google Antigravity, чтобы применить изменения.',
+            'Settings preserved. Restart Google Antigravity to apply changes.'
+          );
+        }
+        if (progressWrap) progressWrap.style.display = 'flex';
+        if (progressFill) progressFill.style.width = '100%';
+        if (stageEl) stageEl.textContent = L('Готово · Требуется перезагрузка', 'Done · Restart required');
+        if (pctEl) pctEl.textContent = '100%';
+        if (errorEl) {
+          errorEl.style.display = 'none';
+          errorEl.textContent = '';
+        }
+        if (actionsEl) actionsEl.style.display = 'flex';
+        if (retryBtn) retryBtn.style.display = 'none';
+        if (closeBtn) closeBtn.textContent = L('Понятно', 'Got it');
+      } else if (isErr) {
+        if (iconEl) iconEl.textContent = '✕';
+        if (titleEl) titleEl.textContent = L('Ошибка при установке обновления', 'Update installation failed');
+        if (descEl) descEl.textContent = L('Настройки не затронуты.', 'Your settings were not affected.');
+        if (progressWrap) progressWrap.style.display = 'none';
+        if (errorEl) {
+          errorEl.style.display = 'block';
+          errorEl.textContent = localizedStatusText || String(st.error || L('Неизвестная ошибка', 'Unknown error'));
+        }
+        if (actionsEl) actionsEl.style.display = 'flex';
+        if (retryBtn) {
+          retryBtn.style.display = 'inline-flex';
+          retryBtn.textContent = L('↻ Повторить', '↻ Retry');
+        }
+        if (closeBtn) closeBtn.textContent = L('Закрыть', 'Close');
+      }
     }
 
     function renderPluginUpdateBanner(checkInfo, statusInfo) {
@@ -19222,12 +19591,14 @@
       }
 
       if (!banner) {
+        renderPluginUpdateOverlay(st, info);
         renderPluginUpdateToast();
         return;
       }
       if (!isBusy && !isDone && !isErr && (!hasUpdate || isSuppressed)) {
         banner.style.display = 'none';
         banner.classList.remove('is-busy', 'is-done', 'is-error');
+        renderPluginUpdateOverlay(st, info);
         renderPluginUpdateToast();
         return;
       }
@@ -19287,9 +19658,13 @@
         if (applyBtn) {
           applyBtn.style.display = 'inline-flex';
           applyBtn.disabled = false;
-          applyBtn.textContent = L('⬇ Обновить', '⬇ Update');
+          applyBtn.textContent = L('Да, обновить', 'Yes, update');
+          applyBtn.title = L('Скачать и установить обновление с GitHub с сохранением настроек', 'Download and install update from GitHub while preserving settings');
         }
-        if (dismissBtn) dismissBtn.style.display = 'inline-flex';
+        if (dismissBtn) {
+          dismissBtn.style.display = 'inline-flex';
+          dismissBtn.title = L('Позже', 'Later');
+        }
       }
 
       if (linkEl) {
@@ -19303,6 +19678,7 @@
           linkEl.style.display = 'none';
         }
       }
+      renderPluginUpdateOverlay(st, info);
       renderPluginUpdateToast();
     }
 
@@ -19396,6 +19772,18 @@
     async function applyPluginUpdateFromPanel() {
       const info = _latestPluginUpdateCheck || {};
       setDismissedUpdateVersion('');
+      _pluginUpdateOverlayDismissed = false;
+      renderPluginUpdateBanner(undefined, {
+        ok: true,
+        active: true,
+        phase: 'downloading',
+        percent: 5,
+        targetVersion: info.latestVersion || '',
+        statusTextRu: 'Запуск загрузки обновления с GitHub…',
+        statusTextEn: 'Starting plugin update from GitHub…',
+        error: '',
+        dismissed: false,
+      });
       try {
         flashStatus(L('Запуск загрузки обновления с GitHub...', 'Starting plugin update from GitHub...'));
         const res = await panelFetch('/api/plugin/update-apply', {
@@ -19420,15 +19808,38 @@
             }
           }
         } else if (!data || !data.ok) {
-          flashStatus(L('Ошибка обновления: ', 'Update error: ') + ((data && data.error) || L('сбой', 'failed')));
+          const errMsg = (data && data.error) || L('сбой запуска обновления', 'failed to start update');
+          renderPluginUpdateBanner(undefined, {
+            ok: false,
+            active: false,
+            phase: 'error',
+            targetVersion: info.latestVersion || '',
+            error: errMsg,
+            statusTextRu: errMsg,
+            statusTextEn: errMsg,
+            dismissed: false,
+          });
+          flashStatus(L('Ошибка обновления: ', 'Update error: ') + errMsg);
         }
       } catch {
-        flashStatus(L('Ошибка связи при установке обновления', 'Connection error installing update'));
+        const netMsg = L('Ошибка связи при установке обновления', 'Connection error installing update');
+        renderPluginUpdateBanner(undefined, {
+          ok: false,
+          active: false,
+          phase: 'error',
+          targetVersion: info.latestVersion || '',
+          error: netMsg,
+          statusTextRu: netMsg,
+          statusTextEn: netMsg,
+          dismissed: false,
+        });
+        flashStatus(netMsg);
       }
     }
 
     async function dismissPluginUpdateBanner() {
       clearPluginUpdatePollTimer();
+      _pluginUpdateOverlayDismissed = true;
       if (_latestPluginUpdateCheck && _latestPluginUpdateCheck.latestVersion) {
         setDismissedUpdateVersion(_latestPluginUpdateCheck.latestVersion);
       }
@@ -19566,7 +19977,9 @@
       if (!listEl) return;
       const rows = Array.from(listEl.querySelectorAll('.ag-bgtask-item'));
       rows.forEach(function (rowEl, idx) {
-        rowEl.classList.toggle('is-overflow-hidden', !nextShowAll && idx >= AG_BG_TASKS_PREVIEW_LIMIT);
+        const isOverflowHidden = !nextShowAll && idx >= AG_BG_TASKS_PREVIEW_LIMIT;
+        rowEl.classList.toggle('is-overflow-hidden', isOverflowHidden);
+        rowEl.setAttribute('aria-hidden', isOverflowHidden ? 'true' : 'false');
       });
       const seeAllBtn = listEl.querySelector('.ag-bgtasks-see-all-btn');
       if (seeAllBtn) {
@@ -19922,7 +20335,8 @@
           const subPct = Math.max(0, Math.min(100, Math.round(Number(s.percent || 0))));
           animateChatPctNode('sub:' + subCid, sNum, subPct);
 
-          const badgeLabel = pickText(s, 'subagentBadge', 'subagentBadgeEn', '') || (L('Агент #', 'Agent #') + (s.subagentNumber || (sIdx + 1)));
+          const fallbackPrefix = (s && s.agentKind === 'swarm_worker') ? L('Рой #', 'Swarm #') : L('Агент #', 'Agent #');
+          const badgeLabel = pickText(s, 'subagentBadge', 'subagentBadgeEn', '') || (fallbackPrefix + (s.subagentNumber || (sIdx + 1)));
           const roleText = String(pickText(s, 'roleLabel', 'roleLabelEn', '') || '').trim();
           const opText = pickText(s, 'stepTitle', 'stepTitleEn', '') || pickText(s, 'formattedText', 'formattedTextEn', '') || L('Работа субагента', 'Subagent running');
           const displayOp = roleText && opText.indexOf(roleText) === -1
@@ -20084,8 +20498,10 @@
           const statusCls = st === 'running'
             ? 'is-running'
             : (st === 'error' ? 'is-error' : (st === 'cancelled' ? 'is-cancelled' : 'is-done'));
+          const isOverflowHidden = !isShowAll && tIdx >= AG_BG_TASKS_PREVIEW_LIMIT;
           const rowItem = document.createElement('div');
-          rowItem.className = 'ag-bgtask-item ' + statusCls + ((!isShowAll && tIdx >= AG_BG_TASKS_PREVIEW_LIMIT) ? ' is-overflow-hidden' : '');
+          rowItem.className = 'ag-bgtask-item ' + statusCls + (isOverflowHidden ? ' is-overflow-hidden' : '');
+          rowItem.setAttribute('aria-hidden', isOverflowHidden ? 'true' : 'false');
           rowItem.setAttribute('data-task-id', String((t && (t.taskId || t.id)) || ('bg-' + tIdx)));
 
           const rowInner = document.createElement('div');
@@ -20882,11 +21298,9 @@
       );
     }
 
-    function updateComposerEngineBadge(mode, label) {
-      const badgeEl = document.getElementById('composerEngineBadge');
-      if (!badgeEl) return;
-      badgeEl.className = 'composer-engine-badge' + (mode ? (' is-' + mode) : '');
-      badgeEl.textContent = label || L('RAM + GPU · 0 тк', 'RAM + GPU · 0 tok');
+    function updateComposerEngineBadge(_mode, _label) {
+      // Badge element was removed from header; kept as safe no-op for legacy callers.
+      return;
     }
 
     function syncSmartComposerSizeAndScroll() {
@@ -25052,10 +25466,10 @@
         if (listEl) {
           const renderedWave = pgState.lens === 'blast' && typeof pgRenderBlastWaveList === 'function' && pgRenderBlastWaveList(listEl);
           if (!renderedWave) {
-            listEl.innerHTML = '<div class="pg-insp-placeholder">' + L(
+            listEl.innerHTML = '<div class="pg-insp-placeholder">' + escapeHtml(L(
               'Наведите курсор для подсветки связей. Двойной клик по папке откроет её файлы, по файлу — локальный граф (1–2 хопа).',
               'Hover to highlight links. Double-click a folder to drill into its files, or a file for its 1–2 hop neighborhood.'
-            ) + '</div>';
+            )) + '</div>';
           }
         }
         return;
@@ -27353,7 +27767,8 @@
             '</button>' +
           '</div>'
         : '';
-      msgEl.innerHTML = messagesHtml + thinkingHtml;
+      const combinedAiHtml = [messagesHtml, thinkingHtml].join('');
+      msgEl.innerHTML = combinedAiHtml;
       msgEl.scrollTop = msgEl.scrollHeight;
     }
 

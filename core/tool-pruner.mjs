@@ -1,6 +1,6 @@
 /**
  * @file tool-pruner.mjs
- * @description Когнитивный 3D-маршрутизатор The Tunnel (3D Cognitive Router v3.34.1):
+ * @description Когнитивный 3D-маршрутизатор The Tunnel (3D Cognitive Router v3.35.0):
  * Оценивает реальный охват графа кода (Scope-Scout + PageRank), строит 3D-тензор
  * Ширина × Глубина × Неопределённость/Риск, генерирует адаптивные варианты плана и проверяет селектор модели Gemini 4.
  */
@@ -572,7 +572,9 @@ export function classifyTaskAndPruneTools(userPrompt = '', state = {}, context =
   const isSkillEnabled = (id) => skillModes[id] !== 'off';
 
   const LEXICAL_SKILL_RULES = [
-    { slug: 'ui-ux-design-system', rx: /(?:\b(?:css|scss|tailwind|showroom|ui\.html|styles\.css)\b|(?:дизайн|стил[ьиейя]|верстк|кноп(?:к|ок)|карточ(?:к|ек)|тем[ауы]|палитр|анимац|витрин|макет))/i, excludeRx: /(?:русифик|перевед[иу].*на\s+русск|локализац)/i },
+    { slug: 'github-publish-guard', rx: /(?:\b(?:github|gh\s+release|git\s+push|git\s+tag|pre-publish)\b|(?:выгруз[а-яё]*\s+(?:на|в)\s+github|запуш[а-яё]*|опубликуй.*(?:релиз|github)|нумерац[а-яё]*\s+верси[ия]|актуальност[ьи]\s+верси|утечк[аи]\s+(?:секрет|путей)|перед\s+(?:пушем|публикац)))/i },
+    { slug: 'programmatic-video-studio', rx: /(?:\b(?:remotion|hyperframes|gsap|mp4|webm)\b|(?:промо[-\s]?ролик|видео[-\s]?ролик|рендер[а-яё]*\s+видео|кинетическ[а-яё]*\s+типографик|анимац[а-яё]*\s+(?:ролик|видео|презентац|промо)))/i },
+    { slug: 'ui-ux-design-system', rx: /(?:\b(?:css|scss|tailwind|showroom|ui\.html|styles\.css)\b|(?:дизайн|стил[ьиейя]|верстк|кноп(?:к|ок)|карточ(?:к|ек)|тем[ауы]|палитр|анимац|витрин|макет))/i, excludeRx: /(?:русифик|перевед[иу].*на\s+русск|локализац|\b(?:remotion|hyperframes|ffmpeg|mp4|webm|glsl|resolume|openfx|davinci)\b|(?:промо[-\s]?ролик|видео[-\s]?ролик|шейдер))/i },
     { slug: 'deep-stress-auditor', rx: /(?:sql[-\s]?инъекц|уязвим|\bcwe\b|\bredos\b|\bfuzz|фаззинг|стресс[-\s]?аудит|гонк[аи]|утечк[аи]\s+ресурс)/i },
     { slug: 'ast-codemod-refactor', rx: /(?:переименуй.*(?:модул|файл|везде|всех)|\bcodemod\b|массов[а-яё]*\s+замен)/i },
     { slug: 'program-slicer-ocd', rx: /(?:отследи\s+откуда|слайс\s+переменн|срез\s+переменн|\bdata[-\s]?flow\b|\bslice-variable\b)/i },
@@ -581,6 +583,7 @@ export function classifyTaskAndPruneTools(userPrompt = '', state = {}, context =
     { slug: 'vj-video-fx-studio', rx: /(?:\bglsl\b|\bresolume\b|\bopenfx\b|\bdavinci\b|шейдер)/i },
     { slug: 'binary-app-localizer', rx: /(?:\bapp\.asar\b|\basar\b|русиф[а-яё]*\s+бинарн|переведи\s+меню\s+electron)/i },
     { slug: 'skill-architect', rx: /(?:\bskill\.md\b|отрицательн[а-яё]*\s+перенос|\baudit-skill\b)/i },
+    { slug: 'context-fork', rx: /(?:\b(?:context[-\s]?fork|implicit\s+cache)\b|(?:экономи[яю]\s+токенов|сжать\s+контекст|переполнен[а-яё]*\s+контекст))/i },
     { slug: 'model-router', rx: /(?:бюджет\s+токенов|\brouter-state\.json\b|какая\s+модель\s+лучше)/i },
   ];
 
@@ -607,7 +610,7 @@ export function classifyTaskAndPruneTools(userPrompt = '', state = {}, context =
     (scores.ui_browser > 0 || /\.(?:css|scss|less|html|vue|svelte)\b/i.test(promptText)) &&
     /(?:дизайн|стил[ьиейя]|цвета?|палитр|тем[ауы]|анимац|верстк|карточ|кнопк|макет|витрин|перекрас|оформ)/i.test(promptText) &&
     (signals.hasMutationVerb || /(?:сверстай|оформи|обнови|добавь|сделай|создай|переделай|улучши|измени|поменяй)/i.test(promptText)) &&
-    !/(?:русифик|перевед[иу]|локализац)/i.test(promptText)
+    !/(?:русифик|перевед[иу]|локализац|\b(?:remotion|hyperframes|ffmpeg|mp4|webm|glsl|resolume|openfx|davinci)\b|(?:промо[-\s]?ролик|видео[-\s]?ролик|шейдер))/i.test(promptText)
   );
 
   const needsDesignPreviewGate =
@@ -640,10 +643,13 @@ export function classifyTaskAndPruneTools(userPrompt = '', state = {}, context =
     (topSkill.score ?? 0) >= 0.48 &&
     !(needsDesignPreviewGate && topSkill.slug === 'ui-ux-design-system')
   ) {
+    const skillRef = typeof topSkill.skillFile === 'string' && topSkill.skillFile.trim()
+      ? `Read ${topSkill.skillFile.trim()} if its workflow applies.`
+      : `Read the "${topSkill.slug}" SKILL.md if its workflow applies.`;
     hints.push(
       topSkill.source === 'lexical'
-        ? `🎯 [Skill Match: ${topSkill.slug}] Read skills/${topSkill.slug}/SKILL.md if its workflow applies.`
-        : `🎯 [Semantic Skill Match: ${topSkill.slug} (${Math.round(topSkill.score * 100)}%)] Read skills/${topSkill.slug}/SKILL.md if its workflow applies.`
+        ? `🎯 [Skill Match: ${topSkill.slug}] ${skillRef}`
+        : `🎯 [Semantic Skill Match: ${topSkill.slug} (${Math.round(topSkill.score * 100)}%)] ${skillRef}`
     );
   }
 

@@ -185,6 +185,7 @@ export function detectImportCyclesTarjan(adjMap, { maxCycles = 40 } = {}) {
  * @returns {string[]}
  */
 export function detectOrphanFiles(nodes = [], forwardDeps = null, reverseDeps = null, docSourcesByCode = null) {
+  if (!Array.isArray(nodes) || nodes.length === 0) return [];
   const orphans = [];
   for (const n of nodes) {
     if (!n || !n.id || n.isTest) continue;

@@ -1151,28 +1151,29 @@ function countGroundingViolations(g) {
  * enforcing strict VRAM fit guards, CoT reasoning headroom, 2nd-hop RAM expansion, and AST/RAM grounding verification.
  * @param {object} [options={}]
  */
-export async function runLocalProjectChat({
-  query = '',
-  messages = [],
-  ragContext = '',
-  ragSources = [],
-  verifiedManifest = '',
-  repoFiles = [],
-  repoSymbols = [],
-  symbolsByFile = null,
-  fetchExtraSlicesFn = null,
-  enableClaimVerifier = false,
-  allowCorrectiveRetry = true,
-  enableThinking = true,
-  workspaceName = '',
-  maxOutputTokens = 768,
-  timeoutMs = 45000,
-  signal = null,
-  cfgOverride = null,
-  httpJsonFn = null,
-  hwProbeFn = null,
-  lang = '',
-} = {}) {
+export async function runLocalProjectChat(rawOpts = {}) {
+  const {
+    query = '',
+    messages = [],
+    ragContext = '',
+    ragSources = [],
+    verifiedManifest = '',
+    repoFiles = [],
+    repoSymbols = [],
+    symbolsByFile = null,
+    fetchExtraSlicesFn = null,
+    enableClaimVerifier = false,
+    allowCorrectiveRetry = true,
+    enableThinking = true,
+    workspaceName = '',
+    maxOutputTokens = 768,
+    timeoutMs = 45000,
+    signal = null,
+    cfgOverride = null,
+    httpJsonFn = null,
+    hwProbeFn = null,
+    lang = '',
+  } = (rawOpts && typeof rawOpts === 'object' ? rawOpts : {});
   const rawQuery = String(query || '').trim().slice(0, 12000);
   if (!rawQuery) {
     return { ok: false, answer: '', error: 'Empty query' };
@@ -1744,15 +1745,16 @@ export async function runLocalProjectChat({
  * Generates a compact bilingual Symbol Card for a module during GPU idle windows.
  * Automatically yields (<5ms) on P0 foreground GPU preemption.
  */
-export async function generateIdleModuleSymbolCard({
-  relPath = '',
-  codeText = '',
-  exportedSymbols = [],
-  timeoutMs = 9000,
-  httpJsonFn = null,
-  cfgOverride = null,
-  signal = null,
-} = {}) {
+export async function generateIdleModuleSymbolCard(rawOpts = {}) {
+  const {
+    relPath = '',
+    codeText = '',
+    exportedSymbols = [],
+    timeoutMs = 9000,
+    httpJsonFn = null,
+    cfgOverride = null,
+    signal = null,
+  } = (rawOpts && typeof rawOpts === 'object' ? rawOpts : {});
   if (signal?.aborted) {
     return { ok: false, aborted: true, error: 'Ollama request aborted' };
   }
@@ -1874,15 +1876,16 @@ export async function generateIdleModuleSymbolCard({
  * Audits a git diff hunk locally on idle GPU for high-confidence runtime/logic bugs only.
  * Automatically yields (<5ms) on P0 foreground GPU preemption.
  */
-export async function reviewGitDiffHunkLocally({
-  relPath = '',
-  diffText = '',
-  neighborContracts = '',
-  timeoutMs = 12000,
-  httpJsonFn = null,
-  cfgOverride = null,
-  signal = null,
-} = {}) {
+export async function reviewGitDiffHunkLocally(rawOpts = {}) {
+  const {
+    relPath = '',
+    diffText = '',
+    neighborContracts = '',
+    timeoutMs = 12000,
+    httpJsonFn = null,
+    cfgOverride = null,
+    signal = null,
+  } = (rawOpts && typeof rawOpts === 'object' ? rawOpts : {});
   if (signal?.aborted) {
     return { ok: false, aborted: true, findings: [], error: 'Ollama request aborted' };
   }

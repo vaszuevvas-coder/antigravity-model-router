@@ -90,7 +90,8 @@ const GPU_PANEL_CACHE_TTL_MS = 2500;
 
 export const gpuStatusPanelCache = { ts: 0, value: null };
 
-export async function safeGetGpuStatus({ force = false } = {}) {
+export async function safeGetGpuStatus(rawOpts = {}) {
+  const { force = false } = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   const now = Date.now();
   try {
     const mod = await getLocalGpuMod();

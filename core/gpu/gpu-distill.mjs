@@ -232,25 +232,26 @@ function buildDistillSystemPrompt(mode = 'general') {
  * @param {number} [params.timeoutMs=35000]
  * @param {string} [params.model]
  */
-export async function distillText({
-  text = '',
-  query = '',
-  mode = 'general',
-  maxOutputTokens = 450,
-  timeoutMs = 35000,
-  model = '',
-  minFreeVramMb = 0,
-  strictTimeout = false,
-  workspaceRoot = '',
-  _skipAtFile = false,
-  lang = '',
-  cfgOverride = null,
-  httpJsonFn = null,
-  hwProbeFn = null,
-  useDistillCache = false,
-  skipThermalGuard = false,
-  _bypassCache = false,
-} = {}) {
+export async function distillText(rawParams = {}) {
+  const {
+    text = '',
+    query = '',
+    mode = 'general',
+    maxOutputTokens = 450,
+    timeoutMs = 35000,
+    model = '',
+    minFreeVramMb = 0,
+    strictTimeout = false,
+    workspaceRoot = '',
+    _skipAtFile = false,
+    lang = '',
+    cfgOverride = null,
+    httpJsonFn = null,
+    hwProbeFn = null,
+    useDistillCache = false,
+    skipThermalGuard = false,
+    _bypassCache = false,
+  } = (rawParams && typeof rawParams === 'object' ? rawParams : {});
   const rawText = String(text || '');
   const trimmedText = rawText.trim();
   if (!trimmedText) {
@@ -626,23 +627,24 @@ function decodeTailSliceWithEncoding(buf, encoding = 'utf8') {
   return buf.toString('utf8');
 }
 
-export async function distillLocalFile({
-  filePath = '',
-  workspaceRoot = '',
-  startLine = 0,
-  endLine = 0,
-  query = '',
-  mode = 'general',
-  maxOutputTokens = 450,
-  timeoutMs = 35000,
-  model = '',
-  minFreeVramMb = 0,
-  strictTimeout = false,
-  lang = '',
-  cfgOverride = null,
-  httpJsonFn = null,
-  hwProbeFn = null,
-} = {}) {
+export async function distillLocalFile(rawOpts = {}) {
+  const {
+    filePath = '',
+    workspaceRoot = '',
+    startLine = 0,
+    endLine = 0,
+    query = '',
+    mode = 'general',
+    maxOutputTokens = 450,
+    timeoutMs = 35000,
+    model = '',
+    minFreeVramMb = 0,
+    strictTimeout = false,
+    lang = '',
+    cfgOverride = null,
+    httpJsonFn = null,
+    hwProbeFn = null,
+  } = (rawOpts && typeof rawOpts === 'object' ? rawOpts : {});
   if (typeof filePath !== 'string' || !filePath.trim() || filePath.includes('\0')) {
     return { ok: false, error: 'Invalid filePath' };
   }

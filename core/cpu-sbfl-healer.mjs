@@ -130,11 +130,13 @@ function buildOffsetToLineLookup(filePath, cache) {
 }
 
 export function offsetToLine1(offsets, byteOrCharOffset) {
+  if (!Array.isArray(offsets) || offsets.length === 0) return 1;
+  const target = Number(byteOrCharOffset) || 0;
   let lo = 0;
   let hi = offsets.length - 1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    if (offsets[mid] <= byteOrCharOffset) lo = mid + 1;
+    if (offsets[mid] <= target) lo = mid + 1;
     else hi = mid - 1;
   }
   return Math.max(1, hi + 1);

@@ -74,6 +74,8 @@ function createIdleStatus(pluginRoot = '') {
     active: false,
     phase: 'idle',
     percent: 0,
+    downloadedBytes: 0,
+    totalBytes: 0,
     pluginRoot: resolvePluginRoot(pluginRoot),
     installedTarget: '',
     targetVersion: '',
@@ -97,8 +99,10 @@ function createIdleStatus(pluginRoot = '') {
 export function parseSemver(rawVersion = '') {
   if (typeof rawVersion !== 'string') return null;
   const trimmed = rawVersion.trim().replace(/^v/i, '');
-  const m = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z.-]+)?$/.exec(trimmed);
+  const m = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$/.exec(trimmed);
   if (!m) return null;
+  if (m[4] && (m[4].startsWith('.') || m[4].endsWith('.') || m[4].includes('..'))) return null;
+  if (m[5] && (m[5].startsWith('.') || m[5].endsWith('.') || m[5].includes('..'))) return null;
   const major = Number(m[1]);
   const minor = Number(m[2]);
   const patch = Number(m[3]);
@@ -208,8 +212,8 @@ export function readPluginMeta(pluginRoot = '') {
 
   const rawVer = (typeof pluginManifest?.version === 'string' && pluginManifest.version.trim())
     || (typeof pkgManifest?.version === 'string' && pkgManifest.version.trim())
-    || '3.34.1';
-  const version = parseSemver(rawVer)?.version || '3.34.1';
+    || '3.35.0';
+  const version = parseSemver(rawVer)?.version || '3.35.0';
 
   const rawRepo =
     pluginManifest?.repository?.url
@@ -243,6 +247,27 @@ function compactUpdateError(err, maxLen = 220) {
   const raw = String(err?.message || err || 'Unknown error').replace(/\s+/g, ' ').trim();
   if (raw.length <= maxLen) return raw;
   return `${raw.slice(0, maxLen - 1)}…`;
+}
+
+function formatUpdateError(err, lang = 'ru') {
+  const raw = compactUpdateError(err);
+  const isEn = normalizeLang(lang, 'ru') === 'en';
+  if (/HTTP\s*403\b|rate\s*limit/i.test(raw)) {
+    return isEn ? `GitHub rate limit reached (${raw})` : `Лимит запросов GitHub (${raw})`;
+  }
+  if (/HTTP\s*404\b/i.test(raw)) {
+    return isEn ? `Release archive not found on GitHub (${raw})` : `Архив релиза не найден на GitHub (${raw})`;
+  }
+  if (/AbortError|TimeoutError|timed out|timeout/i.test(raw)) {
+    return isEn ? `Connection timed out (${raw})` : `Превышено время ожидания сети (${raw})`;
+  }
+  if (/ENOTFOUND|ECONNREFUSED|ECONNRESET|fetch failed|network/i.test(raw)) {
+    return isEn ? `Network error connecting to GitHub (${raw})` : `Ошибка сети при подключении к GitHub (${raw})`;
+  }
+  if (/EBUSY|EPERM|EACCES/i.test(raw)) {
+    return isEn ? `Plugin file is locked by another process (${raw})` : `Файл плагина занят другим процессом (${raw})`;
+  }
+  return raw;
 }
 
 /**
@@ -580,7 +605,12 @@ async function defaultExtractZip(zipPath, destDir, platform = process.platform) 
   }
 }
 
-async function downloadUpdateArchive(urlStr, destZipPath, currentVersion, { fetchFn = null, timeoutMs = 45000 } = {}) {
+async function downloadUpdateArchive(
+  urlStr,
+  destZipPath,
+  currentVersion,
+  { fetchFn = null, timeoutMs = 45000, onProgress = null } = {}
+) {
   if (!isAllowedGitHubUrl(urlStr)) {
     throw new Error('Untrusted download URL');
   }
@@ -605,15 +635,52 @@ async function downloadUpdateArchive(urlStr, destZipPath, currentVersion, { fetc
     throw new Error(`Archive download HTTP ${res ? res.status : 'unknown'}`);
   }
   const cl = Number(res.headers?.get?.('content-length') || res.headers?.['content-length'] || 0);
-  if (cl > MAX_UPDATE_ARCHIVE_BYTES) {
+  const totalBytes = Number.isFinite(cl) && cl > 0 ? cl : 0;
+  if (totalBytes > MAX_UPDATE_ARCHIVE_BYTES) {
     throw new Error(`Update archive exceeds ${MAX_UPDATE_ARCHIVE_BYTES} bytes`);
   }
 
+  const reportProgress = typeof onProgress === 'function' ? onProgress : null;
   let buf;
-  if (typeof res.arrayBuffer === 'function') {
+  if (res.body && typeof res.body.getReader === 'function') {
+    const reader = res.body.getReader();
+    const chunks = [];
+    let receivedBytes = 0;
+    let lastEmitAt = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value || value.byteLength === 0) continue;
+        receivedBytes += value.byteLength;
+        if (receivedBytes > MAX_UPDATE_ARCHIVE_BYTES) {
+          try { await reader.cancel(); } catch {}
+          throw new Error(`Update archive exceeds ${MAX_UPDATE_ARCHIVE_BYTES} bytes`);
+        }
+        chunks.push(Buffer.from(value));
+        const now = Date.now();
+        if (reportProgress && (now - lastEmitAt >= 120 || (totalBytes > 0 && receivedBytes >= totalBytes))) {
+          lastEmitAt = now;
+          try { reportProgress(receivedBytes, totalBytes); } catch {}
+        }
+      }
+    } finally {
+      try { reader.releaseLock?.(); } catch {}
+    }
+    buf = Buffer.concat(chunks);
+    if (reportProgress && buf.length > 0) {
+      try { reportProgress(buf.length, totalBytes || buf.length); } catch {}
+    }
+  } else if (typeof res.arrayBuffer === 'function') {
     buf = Buffer.from(await res.arrayBuffer());
+    if (reportProgress && buf.length > 0) {
+      try { reportProgress(buf.length, totalBytes || buf.length); } catch {}
+    }
   } else if (typeof res.text === 'function') {
     buf = Buffer.from(await res.text(), 'binary');
+    if (reportProgress && buf.length > 0) {
+      try { reportProgress(buf.length, totalBytes || buf.length); } catch {}
+    }
   } else {
     throw new Error('Archive response unreadable');
   }
@@ -744,7 +811,9 @@ export async function applyPluginUpdate(options = {}) {
       const verLabel = effectiveVersion ? `v${effectiveVersion}` : (isEn ? 'update' : 'обновление');
       setStatus({
         phase: 'downloading',
-        percent: 25,
+        percent: 15,
+        downloadedBytes: 0,
+        totalBytes: 0,
         targetVersion: effectiveVersion || meta.version,
         statusText: isEn ? `Downloading ${verLabel} from GitHub...` : `Скачивание ${verLabel} с GitHub...`,
         statusTextRu: `Скачивание ${verLabel} с GitHub...`,
@@ -755,11 +824,39 @@ export async function applyPluginUpdate(options = {}) {
       const zipPath = join(tempWorkDir, 'update.zip');
       const extractDir = join(tempWorkDir, 'extracted');
 
-      await downloadUpdateArchive(effectiveDownloadUrl, zipPath, meta.version, { fetchFn, timeoutMs });
+      const formatMb = (bytes) => (Number(bytes || 0) / (1024 * 1024)).toFixed(1);
+      await downloadUpdateArchive(effectiveDownloadUrl, zipPath, meta.version, {
+        fetchFn,
+        timeoutMs,
+        onProgress: (downloadedBytes, totalBytes) => {
+          let pct;
+          if (totalBytes > 0) {
+            const ratio = Math.max(0, Math.min(1, downloadedBytes / totalBytes));
+            pct = Math.min(60, Math.max(15, 15 + Math.round(ratio * 45)));
+          } else {
+            pct = Math.min(55, Math.max(18, 18 + Math.round(downloadedBytes / (256 * 1024))));
+          }
+          const ruText = totalBytes > 0
+            ? `Скачивание ${verLabel} (${formatMb(downloadedBytes)} / ${formatMb(totalBytes)} МБ)...`
+            : `Скачивание ${verLabel} (${formatMb(downloadedBytes)} МБ)...`;
+          const enText = totalBytes > 0
+            ? `Downloading ${verLabel} (${formatMb(downloadedBytes)} / ${formatMb(totalBytes)} MB)...`
+            : `Downloading ${verLabel} (${formatMb(downloadedBytes)} MB)...`;
+          setStatus({
+            phase: 'downloading',
+            percent: pct,
+            downloadedBytes,
+            totalBytes,
+            statusText: isEn ? enText : ruText,
+            statusTextRu: ruText,
+            statusTextEn: enText,
+          });
+        },
+      });
 
       setStatus({
         phase: 'extracting',
-        percent: 55,
+        percent: 65,
         statusText: isEn ? 'Verifying and extracting update archive...' : 'Проверка и распаковка архива обновления...',
         statusTextRu: 'Проверка и распаковка архива обновления...',
         statusTextEn: 'Verifying and extracting update archive...',
@@ -854,6 +951,8 @@ export async function applyPluginUpdate(options = {}) {
       return { ...job.status };
     } catch (err) {
       const msg = compactUpdateError(err);
+      const ruErr = formatUpdateError(err, 'ru');
+      const enErr = formatUpdateError(err, 'en');
       setStatus({
         ok: false,
         active: false,
@@ -861,9 +960,9 @@ export async function applyPluginUpdate(options = {}) {
         finishedAt: Date.now(),
         needsRestart: false,
         error: msg,
-        statusText: isEn ? `Update failed: ${msg}` : `Ошибка обновления: ${msg}`,
-        statusTextRu: `Ошибка обновления: ${msg}`,
-        statusTextEn: `Update failed: ${msg}`,
+        statusText: isEn ? enErr : ruErr,
+        statusTextRu: ruErr,
+        statusTextEn: enErr,
       });
       return { ...job.status };
     } finally {

@@ -976,6 +976,8 @@ export function extractSkillSlugFromPath(rawPath = '') {
 
 const MAX_PUBLIC_BACKGROUND_TASKS = 25;
 const MAX_TASK_LOGS_TO_SCAN = 60;
+const STALE_BG_TASK_TTL_MS = 10 * 60 * 1000;
+const STALE_DAEMON_BG_TASK_TTL_MS = 6 * 60 * 60 * 1000;
 
 function parseTranscriptEntryTs(entry, fallback = 0) {
   const raw = entry?.created_at || entry?.timestamp || '';
@@ -1639,6 +1641,19 @@ export function inspectTranscriptTurnState(transcriptPath = '', now = Date.now()
           upsertBgTask(bgId, { status: 'cancelled', updatedAt: bgLastTs || Math.round(st.mtimeMs || 0) });
         }
       }
+    }
+  }
+  const transcriptMtimeMs = Math.round(Number(st.mtimeMs || 0));
+  for (const [bgId, bgVal] of backgroundTasksMap.entries()) {
+    if (bgVal.status !== 'running') continue;
+    const bgLastTs = Math.max(Number(bgVal.updatedAt || 0), Number(bgVal.startedAt || 0));
+    // Daemons stay alive while transcript or log is active; non-daemons expire from their own last activity or file mtime.
+    const effectiveTs = bgVal.isDaemon
+      ? Math.max(bgLastTs, transcriptMtimeMs)
+      : (bgLastTs > 0 ? bgLastTs : transcriptMtimeMs);
+    const maxAgeMs = bgVal.isDaemon ? STALE_DAEMON_BG_TASK_TTL_MS : STALE_BG_TASK_TTL_MS;
+    if (effectiveTs > 0 && (now - effectiveTs) > maxAgeMs) {
+      upsertBgTask(bgId, { status: 'cancelled', updatedAt: bgLastTs || transcriptMtimeMs });
     }
   }
   const allBgTasks = Array.from(backgroundTasksMap.values()).sort((a, b) => {

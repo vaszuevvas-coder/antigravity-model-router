@@ -77,6 +77,7 @@ export {
   ensureEmbedModelWarm,
   peekWarmSemanticTargets,
   discoverSkillSemanticEntries,
+  hasSkillIndexDrift,
   indexSkillVectors,
   scoreSkillVectorsWithQueryVec,
   peekWarmSemanticBundle,

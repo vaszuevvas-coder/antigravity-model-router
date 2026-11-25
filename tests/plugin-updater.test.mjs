@@ -280,3 +280,62 @@ test('4. applyPluginUpdate downloads, extracts, installs, preserves router-state
     fs.rmSync(installedRoot, { recursive: true, force: true });
   }
 });
+
+test('5. applyPluginUpdate streams body.getReader() chunks and tracks downloadedBytes/totalBytes progress', async () => {
+  const installedRoot = makeFakePluginRoot('3.33.1', { withGit: false });
+  const statusFile = path.join(installedRoot, '.cache', 'plugin-update-status.json');
+  try {
+    const chunkA = Buffer.from('PK\x03\x04chunk-one-');
+    const chunkB = Buffer.from('chunk-two-end');
+    const totalLen = chunkA.length + chunkB.length;
+    let idx = 0;
+    const chunks = [chunkA, chunkB];
+
+    const res = await applyPluginUpdate({
+      pluginRoot: installedRoot,
+      downloadUrl: 'https://codeload.github.com/vaszuevvas-coder/antigravity-model-router/zip/refs/tags/v3.39.0',
+      targetVersion: '3.39.0',
+      lang: 'ru',
+      fetchFn: async () => ({
+        ok: true,
+        status: 200,
+        url: 'https://codeload.github.com/vaszuevvas-coder/antigravity-model-router/zip/refs/tags/v3.39.0',
+        headers: { get: (k) => (k.toLowerCase() === 'content-length' ? String(totalLen) : null) },
+        body: {
+          getReader: () => ({
+            read: async () => {
+              if (idx < chunks.length) {
+                const value = chunks[idx++];
+                return { done: false, value };
+              }
+              return { done: true, value: undefined };
+            },
+            releaseLock: () => {},
+          }),
+        },
+      }),
+      extractZipFn: async (zipPath, destDir) => {
+        // By the time extraction starts, downloadedBytes/totalBytes & percent=60 must have been persisted
+        const midStatus = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
+        assert.equal(midStatus.downloadedBytes, totalLen);
+        assert.equal(midStatus.totalBytes, totalLen);
+        assert.equal(fs.readFileSync(zipPath).length, totalLen);
+
+        const inner = path.join(destDir, 'antigravity-model-router-3.39.0');
+        fs.mkdirSync(inner, { recursive: true });
+        fs.writeFileSync(
+          path.join(inner, 'plugin.json'),
+          JSON.stringify({ name: 'antigravity-model-router', version: '3.39.0' }, null, 2),
+          'utf8'
+        );
+      },
+    });
+
+    assert.equal(res.ok, true);
+    assert.equal(res.phase, 'done');
+    assert.equal(res.downloadedBytes, totalLen);
+    assert.equal(res.totalBytes, totalLen);
+  } finally {
+    fs.rmSync(installedRoot, { recursive: true, force: true });
+  }
+});

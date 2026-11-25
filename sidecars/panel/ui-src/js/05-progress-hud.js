@@ -104,7 +104,9 @@
       if (!listEl) return;
       const rows = Array.from(listEl.querySelectorAll('.ag-bgtask-item'));
       rows.forEach(function (rowEl, idx) {
-        rowEl.classList.toggle('is-overflow-hidden', !nextShowAll && idx >= AG_BG_TASKS_PREVIEW_LIMIT);
+        const isOverflowHidden = !nextShowAll && idx >= AG_BG_TASKS_PREVIEW_LIMIT;
+        rowEl.classList.toggle('is-overflow-hidden', isOverflowHidden);
+        rowEl.setAttribute('aria-hidden', isOverflowHidden ? 'true' : 'false');
       });
       const seeAllBtn = listEl.querySelector('.ag-bgtasks-see-all-btn');
       if (seeAllBtn) {
@@ -460,7 +462,8 @@
           const subPct = Math.max(0, Math.min(100, Math.round(Number(s.percent || 0))));
           animateChatPctNode('sub:' + subCid, sNum, subPct);
 
-          const badgeLabel = pickText(s, 'subagentBadge', 'subagentBadgeEn', '') || (L('Агент #', 'Agent #') + (s.subagentNumber || (sIdx + 1)));
+          const fallbackPrefix = (s && s.agentKind === 'swarm_worker') ? L('Рой #', 'Swarm #') : L('Агент #', 'Agent #');
+          const badgeLabel = pickText(s, 'subagentBadge', 'subagentBadgeEn', '') || (fallbackPrefix + (s.subagentNumber || (sIdx + 1)));
           const roleText = String(pickText(s, 'roleLabel', 'roleLabelEn', '') || '').trim();
           const opText = pickText(s, 'stepTitle', 'stepTitleEn', '') || pickText(s, 'formattedText', 'formattedTextEn', '') || L('Работа субагента', 'Subagent running');
           const displayOp = roleText && opText.indexOf(roleText) === -1
@@ -622,8 +625,10 @@
           const statusCls = st === 'running'
             ? 'is-running'
             : (st === 'error' ? 'is-error' : (st === 'cancelled' ? 'is-cancelled' : 'is-done'));
+          const isOverflowHidden = !isShowAll && tIdx >= AG_BG_TASKS_PREVIEW_LIMIT;
           const rowItem = document.createElement('div');
-          rowItem.className = 'ag-bgtask-item ' + statusCls + ((!isShowAll && tIdx >= AG_BG_TASKS_PREVIEW_LIMIT) ? ' is-overflow-hidden' : '');
+          rowItem.className = 'ag-bgtask-item ' + statusCls + (isOverflowHidden ? ' is-overflow-hidden' : '');
+          rowItem.setAttribute('aria-hidden', isOverflowHidden ? 'true' : 'false');
           rowItem.setAttribute('data-task-id', String((t && (t.taskId || t.id)) || ('bg-' + tIdx)));
 
           const rowInner = document.createElement('div');

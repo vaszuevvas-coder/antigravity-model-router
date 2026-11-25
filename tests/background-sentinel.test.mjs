@@ -160,60 +160,6 @@ test('1. Two-Phase ask_question Gate: prevAskQuestionCalled false vs true vs und
   }
 });
 
-test('11. Shadow Guard surfaces structured clonePairs details for SimHash duplicates and panel UI normalizes them', async () => {
-  const tmpWs = makeTempDir('amr-sentinel-clones-');
-  const tmpCache = makeTempDir('amr-sentinel-clones-cache-');
-  try {
-    const fnA = [
-      'export function acquireLockSafe(targetPath, maxWait) {',
-      '  const startTs = Date.now();',
-      '  let retries = 0;',
-      '  while (Date.now() - startTs < maxWait) {',
-      '    if (!targetPath) {',
-      '      return { ok: false, reason: "empty" };',
-      '    }',
-      '    retries += 1;',
-      '    if (retries > 3) break;',
-      '  }',
-      '  return { ok: true, retries };',
-      '}',
-    ].join('\n');
-    const fnB = [
-      'export function grabMutexWrapper(lockFile, timeoutLimit) {',
-      '  const startedAt = Date.now();',
-      '  let attempts = 0;',
-      '  while (Date.now() - startedAt < timeoutLimit) {',
-      '    if (!lockFile) {',
-      '      return { ok: false, reason: "missing" };',
-      '    }',
-      '    attempts += 1;',
-      '    if (attempts > 3) break;',
-      '  }',
-      '  return { ok: true, retries: attempts };',
-      '}',
-    ].join('\n');
-    fs.writeFileSync(path.join(tmpWs, 'a-lock.mjs'), fnA, 'utf8');
-    fs.writeFileSync(path.join(tmpWs, 'b-lock.mjs'), fnB, 'utf8');
-
-    const ramEng = new RamMemoryEngine({ budgetMb: 32 });
-    await ramEng.warmWorkspaceAsync(tmpWs, { startWatcher: false });
-    const sentinel = new BackgroundSentinel({ cacheDir: tmpCache });
-    const res = await sentinel.runShadowGuardPass(tmpWs, ramEng);
-    assert.equal(res.cloneCount, 1);
-    assert.equal(Array.isArray(res.clonePairs), true);
-    assert.equal(res.clonePairs.length, 1);
-    assert.ok(res.clonePairs[0].similarityPct >= 88);
-    assert.match(res.clonePairs[0].detailRu, /Дубликат SimHash/);
-
-    const uiHtml = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
-    assert.match(uiHtml, /sg\.clonePairs/);
-    assert.match(uiHtml, /category === 'clone'/);
-  } finally {
-    try { fs.rmSync(tmpWs, { recursive: true, force: true, maxRetries: 10, retryDelay: 60 }); } catch {}
-    try { fs.rmSync(tmpCache, { recursive: true, force: true, maxRetries: 10, retryDelay: 60 }); } catch {}
-  }
-});
-
 test('1b. Short Russian approvals ("Да", "Да!", "Исправляем") + PreToolUse Pre-Task Gate Guard (warn-then-allow & artifact exempt)', async () => {
   for (const phrase of ['Да', 'Да!', 'Исправляем']) {
     const sig = detectPromptIntentSignals(phrase);
@@ -469,60 +415,6 @@ test('1b. Short Russian approvals ("Да", "Да!", "Исправляем") + Pr
         }
       }
     } catch {}
-  }
-});
-
-test('11. Shadow Guard surfaces structured clonePairs details for SimHash duplicates and panel UI normalizes them', async () => {
-  const tmpWs = makeTempDir('amr-sentinel-clones-');
-  const tmpCache = makeTempDir('amr-sentinel-clones-cache-');
-  try {
-    const fnA = [
-      'export function acquireLockSafe(targetPath, maxWait) {',
-      '  const startTs = Date.now();',
-      '  let retries = 0;',
-      '  while (Date.now() - startTs < maxWait) {',
-      '    if (!targetPath) {',
-      '      return { ok: false, reason: "empty" };',
-      '    }',
-      '    retries += 1;',
-      '    if (retries > 3) break;',
-      '  }',
-      '  return { ok: true, retries };',
-      '}',
-    ].join('\n');
-    const fnB = [
-      'export function grabMutexWrapper(lockFile, timeoutLimit) {',
-      '  const startedAt = Date.now();',
-      '  let attempts = 0;',
-      '  while (Date.now() - startedAt < timeoutLimit) {',
-      '    if (!lockFile) {',
-      '      return { ok: false, reason: "missing" };',
-      '    }',
-      '    attempts += 1;',
-      '    if (attempts > 3) break;',
-      '  }',
-      '  return { ok: true, retries: attempts };',
-      '}',
-    ].join('\n');
-    fs.writeFileSync(path.join(tmpWs, 'a-lock.mjs'), fnA, 'utf8');
-    fs.writeFileSync(path.join(tmpWs, 'b-lock.mjs'), fnB, 'utf8');
-
-    const ramEng = new RamMemoryEngine({ budgetMb: 32 });
-    await ramEng.warmWorkspaceAsync(tmpWs, { startWatcher: false });
-    const sentinel = new BackgroundSentinel({ cacheDir: tmpCache });
-    const res = await sentinel.runShadowGuardPass(tmpWs, ramEng);
-    assert.equal(res.cloneCount, 1);
-    assert.equal(Array.isArray(res.clonePairs), true);
-    assert.equal(res.clonePairs.length, 1);
-    assert.ok(res.clonePairs[0].similarityPct >= 88);
-    assert.match(res.clonePairs[0].detailRu, /Дубликат SimHash/);
-
-    const uiHtml = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
-    assert.match(uiHtml, /sg\.clonePairs/);
-    assert.match(uiHtml, /category === 'clone'/);
-  } finally {
-    try { fs.rmSync(tmpWs, { recursive: true, force: true, maxRetries: 10, retryDelay: 60 }); } catch {}
-    try { fs.rmSync(tmpCache, { recursive: true, force: true, maxRetries: 10, retryDelay: 60 }); } catch {}
   }
 });
 

@@ -26,6 +26,8 @@ const POST_TOOL_HOOK_TOOLS = new Set(['edit_file', 'write_file', 'run_command'])
 const AUTO_DISCOVER_RECENCY_MS = 3 * 60 * 1000;
 const REGISTRY_TTL_MS = 2 * 60 * 60 * 1000;
 export const DEFAULT_COMPLETED_HOLD_MS = 2800;
+export const STALE_BG_TASK_TTL_MS = 10 * 60 * 1000;
+export const STALE_DAEMON_BG_TASK_TTL_MS = 6 * 60 * 60 * 1000;
 export const ORCHESTRATOR_HANDOFF_TTL_MS = 3 * 60 * 1000;
 export const MAX_RUNNING_PERCENT = 92;
 export const MAX_PRE_EDIT_PERCENT = 35;
@@ -47,7 +49,7 @@ function clampInt(val, min, max, fallback) {
 export function createDefaultProgressState() {
   const now = Date.now();
   return {
-    version: '3.34.1',
+    version: '3.35.0',
     activeConversationId: 'default',
     projectName: 'antigravity-model-router',
     workspaceRoot: '',
@@ -523,16 +525,41 @@ function dedupeAndNormalizeChatsMap(chatsObj = {}, registryObj = {}, brainDirs =
 const VALID_BG_TASK_STATUSES = new Set(['running', 'done', 'error', 'cancelled']);
 const MAX_PUBLIC_BG_TASKS = 25;
 
-function normalizeBackgroundTasksList(rawList = [], { forceFinishRunning = false, forceCancelRunning = false } = {}) {
+function normalizeBackgroundTasksList(
+  rawList = [],
+  {
+    forceFinishRunning = false,
+    forceCancelRunning = false,
+    now = 0,
+    chatUpdatedAt = 0,
+    staleBgTaskTtlMs = STALE_BG_TASK_TTL_MS,
+    staleDaemonBgTaskTtlMs = STALE_DAEMON_BG_TASK_TTL_MS,
+  } = {}
+) {
   if (!Array.isArray(rawList) || rawList.length === 0) return [];
   const out = [];
+  const safeNow = Math.max(0, Number(now || 0));
+  const safeChatUpdated = Math.max(0, Number(chatUpdatedAt || 0));
   for (const item of rawList.slice(0, MAX_PUBLIC_BG_TASKS)) {
     if (!item || typeof item !== 'object') continue;
     const taskId = String(item.taskId || item.id || '').trim();
     if (!taskId) continue;
+    const isDaemon = Boolean(item.isDaemon);
+    const startedAt = Math.max(0, Math.round(Number(item.startedAt || 0)));
+    const updatedAt = Math.max(0, Math.round(Number(item.updatedAt || 0)));
     let status = VALID_BG_TASK_STATUSES.has(item.status) ? item.status : 'done';
-    if (forceCancelRunning && status === 'running') status = 'cancelled';
-    else if (forceFinishRunning && status === 'running') status = 'done';
+    if (forceCancelRunning && status === 'running') {
+      status = 'cancelled';
+    } else if (forceFinishRunning && status === 'running') {
+      status = 'done';
+    } else if (safeNow > 0 && status === 'running') {
+      const bgLastTs = Math.max(updatedAt, startedAt);
+      const effectiveTs = isDaemon ? Math.max(bgLastTs, safeChatUpdated) : bgLastTs;
+      const maxAgeMs = isDaemon ? staleDaemonBgTaskTtlMs : staleBgTaskTtlMs;
+      if (effectiveTs > 0 && (safeNow - effectiveTs) > maxAgeMs) {
+        status = 'cancelled';
+      }
+    }
     const stripQ = (s) => String(s || '').trim().replace(/^["']+/, '').replace(/["']+$/, '').trim();
     const label = stripQ(sanitizeStepText(item.label || item.description || 'Фоновая задача')).slice(0, 120) || 'Фоновая задача';
     const labelEn = stripQ(sanitizeStepText(item.labelEn || localizeProgressLabelToEn(label))).slice(0, 120) || 'Background task';
@@ -544,16 +571,30 @@ function normalizeBackgroundTasksList(rawList = [], { forceFinishRunning = false
       labelEn,
       commandPreview,
       status,
-      isDaemon: Boolean(item.isDaemon),
-      startedAt: Math.max(0, Math.round(Number(item.startedAt || 0))),
-      updatedAt: Math.max(0, Math.round(Number(item.updatedAt || 0))),
+      isDaemon,
+      startedAt,
+      updatedAt,
     });
   }
   return out;
 }
 
-function filterVisibleBackgroundTasks(rawList = [], { now = Date.now(), completedHoldMs = DEFAULT_COMPLETED_HOLD_MS } = {}) {
-  const list = normalizeBackgroundTasksList(rawList);
+export function filterVisibleBackgroundTasks(
+  rawList = [],
+  {
+    now = Date.now(),
+    completedHoldMs = DEFAULT_COMPLETED_HOLD_MS,
+    chatUpdatedAt = 0,
+    staleBgTaskTtlMs = STALE_BG_TASK_TTL_MS,
+    staleDaemonBgTaskTtlMs = STALE_DAEMON_BG_TASK_TTL_MS,
+  } = {}
+) {
+  const list = normalizeBackgroundTasksList(rawList, {
+    now,
+    chatUpdatedAt,
+    staleBgTaskTtlMs,
+    staleDaemonBgTaskTtlMs,
+  });
   if (list.length === 0) return [];
   const holdMs = Math.max(0, Number(completedHoldMs ?? DEFAULT_COMPLETED_HOLD_MS));
   return list.filter((t) => {
@@ -569,9 +610,13 @@ function buildBackgroundTasksSig(list = [], totalCount = 0) {
   return `${Math.max(0, Number(totalCount || 0))}::${head}`;
 }
 
-function syncChatBackgroundTasksFromTranscript(chat, tInfo, { forceFinishRunning = false } = {}) {
+function syncChatBackgroundTasksFromTranscript(chat, tInfo, { forceFinishRunning = false, now = 0 } = {}) {
   if (!chat || !tInfo || !tInfo.exists || !Array.isArray(tInfo.backgroundTasks)) return false;
-  const nextList = normalizeBackgroundTasksList(tInfo.backgroundTasks, { forceFinishRunning });
+  const nextList = normalizeBackgroundTasksList(tInfo.backgroundTasks, {
+    forceFinishRunning,
+    now,
+    chatUpdatedAt: Number(tInfo.mtimeMs || chat.updatedAt || 0),
+  });
   const nextTotal = Math.max(nextList.length, Math.round(Number(tInfo.backgroundTasksTotalCount || 0)));
   const prevSig = buildBackgroundTasksSig(chat.backgroundTasks, chat.backgroundTasksTotalCount);
   const nextSig = buildBackgroundTasksSig(nextList, nextTotal);
@@ -631,7 +676,11 @@ function buildPublicChatView(chat, subagents = [], { now = Date.now(), completed
   const topic = String(chat.topicLabel || '').trim();
   const subs = Array.isArray(subagents) ? subagents : [];
   const runningSubagentsCount = subs.filter((s) => s && (s.status === 'running' || s.status === 'waiting_user')).length;
-  const visibleBgTasks = filterVisibleBackgroundTasks(chat.backgroundTasks, { now, completedHoldMs });
+  const visibleBgTasks = filterVisibleBackgroundTasks(chat.backgroundTasks, {
+    now,
+    completedHoldMs,
+    chatUpdatedAt: Number(chat.updatedAt || 0),
+  });
   const runningBgCount = visibleBgTasks.filter((t) => t.status === 'running').length;
   const hasLegacyRunningBg = Boolean(chat.hasRunningBackgroundTask) && (!Array.isArray(chat.backgroundTasks) || chat.backgroundTasks.length === 0);
   const effectiveRunningBgCount = runningBgCount > 0
@@ -1556,7 +1605,7 @@ export function getTaskProgressSnapshot(opts = {}) {
         if (!chat.isSubagent && !chat.topicLabel && tInfo.lastUserPrompt) {
           chat.topicLabel = extractTopicLabelFromPrompt(tInfo.lastUserPrompt);
         }
-        if (syncChatBackgroundTasksFromTranscript(chat, tInfo)) {
+        if (syncChatBackgroundTasksFromTranscript(chat, tInfo, { now })) {
           dirty = true;
         }
         if (

@@ -481,6 +481,11 @@
       'Доступных обновлений нет': 'No updates available',
       'Что нового ↗': 'What\'s new ↗',
       '⬇ Обновить': '⬇ Update',
+      'Да, обновить': 'Yes, update',
+      'Идёт обновление расширения': 'Updating extension',
+      'Подготовка загрузки с GitHub…': 'Preparing GitHub download…',
+      'Проверка…': 'Checking…',
+      'Закрыть': 'Close',
       '🛡️ Фоновый Дозор:': '🛡️ Background Sentinel:',
       'Контракты: чисто · BugBot: чисто': 'Contracts: clean · BugBot: clean',
       '🛠️ Исправить': '🛠️ Fix',
@@ -499,6 +504,7 @@
       'Проверить обновления расширения на GitHub': 'Check GitHub for plugin updates',
       'Скачать и установить обновление с GitHub с сохранением настроек': 'Download and install update from GitHub while preserving settings',
       'Скрыть уведомление до следующей версии': 'Dismiss notification until next version',
+      'Позже': 'Later',
       'Закрыть уведомление': 'Dismiss notification',
       'Обновить всё (телеметрия обновляется автоматически раз в ~3 сек)': 'Refresh all (telemetry auto-refreshes every ~3s)',
       'Автодиагностика стека проекта, .agentignore, DESIGN.md и GATES.md': 'Auto-diagnose project stack, .agentignore, DESIGN.md & GATES.md',
@@ -817,6 +823,9 @@
     async function setUiLanguage(lang) {
       const valid = normalizeUiLanguage(lang);
       applyUiLanguageDom(valid);
+      if (typeof flashStatus === 'function') {
+        flashStatus(valid === 'ru' ? 'Язык интерфейса: Русский' : 'Interface language: English');
+      }
       if (currentState && typeof currentState === 'object') {
         currentState.uiLanguage = valid;
       }

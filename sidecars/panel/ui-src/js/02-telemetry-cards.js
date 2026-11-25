@@ -1667,9 +1667,17 @@
           _updateBatchWaiters = [];
           const rollbackSnap = _batchRollbackSnap || cloneRollbackSnap(currentState);
           let ok = false;
+          const useFastUpdate = Boolean(
+            patchToSend &&
+            !patchToSend.rootDir &&
+            !patchToSend.workspaceScope &&
+            !patchToSend.skillModes &&
+            !patchToSend.replaceSkillModes
+          );
           try {
             const res = await panelFetch('/api/update', {
               method: 'POST',
+              headers: useFastUpdate ? { 'x-panel-fast-update': '1' } : undefined,
               body: JSON.stringify(patchToSend),
             });
             if (!res || !res.ok) {
@@ -1681,8 +1689,14 @@
             }
             // Refresh rollback baseline to confirmed server state for any trailing queued batch.
             _batchRollbackSnap = cloneRollbackSnap(updated.state);
+            const payloadForRender = updated.fast === true && lastPayloadCache
+              ? Object.assign({}, lastPayloadCache, updated)
+              : updated;
+            if (updated.fast === true && lastPayloadCache) {
+              lastPayloadCache = payloadForRender;
+            }
             if (!_pendingUpdatePatch) {
-              renderPayload(updated);
+              renderPayload(payloadForRender);
               flashStatus(L('Сохранено в router-state.json ✓', 'Saved to router-state.json ✓'));
             } else if (updated.state) {
               currentState = mergeStatePatches(updated.state, _pendingUpdatePatch);

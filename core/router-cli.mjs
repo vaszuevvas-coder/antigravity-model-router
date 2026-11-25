@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * @file router-cli.mjs
- * @description Единый интерфейс командной строки (CLI) для The Tunnel v3.34.1.
+ * @description Единый интерфейс командной строки (CLI) для The Tunnel v3.35.0.
  * Предоставляет команды диагностики, анализа символов, слайсинга, кодомода и резервного копирования профиля.
  */
 
@@ -196,7 +196,7 @@ export function backupRouterProfile(backupPath = '', options = {}) {
 
     const pluginMeta = safeReadJsonSync(join(PLUGIN_ROOT, 'plugin.json'), {});
     const snapshot = {
-      version: String(pluginMeta?.version || '3.34.1'),
+      version: String(pluginMeta?.version || '3.35.0'),
       createdAt: new Date().toISOString(),
       state,
       cacheFiles
@@ -381,7 +381,7 @@ export function getRouterStatusSummary(workspaceRoot = process.cwd()) {
   } catch {}
 
   const pluginMeta = safeReadJsonSync(join(PLUGIN_ROOT, 'plugin.json'), {});
-  const version = String(pluginMeta?.version || '3.34.1');
+  const version = String(pluginMeta?.version || '3.35.0');
   const formatted = `🛡️ [Router Status] v${version} | Strategy: ${strategy} | Profile: ${hookProfile} | Guardrails: ${activeGuardrails}/${totalGuardrails} active | Skills: ${skillsCount} ready`;
 
   return {

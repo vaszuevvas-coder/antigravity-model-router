@@ -478,12 +478,13 @@ export function recordHandoffAction(rawOpts = {}) {
  * @param {string} [params.rejectedApproach=''] Why previous approach was rejected
  * @returns {object|undefined}
  */
-export function recordHandoffRationale({
-  workspaceRoot = '',
-  filePath = '',
-  rationale = '',
-  rejectedApproach = ''
-} = {}) {
+export function recordHandoffRationale(rawOpts = {}) {
+  const {
+    workspaceRoot = '',
+    filePath = '',
+    rationale = '',
+    rejectedApproach = ''
+  } = (rawOpts && typeof rawOpts === 'object' ? rawOpts : {});
   const targetPath = filePath || 'architecture';
   return recordHandoffAction({
     workspaceRoot,
@@ -505,13 +506,14 @@ export function recordHandoffRationale({
  * @param {string} [params.category='general'] Decision category
  * @returns {object|undefined}
  */
-export function recordUserDecision({
-  workspaceRoot = '',
-  conversationId = '',
-  question = '',
-  answer = '',
-  category = 'general'
-} = {}) {
+export function recordUserDecision(rawOpts = {}) {
+  const {
+    workspaceRoot = '',
+    conversationId = '',
+    question = '',
+    answer = '',
+    category = 'general'
+  } = (rawOpts && typeof rawOpts === 'object' ? rawOpts : {});
   const cleanQ = redactSecretsInText(typeof question === 'string' ? question.trim() : '');
   const cleanA = redactSecretsInText(typeof answer === 'string' ? answer.trim() : '');
   if (!cleanQ || !cleanA) return undefined;

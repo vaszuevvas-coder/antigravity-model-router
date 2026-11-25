@@ -5,7 +5,7 @@
   <meta name="google" content="notranslate" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%230a84ff'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%23ffffff'/%3E%3C/svg%3E" />
-  <title>The Tunnel v3.34.1</title>
+  <title>The Tunnel v3.35.0</title>
   <script src="/preload.js"></script>
   <style>
 /*__PANEL_STYLES__*/
@@ -28,6 +28,19 @@
   </svg>
 
   <div class="lg-shell">
+    <!-- Верхняя закреплённая линия доступного обновления плагина с GitHub -->
+    <div class="plugin-update-banner" id="pluginUpdateBanner" style="display: none;">
+      <div class="plugin-update-main">
+        <span class="plugin-update-badge" id="pluginUpdateBadge">Обновление</span>
+        <span class="plugin-update-text" id="pluginUpdateBannerText">Доступна новая версия расширения на GitHub</span>
+        <a class="plugin-update-link" id="pluginUpdateReleaseLink" href="https://github.com/vaszuevvas-coder/antigravity-model-router/releases" target="_blank" rel="noopener noreferrer">Что нового ↗</a>
+      </div>
+      <div class="plugin-update-actions">
+        <button type="button" class="win-btn plugin-update-apply-btn" id="pluginUpdateApplyBtn" data-action="applyPluginUpdateFromPanel" title="Скачать и установить обновление с GitHub с сохранением настроек">Да, обновить</button>
+        <button type="button" class="win-btn plugin-update-dismiss-btn" id="pluginUpdateDismissBtn" data-action="dismissPluginUpdateBanner" title="Позже" aria-label="Позже">✕</button>
+      </div>
+    </div>
+
     <header class="lg-header">
       <div class="lg-brand">
         <span class="lg-brand-orb"></span>
@@ -78,19 +91,6 @@
     </div>
 
     <div class="window-body">
-      <!-- Верхняя плашка доступного обновления плагина с GitHub -->
-      <div class="plugin-update-banner" id="pluginUpdateBanner" style="display: none;">
-        <div class="plugin-update-main">
-          <span class="plugin-update-badge" id="pluginUpdateBadge">Обновление</span>
-          <span class="plugin-update-text" id="pluginUpdateBannerText">Доступна новая версия расширения на GitHub</span>
-          <a class="plugin-update-link" id="pluginUpdateReleaseLink" href="https://github.com/vaszuevvas-coder/antigravity-model-router/releases" target="_blank" rel="noopener noreferrer">Что нового ↗</a>
-        </div>
-        <div class="plugin-update-actions">
-          <button type="button" class="win-btn plugin-update-apply-btn" id="pluginUpdateApplyBtn" data-action="applyPluginUpdateFromPanel" title="Скачать и установить обновление с GitHub с сохранением настроек">⬇ Обновить</button>
-          <button type="button" class="win-btn plugin-update-dismiss-btn" id="pluginUpdateDismissBtn" data-action="dismissPluginUpdateBanner" title="Скрыть уведомление до следующей версии">✕</button>
-        </div>
-      </div>
-
       <!-- Статус-баннер разговорного ИИ-пилота -->
       <div class="smart-banner" id="smartProjectBanner">
         <div class="smart-banner-main">
@@ -1378,7 +1378,7 @@
 
     <div class="status-bar">
       <div id="statusPill" class="status-pane">Готово · Синхронизировано</div>
-      <div class="status-pane" id="footerPluginVersion">The Tunnel v3.34.1</div>
+      <div class="status-pane" id="footerPluginVersion">The Tunnel v3.35.0</div>
     </div>
     <div style="text-align:center;font-size:10.5px;color:var(--text-sub);opacity:0.7;padding:4px 0 2px;letter-spacing:0.02em;">Created by Vasili Zuev</div>
   </div>
@@ -1389,7 +1389,7 @@
       <div class="wiz-head">
         <div class="lg-brand">
           <span class="lg-brand-orb"></span>
-          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v3.34.1</span>
+          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v3.35.0</span>
           <span class="lg-session-pill" id="wizLaunchBadge">Первый запуск</span>
         </div>
         <button class="lg-icon-btn round" type="button" data-action="closeOnboardingWizard" title="Отложить или закрыть окно настройки (Esc)">×</button>
@@ -1604,6 +1604,28 @@
           </div>
         </div>
       </aside>
+    </div>
+  </div>
+
+  <div class="plugin-update-overlay" id="pluginUpdateOverlay" role="dialog" aria-modal="true" aria-labelledby="pluginUpdateOverlayTitle" style="display: none;">
+    <div class="plugin-update-modal">
+      <div class="plugin-update-modal-icon" id="pluginUpdateOverlayIcon" aria-hidden="true">⬇</div>
+      <h3 class="plugin-update-modal-title" id="pluginUpdateOverlayTitle">Идёт обновление расширения</h3>
+      <p class="plugin-update-modal-desc" id="pluginUpdateOverlayDesc">Подготовка загрузки с GitHub…</p>
+      <div class="plugin-update-progress-wrap" id="pluginUpdateProgressWrap">
+        <div class="plugin-update-progress-track">
+          <div class="plugin-update-progress-fill" id="pluginUpdateProgressFill" style="width: 0%;"></div>
+        </div>
+        <div class="plugin-update-progress-meta">
+          <span id="pluginUpdateProgressStage">Проверка…</span>
+          <span id="pluginUpdateProgressPct">0%</span>
+        </div>
+      </div>
+      <div class="plugin-update-modal-error" id="pluginUpdateOverlayError" style="display: none;"></div>
+      <div class="plugin-update-modal-actions" id="pluginUpdateOverlayActions" style="display: none;">
+        <button type="button" class="win-btn plugin-update-apply-btn" id="pluginUpdateOverlayRetryBtn" data-action="applyPluginUpdateFromPanel" style="display: none;">↻ Повторить</button>
+        <button type="button" class="win-btn" id="pluginUpdateOverlayCloseBtn" data-action="closePluginUpdateOverlay">Закрыть</button>
+      </div>
     </div>
   </div>
 

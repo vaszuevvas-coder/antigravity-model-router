@@ -2553,6 +2553,7 @@ test('9. Wave 4 UX: startup update check shows top banner, 1-click apply transit
   );
 
   let advertisedVersion = '9.99.0';
+  let failNextApply = false;
   const checkCalls = [];
   let updateStatus = {
     ok: true,
@@ -2588,6 +2589,23 @@ test('9. Wave 4 UX: startup update check shows top banner, 1-click apply transit
     },
     getPluginUpdateStatus: () => ({ ...updateStatus }),
     applyPluginUpdate: async ({ targetVersion = advertisedVersion } = {}) => {
+      if (failNextApply) {
+        failNextApply = false;
+        updateStatus = {
+          ok: false,
+          active: false,
+          phase: 'error',
+          percent: 25,
+          targetVersion: targetVersion || advertisedVersion,
+          needsRestart: false,
+          statusText: 'HTTP 503',
+          statusTextRu: 'HTTP 503',
+          statusTextEn: 'HTTP 503',
+          error: 'HTTP 503',
+          dismissed: false,
+        };
+        return { ...updateStatus };
+      }
       updateStatus = {
         ok: true,
         active: true,
@@ -2659,8 +2677,12 @@ test('9. Wave 4 UX: startup update check shows top banner, 1-click apply transit
     const html = await htmlRes.text();
     dom = createPanelDomHarness(html, originUrl, 'e2e-token-w4');
 
-    // 1) Startup check reveals #pluginUpdateBanner at top & #headerUpdateDot
+    // 1) Startup check reveals #pluginUpdateBanner at very top of .lg-shell (above .lg-header) & #headerUpdateDot
     await waitFor(() => dom.doc.getElementById('pluginUpdateBanner').style.display === 'flex', 5000, 15, 'update banner visible');
+    const shellChildren = Array.from(dom.doc.querySelector('.lg-shell').children);
+    const bannerIdx = shellChildren.indexOf(dom.doc.getElementById('pluginUpdateBanner'));
+    const headerIdx = shellChildren.indexOf(dom.doc.querySelector('.lg-shell > .lg-header'));
+    assert.ok(bannerIdx !== -1 && headerIdx !== -1 && bannerIdx < headerIdx, 'Update banner must appear above .lg-header inside .lg-shell');
     assert.ok(checkCalls.length >= 1 && checkCalls[0].force === false);
     assert.equal(dom.doc.getElementById('headerUpdateDot').style.display, 'inline-block');
     assert.ok(dom.doc.getElementById('checkPluginUpdateBtn').classList.contains('has-update'));
@@ -2673,27 +2695,56 @@ test('9. Wave 4 UX: startup update check shows top banner, 1-click apply transit
     dom.doc.querySelector('#uiLanguageGroup button[data-lang="ru"]').click();
     await waitFor(() => dom.doc.getElementById('pluginUpdateBannerText').textContent.includes('Доступна версия v9.99.0'));
 
-    // 3) Click Apply -> polls status until phase === 'done' & restart notice appears
+    // 3) Click Apply -> blurs panel & opens #pluginUpdateOverlay with progress, then transitions to done & restart notice
     dom.doc.getElementById('pluginUpdateApplyBtn').click();
+    assert.equal(dom.doc.getElementById('pluginUpdateOverlay').style.display, 'flex');
+    assert.equal(dom.doc.body.classList.contains('is-plugin-updating'), true);
+    assert.ok(dom.doc.getElementById('pluginUpdateProgressFill').style.width.endsWith('%'));
+
     await waitFor(
-      () => dom.doc.getElementById('pluginUpdateBanner').classList.contains('is-done'),
+      () => dom.doc.getElementById('pluginUpdateBanner').classList.contains('is-done')
+        && dom.doc.getElementById('pluginUpdateOverlay').classList.contains('is-done'),
       5000,
       20,
-      'update banner reaches is-done'
+      'update banner & overlay reach is-done'
     );
     assert.ok(dom.doc.getElementById('pluginUpdateBannerText').textContent.includes('Перезапустите Google Antigravity'));
+    assert.ok(dom.doc.getElementById('pluginUpdateOverlayDesc').textContent.includes('Перезагрузите Google Antigravity'));
     assert.equal(dom.doc.getElementById('headerUpdateDot').style.display, 'none');
+
+    // Close overlay keeps top restart reminder banner visible and removes blur
+    dom.doc.getElementById('pluginUpdateOverlayCloseBtn').click();
+    assert.equal(dom.doc.getElementById('pluginUpdateOverlay').style.display, 'none');
+    assert.equal(dom.doc.body.classList.contains('is-plugin-updating'), false);
+    assert.equal(dom.doc.getElementById('pluginUpdateBanner').style.display, 'flex');
 
     // 4) Dismiss banner hides #pluginUpdateBanner
     dom.doc.getElementById('pluginUpdateDismissBtn').click();
     await waitFor(() => dom.doc.getElementById('pluginUpdateBanner').style.display === 'none');
 
-    // 5) Manual header button click forces re-check & surfaces next version
+    // 5) Manual header button click forces re-check & surfaces next version, and error state shows in blur overlay
     advertisedVersion = '9.99.1';
     dom.doc.getElementById('checkPluginUpdateBtn').click();
     await waitFor(() => dom.doc.getElementById('pluginUpdateBanner').style.display === 'flex', 5000, 20, 'manual check re-opens banner');
     assert.ok(checkCalls.some((c) => c.force === true), 'Manual click must call ?force=1');
     assert.ok(dom.doc.getElementById('pluginUpdateBannerText').textContent.includes('9.99.1'));
+
+    failNextApply = true;
+    dom.doc.getElementById('pluginUpdateApplyBtn').click();
+    await waitFor(
+      () => dom.doc.getElementById('pluginUpdateOverlay').classList.contains('is-error'),
+      5000,
+      20,
+      'error overlay visible'
+    );
+    assert.equal(dom.doc.body.classList.contains('is-plugin-updating'), true);
+    assert.ok(dom.doc.getElementById('pluginUpdateOverlayError').textContent.includes('HTTP 503'));
+    assert.equal(dom.doc.getElementById('pluginUpdateOverlayRetryBtn').style.display, 'inline-flex');
+    dom.doc.getElementById('pluginUpdateOverlayCloseBtn').click();
+    assert.equal(dom.doc.getElementById('pluginUpdateOverlay').style.display, 'none');
+    assert.equal(dom.doc.body.classList.contains('is-plugin-updating'), false);
+    dom.doc.getElementById('pluginUpdateDismissBtn').click();
+    await waitFor(() => dom.doc.getElementById('pluginUpdateBanner').style.display === 'none');
 
     // 6) Manual header button click when up-to-date shows floating toast & translates RU <-> EN
     advertisedVersion = PKG_VERSION;

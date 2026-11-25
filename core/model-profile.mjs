@@ -893,12 +893,13 @@ export function peekActiveModelFromTranscript(transcriptPath = '', conversationI
  * @param {string} [params.conversationId='']
  * @returns {ReturnType<typeof normalizeModelProfile>}
  */
-export function resolveActiveModelProfile({
-  modelName = '',
-  userInput = '',
-  transcriptPath = '',
-  conversationId = '',
-} = {}) {
+export function resolveActiveModelProfile(rawOpts = {}) {
+  const {
+    modelName = '',
+    userInput = '',
+    transcriptPath = '',
+    conversationId = '',
+  } = (rawOpts && typeof rawOpts === 'object' ? rawOpts : {});
   const annState =
     transcriptPath || conversationId
       ? peekOrchestratorAnnotationState(transcriptPath, conversationId)

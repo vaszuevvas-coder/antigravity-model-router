@@ -45,8 +45,8 @@ function buildStaticSessionStartHeader(state = {}) {
   const isEn = resolveUserLanguage(state) === 'en';
   const lines = [
     isEn
-      ? '# The Tunnel v3.34.1 (EN-Internal / EN-Chat)'
-      : '# The Tunnel v3.34.1 (EN-Internal / RU-Chat)',
+      ? '# The Tunnel v3.35.0 (EN-Internal / EN-Chat)'
+      : '# The Tunnel v3.35.0 (EN-Internal / RU-Chat)',
     isEn
       ? '- User replies/UI/Role/toolSummary: 100% English.'
       : '- User replies/UI/Role/toolSummary: 100% Russian.',
@@ -683,12 +683,12 @@ export function buildZeroTokenUserBadgeStep(rawOpts = {}) {
         ? `Pro Architect${subSuffix}`
         : strat === 'flash_dispatcher' || strat === 'economy'
           ? `Flash Dispatcher${subSuffix}`
-          : `Autopilot v3.34.1${subSuffix}`)
+          : `Autopilot v3.35.0${subSuffix}`)
     : (strat === 'pro_architect' || strat === 'performance'
         ? `Pro-Архитектор${subSuffix}`
         : strat === 'flash_dispatcher' || strat === 'economy'
           ? `Flash-Диспетчер${subSuffix}`
-          : `Автопилот v3.34.1${subSuffix}`);
+          : `Автопилот v3.35.0${subSuffix}`);
   const executor = isEn
     ? (modelProfile?.displayEn || modelProfile?.shortLabel || modelProfile?.displayRu || modelProfile?.displayNameRu || 'Current executor')
     : (modelProfile?.displayRu || modelProfile?.displayNameRu || modelProfile?.shortLabel || 'Текущий исполнитель');
@@ -736,7 +736,8 @@ const DRIFT_CHECK_FILES = [
  * @param {string} [params.installedRoot]
  * @returns {{ checked: boolean, hasDrift: boolean, driftedFiles: string[], repoRoot?: string, installedRoot?: string }}
  */
-export function checkInstalledPluginDrift({ repoRoot = '', installedRoot = '' } = {}) {
+export function checkInstalledPluginDrift(rawOpts = {}) {
+  const { repoRoot = '', installedRoot = '' } = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   if (!repoRoot) {
     return { checked: false, hasDrift: false, driftedFiles: [] };
   }
@@ -1146,7 +1147,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
     ) {
       try {
         const preConvoId = swarmCtx?.isolationKey || payload.conversationId || 'default';
-        const ramPreRes = await queryRamDaemon('/hook/pre-invocation', { wsPath, query: userInput, convoId: preConvoId }, 190);
+        const ramPreRes = await queryRamDaemon('/hook/pre-invocation', { wsPath, query: userInput, convoId: preConvoId }, 260);
         if (Array.isArray(ramPreRes?.semanticFiles)) {
           semanticFiles = ramPreRes.semanticFiles;
         }
@@ -1175,7 +1176,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
       typeof localGpuMod?.peekWarmSemanticSkills === 'function'
     ) {
       try {
-        const directSkillRes = await localGpuMod.peekWarmSemanticSkills(userInput, { timeoutMs: 120 });
+        const directSkillRes = await localGpuMod.peekWarmSemanticSkills(userInput, { timeoutMs: 180, wsAbsRoot: wsPath });
         if (Array.isArray(directSkillRes?.semanticSkills)) {
           semanticSkills = directSkillRes.semanticSkills;
         }
@@ -1230,7 +1231,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
       }
     }
 
-    // 2. Когнитивный ИИ-Автопилот v3.34.1 (3D-матрица Breadth × Depth × Risk + безлимитное EN-мышление на Gemini 4)
+    // 2. Когнитивный ИИ-Автопилот v3.35.0 (3D-матрица Breadth × Depth × Risk + безлимитное EN-мышление на Gemini 4)
     if (baseState.thinkingLimiter !== false && toolPruner && typeof toolPruner.estimateTaskGradeAndThinkingBudget === 'function') {
       try {
         const budgetRes = toolPruner.estimateTaskGradeAndThinkingBudget(userInput, effectiveState, {
