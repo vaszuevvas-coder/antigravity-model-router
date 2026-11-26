@@ -339,3 +339,145 @@ test('5. applyPluginUpdate streams body.getReader() chunks and tracks downloaded
     fs.rmSync(installedRoot, { recursive: true, force: true });
   }
 });
+
+test('6. checkForPluginUpdate falls back on api.github.com timeout/error to release redirect and main branch', async () => {
+  const root = makeFakePluginRoot('4.0.0');
+  try {
+    // Case A: api.github.com times out -> falls back to github.com/.../releases/latest 302 redirect
+    const redirFetch = async (url) => {
+      const s = String(url);
+      if (s.includes('api.github.com')) {
+        const err = new Error('The operation was aborted due to timeout');
+        err.name = 'TimeoutError';
+        throw err;
+      }
+      if (s.endsWith('/releases/latest')) {
+        return {
+          ok: false,
+          status: 302,
+          url: s,
+          headers: {
+            get: (k) => (k.toLowerCase() === 'location'
+              ? 'https://github.com/vaszuevvas-coder/antigravity-model-router/releases/tag/v4.0.1'
+              : ''),
+          },
+        };
+      }
+      throw new Error(`Unexpected URL: ${s}`);
+    };
+    const rRedir = await checkForPluginUpdate({ pluginRoot: root, force: true, fetchFn: redirFetch });
+    assert.equal(rRedir.ok, true);
+    assert.equal(rRedir.source, 'release_redirect');
+    assert.equal(rRedir.latestVersion, '4.0.1');
+    assert.equal(rRedir.updateAvailable, true);
+    assert.equal(
+      rRedir.downloadUrl,
+      'https://codeload.github.com/vaszuevvas-coder/antigravity-model-router/zip/refs/tags/v4.0.1'
+    );
+
+    // Case B: api.github.com and github.com redirect both fail -> falls back to raw.githubusercontent.com plugin.json
+    const branchFallbackFetch = async (url) => {
+      const s = String(url);
+      if (s.includes('api.github.com') || s.includes('github.com/vaszuevvas-coder/antigravity-model-router/releases/latest')) {
+        throw new Error('fetch failed');
+      }
+      assert.match(s, /raw\.githubusercontent\.com\/.*\/main\/plugin\.json$/);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ name: 'antigravity-model-router', version: '4.0.2' }),
+      };
+    };
+    const rBranch = await checkForPluginUpdate({ pluginRoot: root, force: true, fetchFn: branchFallbackFetch });
+    assert.equal(rBranch.ok, true);
+    assert.equal(rBranch.source, 'branch');
+    assert.equal(rBranch.latestVersion, '4.0.2');
+    assert.equal(rBranch.updateAvailable, true);
+
+    // Case C: all sources time out -> localized RU timeout message preserving original detail
+    const timeoutRes = await checkForPluginUpdate({
+      pluginRoot: root,
+      force: true,
+      lang: 'ru',
+      fetchFn: async () => {
+        const err = new Error('The operation was aborted due to timeout');
+        err.name = 'TimeoutError';
+        throw err;
+      },
+    });
+    assert.equal(timeoutRes.ok, false);
+    assert.match(timeoutRes.error, /Превышено время ожидания сети/);
+    assert.match(timeoutRes.error, /The operation was aborted due to timeout/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('7. Transport fallback hooks (fallbackHttpFn & fallbackDownloadFn) recover from fetch timeout/failure', async () => {
+  const installedRoot = makeFakePluginRoot('4.0.0', { withGit: false });
+  try {
+    let httpFallbackCalls = 0;
+    const checkRes = await checkForPluginUpdate({
+      pluginRoot: installedRoot,
+      force: true,
+      fetchFn: async () => {
+        throw new Error('fetch failed');
+      },
+      fallbackHttpFn: async (url) => {
+        httpFallbackCalls++;
+        assert.match(String(url), /\/releases\/latest$/);
+        return {
+          ok: true,
+          status: 200,
+          url,
+          headers: { get: () => '' },
+          json: async () => ({
+            tag_name: 'v4.0.1',
+            html_url: 'https://github.com/vaszuevvas-coder/antigravity-model-router/releases/tag/v4.0.1',
+            assets: [],
+          }),
+        };
+      },
+    });
+    assert.equal(checkRes.ok, true);
+    assert.equal(checkRes.latestVersion, '4.0.1');
+    assert.equal(checkRes.source, 'release');
+    assert.equal(httpFallbackCalls, 1);
+
+    let downloadFallbackCalls = 0;
+    const fakeBytes = Buffer.from('PK\x03\x04fallback-zip');
+    const applyRes = await applyPluginUpdate({
+      pluginRoot: installedRoot,
+      downloadUrl: 'https://codeload.github.com/vaszuevvas-coder/antigravity-model-router/zip/refs/tags/v4.0.1',
+      targetVersion: '4.0.1',
+      lang: 'ru',
+      fetchFn: async () => {
+        const err = new Error('The operation was aborted due to timeout');
+        err.name = 'TimeoutError';
+        throw err;
+      },
+      fallbackDownloadFn: async (_url, destZipPath, _curVer, { onProgress }) => {
+        downloadFallbackCalls++;
+        fs.writeFileSync(destZipPath, fakeBytes);
+        onProgress?.(fakeBytes.length, fakeBytes.length);
+        return fakeBytes.length;
+      },
+      extractZipFn: async (zipPath, destDir) => {
+        assert.equal(fs.readFileSync(zipPath).equals(fakeBytes), true);
+        const inner = path.join(destDir, 'antigravity-model-router-4.0.1');
+        fs.mkdirSync(inner, { recursive: true });
+        fs.writeFileSync(
+          path.join(inner, 'plugin.json'),
+          JSON.stringify({ name: 'antigravity-model-router', version: '4.0.1' }, null, 2),
+          'utf8'
+        );
+      },
+    });
+    assert.equal(applyRes.ok, true);
+    assert.equal(applyRes.phase, 'done');
+    assert.equal(applyRes.targetVersion, '4.0.1');
+    assert.equal(downloadFallbackCalls, 1);
+  } finally {
+    fs.rmSync(installedRoot, { recursive: true, force: true });
+  }
+});

@@ -2,7 +2,17 @@
 
 Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
 
-> Хронология с `v3.8.0` по `v4.0.0` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`57` основных / `65` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `46` наборов автотестов).
+> Хронология с `v3.8.0` по `v4.0.1` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`57` основных / `65` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `46` наборов автотестов).
+
+---
+
+## [4.0.1] — 2026-11-26
+
+### Исправлено (Надёжность 1-кликового автообновления через прокси/VPN и IPv6)
+- **Устойчивый транспорт обновлений ([core/plugin-updater.mjs](core/plugin-updater.mjs), [sidecars/panel/server.mjs](sidecars/panel/server.mjs), [tests/plugin-updater.test.mjs](tests/plugin-updater.test.mjs))**:
+  - Включён приоритет IPv4 (`dns.setDefaultResultOrder('ipv4first')`), а таймаут проверки обновлений увеличен с `6000` до `15000` мс (устраняет таймаут и залипание `fetch` на IPv6).
+  - Добавлен автоматический фолбэк транспорта через системный прокси (`WinINET` / `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`) и `curl.exe`/`curl` с `-4` при таймауте или `fetch failed` как для `checkForPluginUpdate`, так и для `downloadUpdateArchive` (с сохранением `isAllowedGitHubUrl` и лимита `MAX_UPDATE_ARCHIVE_BYTES`).
+  - Добавлена цепочка резервных источников проверки релиза: при сбое `api.github.com` проверяется редирект `github.com/.../releases/latest` (`source: 'release_redirect'`), а затем `raw.githubusercontent.com/.../main/plugin.json` (`source: 'branch'`), с выводом локализованных причин ошибок через `formatUpdateError`.
 
 ---
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * @file router-cli.mjs
- * @description Единый интерфейс командной строки (CLI) для The Tunnel v4.0.0.
+ * @description Единый интерфейс командной строки (CLI) для The Tunnel v4.0.1.
  * Предоставляет команды диагностики, анализа символов, слайсинга, кодомода и резервного копирования профиля.
  */
 
@@ -196,7 +196,7 @@ export function backupRouterProfile(backupPath = '', options = {}) {
 
     const pluginMeta = safeReadJsonSync(join(PLUGIN_ROOT, 'plugin.json'), {});
     const snapshot = {
-      version: String(pluginMeta?.version || '4.0.0'),
+      version: String(pluginMeta?.version || '4.0.1'),
       createdAt: new Date().toISOString(),
       state,
       cacheFiles
@@ -381,7 +381,7 @@ export function getRouterStatusSummary(workspaceRoot = process.cwd()) {
   } catch {}
 
   const pluginMeta = safeReadJsonSync(join(PLUGIN_ROOT, 'plugin.json'), {});
-  const version = String(pluginMeta?.version || '4.0.0');
+  const version = String(pluginMeta?.version || '4.0.1');
   const formatted = `🛡️ [Router Status] v${version} | Strategy: ${strategy} | Profile: ${hookProfile} | Guardrails: ${activeGuardrails}/${totalGuardrails} active | Skills: ${skillsCount} ready`;
 
   return {
@@ -417,7 +417,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 
   if (cmd === 'help' || cmd === '--help' || cmd === '-h') {
     const pluginMeta = safeReadJsonSync(join(PLUGIN_ROOT, 'plugin.json'), {});
-    const version = String(pluginMeta?.version || '4.0.0');
+    const version = String(pluginMeta?.version || '4.0.1');
     console.log(
       isEnCli
         ? [
@@ -446,7 +446,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     process.exit(0);
   } else if (cmd === '--version' || cmd === '-v' || cmd === 'version') {
     const pluginMeta = safeReadJsonSync(join(PLUGIN_ROOT, 'plugin.json'), {});
-    const version = String(pluginMeta?.version || '4.0.0');
+    const version = String(pluginMeta?.version || '4.0.1');
     if (args.includes('--json')) {
       console.log(JSON.stringify({ ok: true, version }));
     } else {

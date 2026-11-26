@@ -151,7 +151,7 @@ export async function searchSkillsCatalog(opts = {}) {
     const url = `https://skills.sh/api/search?q=${encodeURIComponent(cleanQuery)}&limit=${Math.min(20, Math.max(4, limit))}`;
     try {
       const resp = await fetchImpl(url, {
-        headers: { Accept: 'application/json', 'User-Agent': 'antigravity-model-router/4.0.0' },
+        headers: { Accept: 'application/json', 'User-Agent': 'antigravity-model-router/4.0.1' },
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (!resp.ok) {

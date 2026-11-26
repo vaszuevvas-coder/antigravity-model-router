@@ -4,6 +4,7 @@
  */
 
 import { execFile } from 'node:child_process';
+import { setDefaultResultOrder } from 'node:dns';
 import {
   copyFileSync,
   existsSync,
@@ -14,6 +15,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -212,8 +214,8 @@ export function readPluginMeta(pluginRoot = '') {
 
   const rawVer = (typeof pluginManifest?.version === 'string' && pluginManifest.version.trim())
     || (typeof pkgManifest?.version === 'string' && pkgManifest.version.trim())
-    || '4.0.0';
-  const version = parseSemver(rawVer)?.version || '4.0.0';
+    || '4.0.1';
+  const version = parseSemver(rawVer)?.version || '4.0.1';
 
   const rawRepo =
     pluginManifest?.repository?.url
@@ -270,6 +272,225 @@ function formatUpdateError(err, lang = 'ru') {
   return raw;
 }
 
+let ipv4DnsConfigured = false;
+function ensureIpv4FirstDns() {
+  if (ipv4DnsConfigured) return;
+  ipv4DnsConfigured = true;
+  try {
+    setDefaultResultOrder('ipv4first');
+  } catch {}
+}
+
+function isRetryableNetworkError(err) {
+  const name = String(err?.name || '');
+  const code = String(err?.code || err?.cause?.code || '');
+  const msg = String(err?.message || err || '');
+  return /AbortError|TimeoutError|timed out|timeout|fetch failed|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|UND_ERR/i.test(
+    `${name} ${code} ${msg}`
+  );
+}
+
+let cachedSystemProxy = { checkedAt: 0, url: '' };
+function sanitizeProxyUrl(raw = '') {
+  const s = String(raw || '').trim();
+  if (!s || /[\s\r\n\0]/.test(s)) return '';
+  const withProto = /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : `http://${s}`;
+  try {
+    const u = new URL(withProto);
+    if (!u.hostname || (u.protocol !== 'http:' && u.protocol !== 'https:' && u.protocol !== 'socks5:' && u.protocol !== 'socks5h:')) {
+      return '';
+    }
+    return u.href.replace(/\/+$/, '');
+  } catch {
+    return '';
+  }
+}
+
+async function detectSystemProxyUrl() {
+  const envRaw = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy || process.env.ALL_PROXY || process.env.all_proxy || '';
+  const envProxy = sanitizeProxyUrl(envRaw);
+  if (envProxy) return envProxy;
+
+  if (process.platform !== 'win32') return '';
+  const now = Date.now();
+  if (now - cachedSystemProxy.checkedAt < 60_000) {
+    return cachedSystemProxy.url;
+  }
+
+  let detected = '';
+  try {
+    const { stdout } = await execFileAsync(
+      'reg',
+      ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'],
+      { windowsHide: true, timeout: 2500 }
+    );
+    const enabledMatch = /ProxyEnable\s+REG_DWORD\s+0x([0-9a-f]+)/i.exec(stdout);
+    const enabled = enabledMatch ? parseInt(enabledMatch[1], 16) !== 0 : false;
+    if (enabled) {
+      const serverMatch = /ProxyServer\s+REG_SZ\s+([^\r\n]+)/i.exec(stdout);
+      const rawServer = (serverMatch?.[1] || '').trim();
+      if (rawServer) {
+        let candidate = rawServer;
+        if (rawServer.includes('=')) {
+          const parts = rawServer.split(';').map((p) => p.trim()).filter(Boolean);
+          const httpsPart = parts.find((p) => /^https=/i.test(p));
+          const httpPart = parts.find((p) => /^http=/i.test(p));
+          const socksPart = parts.find((p) => /^socks=/i.test(p));
+          const chosen = httpsPart || httpPart || socksPart || parts[0] || '';
+          const eqIdx = chosen.indexOf('=');
+          const scheme = eqIdx > 0 ? chosen.slice(0, eqIdx).toLowerCase() : '';
+          const hostPort = eqIdx > 0 ? chosen.slice(eqIdx + 1).trim() : chosen;
+          candidate = scheme === 'socks' ? `socks5h://${hostPort}` : `http://${hostPort}`;
+        }
+        detected = sanitizeProxyUrl(candidate);
+      }
+    }
+  } catch {}
+
+  cachedSystemProxy = { checkedAt: now, url: detected };
+  return detected;
+}
+
+async function defaultFallbackHttpGet(url, { headers = {}, timeoutMs = 15000, followRedirects = true } = {}) {
+  if (!isAllowedGitHubUrl(url)) {
+    throw new Error('Untrusted GitHub URL');
+  }
+  const curlBin = process.platform === 'win32' ? 'curl.exe' : 'curl';
+  const maxSecs = String(Math.max(2, Math.ceil((Number(timeoutMs) || 15000) / 1000)));
+  const proxyUrl = await detectSystemProxyUrl();
+  const marker = '__TUNNEL_CURL_META__';
+  const args = [
+    '-4',
+    '-sS',
+    '--max-time',
+    maxSecs,
+    '-w',
+    `\n${marker}\n%{http_code}\n%{redirect_url}\n%{url_effective}`,
+  ];
+  if (followRedirects) {
+    args.push('-L', '--max-redirs', '5');
+  }
+  if (proxyUrl) {
+    args.push('--proxy', proxyUrl);
+  }
+  for (const [k, v] of Object.entries(headers || {})) {
+    if (!k || v === undefined || v === null) continue;
+    args.push('-H', `${k}: ${String(v)}`);
+  }
+  args.push(url);
+
+  const { stdout } = await execFileAsync(curlBin, args, {
+    windowsHide: true,
+    timeout: Math.max(5000, (Number(timeoutMs) || 15000) + 3000),
+    maxBuffer: 4 * 1024 * 1024,
+  });
+
+  const idx = stdout.lastIndexOf(`\n${marker}\n`);
+  if (idx < 0) {
+    throw new Error('Malformed curl response');
+  }
+  const body = stdout.slice(0, idx);
+  const metaLines = stdout.slice(idx + marker.length + 2).split(/\r?\n/);
+  const status = Number(metaLines[0] || 0);
+  const redirectUrl = String(metaLines[1] || '').trim();
+  const effectiveUrl = String(metaLines[2] || '').trim() || url;
+
+  if (effectiveUrl && !isAllowedGitHubUrl(effectiveUrl)) {
+    throw new Error(`Untrusted redirect target: ${effectiveUrl}`);
+  }
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    url: effectiveUrl,
+    headers: {
+      get: (key) => (String(key || '').toLowerCase() === 'location' ? redirectUrl : ''),
+    },
+    json: async () => JSON.parse(body),
+    text: async () => body,
+  };
+}
+
+async function defaultFallbackDownloadFile(
+  urlStr,
+  destZipPath,
+  currentVersion,
+  { timeoutMs = 45000, onProgress = null } = {}
+) {
+  if (!isAllowedGitHubUrl(urlStr)) {
+    throw new Error('Untrusted download URL');
+  }
+  const curlBin = process.platform === 'win32' ? 'curl.exe' : 'curl';
+  const maxSecs = String(Math.max(5, Math.ceil((Number(timeoutMs) || 45000) / 1000)));
+  const proxyUrl = await detectSystemProxyUrl();
+  const args = [
+    '-4',
+    '-sS',
+    '-L',
+    '--max-redirs',
+    '5',
+    '--max-time',
+    maxSecs,
+    '--max-filesize',
+    String(MAX_UPDATE_ARCHIVE_BYTES),
+    '-A',
+    `antigravity-model-router/${currentVersion}`,
+    '-o',
+    destZipPath,
+    '-w',
+    '%{http_code}\n%{url_effective}',
+  ];
+  if (proxyUrl) {
+    args.push('--proxy', proxyUrl);
+  }
+  args.push(urlStr);
+
+  const cleanupDest = () => {
+    try {
+      if (existsSync(destZipPath)) unlinkSync(destZipPath);
+    } catch {}
+  };
+
+  let stdout = '';
+  try {
+    ({ stdout } = await execFileAsync(curlBin, args, {
+      windowsHide: true,
+      timeout: Math.max(8000, (Number(timeoutMs) || 45000) + 5000),
+      maxBuffer: 1024 * 1024,
+    }));
+  } catch (err) {
+    cleanupDest();
+    throw err;
+  }
+
+  const lines = String(stdout || '').trim().split(/\r?\n/);
+  const status = Number(lines[0] || 0);
+  const effectiveUrl = String(lines[1] || '').trim();
+  if (effectiveUrl && !isAllowedGitHubUrl(effectiveUrl)) {
+    cleanupDest();
+    throw new Error(`Untrusted redirect target: ${effectiveUrl}`);
+  }
+  if (!Number.isFinite(status) || status < 200 || status >= 300) {
+    cleanupDest();
+    throw new Error(`Archive download HTTP ${status || 'unknown'}`);
+  }
+  if (!existsSync(destZipPath)) {
+    throw new Error('Downloaded update archive is empty');
+  }
+  const size = statSync(destZipPath).size;
+  if (size <= 0) {
+    cleanupDest();
+    throw new Error('Downloaded update archive is empty');
+  }
+  if (size > MAX_UPDATE_ARCHIVE_BYTES) {
+    cleanupDest();
+    throw new Error(`Update archive exceeds ${MAX_UPDATE_ARCHIVE_BYTES} bytes`);
+  }
+  if (typeof onProgress === 'function') {
+    try { onProgress(size, size); } catch {}
+  }
+  return size;
+}
+
 /**
  * Returns the persisted or active update installer status for a plugin root.
  * @param {string} [pluginRoot]
@@ -320,8 +541,8 @@ function persistUpdateStatus(pluginRoot, nextStatus) {
 }
 
 /**
- * Checks GitHub releases (and falls back to main branch plugin.json on 404) for newer versions.
- * Uses a 6h disk cache unless `force: true` is passed.
+ * Checks GitHub releases (with IPv4-first DNS, proxy/curl fallback, and release-redirect / main-branch fallbacks)
+ * for newer versions. Uses a 6h disk cache unless `force: true` is passed.
  * @param {object} [options={}]
  */
 export async function checkForPluginUpdate(options = {}) {
@@ -330,7 +551,9 @@ export async function checkForPluginUpdate(options = {}) {
     force = false,
     cacheTtlMs = UPDATE_CHECK_CACHE_TTL_MS,
     fetchFn = null,
-    timeoutMs = 6000,
+    fallbackHttpFn = null,
+    timeoutMs = 15000,
+    lang = 'ru',
     allowInTests = false,
   } = options && typeof options === 'object' ? options : {};
 
@@ -375,7 +598,12 @@ export async function checkForPluginUpdate(options = {}) {
     }
   }
 
-  const fetchImpl = typeof fetchFn === 'function' ? fetchFn : globalThis.fetch;
+  const useRealNetwork = typeof fetchFn !== 'function';
+  if (useRealNetwork) {
+    ensureIpv4FirstDns();
+  }
+
+  const fetchImpl = !useRealNetwork ? fetchFn : globalThis.fetch;
   if (typeof fetchImpl !== 'function') {
     return {
       ok: false,
@@ -402,13 +630,60 @@ export async function checkForPluginUpdate(options = {}) {
 
   const buildSignal = () => (
     typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
-      ? AbortSignal.timeout(Math.max(1000, Number(timeoutMs) || 6000))
+      ? AbortSignal.timeout(Math.max(1000, Number(timeoutMs) || 15000))
       : undefined
   );
 
+  const requestWithFallback = async (url, { followRedirects = true } = {}) => {
+    try {
+      return await fetchImpl(url, {
+        headers: reqHeaders,
+        redirect: followRedirects ? 'follow' : 'manual',
+        signal: buildSignal(),
+      });
+    } catch (err) {
+      if (isRetryableNetworkError(err)) {
+        if (typeof fallbackHttpFn === 'function') {
+          return await fallbackHttpFn(url, { headers: reqHeaders, timeoutMs, followRedirects });
+        }
+        if (useRealNetwork) {
+          return await defaultFallbackHttpGet(url, { headers: reqHeaders, timeoutMs, followRedirects });
+        }
+      }
+      throw err;
+    }
+  };
+
+  const fetchBranchFallback = async () => {
+    const rawPluginUrl = `https://raw.githubusercontent.com/${meta.repo}/main/plugin.json`;
+    const branchRes = await requestWithFallback(rawPluginUrl);
+    if (!branchRes || !branchRes.ok) {
+      throw new Error(`GitHub manifest HTTP ${branchRes ? branchRes.status : 'unknown'}`);
+    }
+    const manifest = await branchRes.json();
+    const parsedBranchVer = parseSemver(String(manifest?.version || ''));
+    if (!parsedBranchVer) {
+      throw new Error('Invalid remote plugin.json version');
+    }
+    return {
+      latestVersion: parsedBranchVer.version,
+      releaseUrl: meta.homepage,
+      downloadUrl: `https://codeload.github.com/${meta.repo}/zip/refs/heads/main`,
+      releaseNotes: '',
+      publishedAt: '',
+      source: 'branch',
+    };
+  };
+
   try {
     const releaseApiUrl = `https://api.github.com/repos/${meta.repo}/releases/latest`;
-    const res = await fetchImpl(releaseApiUrl, { headers: reqHeaders, signal: buildSignal() });
+    let res = null;
+    let primaryErr = null;
+    try {
+      res = await requestWithFallback(releaseApiUrl);
+    } catch (err) {
+      primaryErr = err;
+    }
 
     let latestVersion = '';
     let releaseUrl = `${meta.homepage}/releases`;
@@ -418,20 +693,7 @@ export async function checkForPluginUpdate(options = {}) {
     let source = 'release';
 
     if (res && res.status === 404) {
-      const rawPluginUrl = `https://raw.githubusercontent.com/${meta.repo}/main/plugin.json`;
-      const branchRes = await fetchImpl(rawPluginUrl, { headers: reqHeaders, signal: buildSignal() });
-      if (!branchRes || !branchRes.ok) {
-        throw new Error(`GitHub manifest HTTP ${branchRes ? branchRes.status : 'unknown'}`);
-      }
-      const manifest = await branchRes.json();
-      const parsedBranchVer = parseSemver(String(manifest?.version || ''));
-      if (!parsedBranchVer) {
-        throw new Error('Invalid remote plugin.json version');
-      }
-      latestVersion = parsedBranchVer.version;
-      releaseUrl = meta.homepage;
-      downloadUrl = `https://codeload.github.com/${meta.repo}/zip/refs/heads/main`;
-      source = 'branch';
+      ({ latestVersion, releaseUrl, downloadUrl, releaseNotes, publishedAt, source } = await fetchBranchFallback());
     } else if (res && res.ok) {
       const rel = await res.json();
       const rawTag = String(rel?.tag_name || '').trim();
@@ -457,7 +719,36 @@ export async function checkForPluginUpdate(options = {}) {
       publishedAt = typeof rel?.published_at === 'string' ? rel.published_at.trim() : '';
       source = 'release';
     } else {
-      throw new Error(`GitHub API HTTP ${res ? res.status : 'unknown'}`);
+      // Fallback 1: github.com/<repo>/releases/latest redirect -> /releases/tag/vX.Y.Z
+      try {
+        const webLatestUrl = `https://github.com/${meta.repo}/releases/latest`;
+        const redirRes = await requestWithFallback(webLatestUrl, { followRedirects: false });
+        if (redirRes && ((redirRes.status >= 300 && redirRes.status < 400) || redirRes.ok)) {
+          const loc = String(redirRes.headers?.get?.('location') || redirRes.url || '').trim();
+          const tagMatch = /\/releases\/tag\/([^/?#]+)/i.exec(loc);
+          if (tagMatch && tagMatch[1]) {
+            const rawTag = decodeURIComponent(tagMatch[1]);
+            const parsedTagVer = parseSemver(rawTag);
+            if (parsedTagVer) {
+              latestVersion = parsedTagVer.version;
+              releaseUrl = `https://github.com/${meta.repo}/releases/tag/${encodeURIComponent(rawTag)}`;
+              downloadUrl = `https://codeload.github.com/${meta.repo}/zip/refs/tags/${encodeURIComponent(rawTag)}`;
+              source = 'release_redirect';
+            }
+          }
+        }
+      } catch {}
+
+      // Fallback 2: raw.githubusercontent.com/<repo>/main/plugin.json
+      if (!latestVersion) {
+        try {
+          ({ latestVersion, releaseUrl, downloadUrl, releaseNotes, publishedAt, source } = await fetchBranchFallback());
+        } catch {}
+      }
+
+      if (!latestVersion) {
+        throw primaryErr || new Error(`GitHub API HTTP ${res ? res.status : 'unknown'}`);
+      }
     }
 
     if (!isAllowedGitHubUrl(downloadUrl)) {
@@ -497,7 +788,7 @@ export async function checkForPluginUpdate(options = {}) {
       releaseNotes: '',
       publishedAt: '',
       source: 'error',
-      error: compactUpdateError(err),
+      error: formatUpdateError(err, lang),
       checkedAt: Date.now(),
       cached: false,
     };
@@ -609,12 +900,16 @@ async function downloadUpdateArchive(
   urlStr,
   destZipPath,
   currentVersion,
-  { fetchFn = null, timeoutMs = 45000, onProgress = null } = {}
+  { fetchFn = null, fallbackDownloadFn = null, timeoutMs = 45000, onProgress = null } = {}
 ) {
   if (!isAllowedGitHubUrl(urlStr)) {
     throw new Error('Untrusted download URL');
   }
-  const fetchImpl = typeof fetchFn === 'function' ? fetchFn : globalThis.fetch;
+  const useRealNetwork = typeof fetchFn !== 'function';
+  if (useRealNetwork) {
+    ensureIpv4FirstDns();
+  }
+  const fetchImpl = !useRealNetwork ? fetchFn : globalThis.fetch;
   if (typeof fetchImpl !== 'function') {
     throw new Error('Fetch API unavailable');
   }
@@ -622,11 +917,24 @@ async function downloadUpdateArchive(
     ? AbortSignal.timeout(Math.max(2000, Number(timeoutMs) || 45000))
     : undefined;
 
-  const res = await fetchImpl(urlStr, {
-    headers: { 'User-Agent': `antigravity-model-router/${currentVersion}` },
-    redirect: 'follow',
-    signal,
-  });
+  let res;
+  try {
+    res = await fetchImpl(urlStr, {
+      headers: { 'User-Agent': `antigravity-model-router/${currentVersion}` },
+      redirect: 'follow',
+      signal,
+    });
+  } catch (err) {
+    if (isRetryableNetworkError(err)) {
+      if (typeof fallbackDownloadFn === 'function') {
+        return await fallbackDownloadFn(urlStr, destZipPath, currentVersion, { timeoutMs, onProgress });
+      }
+      if (useRealNetwork) {
+        return await defaultFallbackDownloadFile(urlStr, destZipPath, currentVersion, { timeoutMs, onProgress });
+      }
+    }
+    throw err;
+  }
 
   if (res && typeof res.url === 'string' && res.url && !isAllowedGitHubUrl(res.url)) {
     throw new Error(`Untrusted redirect target: ${res.url}`);
@@ -722,6 +1030,8 @@ export async function applyPluginUpdate(options = {}) {
     targetVersion = '',
     forceApply = false,
     fetchFn = null,
+    fallbackHttpFn = null,
+    fallbackDownloadFn = null,
     extractZipFn = null,
     runInstallFn = null,
     lang = 'ru',
@@ -778,6 +1088,8 @@ export async function applyPluginUpdate(options = {}) {
           pluginRoot: root,
           force: true,
           fetchFn,
+          fallbackHttpFn,
+          lang: cleanLang,
           timeoutMs: Math.min(timeoutMs, 15000),
           allowInTests: Boolean(fetchFn || forceApply),
         });
@@ -827,6 +1139,7 @@ export async function applyPluginUpdate(options = {}) {
       const formatMb = (bytes) => (Number(bytes || 0) / (1024 * 1024)).toFixed(1);
       await downloadUpdateArchive(effectiveDownloadUrl, zipPath, meta.version, {
         fetchFn,
+        fallbackDownloadFn,
         timeoutMs,
         onProgress: (downloadedBytes, totalBytes) => {
           let pct;

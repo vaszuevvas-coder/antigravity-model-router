@@ -213,7 +213,7 @@ function getPluginVersion() {
     const ver = typeof meta?.version === 'string' ? meta.version.trim() : '';
     if (ver) return ver;
   } catch {}
-  return '4.0.0';
+  return '4.0.1';
 }
 
 function getUiBuildVersion() {
@@ -3433,6 +3433,7 @@ export async function startSidecarPanel(options = {}) {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const pluginRoot = resolveUpdaterRoot();
     const force = data?.force === true || data?.force === '1' || data?.force === 'true';
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const checkFn = typeof updateHandlers?.checkForPluginUpdate === 'function'
         ? updateHandlers.checkForPluginUpdate
@@ -3440,7 +3441,7 @@ export async function startSidecarPanel(options = {}) {
       const statusFn = typeof updateHandlers?.getPluginUpdateStatus === 'function'
         ? updateHandlers.getPluginUpdateStatus
         : getPluginUpdateStatus;
-      const checkRes = await checkFn({ pluginRoot, force });
+      const checkRes = await checkFn({ pluginRoot, force, lang });
       const status = statusFn(pluginRoot);
       return { ...checkRes, status };
     } catch (err) {
