@@ -1325,6 +1325,30 @@
         btn.classList.toggle('active', btn.dataset.val === activeGrillMode);
       });
 
+      const activeAutoSpecMode = (s.autoSpecMode === 'off' || s.autoSpecMode === 'always') ? s.autoSpecMode : 'auto';
+      document.querySelectorAll('#autoSpecModeGroup button').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.val === activeAutoSpecMode);
+      });
+      const autoSpecHintEl = document.getElementById('autoSpecModeHint');
+      if (autoSpecHintEl) {
+        if (activeAutoSpecMode === 'off') {
+          autoSpecHintEl.textContent = L(
+            'Режим «Выкл»: скрытый внутренний промпт не собирается (можно включить разово через /spec в чате).',
+            '"Off" mode: silent internal spec prompt is disabled (trigger once with /spec in chat).'
+          );
+        } else if (activeAutoSpecMode === 'always') {
+          autoSpecHintEl.textContent = L(
+            'Режим «Всегда»: перед любыми правками агент скрытно компилирует точный промпт по строкам, контрактам и тестам.',
+            '"Always" mode: before any code edit, the agent silently compiles an exact file/line/contract prompt.'
+          );
+        } else {
+          autoSpecHintEl.textContent = L(
+            'Режим «Авто M+»: на задачах M/L/XL агент сам собирает внутренний промпт по файлам, строкам и контрактам и сразу идёт по нему.',
+            '"Auto M+" mode: on M/L/XL tasks the agent silently compiles an internal file/line/contract prompt and executes against it.'
+          );
+        }
+      }
+
       const activeLeanMode = (s.leanMode === 'off' || s.leanMode === 'lite' || s.leanMode === 'ultra') ? s.leanMode : 'full';
       document.querySelectorAll('#leanModeGroup button').forEach((btn) => {
         btn.classList.toggle('active', btn.dataset.val === activeLeanMode);

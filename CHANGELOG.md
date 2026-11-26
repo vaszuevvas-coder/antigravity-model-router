@@ -2,7 +2,19 @@
 
 Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
 
-> Хронология с `v3.8.0` по `v4.0.3` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`57` основных / `65` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `46` наборов автотестов).
+> Хронология с `v3.8.0` по `v4.0.4` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`57` основных / `65` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `47` наборов автотестов).
+
+---
+
+## [4.0.4] — 2026-11-26
+
+### Добавлено (Режим «Внутреннее ТЗ (Auto-Spec)» / `Internal Spec-First`)
+- **Автоматическая скрытая компиляция внутреннего промпта ([core/tool-pruner.mjs](core/tool-pruner.mjs), [core/hook-runner.mjs](core/hook-runner.mjs), [rules/AGENTS.md](rules/AGENTS.md))**:
+  - Добавлены `resolveAutoSpecMode` (`off | auto | always` + разовые команды в запросе `/spec`, `/autospec off|auto|always`, `без авто-тз`) и `buildAutoSpecDirective`, интегрированные в `estimateTaskGradeAndThinkingBudget` и `SessionStart` (`buildStaticSessionStartHeader`).
+  - На задачах `M/L/XL` и глубокой архитектуре (в режиме `auto`, по умолчанию) или перед любыми правками кода (в режиме `always`) агент после разведки через `ram_search`/`ram_slice` скрытно собирает в `<thinking>` точное внутреннее ТЗ (`FILES+LINES | SYMBOLS & CONTRACTS | BLAST RADIUS | EDGE CASES | VERIFY`) и сразу опирается на него без вывода простыни промпта в чат.
+- **Схема состояния, панель управления и автотесты ([sidecars/panel/lib/panel-state-skills.mjs](sidecars/panel/lib/panel-state-skills.mjs), [sidecars/panel/ui-src/](sidecars/panel/ui-src/head-body.html), [sidecars/panel/ui.html](sidecars/panel/ui.html), [tests/auto-spec-mode.test.mjs](tests/auto-spec-mode.test.mjs))**:
+  - В `DEFAULT_STATE` и `sanitizeStatePatch` добавлен параметр `autoSpecMode` (по умолчанию `'auto'`), а в боковую панель — переключатель **Выкл / Авто M+ / Всегда** с полной RU/EN-локализацией в `00-i18n.js`.
+  - Добавлен набор автотестов `tests/auto-spec-mode.test.mjs` для проверки схемы, директив, триггеров и синхронизации UI.
 
 ---
 

@@ -1,6 +1,6 @@
 /**
  * @file tool-pruner.mjs
- * @description Когнитивный 3D-маршрутизатор The Tunnel (3D Cognitive Router v4.0.3):
+ * @description Когнитивный 3D-маршрутизатор The Tunnel (3D Cognitive Router v4.0.4):
  * Оценивает реальный охват графа кода (Scope-Scout + PageRank), строит 3D-тензор
  * Ширина × Глубина × Неопределённость/Риск, генерирует адаптивные варианты плана и проверяет селектор модели Gemini 4.
  */
@@ -1335,6 +1335,13 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
 
   const grillSignal = detectGrillMeSignals(promptText, matrix3D, state);
   const grillDirective = buildGrillMeDirective({ grillSignal, grade, matrix3D, lang: uiLang });
+  const autoSpecMode = resolveAutoSpecMode(promptText, state);
+  const autoSpecDirective = buildAutoSpecDirective({
+    mode: autoSpecMode,
+    grade,
+    isReadOnlyQuestion: Boolean(signals.isReadOnlyQuestion),
+    isDeepAuditOrArch: Boolean(isDeepAuditOrArch),
+  });
 
   let budgetHint = '';
   let optionsBlueprint = null;
@@ -1385,6 +1392,9 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
       `🧭 [3D Triage: ${label3D} (${matrix3D.tensorId} -> pre-read ~${grade})${selectorSnapshot ? ` | ${selectorSnapshot}` : ''} | ${subTag} | Optimal: ${recModel}${modeNote}]`,
       buildAdaptiveReasoningDirective(matrix3D, modelProfile),
     ];
+    if (autoSpecDirective) {
+      lines.push(autoSpecDirective);
+    }
     if (evalTip) {
       lines.push(`🎚️ [Pre-Read Selector Hint (re-verify after code read)] ${evalTip}`);
     }
@@ -1450,6 +1460,7 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
     selectorEval,
     compiledSpec,
     grillMe: grillSignal,
+    autoSpecMode,
     isReadOnlyQuestion: Boolean(signals.isReadOnlyQuestion),
     isModalAnalyticalQuestion: Boolean(signals.isModalAnalyticalQuestion),
     isApprovalFollowUp: false,
@@ -1505,3 +1516,36 @@ export function buildTerseModeDirective(mode = 'off') {
   const maxWords = clean === 'ultracave' ? 12 : 20;
   return `- Controlled Brevity (${clean} · ASD-STE100): answer-first (\`[target] [action] [reason]\`, <=${maxWords} words/sentence, zero filler); keep code, paths, negations, numbers, and security/destructive warnings 100% exact and complete.`;
 }
+
+/**
+ * Resolves Internal Spec-First mode (`off | auto | always`) from prompt overrides or persisted state.
+ * @param {string} [promptText='']
+ * @param {object} [state={}]
+ * @returns {'off'|'auto'|'always'}
+ */
+export function resolveAutoSpecMode(promptText = '', state = {}) {
+  const text = String(promptText || '');
+  const m = /(?:^|\s)\/autospec(?:\s+(off|auto|always))?\b/i.exec(text);
+  if (m) {
+    return (m[1] || 'always').toLowerCase();
+  }
+  if (/(?:^|\s)\/spec\b/i.test(text)) return 'always';
+  if (/\b(?:stop\s+autospec|no\s+autospec)\b|без\s+авто[-\s]?тз/i.test(text)) return 'off';
+  const raw = typeof state?.autoSpecMode === 'string' ? state.autoSpecMode.trim().toLowerCase() : 'auto';
+  return (raw === 'off' || raw === 'always') ? raw : 'auto';
+}
+
+/**
+ * Builds the Internal Spec-First directive so the agent silently compiles an exact file/line/contract
+ * execution prompt in <thinking> after scouting and executes against it without dumping raw prompts to chat.
+ * @param {{ mode?: 'off'|'auto'|'always', grade?: string, isReadOnlyQuestion?: boolean, isDeepAuditOrArch?: boolean }} [opts={}]
+ * @returns {string}
+ */
+export function buildAutoSpecDirective({ mode = 'auto', grade = 'M', isReadOnlyQuestion = false, isDeepAuditOrArch = false } = {}) {
+  if (isReadOnlyQuestion) return '';
+  const clean = (mode === 'off' || mode === 'always') ? mode : 'auto';
+  if (clean === 'off') return '';
+  if (clean === 'auto' && grade === 'S' && !isDeepAuditOrArch) return '';
+  return `📐 [Internal Spec-First (${clean} · ${grade})] Before proposing a plan or editing, scout target files via ram_search/ram_slice and silently compile an internal execution prompt in <thinking> (FILES+LINES | SYMBOLS & CONTRACTS | BLAST RADIUS | EDGE CASES | VERIFY), then execute directly against it without dumping the raw prompt to chat.`;
+}
+

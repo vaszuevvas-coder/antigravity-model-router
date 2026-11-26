@@ -45,8 +45,8 @@ function buildStaticSessionStartHeader(state = {}) {
   const isEn = resolveUserLanguage(state) === 'en';
   const lines = [
     isEn
-      ? '# The Tunnel v4.0.3 (EN-Internal / EN-Chat)'
-      : '# The Tunnel v4.0.3 (EN-Internal / RU-Chat)',
+      ? '# The Tunnel v4.0.4 (EN-Internal / EN-Chat)'
+      : '# The Tunnel v4.0.4 (EN-Internal / RU-Chat)',
     isEn
       ? '- User replies/UI/Role/toolSummary: 100% English.'
       : '- User replies/UI/Role/toolSummary: 100% Russian.',
@@ -69,6 +69,13 @@ function buildStaticSessionStartHeader(state = {}) {
     const cap = terse === 'ultracave' ? 12 : 20;
     lines.push(
       `- Controlled Brevity (${terse} · ASD-STE100): answer-first (\`[target] [action] [reason]\`, <=${cap} words/sentence, zero filler); keep code, paths, negations, numbers, and security warnings 100% exact.`
+    );
+  }
+  const autoSpec = typeof state?.autoSpecMode === 'string' ? state.autoSpecMode.trim().toLowerCase() : 'auto';
+  if (autoSpec === 'auto' || autoSpec === 'always') {
+    const scopeLabel = autoSpec === 'always' ? 'all coding tasks' : 'M/L/XL & Deep tasks';
+    lines.push(
+      `- Internal Spec-First (${autoSpec}): on ${scopeLabel}, scout target slices first and silently compile an internal execution prompt in <thinking> (FILES+LINES | CONTRACTS | BLAST RADIUS | EDGE CASES | VERIFY) before planning or editing.`
     );
   }
   return lines;
@@ -683,12 +690,12 @@ export function buildZeroTokenUserBadgeStep(rawOpts = {}) {
         ? `Pro Architect${subSuffix}`
         : strat === 'flash_dispatcher' || strat === 'economy'
           ? `Flash Dispatcher${subSuffix}`
-          : `Autopilot v4.0.3${subSuffix}`)
+          : `Autopilot v4.0.4${subSuffix}`)
     : (strat === 'pro_architect' || strat === 'performance'
         ? `Pro-Архитектор${subSuffix}`
         : strat === 'flash_dispatcher' || strat === 'economy'
           ? `Flash-Диспетчер${subSuffix}`
-          : `Автопилот v4.0.3${subSuffix}`);
+          : `Автопилот v4.0.4${subSuffix}`);
   const executor = isEn
     ? (modelProfile?.displayEn || modelProfile?.shortLabel || modelProfile?.displayRu || modelProfile?.displayNameRu || 'Current executor')
     : (modelProfile?.displayRu || modelProfile?.displayNameRu || modelProfile?.shortLabel || 'Текущий исполнитель');
@@ -1231,7 +1238,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
       }
     }
 
-    // 2. Когнитивный ИИ-Автопилот v4.0.3 (3D-матрица Breadth × Depth × Risk + безлимитное EN-мышление на Gemini 4)
+    // 2. Когнитивный ИИ-Автопилот v4.0.4 (3D-матрица Breadth × Depth × Risk + безлимитное EN-мышление на Gemini 4)
     if (baseState.thinkingLimiter !== false && toolPruner && typeof toolPruner.estimateTaskGradeAndThinkingBudget === 'function') {
       try {
         const budgetRes = toolPruner.estimateTaskGradeAndThinkingBudget(userInput, effectiveState, {

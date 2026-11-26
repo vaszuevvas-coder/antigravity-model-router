@@ -316,6 +316,7 @@ export const DEFAULT_STATE = {
   uiDesignPreviewGate: true,
   uiInspirationMode: 'ask',
   grillMode: 'auto',
+  autoSpecMode: 'auto',
   leanMode: 'full',
   terseMode: 'off',
   skillModes: {},
@@ -445,6 +446,8 @@ const VALID_UI_INSPIRATION_MODES = new Set(['ask', 'showroom', 'web_refs']);
 
 const VALID_GRILL_MODES = new Set(['off', 'auto', 'always']);
 
+const VALID_AUTO_SPEC_MODES = new Set(['off', 'auto', 'always']);
+
 const VALID_LEAN_MODES = new Set(['off', 'lite', 'full', 'ultra']);
 
 const VALID_TERSE_MODES = new Set(['off', 'caveman', 'ultracave']);
@@ -535,6 +538,9 @@ export function sanitizeStatePatch(patch = {}, options = {}) {
         break;
       case 'grillMode':
         if (VALID_GRILL_MODES.has(String(val))) out[key] = String(val);
+        break;
+      case 'autoSpecMode':
+        if (VALID_AUTO_SPEC_MODES.has(String(val))) out[key] = String(val);
         break;
       case 'leanMode':
         if (VALID_LEAN_MODES.has(String(val))) out[key] = String(val);

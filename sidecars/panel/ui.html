@@ -5,7 +5,7 @@
   <meta name="google" content="notranslate" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='2' width='28' height='28' rx='6' fill='%230a0b0d' stroke='%232a2d35' stroke-width='2'/%3E%3Cpath d='M6 16h6M20 16h6M12 16l4-5 4 5-4 5z' fill='none' stroke='%23f04848' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
-  <title>The Tunnel v4.0.3</title>
+  <title>The Tunnel v4.0.4</title>
   <script src="/preload.js"></script>
   <style>
     :root {
@@ -9207,6 +9207,18 @@
                   Режим «Авто M+»: предлагает детальный опрос по развилкам в стартовом окне на крупных или новых задачах.
                 </div>
                 <div class="control-row" style="margin-top: 8px;">
+                  <span title="Что делает: перед планом и правками агент сам изучает файлы, строки и зависимости и скрытно собирает для себя подробное внутреннее ТЗ-промпт в размышлениях.
+Зачем: даёт глубину ручной команды «напиши промпт» автоматически, без вывода лишнего текста в чат.">Внутреннее ТЗ (Auto-Spec):</span>
+                  <div class="win-btn-group" id="autoSpecModeGroup">
+                    <button type="button" class="win-btn" data-val="off" data-action="setAutoSpecMode" data-arg="off" title="Отключить автоматическую компиляцию внутреннего ТЗ-промпта">Выкл</button>
+                    <button type="button" class="win-btn active" data-val="auto" data-action="setAutoSpecMode" data-arg="auto" title="Скрытно собирать внутренний ТЗ-промпт для задач M/L/XL и сложной архитектуры">Авто M+</button>
+                    <button type="button" class="win-btn" data-val="always" data-action="setAutoSpecMode" data-arg="always" title="Всегда скрытно собирать внутренний ТЗ-промпт перед любыми правками кода">Всегда</button>
+                  </div>
+                </div>
+                <div id="autoSpecModeHint" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px; line-height: 1.35;">
+                  Режим «Авто M+»: на задачах M/L/XL агент сам собирает внутренний промпт по файлам, строкам и контрактам и сразу идёт по нему.
+                </div>
+                <div class="control-row" style="margin-top: 8px;">
                   <span title="Что делает: заставляет агента сначала искать готовые функции в проекте и стандартной библиотеке, прежде чем писать новый код с нуля.
 Зачем: предотвращает раздувание кодовой базы, дубликаты и лишние зависимости.">Лестница лени (Ponytail):</span>
                   <div class="win-btn-group" id="leanModeGroup">
@@ -10499,7 +10511,7 @@
 
     <div class="status-bar">
       <div id="statusPill" class="status-pane">Готово · Синхронизировано</div>
-      <div class="status-pane" id="footerPluginVersion">The Tunnel v4.0.3</div>
+      <div class="status-pane" id="footerPluginVersion">The Tunnel v4.0.4</div>
     </div>
     <div style="text-align:center;font-size:10.5px;color:var(--text-sub);opacity:0.7;padding:4px 0 2px;letter-spacing:0.02em;">Created by Vasili Zuev</div>
   </div>
@@ -10510,7 +10522,7 @@
       <div class="wiz-head">
         <div class="lg-brand">
           <span class="lg-brand-orb" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 8h3.5M10.5 8H14M5.5 8L8 4.5 10.5 8 8 11.5z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v4.0.3</span>
+          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v4.0.4</span>
           <span class="lg-session-pill" id="wizLaunchBadge">Первый запуск</span>
         </div>
         <button class="lg-icon-btn round" type="button" data-action="closeOnboardingWizard" title="Отложить или закрыть окно настройки (Esc)">×</button>
@@ -10862,9 +10874,11 @@
       'Умная связка Orchestrator': 'Smart Orchestrator Synergy',
       '— без лишних опросов на': '— skips extra prompts on',
       'Детальный опрос (Grill-Me):': 'Deep Interview (Grill-Me):',
+      'Внутреннее ТЗ (Auto-Spec):': 'Internal Spec (Auto-Spec):',
       'Выкл': 'Off',
       'Авто M+': 'Auto M+',
       'Режим «Авто M+»: предлагает детальный опрос по развилкам в стартовом окне на крупных или новых задачах.': '"Auto M+" mode: offers a decision-tree interview in the Pre-Task Gate for large or ambiguous tasks.',
+      'Режим «Авто M+»: на задачах M/L/XL агент сам собирает внутренний промпт по файлам, строкам и контрактам и сразу идёт по нему.': '"Auto M+" mode: on M/L/XL tasks the agent silently compiles an internal file/line/contract prompt and executes against it.',
       'Тихий автопилот': 'Silent Autopilot',
       'Без вопросов': 'No prompts',
       'Агент сразу выполняет задачу по выбранному шаблону без промежуточных подтверждений.': 'The agent executes immediately using the chosen preset without confirmation prompts.',
@@ -11432,6 +11446,9 @@
       'Не предлагать углублённый опрос по дереву решений': 'Do not offer deep decision-tree interview',
       'Предлагать выбор детального опроса в окне Pre-Task Gate для сложных и размытых задач': 'Offer deep interview option in Pre-Task Gate for complex or ambiguous tasks',
       'Всегда проводить детальный опрос по развилкам перед реализацией': 'Always run a detailed decision-tree interview before implementing',
+      'Отключить автоматическую компиляцию внутреннего ТЗ-промпта': 'Disable automatic silent compilation of the internal spec prompt',
+      'Скрытно собирать внутренний ТЗ-промпт для задач M/L/XL и сложной архитектуры': 'Silently compile an internal spec prompt for M/L/XL and deep architectural tasks',
+      'Всегда скрытно собирать внутренний ТЗ-промпт перед любыми правками кода': 'Always silently compile an internal spec prompt before any code edit',
       'Максимальная точность и архитектурный контроль через Orchestrator (Neon) / Neon': 'Maximum precision and architectural control via Orchestrator (Neon) / Neon',
       'Перед изменением внешнего вида ИИ спросит желаемый стиль и покажет 3 примера на выбор': 'Before changing visuals, AI asks your desired style and shows 3 preview options',
       'Делать дизайн и анимации сразу в коде без предварительной витрины вариантов': 'Implement design & animations directly in code without a preview showroom',
@@ -11636,6 +11653,7 @@
       'Что делает: перед началом правок оценивает масштаб задачи (S/M/L/XL), подбирает модель и при необходимости задаёт уточняющие вопросы. Зачем: защищает от поспешных переделок на сложных задачах и перерасхода квоты.': 'What it does: assesses task grade (S/M/L/XL), picks the optimal model, and asks clarifying questions before major edits.\nWhy: prevents rushed rewrites and unnecessary quota burn.',
       'Что делает: выбирает, начиная с какого масштаба задачи показывать окно подтверждения плана (Pre-Task Gate). Зачем: позволяет делать мелкие правки без пауз, но спрашивать перед крупными.': 'What it does: sets the minimum task size that triggers the Pre-Task Gate confirmation prompt.\nWhy: lets tiny edits run immediately while confirming big changes.',
       'Что делает: перед написанием кода проводит короткое интервью по развилкам архитектуры и крайним случаям (метод Grill-Me). Зачем: проясняет спорные места до редактирования файлов и снижает риск переделок.': 'What it does: runs a short interview on architectural forks and edge cases (Grill-Me) before coding.\nWhy: resolves ambiguities before editing files and cuts rework.',
+      'Что делает: перед планом и правками агент сам изучает файлы, строки и зависимости и скрытно собирает для себя подробное внутреннее ТЗ-промпт в размышлениях. Зачем: даёт глубину ручной команды «напиши промпт» автоматически, без вывода лишнего текста в чат.': 'What it does: scouts target files, lines, and dependencies and silently compiles an internal execution spec prompt in thinking before planning or editing.\nWhy: delivers deep prompt-engineering quality automatically without dumping raw prompts to chat.',
       'Что делает: заставляет агента сначала искать готовые функции в проекте и стандартной библиотеке, прежде чем писать новый код с нуля. Зачем: предотвращает раздувание кодовой базы, дубликаты и лишние зависимости.': 'What it does: enforces checking existing repo helpers and stdlib before writing new code.\nWhy: prevents bloat, duplicated logic, and unnecessary dependencies.',
       'Что делает: ограничивает «воду» во внутренних рассуждениях и формулировках ответов по стандарту ASD-STE100 (код не сокращается). Зачем: ускоряет генерацию и экономит выходные токены квоты.': 'What it does: trims filler prose in thinking and replies using ASD-STE100 style (code remains verbatim).\nWhy: speeds up responses and saves output token quota.',
       'Что делает: агент сразу приступает к выполнению по выбранному профилю маршрутизации без стартовых вопросов. Зачем: удобно, когда вы хотите максимальную скорость без остановок на подтверждение плана.': 'What it does: starts executing immediately using your chosen routing preset without pre-task prompts.\nWhy: ideal when you want maximum speed without confirmation pauses.',
@@ -12406,6 +12424,10 @@
 
     function setGrillMode(mode) {
       updateState({ grillMode: mode });
+    }
+
+    function setAutoSpecMode(mode) {
+      updateState({ autoSpecMode: mode });
     }
 
     function setLeanMode(mode) {
@@ -14490,6 +14512,30 @@
       document.querySelectorAll('#grillModeGroup button').forEach((btn) => {
         btn.classList.toggle('active', btn.dataset.val === activeGrillMode);
       });
+
+      const activeAutoSpecMode = (s.autoSpecMode === 'off' || s.autoSpecMode === 'always') ? s.autoSpecMode : 'auto';
+      document.querySelectorAll('#autoSpecModeGroup button').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.val === activeAutoSpecMode);
+      });
+      const autoSpecHintEl = document.getElementById('autoSpecModeHint');
+      if (autoSpecHintEl) {
+        if (activeAutoSpecMode === 'off') {
+          autoSpecHintEl.textContent = L(
+            'Режим «Выкл»: скрытый внутренний промпт не собирается (можно включить разово через /spec в чате).',
+            '"Off" mode: silent internal spec prompt is disabled (trigger once with /spec in chat).'
+          );
+        } else if (activeAutoSpecMode === 'always') {
+          autoSpecHintEl.textContent = L(
+            'Режим «Всегда»: перед любыми правками агент скрытно компилирует точный промпт по строкам, контрактам и тестам.',
+            '"Always" mode: before any code edit, the agent silently compiles an exact file/line/contract prompt.'
+          );
+        } else {
+          autoSpecHintEl.textContent = L(
+            'Режим «Авто M+»: на задачах M/L/XL агент сам собирает внутренний промпт по файлам, строкам и контрактам и сразу идёт по нему.',
+            '"Auto M+" mode: on M/L/XL tasks the agent silently compiles an internal file/line/contract prompt and executes against it.'
+          );
+        }
+      }
 
       const activeLeanMode = (s.leanMode === 'off' || s.leanMode === 'lite' || s.leanMode === 'ultra') ? s.leanMode : 'full';
       document.querySelectorAll('#leanModeGroup button').forEach((btn) => {
@@ -20633,6 +20679,7 @@
         case 'setUiDesignGate': setUiDesignGate(arg === 'true'); break;
         case 'setUiInspirationMode': setUiInspirationMode(arg); break;
         case 'setGrillMode': setGrillMode(arg); break;
+        case 'setAutoSpecMode': setAutoSpecMode(arg); break;
         case 'setLeanMode': setLeanMode(arg); break;
         case 'setTerseMode': setTerseMode(arg); break;
         case 'toggleComposerGrillMe': toggleComposerGrillMe(); break;

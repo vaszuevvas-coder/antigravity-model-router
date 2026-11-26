@@ -82,7 +82,7 @@ function mapModelToGemini4Route(grade, recommendedModel = '', { batch = false } 
 function printHelp() {
   console.log(`
 ╔════════════════════════════════════════════════════════════════════════════╗
-║  🚀 THE TUNNEL v4.0.3 — GEMINI 4 + 12GB RAM + LOCAL GPU CLI                ║
+║  🚀 THE TUNNEL v4.0.4 — GEMINI 4 + 12GB RAM + LOCAL GPU CLI                ║
 ╚════════════════════════════════════════════════════════════════════════════╝
 
 Usage: node ag-cli.mjs <command> [arguments]

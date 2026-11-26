@@ -780,6 +780,7 @@
         case 'setUiDesignGate': setUiDesignGate(arg === 'true'); break;
         case 'setUiInspirationMode': setUiInspirationMode(arg); break;
         case 'setGrillMode': setGrillMode(arg); break;
+        case 'setAutoSpecMode': setAutoSpecMode(arg); break;
         case 'setLeanMode': setLeanMode(arg); break;
         case 'setTerseMode': setTerseMode(arg); break;
         case 'toggleComposerGrillMe': toggleComposerGrillMe(); break;

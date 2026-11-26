@@ -397,6 +397,10 @@
       updateState({ grillMode: mode });
     }
 
+    function setAutoSpecMode(mode) {
+      updateState({ autoSpecMode: mode });
+    }
+
     function setLeanMode(mode) {
       updateState({ leanMode: mode });
     }
