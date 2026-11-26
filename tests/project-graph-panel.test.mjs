@@ -4665,4 +4665,305 @@ test('22. Hybrid layer column drag by header, smart node detach/reattach, align 
   }
 });
 
+test('30. Fragile file "Карта" deep-link: open-window focus param, path sanitization, auto includeTests & standalone focus selection', async () => {
+  const tmpWs = makeTmpDir('tunnel-pg-focus-ws-');
+  const tmpPanelDir = makeTmpDir('tunnel-pg-focus-panel-');
+  const prevIsolate = process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+  const prevStatePath = process.env.TUNNEL_TEST_STATE_PATH;
+  const prevCacheDir = process.env.TUNNEL_CACHE_DIR;
+
+  fs.mkdirSync(path.join(tmpWs, 'core'), { recursive: true });
+  fs.mkdirSync(path.join(tmpWs, 'tests'), { recursive: true });
+  fs.writeFileSync(path.join(tmpWs, 'core', 'auto-verifier.mjs'), 'export function verifyAll() { return true; }\n', 'utf8');
+  fs.writeFileSync(
+    path.join(tmpWs, 'tests', 'router-core.test.mjs'),
+    "import { verifyAll } from '../core/auto-verifier.mjs';\nverifyAll();\n",
+    'utf8'
+  );
+
+  class MiniSidecarApp {
+    constructor() {
+      this._routes = new Map();
+    }
+    page() {}
+    api(p, handler, method = 'POST') {
+      if (!this._routes.has(p)) this._routes.set(p, new Map());
+      this._routes.get(p).set(method.toUpperCase(), handler);
+    }
+    run() {
+      return http.createServer();
+    }
+  }
+
+  process.env.TUNNEL_TEST_ISOLATE_INSTALLED = '1';
+  process.env.TUNNEL_TEST_STATE_PATH = path.join(tmpPanelDir, 'router-state.json');
+  process.env.TUNNEL_CACHE_DIR = path.join(tmpPanelDir, 'cache');
+
+  const panelApp = await startSidecarPanel({ SidecarAppClass: MiniSidecarApp });
+  try {
+    const openWindowHandler = panelApp._routes.get('/api/project-graph/open-window')?.get('POST');
+    assert.equal(typeof openWindowHandler, 'function', '/api/project-graph/open-window POST route must exist');
+    const mockReq = { headers: { host: '127.0.0.1:41234', origin: 'http://127.0.0.1:41234', 'x-sidecar-token': 'tok123' } };
+
+    // 1. /api/project-graph/open-window forwards sanitized focus param
+    const okJson = await openWindowHandler({ rootDir: tmpWs, focus: '.\\core\\auto-verifier.mjs', dryRun: true }, mockReq);
+    assert.equal(okJson.ok, true);
+    const okUrl = new URL(okJson.url);
+    assert.equal(okUrl.searchParams.get('view'), 'graph');
+    assert.equal(okUrl.searchParams.get('focus'), 'core/auto-verifier.mjs');
+
+    // 2. /api/project-graph/open-window strips path traversal & schemes
+    const badJson = await openWindowHandler({ rootDir: tmpWs, focus: '../secrets.env', dryRun: true }, mockReq);
+    assert.equal(badJson.ok, true);
+    assert.equal(new URL(badJson.url).searchParams.get('focus'), null, 'Path traversal focus must be stripped');
+
+    const schemeJson = await openWindowHandler({ rootDir: tmpWs, focus: 'javascript:alert(1)', dryRun: true }, mockReq);
+    assert.equal(schemeJson.ok, true);
+    assert.equal(new URL(schemeJson.url).searchParams.get('focus'), null, 'Scheme focus must be stripped');
+  } finally {
+    if (prevIsolate === undefined) delete process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+    else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIsolate;
+    if (prevStatePath === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
+    else process.env.TUNNEL_TEST_STATE_PATH = prevStatePath;
+    if (prevCacheDir === undefined) delete process.env.TUNNEL_CACHE_DIR;
+    else process.env.TUNNEL_CACHE_DIR = prevCacheDir;
+  }
+
+  // 3. Standalone boot with ?view=graph&focus=tests/router-core.test.mjs auto-enables tests, focuses & selects the file
+  const uiHtml = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+  const scriptMatches = [...uiHtml.matchAll(/<script>([\s\S]*?)<\/script>/gi)];
+  const mainScriptMatch = scriptMatches.find((m) => m[1].includes('pgInitStandaloneIfNeeded'));
+  assert.ok(mainScriptMatch);
+
+  const makeClassList = () => {
+    const set = new Set();
+    return {
+      add: (...cls) => cls.filter(Boolean).forEach((c) => set.add(c)),
+      remove: (...cls) => cls.forEach((c) => set.delete(c)),
+      toggle: (c, force) => {
+        if (force === true) { set.add(c); return true; }
+        if (force === false) { set.delete(c); return false; }
+        if (set.has(c)) { set.delete(c); return false; }
+        set.add(c); return true;
+      },
+      contains: (c) => set.has(c),
+    };
+  };
+  const makeEl = (tag = 'div', id = '') => {
+    const attrs = new Map();
+    const el = {
+      tagName: String(tag).toUpperCase(),
+      id,
+      className: '',
+      classList: makeClassList(),
+      style: {},
+      dataset: {},
+      children: [],
+      textContent: '',
+      innerHTML: '',
+      value: '',
+      checked: false,
+      disabled: false,
+      width: 960,
+      height: 640,
+      clientWidth: 960,
+      clientHeight: 640,
+      scrollHeight: 640,
+      scrollTop: 0,
+      title: '',
+      parentElement: null,
+      addEventListener() {},
+      removeEventListener() {},
+      setAttribute(k, v) { attrs.set(k, String(v)); },
+      getAttribute(k) { return attrs.has(k) ? attrs.get(k) : null; },
+      removeAttribute(k) { attrs.delete(k); },
+      appendChild(c) { if (c) { c.parentElement = el; el.children.push(c); } return c; },
+      removeChild(c) { return c; },
+      focus() {},
+      blur() {},
+      click() {},
+      closest() { return null; },
+      querySelector() { return null; },
+      querySelectorAll() { return []; },
+      getBoundingClientRect() { return { left: 0, top: 0, width: 960, height: 640, right: 960, bottom: 640 }; },
+      getContext() {
+        return {
+          setTransform() {}, clearRect() {}, save() {}, restore() {}, translate() {}, scale() {},
+          beginPath() {}, moveTo() {}, lineTo() {}, quadraticCurveTo() {}, bezierCurveTo() {}, arc() {}, rect() {},
+          roundRect() {}, closePath() {}, clip() {}, fill() {}, stroke() {}, fillRect() {}, strokeRect() {},
+          fillText() {}, measureText(t) { return { width: String(t || '').length * 6 }; }, setLineDash() {},
+          createLinearGradient: () => ({ addColorStop() {} }),
+          createRadialGradient: () => ({ addColorStop() {} }),
+        };
+      },
+    };
+    return el;
+  };
+
+  const elements = new Map();
+  const getOrCreateEl = (id, tag = 'div') => {
+    if (!elements.has(id)) elements.set(id, makeEl(tag, id));
+    return elements.get(id);
+  };
+  const bodyEl = makeEl('body');
+  const doc = {
+    body: bodyEl,
+    documentElement: makeEl('html'),
+    title: '',
+    hidden: false,
+    activeElement: null,
+    getElementById: (id) => getOrCreateEl(id, (id === 'projectGraphCanvas' || id === 'pgCanvas') ? 'canvas' : 'div'),
+    createElement: (tag) => makeEl(tag),
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    addEventListener() {},
+    removeEventListener() {},
+  };
+
+  const fetchedUrls = [];
+  const openWindowPayloads = [];
+  const fetchMock = async (url, init = {}) => {
+    const u = String(url);
+    fetchedUrls.push(u);
+    if (u.startsWith('/api/project-graph/open-window')) {
+      try { openWindowPayloads.push(JSON.parse(init?.body || '{}')); } catch {}
+      return { ok: true, status: 200, json: async () => ({ ok: true, url: 'http://127.0.0.1:1234/?view=graph&focus=core%2Fauto-verifier.mjs' }) };
+    }
+    if (u.startsWith('/api/project-graph/workspaces')) {
+      return { ok: true, status: 200, json: async () => ({ ok: true, workspaces: [{ workspaceRoot: tmpWs, projectName: 'focus-test' }] }) };
+    }
+    if (u.startsWith('/api/project-graph')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          workspaceRoot: tmpWs,
+          workspaceName: 'focus-test',
+          focus: 'tests/router-core.test.mjs',
+          totalFiles: 2,
+          shownNodes: 2,
+          shownEdges: 1,
+          clusters: [
+            { id: 'tests', label: 'tests', size: 1 },
+            { id: 'core', label: 'core', size: 1 },
+          ],
+          nodes: [
+            { id: 'tests/router-core.test.mjs', label: 'router-core.test.mjs', clusterId: 'tests', clusterLabel: 'tests', inDeg: 0, outDeg: 1, hop: 0, isTest: true, isFragile: true, reliabilityPercent: 30 },
+            { id: 'core/auto-verifier.mjs', label: 'auto-verifier.mjs', clusterId: 'core', clusterLabel: 'core', inDeg: 1, outDeg: 0, hop: 1, isFragile: true, reliabilityPercent: 29 },
+          ],
+          edges: [{ source: 'tests/router-core.test.mjs', target: 'core/auto-verifier.mjs', kind: 'import' }],
+          cycles: [],
+          cycleNodeIds: [],
+          cycleEdgeKeys: [],
+          orphanIds: [],
+          testFilesByTarget: { 'core/auto-verifier.mjs': ['tests/router-core.test.mjs'] },
+        }),
+      };
+    }
+    if (u.startsWith('/api/state')) {
+      return { ok: true, status: 200, json: async () => ({ ok: true, state: { uiLanguage: 'ru', panelTheme: 'glass_teal' } }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+
+  const windowObj = {
+    location: {
+      search: `?view=graph&rootDir=${encodeURIComponent(tmpWs)}&focus=${encodeURIComponent('tests/router-core.test.mjs')}&token=tok123`,
+      origin: 'http://127.0.0.1:41234',
+      href: `http://127.0.0.1:41234/?view=graph&rootDir=${encodeURIComponent(tmpWs)}&focus=${encodeURIComponent('tests/router-core.test.mjs')}&token=tok123`,
+    },
+    history: { replaceState() {} },
+    sidecar: { token: 'tok123', rpc() { return Promise.resolve({}); } },
+    devicePixelRatio: 1,
+    innerWidth: 1280,
+    innerHeight: 800,
+    addEventListener() {},
+    removeEventListener() {},
+    requestAnimationFrame: () => 0,
+    cancelAnimationFrame() {},
+    matchMedia: () => ({ matches: false, addEventListener() {} }),
+    ResizeObserver: class { observe() {} disconnect() {} },
+    IntersectionObserver: class { observe() {} disconnect() {} },
+    localStorage: { _m: new Map(), getItem(k) { return this._m.get(k) ?? null; }, setItem(k, v) { this._m.set(k, String(v)); }, removeItem(k) { this._m.delete(k); } },
+    navigator: { clipboard: { writeText: async () => {} } },
+    fetch: fetchMock,
+    URLSearchParams,
+    URL,
+  };
+  windowObj.window = windowObj;
+  windowObj.self = windowObj;
+  windowObj.document = doc;
+
+  const ctx = vm.createContext({
+    window: windowObj,
+    self: windowObj,
+    globalThis: windowObj,
+    document: doc,
+    navigator: windowObj.navigator,
+    localStorage: windowObj.localStorage,
+    URLSearchParams,
+    URL,
+    ResizeObserver: windowObj.ResizeObserver,
+    IntersectionObserver: windowObj.IntersectionObserver,
+    Event: class { constructor(type) { this.type = type; } },
+    CustomEvent: class { constructor(type, opts = {}) { this.type = type; this.detail = opts.detail; } },
+    requestAnimationFrame: windowObj.requestAnimationFrame,
+    cancelAnimationFrame: windowObj.cancelAnimationFrame,
+    setTimeout: () => 0,
+    clearTimeout() {},
+    setInterval: () => 0,
+    clearInterval() {},
+    fetch: fetchMock,
+    console,
+    Promise, Set, Map, WeakMap, Array, Object, String, Number, Boolean, Math, Date, JSON, RegExp, Error,
+    encodeURIComponent, decodeURIComponent,
+  });
+
+  vm.runInContext(mainScriptMatch[1], ctx, { filename: 'sidecars/panel/ui.html' });
+  for (let i = 0; i < 10; i++) {
+    await new Promise((r) => setImmediate(r));
+    if (vm.runInContext('pgState.nodes.length', ctx) > 0) break;
+  }
+
+  const graphFetch = fetchedUrls.find((u) => u.startsWith('/api/project-graph?'));
+  assert.ok(graphFetch, 'Standalone focus boot must fetch /api/project-graph');
+  const graphQs = new URLSearchParams(graphFetch.split('?')[1] || '');
+  assert.equal(graphQs.get('focus'), 'tests/router-core.test.mjs', 'Must request focused file from API');
+  assert.equal(graphQs.get('includeTests'), '1', 'Must auto-enable includeTests when focus file is a test');
+
+  const focusCheck = vm.runInContext(`(() => {
+    const fn = pgState.nodeById.get('tests/router-core.test.mjs');
+    return {
+      mode: pgState.mode,
+      viewLevel: pgState.viewLevel,
+      focusFile: pgState.focusFile,
+      selectedNodeId: pgState.selectedNodeId,
+      includeTests: pgState.includeTests,
+      nodesCount: pgState.nodes.length,
+      camX: pgState.camX,
+      camY: pgState.camY,
+      nodeX: fn ? fn.x : null,
+      nodeY: fn ? fn.y : null,
+      emptySub: document.getElementById('pgEmptySub').textContent,
+    };
+  })()`, ctx);
+  assert.equal(focusCheck.mode, 'local');
+  assert.equal(focusCheck.viewLevel, 'files');
+  assert.equal(focusCheck.focusFile, 'tests/router-core.test.mjs');
+  assert.equal(focusCheck.selectedNodeId, 'tests/router-core.test.mjs');
+  assert.equal(focusCheck.includeTests, true);
+  assert.equal(focusCheck.nodesCount, 2, `Expected 2 hydrated nodes (emptySub=${focusCheck.emptySub})`);
+  assert.equal(focusCheck.camX, focusCheck.nodeX, `Camera X must center on focused fragile file (emptySub=${focusCheck.emptySub})`);
+  assert.equal(focusCheck.camY, focusCheck.nodeY, 'Camera Y must center on focused fragile file');
+
+  // 4. openFragileInGraph in non-standalone panel forwards focus to /api/project-graph/open-window
+  windowObj.location.search = '?token=tok123';
+  await vm.runInContext(`openFragileInGraph('core/auto-verifier.mjs')`, ctx);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(openWindowPayloads.length, 1, 'openFragileInGraph must invoke /api/project-graph/open-window');
+  assert.equal(openWindowPayloads[0].focus, 'core/auto-verifier.mjs');
+});
+
+
 

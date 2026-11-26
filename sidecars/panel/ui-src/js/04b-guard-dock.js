@@ -748,12 +748,10 @@
 
     function openFragileInGraph(filePath) {
       if (typeof openProjectGraphModal === 'function') {
-        openProjectGraphModal();
-        if (filePath && typeof pgSelectNodeById === 'function') {
-          setTimeout(function () {
-            try { pgSelectNodeById(filePath); } catch {}
-          }, 420);
-        }
+        const cleanFocus = typeof filePath === 'string'
+          ? filePath.trim().replace(/\\/g, '/').replace(/^\.\//, '')
+          : '';
+        void openProjectGraphModal(cleanFocus ? { focusFile: cleanFocus } : undefined);
       }
     }
 

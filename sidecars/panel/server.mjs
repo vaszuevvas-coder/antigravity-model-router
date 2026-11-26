@@ -2113,9 +2113,20 @@ export async function startSidecarPanel(options = {}) {
         (typeof data?.token === 'string' ? data.token : '') ||
         process.env.SIDECAR_TOKEN ||
         '';
+      const rawFocus = typeof data?.focus === 'string' ? data.focus.trim().replace(/\\/g, '/').replace(/^\.\//, '') : '';
+      const cleanFocus = (
+        rawFocus &&
+        rawFocus.length <= 512 &&
+        !/[\r\n\0]/.test(rawFocus) &&
+        !rawFocus.startsWith('/') &&
+        !/^[a-zA-Z]:/.test(rawFocus) &&
+        !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(rawFocus) &&
+        !rawFocus.split('/').some((seg) => seg === '..')
+      ) ? rawFocus : '';
       const urlParams = new URLSearchParams();
       urlParams.set('view', 'graph');
       if (activeWs) urlParams.set('rootDir', activeWs);
+      if (cleanFocus) urlParams.set('focus', cleanFocus);
       if (rawToken) urlParams.set('token', String(rawToken).trim());
       const targetUrl = `http://127.0.0.1:${port}/?${urlParams.toString()}`;
 

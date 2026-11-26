@@ -3308,6 +3308,17 @@
         }
         pgState.rawGraphData = data;
         pgHydrateSimulation(data);
+        if (pgState.mode === 'local' && pgState.focusFile) {
+          const focusTarget = pgState.nodeById.get(pgState.focusFile) || (data.focus ? pgState.nodeById.get(data.focus) : null);
+          if (focusTarget) {
+            pgState.selectedNodeId = focusTarget.id;
+            pgState.camX = focusTarget.x;
+            pgState.camY = focusTarget.y;
+            if (typeof pgRefreshLensState === 'function') pgRefreshLensState();
+            pgRenderInspector();
+            pgDrawGraph();
+          }
+        }
         if (pgState.lens === 'blast' && typeof pgLoadGitDiff === 'function' && (!pgState.gitDiffLoaded || (opts && opts.refresh))) {
           void pgLoadGitDiff(Boolean(opts && opts.refresh));
         }
@@ -4157,11 +4168,46 @@
       }
     }
 
+    function pgNormalizeFocusFilePath(rawPath) {
+      const s = typeof rawPath === 'string' ? rawPath.trim().replace(/\\/g, '/').replace(/^\.\//, '') : '';
+      if (!s || s.length > 512 || /[\r\n\0]/.test(s) || s.startsWith('/') || /^[a-zA-Z]:/.test(s) || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(s)) {
+        return '';
+      }
+      if (s.split('/').some(function (seg) { return seg === '..'; })) return '';
+      return s;
+    }
+
+    function pgIsTestFilePath(relPath) {
+      const p = String(relPath || '').replace(/\\/g, '/');
+      if (!p) return false;
+      return /(^|\/)(tests?|__tests__|specs?)(\/|$)/i.test(p) || /\.(test|spec)\.[^./]+$/i.test(p);
+    }
+
+    function pgPrepareFocusState(focusFile) {
+      const cleanFocus = pgNormalizeFocusFilePath(focusFile);
+      if (!cleanFocus) return false;
+      pgState.focusFile = cleanFocus;
+      pgState.mode = 'local';
+      pgState.viewLevel = 'files';
+      pgState.drillFolder = '';
+      pgState.activeClusterId = '';
+      pgState.activeLayerTier = null;
+      pgState.hoveredLayerTier = null;
+      pgState.layerHeaderRects = [];
+      pgState.selectedNodeId = cleanFocus;
+      if (pgIsTestFilePath(cleanFocus)) {
+        pgState.includeTests = true;
+      }
+      return true;
+    }
+
     function pgInitStandaloneIfNeeded() {
       if (!pgIsStandaloneView()) return false;
+      let focusParam = '';
       try {
         const qs = new URLSearchParams(window.location.search);
         const wsParam = String(qs.get('rootDir') || '').trim();
+        focusParam = pgNormalizeFocusFilePath(qs.get('focus') || '');
         pgState.workspaceRoot = wsParam;
         if (wsParam) pgSaveRecentWorkspace(wsParam);
         if (typeof _selectedWorkspaceMode !== 'undefined') {
@@ -4171,12 +4217,14 @@
       if (document.body) {
         document.body.classList.add('pg-standalone');
       }
-      void openProjectGraphModal({ inlineOnly: true }).catch(function () {});
+      const openOpts = focusParam ? { inlineOnly: true, focusFile: focusParam } : { inlineOnly: true };
+      void openProjectGraphModal(openOpts).catch(function () {});
       void pgSyncStandaloneThemeAndLang();
       return true;
     }
 
     async function openProjectGraphModal(opts) {
+      const requestedFocus = pgNormalizeFocusFilePath((opts && (opts.focusFile || opts.focus)) || '');
       if (!pgIsStandaloneView() && !(opts && opts.inlineOnly)) {
         try {
           if (typeof flashStatus === 'function') {
@@ -4187,9 +4235,18 @@
             '';
           const curGraphWs = pgGetEffectiveWorkspaceRoot();
           const openBody = { token: tok };
-          if (curGraphWs) openBody.rootDir = curGraphWs;
-          const openUrl = curGraphWs
-            ? '/api/project-graph/open-window?rootDir=' + encodeURIComponent(curGraphWs)
+          const openParams = new URLSearchParams();
+          if (curGraphWs) {
+            openBody.rootDir = curGraphWs;
+            openParams.set('rootDir', curGraphWs);
+          }
+          if (requestedFocus) {
+            openBody.focus = requestedFocus;
+            openParams.set('focus', requestedFocus);
+          }
+          const openQs = openParams.toString();
+          const openUrl = openQs
+            ? '/api/project-graph/open-window?' + openQs
             : '/api/project-graph/open-window';
           const res = await panelFetch(openUrl, {
             method: 'POST',
@@ -4207,6 +4264,9 @@
 
       const modal = document.getElementById('projectGraphModal');
       if (!modal) return;
+      if (requestedFocus) {
+        pgPrepareFocusState(requestedFocus);
+      }
       pgState.open = true;
       modal.classList.add('visible');
       pgBindCanvasEvents();
