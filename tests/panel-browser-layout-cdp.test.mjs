@@ -412,6 +412,7 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
   let browserProc = null;
   let cdp = null;
 
+  const prevIsolate = process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
   try {
     const isolatedStatePath = path.join(tmpUserDataDir, 'router-state.json');
     if (stateSnapshotBuf !== null) {
@@ -419,6 +420,7 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
     }
     process.env.TUNNEL_TEST_STATE_PATH = isolatedStatePath;
     process.env.TUNNEL_CACHE_DIR = path.join(tmpUserDataDir, 'cache');
+    process.env.TUNNEL_TEST_ISOLATE_INSTALLED = '1';
     const TestSidecarApp = createTestSidecarAppClass();
     app = await startSidecarPanel({ port: 0, SidecarAppClass: TestSidecarApp });
     assert.ok(app && app.port > 0, 'Sidecar panel server must bind an ephemeral port');
@@ -447,7 +449,7 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
       while (Date.now() < deadline) {
         const ver = document.getElementById('footerPluginVersion')?.textContent || '';
         const bodyTheme = document.body.getAttribute('data-panel-theme');
-        if (ver.includes('3.') && bodyTheme) return true;
+        if (/\bv\d+\./.test(ver) && bodyTheme) return true;
         await new Promise((r) => setTimeout(r, 40));
       }
       throw new Error('Timed out waiting for initial panel UI hydration');
@@ -850,7 +852,6 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
         '#ramUnitStateBadge',
         '#gpuUnitStateBadge',
         '#cpuUnitStateBadge',
-        '#gpuUnitSavedPill',
         '#gpuModelsPicker',
         '#btn-gpuChatModel',
         '#btn-gpuChatModel .lg-select-chevron',
@@ -906,14 +907,25 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
     }
 
     // -----------------------------------------------------------------------
-    // 4. Real Theme CSS Application (glass_teal, studio_titanium, conductor_paper)
+    // 4. Single Dark Theme Enforcement & Legacy Theme Normalization (glass_teal)
     // -----------------------------------------------------------------------
-    const applyThemeAndReadStyles = async (themeId, mode, expectedAttr = themeId) => cdp.evaluate(async (id, applyMode, targetAttr) => {
-      if (applyMode === 'click') {
-        const btn = document.querySelector(`#panelThemeGroup button[data-theme="${id}"]`);
-        if (!btn) throw new Error(`Theme button not found for ${id}`);
-        btn.click();
-      } else {
+    const readThemeStyles = async () => cdp.evaluate(async () => {
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const cs = getComputedStyle(document.body);
+      return {
+        hasThemeGroup: Boolean(document.getElementById('panelThemeGroup')),
+        attr: document.body.getAttribute('data-panel-theme'),
+        backgroundColor: cs.backgroundColor,
+        color: cs.color,
+      };
+    });
+
+    const initialStyle = await readThemeStyles();
+    assert.equal(initialStyle.hasThemeGroup, false, 'Theme switcher group must be removed from header');
+    assert.equal(initialStyle.attr, 'glass_teal');
+
+    for (const legacyTheme of ['studio_titanium', 'conductor_paper']) {
+      await cdp.evaluate(async (id) => {
         await panelFetch('/api/state', {
           method: 'POST',
           body: JSON.stringify({ panelTheme: id }),
@@ -921,69 +933,264 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
         if (typeof refreshAll === 'function') {
           await refreshAll();
         }
-      }
+      }, legacyTheme);
+      const afterLegacy = await readThemeStyles();
+      assert.equal(afterLegacy.attr, 'glass_teal', `Legacy ${legacyTheme} must normalize to glass_teal`);
+      assert.equal(loadState().panelTheme, 'glass_teal', `Server router-state should normalize ${legacyTheme} to glass_teal`);
+      assert.equal(afterLegacy.backgroundColor, initialStyle.backgroundColor);
+      assert.equal(afterLegacy.color, initialStyle.color);
+    }
 
-      const deadline = Date.now() + 5000;
-      while (Date.now() < deadline) {
-        const attr = document.body.getAttribute('data-panel-theme');
-        if (attr === targetAttr) break;
-        await new Promise((r) => setTimeout(r, 25));
+    // -----------------------------------------------------------------------
+    // 5. Realistic Desktop User Width (880x1000): Real Mouse Clicks on Nested Spoilers,
+    //    Stale-Server Resilience & Zero RAM/GPU/CPU Counter Resets
+    // -----------------------------------------------------------------------
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: 880,
+      height: 1000,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await cdp.evaluate(async (spoilerIds) => {
+      try { localStorage.removeItem('ag_tunnel_open_spoilers_v1'); } catch {}
+      for (const id of spoilerIds) {
+        const el = document.getElementById(id);
+        if (el && el.open) el.open = false;
       }
-      // Wait for queued POST /api/update writes to settle before issuing the next API theme mutation.
-      if (applyMode === 'click') {
-        const settleDeadline = Date.now() + 4000;
-        while (Date.now() < settleDeadline) {
-          try {
-            const stRes = await panelFetch('/api/state', { method: 'GET' });
-            const stJson = await stRes.json();
-            if (stJson?.state?.panelTheme === targetAttr) break;
-          } catch {}
-          await new Promise((r) => setTimeout(r, 40));
+      if (typeof _locallyToggledSpoilers === 'object' && _locallyToggledSpoilers) {
+        for (const k of Object.keys(_locallyToggledSpoilers)) delete _locallyToggledSpoilers[k];
+      }
+      if (typeof _lastAppliedSpoilersMap === 'object' && _lastAppliedSpoilersMap) {
+        for (const k of Object.keys(_lastAppliedSpoilersMap)) delete _lastAppliedSpoilersMap[k];
+      }
+      if (typeof updateState === 'function') {
+        await updateState({
+          panelCollapsedCards: {},
+          panelOpenSpoilers: {},
+        });
+      }
+      if (typeof refreshAll === 'function') {
+        await refreshAll();
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }, [...PANEL_SPOILER_IDS]);
+
+    const spoilersStartClosed = await cdp.evaluate(() => ({
+      hw: Boolean(document.getElementById('hwEnginesSpoiler')?.open),
+      sent: Boolean(document.getElementById('sentinelEnginesSpoiler')?.open),
+    }));
+    assert.equal(spoilersStartClosed.hw, false, '#hwEnginesSpoiler must start closed before Section 5 click');
+    assert.equal(spoilersStartClosed.sent, false, '#sentinelEnginesSpoiler must start closed before Section 5 click');
+
+    const wideOverflow = await cdp.evaluate(async () => {
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return {
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+        innerWidth: window.innerWidth,
+      };
+    });
+    assert.equal(wideOverflow.innerWidth, 880, 'Wide viewport innerWidth must match 880px');
+    assert.ok(
+      wideOverflow.scrollWidth <= wideOverflow.clientWidth + 2,
+      `Horizontal overflow at 880x1000: scrollWidth=${wideOverflow.scrollWidth} > clientWidth+2 (${wideOverflow.clientWidth + 2})`,
+    );
+
+    const realClickSelector = async (selector) => {
+      const pt = await cdp.evaluate(async (sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return null;
+        el.scrollIntoView({ block: 'center' });
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const rc = el.getBoundingClientRect();
+        const x = Math.round(rc.left + rc.width / 2);
+        const y = Math.round(rc.top + rc.height / 2);
+        const hit = document.elementFromPoint(x, y);
+        return {
+          x,
+          y,
+          width: Math.round(rc.width),
+          height: Math.round(rc.height),
+          containsHit: Boolean(hit && (el === hit || el.contains(hit))),
+          hitTag: hit?.tagName || '',
+        };
+      }, selector);
+      assert.ok(pt && pt.width > 0 && pt.height > 0, `Clickable target missing or collapsed: ${selector}`);
+      assert.equal(pt.containsHit, true, `Click target occluded for ${selector}: ${JSON.stringify(pt)}`);
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: pt.x, y: pt.y, button: 'left', clickCount: 1 });
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pt.x, y: pt.y, button: 'left', clickCount: 1 });
+      await new Promise((r) => setTimeout(r, 320));
+    };
+
+    const hwInitial = await cdp.evaluate(async () => {
+      const card = document.getElementById('gpuRamCard');
+      if (card && card.classList.contains('is-collapsed') && typeof togglePanelCardCollapse === 'function') {
+        togglePanelCardCollapse('gpuRamCard');
+      }
+      if (typeof ensurePanelSectionsLoaded === 'function') {
+        await ensurePanelSectionsLoaded(['skills', 'checkpoints', 'bayesian', 'circuit', 'compaction', 'pitfalls', 'hw']);
+      }
+      if (typeof flushVisibleBlockRenders === 'function') {
+        flushVisibleBlockRenders();
+      }
+      if (typeof refreshAll === 'function') {
+        await refreshAll();
+      }
+      if (typeof ensurePanelSectionsLoaded === 'function') {
+        await ensurePanelSectionsLoaded(['skills', 'checkpoints', 'bayesian', 'circuit', 'compaction', 'pitfalls', 'hw']);
+      }
+      // Wait for async lazy sections (e.g. skills above gpuRamCard) so layout height settles before clicking.
+      let stable = 0;
+      let prevH = -1;
+      const deadline = Date.now() + 4000;
+      while (Date.now() < deadline && stable < 3) {
+        await new Promise((r) => setTimeout(r, 80));
+        const inFlight = typeof _inFlightPanelSections !== 'undefined' ? _inFlightPanelSections.size : 0;
+        const h = document.documentElement.scrollHeight;
+        if (inFlight === 0 && h === prevH) stable += 1;
+        else {
+          stable = 0;
+          prevH = h;
         }
       }
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      const cs = getComputedStyle(document.body);
+
+      window.__hwCounterMutations = [];
+      const ids = ['ramUnitMetricVal', 'gpuUnitMetricVal', 'cpuUnitMetricVal', 'ramUnitSavedPill', 'gpuUnitSavedPill', 'cpuUnitSavedPill'];
+      const obs = new MutationObserver((muts) => {
+        for (const m of muts) {
+          const el = m.target.nodeType === 1 ? m.target : m.target.parentElement;
+          const id = el?.id || el?.closest?.('[id]')?.id || '?';
+          window.__hwCounterMutations.push({
+            id,
+            type: m.type,
+            val: m.type === 'characterData' ? m.target.data : (el?.textContent || ''),
+          });
+        }
+      });
+      for (const id of ids) {
+        const el = document.getElementById(id);
+        if (el) obs.observe(el, { characterData: true, childList: true, subtree: true });
+      }
+      window.__hwCounterObserver = obs;
+
       return {
-        attr: document.body.getAttribute('data-panel-theme'),
-        backgroundColor: cs.backgroundColor,
-        color: cs.color,
+        ram: document.getElementById('ramUnitMetricVal')?.textContent || '',
+        gpu: document.getElementById('gpuUnitMetricVal')?.textContent || '',
+        cpu: document.getElementById('cpuUnitMetricVal')?.textContent || '',
+        ramSaved: document.getElementById('ramUnitSavedPill')?.textContent || '',
+        gpuSaved: document.getElementById('gpuUnitSavedPill')?.textContent || '',
+        cpuSaved: document.getElementById('cpuUnitSavedPill')?.textContent || '',
       };
-    }, themeId, mode, expectedAttr);
+    });
 
-    const glassStyle = await applyThemeAndReadStyles('glass_teal', 'click', 'glass_teal');
-    const studioStyle = await applyThemeAndReadStyles('studio_titanium', 'click', 'studio_titanium');
-    // Reset back to dark glass_teal before testing legacy conductor_paper API normalization
-    await applyThemeAndReadStyles('glass_teal', 'click', 'glass_teal');
-    const conductorStyle = await applyThemeAndReadStyles('conductor_paper', 'api', 'studio_titanium');
+    await realClickSelector('#hwEnginesSpoiler > summary');
+    await realClickSelector('#sentinelEnginesSpoiler > summary');
+    await realClickSelector('#btn-gpuChatModel');
 
-    assert.equal(glassStyle.attr, 'glass_teal');
-    assert.equal(studioStyle.attr, 'studio_titanium');
-    assert.equal(conductorStyle.attr, 'studio_titanium', 'Legacy conductor_paper must map to studio_titanium via /api/state');
-    assert.equal(loadState().panelTheme, 'studio_titanium', 'Server router-state should persist canonical studio_titanium');
+    const afterClicks = await cdp.evaluate(async () => {
+      await new Promise((r) => setTimeout(r, 250));
+      const openBeforeStale = {
+        hwEnginesSpoiler: Boolean(document.getElementById('hwEnginesSpoiler')?.open),
+        sentinelEnginesSpoiler: Boolean(document.getElementById('sentinelEnginesSpoiler')?.open),
+        selectHidden: Boolean(document.getElementById('lgCustomSelectMenu')?.hidden),
+        gpuCardCollapsed: Boolean(document.getElementById('gpuRamCard')?.classList.contains('is-collapsed')),
+        sentinelCardCollapsed: Boolean(document.getElementById('sentinelSectionCard')?.classList.contains('is-collapsed')),
+        wizVisible: Boolean(document.getElementById('onboardingWizardModal')?.classList.contains('visible')),
+        scrollY: window.scrollY,
+        lsSpoilers: localStorage.getItem('ag_tunnel_open_spoilers_v1'),
+        stateSpoilers: currentState?.panelOpenSpoilers,
+      };
+      // Simulate a stale server response stripping nested spoiler IDs from panelOpenSpoilers
+      if (typeof applyAllSpoilersOpenState === 'function') {
+        applyAllSpoilersOpenState({});
+      }
+      await new Promise((r) => setTimeout(r, 80));
+      const openAfterStale = {
+        hwEnginesSpoiler: Boolean(document.getElementById('hwEnginesSpoiler')?.open),
+        sentinelEnginesSpoiler: Boolean(document.getElementById('sentinelEnginesSpoiler')?.open),
+      };
+      if (window.__hwCounterObserver) {
+        window.__hwCounterObserver.disconnect();
+      }
+      return {
+        openBeforeStale,
+        openAfterStale,
+        hwAfter: {
+          ram: document.getElementById('ramUnitMetricVal')?.textContent || '',
+          gpu: document.getElementById('gpuUnitMetricVal')?.textContent || '',
+          cpu: document.getElementById('cpuUnitMetricVal')?.textContent || '',
+          ramSaved: document.getElementById('ramUnitSavedPill')?.textContent || '',
+          gpuSaved: document.getElementById('gpuUnitSavedPill')?.textContent || '',
+          cpuSaved: document.getElementById('cpuUnitSavedPill')?.textContent || '',
+        },
+        mutations: window.__hwCounterMutations || [],
+      };
+    });
 
-    assert.notEqual(
-      glassStyle.backgroundColor,
-      studioStyle.backgroundColor,
-      `Expected distinct body backgroundColor between glass_teal (${glassStyle.backgroundColor}) and studio_titanium (${studioStyle.backgroundColor})`,
-    );
-    assert.notEqual(
-      glassStyle.color,
-      studioStyle.color,
-      `Expected distinct body text color between glass_teal (${glassStyle.color}) and studio_titanium (${studioStyle.color})`,
-    );
-    assert.notEqual(
-      glassStyle.backgroundColor,
-      conductorStyle.backgroundColor,
-      `Expected conductor_paper to switch body backgroundColor away from glass_teal (${glassStyle.backgroundColor})`,
-    );
     assert.equal(
-      conductorStyle.backgroundColor,
-      studioStyle.backgroundColor,
-      'conductor_paper light palette should match canonical studio_titanium background',
+      afterClicks.openBeforeStale.hwEnginesSpoiler,
+      true,
+      `#hwEnginesSpoiler must remain open after real mouse click: ${JSON.stringify(afterClicks.openBeforeStale)}`,
     );
+    assert.equal(afterClicks.openBeforeStale.sentinelEnginesSpoiler, true, '#sentinelEnginesSpoiler must remain open after real mouse click');
+    assert.equal(afterClicks.openBeforeStale.selectHidden, false, '#lgCustomSelectMenu must open on real mouse click');
+    assert.equal(afterClicks.openAfterStale.hwEnginesSpoiler, true, '#hwEnginesSpoiler must NOT collapse on stale server panelOpenSpoilers={}');
+    assert.equal(afterClicks.openAfterStale.sentinelEnginesSpoiler, true, '#sentinelEnginesSpoiler must NOT collapse on stale server panelOpenSpoilers={}');
+    assert.equal(
+      afterClicks.mutations.length,
+      0,
+      `RAM/GPU/CPU counters must NOT reset/mutate on spoiler or dropdown clicks, saw: ${JSON.stringify(afterClicks.mutations)}`,
+    );
+    assert.equal(afterClicks.hwAfter.ram, hwInitial.ram);
+    assert.equal(afterClicks.hwAfter.gpu, hwInitial.gpu);
+    assert.equal(afterClicks.hwAfter.cpu, hwInitial.cpu);
+    assert.equal(afterClicks.hwAfter.ramSaved, hwInitial.ramSaved);
+    assert.equal(afterClicks.hwAfter.gpuSaved, hwInitial.gpuSaved);
+    assert.equal(afterClicks.hwAfter.cpuSaved, hwInitial.cpuSaved);
+
+    // Regression: transient ramCache.active=false miss must NOT wipe RAM/CPU metrics or trigrams
+    const ramMissAudit = await cdp.evaluate(() => {
+      const baseState = Object.assign({}, currentState || {}, { ramCacheEnabled: true });
+      const baseGpu = (lastPayloadCache && lastPayloadCache.gpu) || null;
+      const baseCpu = (lastPayloadCache && lastPayloadCache.cpu) || { hardware: { effectiveMaxThreads: 28, logicalCores: 32 }, telemetry: { workerBatches: 64 }, pool: {}, liveActivity: {} };
+      renderGpuAndRam(
+        baseGpu,
+        {
+          enabled: true,
+          active: true,
+          budgetMb: 32768,
+          cacheUsedMb: 42,
+          savedTokensEstimate: 12510000,
+          workspaces: [{ workspace: 'test-ws', files: 10, cacheMb: 42, trigramsIndexed: 164300 }],
+        },
+        baseState,
+        baseCpu
+      );
+      const activeSnap = {
+        ram: document.getElementById('ramUnitMetricVal')?.textContent || '',
+        ramPct: document.getElementById('ramUnitCapPct')?.textContent || '',
+      };
+      renderGpuAndRam(
+        baseGpu,
+        { enabled: true, active: false, budgetMb: 32768, cacheUsedMb: 0, savedTokensEstimate: 0, workspaces: [] },
+        baseState,
+        Object.assign({}, baseCpu, { ramTrigramsIndexed: 0 })
+      );
+      const afterMissSnap = {
+        ram: document.getElementById('ramUnitMetricVal')?.textContent || '',
+        ramPct: document.getElementById('ramUnitCapPct')?.textContent || '',
+      };
+      return { activeSnap, afterMissSnap };
+    });
+    assert.ok(!ramMissAudit.activeSnap.ram.startsWith('0 /'), `Expected active RAM > 0, got ${ramMissAudit.activeSnap.ram}`);
+    assert.ok(ramMissAudit.activeSnap.ramPct && ramMissAudit.activeSnap.ramPct !== '0%', `Expected active RAM pct > 0%, got ${ramMissAudit.activeSnap.ramPct}`);
+    assert.equal(ramMissAudit.afterMissSnap.ram, ramMissAudit.activeSnap.ram, 'Transient active:false must preserve RAM metric');
+    assert.equal(ramMissAudit.afterMissSnap.ramPct, ramMissAudit.activeSnap.ramPct, 'Transient active:false must preserve RAM pct');
   } finally {
     delete process.env.TUNNEL_TEST_STATE_PATH;
     delete process.env.TUNNEL_CACHE_DIR;
+    if (prevIsolate === undefined) delete process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+    else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIsolate;
     if (cdp) cdp.close();
     if (browserProc) killBrowserProcess(browserProc);
     if (app) {

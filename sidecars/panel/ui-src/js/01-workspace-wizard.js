@@ -81,13 +81,13 @@
 
       if (badgeEl) {
         if (_selectedWorkspaceMode === '__all__') {
-          badgeEl.textContent = L('🗂 Все проекты', '🗂 All projects');
+          badgeEl.textContent = L('Все проекты', 'All projects');
         } else if (_selectedWorkspaceMode !== '__auto__') {
-          badgeEl.textContent = '📁 ' + activeName;
+          badgeEl.textContent = activeName;
         } else {
           const autoTarget = _autoWorkspaceResolved || _activeWorkspaceResolved || '';
           const autoName = autoTarget ? getWorkspaceDisplayLabel(autoTarget) : (activeName || L('Проект', 'Project'));
-          badgeEl.textContent = L('🔄 Авто · ', '🔄 Auto · ') + autoName;
+          badgeEl.textContent = L('Авто · ', 'Auto · ') + autoName;
         }
       }
       if (triggerBtn) {
@@ -104,10 +104,10 @@
       }
       if (scopeBadge) {
         if (_selectedWorkspaceMode === '__all__') {
-          scopeBadge.textContent = L('🗂 Все проекты', '🗂 All projects');
+          scopeBadge.textContent = L('Все проекты', 'All projects');
           scopeBadge.title = L('Показаны снимки всех проектов', 'Showing snapshots from all projects');
         } else {
-          scopeBadge.textContent = '📁 ' + activeName;
+          scopeBadge.textContent = activeName;
           scopeBadge.title = _activeWorkspaceResolved ? (L('Проект: ', 'Project: ') + _activeWorkspaceResolved) : (L('Проект: ', 'Project: ') + activeName);
         }
       }
@@ -157,8 +157,8 @@
           const autoOpt = document.createElement('option');
           autoOpt.value = '__auto__';
           autoOpt.dataset.name = autoLabel
-            ? L('🔄 Авто (' + autoLabel + ')', '🔄 Auto (' + autoLabel + ')')
-            : L('🔄 Авто (активный чат)', '🔄 Auto (active chat)');
+            ? L('Авто (' + autoLabel + ')', 'Auto (' + autoLabel + ')')
+            : L('Авто (активный чат)', 'Auto (active chat)');
           autoOpt.dataset.vram = L('Авто', 'Auto');
           autoOpt.textContent = autoOpt.dataset.name;
           sel.appendChild(autoOpt);
@@ -169,8 +169,8 @@
             const opt = document.createElement('option');
             opt.value = w.workspaceRoot;
             const lbl = w.displayLabel || w.projectName || getWorkspaceBasename(w.workspaceRoot);
-            opt.dataset.name = '📁 ' + lbl;
-            opt.textContent = '📁 ' + lbl;
+            opt.dataset.name = lbl;
+            opt.textContent = lbl;
             if (Number(w.checkpointsCount || 0) > 0) {
               opt.dataset.size = Number(w.checkpointsCount) + L(' сн.', ' snap.');
             }
@@ -184,7 +184,7 @@
 
           const allOpt = document.createElement('option');
           allOpt.value = '__all__';
-          allOpt.dataset.name = L('🗂 Все проекты (общая лента)', '🗂 All projects (combined feed)');
+          allOpt.dataset.name = L('Все проекты (общая лента)', 'All projects (combined feed)');
           allOpt.dataset.size = L('Все', 'All');
           allOpt.textContent = allOpt.dataset.name;
           sel.appendChild(allOpt);
@@ -214,6 +214,8 @@
       _activeTurnDiffPreview = null;
       _loadedPanelSections.clear();
       telemetryLastSig = '';
+      if (typeof resetSentinelTransientState === 'function') resetSentinelTransientState();
+      if (typeof resetGuardDockTransientState === 'function') resetGuardDockTransientState();
       _localRagHistory.length = 0;
       renderLocalRagMessages();
       const shieldBadgeEl = document.getElementById('agentShieldBadge');
@@ -352,7 +354,6 @@
     let currentHardwareCeilings = null;
     let wizAutoOpenedOnce = false;
     let wizHwLoading = false;
-    let wizThemePreviewDirty = false;
     let wizSubTierPreviewDirty = false;
     let wizLangPreviewDirty = false;
     let wizViewModePreviewDirty = false;
@@ -377,7 +378,6 @@
       gpuAutoDistillLogs: false,
       gpuSemanticSearch: false,
       gpuPullMode: 'cascade',
-      panelTheme: 'glass_teal',
       modePreset: 'advisor_m',
       uiDesignPreviewGate: true,
       uiInspirationMode: 'ask',
@@ -482,7 +482,6 @@
         gpuPre.gpuSemanticSearch !== undefined ? gpuPre.gpuSemanticSearch : (currentState.gpuSemanticSearch !== false)
       );
       wizDraft.gpuPullMode = isFresh ? 'cascade' : 'skip';
-      wizDraft.panelTheme = normalizeUiTheme(currentState.panelTheme || 'glass_teal');
       wizDraft.uiInspirationMode = (currentState.uiInspirationMode === 'showroom' || currentState.uiInspirationMode === 'web_refs')
         ? currentState.uiInspirationMode
         : 'ask';
@@ -504,14 +503,6 @@
       if (typeof syncSmartComposerSizeAndScroll === 'function') {
         syncSmartComposerSizeAndScroll();
       }
-    }
-
-    function applyThemeDomPreviewOnly(themeId) {
-      const valid = normalizeUiTheme(themeId);
-      document.body.setAttribute('data-panel-theme', valid);
-      document.querySelectorAll('#panelThemeGroup button').forEach((btn) => {
-        btn.classList.toggle('active', btn.dataset.theme === valid);
-      });
     }
 
     function openOnboardingWizard(stepNum) {
@@ -538,7 +529,6 @@
 
       const modal = document.getElementById('onboardingWizardModal');
       if (modal) modal.classList.add('visible');
-      wizThemePreviewDirty = false;
       wizSubTierPreviewDirty = false;
       wizLangPreviewDirty = false;
       wizViewModePreviewDirty = false;
@@ -578,11 +568,9 @@
     function closeOnboardingWizard() {
       const modal = document.getElementById('onboardingWizardModal');
       if (modal) modal.classList.remove('visible');
-      wizThemePreviewDirty = false;
       wizSubTierPreviewDirty = false;
       wizLangPreviewDirty = false;
       wizViewModePreviewDirty = false;
-      applyThemeDomPreviewOnly(currentState.panelTheme);
       applyPanelViewModeDomPreviewOnly(currentState.panelViewMode);
       if (typeof applyUiLanguageDom === 'function') {
         applyUiLanguageDom(currentState.uiLanguage);
@@ -649,16 +637,8 @@
       renderWizardStep();
     }
 
-    function normalizeUiTheme(themeId) {
-      return themeId === 'studio_titanium' ? 'studio_titanium' : 'glass_teal';
-    }
-
-    function wizSetThemePreview(themeId) {
-      const valid = normalizeUiTheme(themeId);
-      wizDraft.panelTheme = valid;
-      wizThemePreviewDirty = true;
-      applyThemeDomPreviewOnly(valid);
-      renderWizardStep();
+    function normalizeUiTheme() {
+      return 'glass_teal';
     }
 
     function wizSetLanguage(lang) {
@@ -758,52 +738,52 @@
         const recInfo = hw.recommendation || {};
         const isScanning = wizHwLoading && !sys.cpuModel && !sys.totalRamMb;
         const cpuText = isScanning
-          ? L('⏳ Сканируем процессор...', '⏳ Scanning CPU...')
+          ? L('Сканируем процессор...', 'Scanning CPU...')
           : (sys.cpuModel
               ? (sys.cpuModel.replace(/\(R\)|\(TM\)|Processor|CPU/gi, '').trim() + ' · ' + (sys.logicalCores || 4) + L(' пот.', ' thr.'))
               : L('Авто-определение CPU', 'Auto-detect CPU'));
         const ramGb = sys.totalRamGb || Math.round((sys.totalRamMb || 8192) / 1024);
         const recRamGb = Math.max(1, Math.round((wizDraft.ramMaxBudgetMb || 4096) / 1024));
         const ramText = isScanning
-          ? L('⏳ Определяем объём ОЗУ...', '⏳ Detecting RAM...')
+          ? L('Определяем объём ОЗУ...', 'Detecting RAM...')
           : (ramGb + L(' ГБ ОЗУ (буфер: ', ' GB RAM (cache: ') + recRamGb + L(' ГБ)', ' GB)'));
         const gpuName = gpu.name || L('Встроенная графика / CPU', 'Integrated GPU / CPU');
         const gpuVramText = gpu.totalMb > 0 ? (' · ' + Math.round(gpu.totalMb / 1024) + L(' ГБ', ' GB')) : '';
-        const gpuTileText = isScanning ? L('⏳ Проверяем видеокарту...', '⏳ Detecting GPU...') : (gpuName + gpuVramText);
+        const gpuTileText = isScanning ? L('Проверяем видеокарту...', 'Detecting GPU...') : (gpuName + gpuVramText);
         const ollStatus = isScanning
-          ? L('⏳ Проверка Ollama...', '⏳ Checking Ollama...')
-          : (oll.running ? L('🟢 Запущена', '🟢 Running') : (oll.installed ? L('🟡 Установлена', '🟡 Installed') : L('⚪ Не найдена', '⚪ Not found')));
+          ? L('Проверка Ollama...', 'Checking Ollama...')
+          : (oll.running ? L('Запущена', 'Running') : (oll.installed ? L('Установлена', 'Installed') : L('Не найдена', 'Not found')));
         const sub = wizDraft.subscriptionTier;
         const lang = normalizeUiLanguage(wizDraft.uiLanguage || getUiLanguage());
         const viewMode = normalizePanelViewMode(wizDraft.panelViewMode || currentState.panelViewMode);
 
         bodyEl.innerHTML =
-          '<div class="wiz-section-label" style="margin-top:0;">🌐 Language / Язык интерфейса и ответов ИИ</div>' +
+          '<div class="wiz-group-title" style="margin-top:0;">Language / Язык интерфейса и ответов ИИ</div>' +
           '<div class="wiz-two-col" style="margin-bottom:10px;">' +
             '<div class="wiz-choice-card' + (lang === 'en' ? ' selected' : '') + '" style="margin-bottom:0;" data-action="wizSetLanguage" data-arg="en">' +
-              '<div class="wiz-choice-head"><span>🇺🇸 English</span><span style="font-size:10px;color:var(--accent-cyan);">Default</span></div>' +
+              '<div class="wiz-choice-head"><span>English</span><span style="font-size:10px;color:var(--accent-cyan);">Default</span></div>' +
               '<div class="wiz-choice-desc">English panel UI, setup wizard, hooks and AI replies.</div>' +
             '</div>' +
             '<div class="wiz-choice-card' + (lang === 'ru' ? ' selected' : '') + '" style="margin-bottom:0;" data-action="wizSetLanguage" data-arg="ru">' +
-              '<div class="wiz-choice-head"><span>🇷🇺 Русский</span><span style="font-size:10px;color:var(--status-ok);">RU</span></div>' +
+              '<div class="wiz-choice-head"><span>Русский</span><span style="font-size:10px;color:var(--status-ok);">RU</span></div>' +
               '<div class="wiz-choice-desc">Русский интерфейс пульта, мастера, хуков и ответов ИИ.</div>' +
             '</div>' +
           '</div>' +
-          '<div class="wiz-section-label">' + L('🎛️ Режим интерфейса панели', '🎛️ Panel Interface Mode') + '</div>' +
+          '<div class="wiz-group-title">' + L('Режим интерфейса панели', 'Panel Interface Mode') + '</div>' +
           '<div class="wiz-two-col" style="margin-bottom:10px;">' +
             '<div class="wiz-choice-card' + (viewMode === 'full' ? ' selected' : '') + '" style="margin-bottom:0;" data-action="wizSetViewMode" data-arg="full">' +
-              '<div class="wiz-choice-head"><span>🧩 Full</span><span style="font-size:10px;color:var(--accent-cyan);">' + L('По умолчанию', 'Default') + '</span></div>' +
+              '<div class="wiz-choice-head"><span>Full</span><span style="font-size:10px;color:var(--accent-cyan);">' + L('По умолчанию', 'Default') + '</span></div>' +
               '<div class="wiz-choice-desc">' + L('Все блоки настроек, телеметрия Роя, графики RAM/GPU, Дозор и экспертные спойлеры.', 'All setting blocks, Swarm telemetry, RAM/GPU charts, Sentinel & expert spoilers.') + '</div>' +
             '</div>' +
             '<div class="wiz-choice-card' + (viewMode === 'lite' ? ' selected' : '') + '" style="margin-bottom:0;" data-action="wizSetViewMode" data-arg="lite">' +
-              '<div class="wiz-choice-head"><span>⚡ Lite</span><span style="font-size:10px;color:var(--status-ok);">' + L('Компактно', 'Compact') + '</span></div>' +
+              '<div class="wiz-choice-head"><span>Lite</span><span style="font-size:10px;color:var(--status-ok);">' + L('Компактно', 'Compact') + '</span></div>' +
               '<div class="wiz-choice-desc">' + L('Краткий пульт: прогресс, Стек, Карта, компактный Композер, порог, дизайн, Рой, Дозор и RAM+GPU.', 'Compact panel: progress, Stack, Map, slim Composer, confirm threshold, design, Swarm, Sentinel & RAM+GPU.') + '</div>' +
             '</div>' +
           '</div>' +
 
           '<div class="hw-passport-card">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;">' +
-              '<span style="font-weight:700;font-size:11px;">' + L('🖥️ Паспорт и авто-калибровка вашей системы', '🖥️ Hardware Passport & Auto-Calibration') + '</span>' +
+              '<span style="font-weight:700;font-size:11px;">' + L('Паспорт и авто-калибровка вашей системы', 'Hardware Passport & Auto-Calibration') + '</span>' +
               '<button type="button" class="win-btn" style="font-size:9.5px;padding:2px 7px;" data-action="wizRescanHw">' + L('↻ Пересканировать ПК', '↻ Rescan PC') + '</button>' +
             '</div>' +
             '<div class="hw-spec-grid">' +
@@ -812,29 +792,29 @@
               '<div class="hw-spec-tile"><div class="hw-spec-k">' + L('Видеокарта', 'GPU') + ' (' + escHtml((gpu.vendor || 'cpu').toUpperCase()) + ')</div><div class="hw-spec-v" title="' + escHtml(gpuTileText) + '">' + escHtml(gpuTileText) + '</div></div>' +
               '<div class="hw-spec-tile"><div class="hw-spec-k">' + L('Локальный ИИ Ollama', 'Local AI Ollama') + '</div><div class="hw-spec-v">' + ollStatus + '</div></div>' +
             '</div>' +
-            '<div style="font-size:10px;color:var(--text-sub);margin-top:5px;line-height:1.35;">💡 ' + escHtml(isScanning
+            '<div style="font-size:10px;color:var(--text-sub);margin-top:5px;line-height:1.35;">' + escHtml(isScanning
               ? L('Считываем характеристики вашего ПК для безопасного расчёта потоков и памяти...', 'Reading your hardware specs to calculate safe thread and memory budgets...')
               : (isRu()
                   ? (recInfo.vendorTipRu || 'Лимиты автоматически адаптированы под ваш компьютер без риска зависаний.')
                   : (recInfo.vendorTipEn || 'Limits are automatically calibrated for your machine to prevent freezes.'))) + '</div>' +
           '</div>' +
 
-          '<div class="wiz-section-label">' + L('1) Какой у вас тариф подписки Antigravity?', '1) Which Antigravity subscription tier do you use?') + '</div>' +
+          '<div class="wiz-group-title">' + L('1) Какой у вас тариф подписки Antigravity?', '1) Which Antigravity subscription tier do you use?') + '</div>' +
           '<div class="wiz-two-col">' +
             '<div class="wiz-choice-card' + (sub === 'pro' ? ' selected' : '') + '" style="margin-bottom:0;" data-action="wizSetSubTier" data-arg="pro">' +
-              '<div class="wiz-choice-head"><span>' + L('💎 Подписка Pro', '💎 Pro Tier') + '</span><span style="font-size:10px;color:var(--accent-cyan);">' + L('Беречь квоту', 'Save quota') + '</span></div>' +
+              '<div class="wiz-choice-head"><span>' + L('Подписка Pro', 'Pro Tier') + '</span><span style="font-size:10px;color:var(--accent-cyan);">' + L('Беречь квоту', 'Save quota') + '</span></div>' +
               '<div class="wiz-choice-desc">' + L('Hydrogen на S/M и Orchestrator (Neon) на L/XL. Недоступные на Pro модели Ultra (Carbon) автоматически скрыты.', 'Hydrogen on S/M and Orchestrator (Neon) on L/XL. Ultra-only models (Carbon) are hidden automatically.') + '</div>' +
             '</div>' +
             '<div class="wiz-choice-card' + (sub === 'ultra' ? ' selected' : '') + '" style="margin-bottom:0;" data-action="wizSetSubTier" data-arg="ultra">' +
-              '<div class="wiz-choice-head"><span>🚀 Ultra / Max</span><span style="font-size:10px;color:var(--status-ok);">' + L('Полный доступ', 'Full access') + '</span></div>' +
+              '<div class="wiz-choice-head"><span>Ultra / Max</span><span style="font-size:10px;color:var(--status-ok);">' + L('Полный доступ', 'Full access') + '</span></div>' +
               '<div class="wiz-choice-desc">' + L('Полная версия расширения: Orchestrator (Carbon/Neon), расширенные воркеры Роя и повышенный лимит квот.', 'Full extension features: Orchestrator (Carbon/Neon), extended Swarm workers and higher quota limits.') + '</div>' +
             '</div>' +
           '</div>' +
 
-          '<div class="wiz-section-label">' + L('2) Использовать ресурсы ПК для экономии облачных токенов?', '2) Use local PC resources to save cloud tokens?') + '</div>' +
+          '<div class="wiz-group-title">' + L('2) Использовать ресурсы ПК для экономии облачных токенов?', '2) Use local PC resources to save cloud tokens?') + '</div>' +
           '<div class="wiz-choice-card' + (wizDraft.useRam ? ' selected' : '') + '" data-action="wizToggleFlag" data-arg="useRam">' +
             '<div class="wiz-choice-head">' +
-              '<span>' + (wizDraft.useRam ? '☑ ' : '☐ ') + L('💾 Оперативная память (In-RAM кэш кода)', '💾 System RAM (In-RAM Code Cache)') + '</span>' +
+              '<span>' + (wizDraft.useRam ? '✓ ' : '') + L('Оперативная память (In-RAM кэш кода)', 'System RAM (In-RAM Code Cache)') + '</span>' +
               '<span>' + (wizDraft.useRam ? (L('ВКЛ · до ', 'ON · up to ') + recRamGb + L(' ГБ', ' GB')) : L('ВЫКЛ', 'OFF')) + '</span>' +
             '</div>' +
             '<div class="wiz-choice-desc">' + L('Мгновенно выдаёт ИИ точные срезы строк за &lt;1 мс без повторного чтения файлов с диска.', 'Delivers exact code slices to AI in &lt;1 ms without re-reading full files from disk.') + '</div>' +
@@ -842,7 +822,7 @@
 
           '<div class="wiz-choice-card' + (wizDraft.useCpu ? ' selected' : '') + '" data-action="wizToggleFlag" data-arg="useCpu">' +
             '<div class="wiz-choice-head">' +
-              '<span>' + (wizDraft.useCpu ? '☑ ' : '☐ ') + L('⚡ Многопоточный процессор (CPU-пул, 0 VRAM)', '⚡ Multi-Core CPU Pool (0 VRAM)') + '</span>' +
+              '<span>' + (wizDraft.useCpu ? '✓ ' : '') + L('Многопоточный процессор (CPU-пул, 0 VRAM)', 'Multi-Core CPU Pool (0 VRAM)') + '</span>' +
               '<span>' + (wizDraft.useCpu ? (L('ВКЛ · до ', 'ON · up to ') + wizDraft.cpuMaxThreads + L(' пот.', ' thr.')) : L('Тихий режим (1 пот.)', 'Quiet mode (1 thr.)')) + '</span>' +
             '</div>' +
             '<div class="wiz-choice-desc">' + L('Локальный триграммный индекс и быстрая фоновая проверка синтаксиса на ядрах CPU (спит в простое).', 'Local trigram search index and fast background syntax verification on CPU cores (sleeps when idle).') + '</div>' +
@@ -850,7 +830,7 @@
 
           '<div class="wiz-choice-card' + (wizDraft.useGpu ? ' selected' : '') + '" data-action="wizToggleFlag" data-arg="useGpu">' +
             '<div class="wiz-choice-head">' +
-              '<span>' + (wizDraft.useGpu ? '☑ ' : '☐ ') + L('🎮 Видеокарта (локальный ИИ через Ollama)', '🎮 Local GPU (Ollama Copilot)') + '</span>' +
+              '<span>' + (wizDraft.useGpu ? '✓ ' : '') + L('Видеокарта (локальный ИИ через Ollama)', 'Local GPU (Ollama Copilot)') + '</span>' +
               '<span>' + (wizDraft.useGpu ? (L('ВКЛ · ', 'ON · ') + escHtml(wizDraft.gpuChatModel + ' + ' + wizDraft.gpuEmbedModel)) : L('ВЫКЛ (без GPU)', 'OFF (no GPU)')) + '</span>' +
             '</div>' +
             '<div class="wiz-choice-desc">' + L('Бесплатное сжатие больших логов, умное автодополнение в Композере и смысловой поиск (0 облачных токенов).', 'Free distillation of huge logs, smart Composer autocomplete and semantic search (0 cloud tokens).') + '</div>' +
@@ -860,7 +840,7 @@
                 const cb = recInfo.cascadeBundle || {};
                 const allModels = Array.isArray(cb.models) ? cb.models : [];
                 const namesList = allModels.length > 0
-                  ? allModels.map(function (m) { return (m.alreadyDownloaded ? '✓ ' : '⬇ ') + m.name; }).join(', ')
+                  ? allModels.map(function (m) { return (m.alreadyDownloaded ? '✓ ' : '↓ ') + m.name; }).join(', ')
                   : (wizDraft.gpuChatModel + ', ' + wizDraft.gpuEmbedModel);
                 const missingGbTxt = Number(cb.approxMissingDiskGb || 0) > 0
                   ? (' (~' + Number(cb.approxMissingDiskGb).toFixed(1) + L(' ГБ к загрузке)', ' GB to download)'))
@@ -877,7 +857,7 @@
                   ? '<div class="wiz-gpu-install-box">' +
                       '<label class="wiz-mini-check-row" data-action="wizToggleFlag" data-arg="autoInstallOllama">' +
                         '<input type="checkbox"' + (wizDraft.autoInstallOllama !== false ? ' checked' : '') + ' tabindex="-1" style="pointer-events:none;" />' +
-                        '<span><strong>' + L('⚡ Установить Ollama автоматически', '⚡ Auto-install Ollama') + '</strong> — ' +
+                        '<span><strong>' + L('Установить Ollama автоматически', 'Auto-install Ollama') + '</strong> — ' +
                           L('скачает и установит Ollama после завершения мастера, затем сразу начнёт загрузку моделей.', 'downloads and installs Ollama on finish, then immediately starts model downloads.') +
                         '</span>' +
                       '</label>' +
@@ -887,32 +867,32 @@
                   ? ('<div style="font-size:9px;color:var(--text-sub);margin-top:3px;word-break:break-all;">' + L('Модели сохранятся в: ', 'Models folder: ') + '<code>' + escHtml(derivedModelsDir) + '</code></div>')
                   : '<div style="font-size:9px;color:var(--text-sub);margin-top:3px;">' + L('Если не указывать — используются стандартные пути системы (~/.ollama).', 'Leave empty to use default system paths (~/.ollama).') + '</div>';
                 return '<div class="wiz-gpu-cascade-box">' +
-                  '<div style="font-size:10.5px;font-weight:600;">' + L('📦 Модели под ступени вашей видеопамяти', '📦 Models matched to your VRAM tiers') + escHtml(missingGbTxt) + '</div>' +
+                  '<div style="font-size:10.5px;font-weight:600;">' + L('Модели под ступени вашей видеопамяти', 'Models matched to your VRAM tiers') + escHtml(missingGbTxt) + '</div>' +
                   '<div style="font-size:9.5px;color:var(--text-sub);margin-top:2px;line-height:1.35;">' + escHtml(namesList) + '</div>' +
                   '<div style="margin-top:6px;">' +
-                    '<div style="font-size:9.5px;font-weight:600;margin-bottom:3px;color:var(--text-main);">' + L('📁 Папка установки Ollama и моделей:', '📁 Folder for Ollama & models:') + '</div>' +
+                    '<div style="font-size:9.5px;font-weight:600;margin-bottom:3px;color:var(--text-main);">' + L('Папка установки Ollama и моделей:', 'Folder for Ollama & models:') + '</div>' +
                     '<div class="wiz-dir-row">' +
                       '<input type="text" id="wizGpuInstallDir" class="lg-input" data-input-action="wizSetGpuInstallDir" value="' + escHtml(effectiveDir) + '" placeholder="' + escHtml(L('По умолчанию (AppData / ~/.ollama)', 'Default (AppData / ~/.ollama)')) + '" />' +
-                      '<button type="button" class="win-btn wiz-dir-pick-btn" id="wizBtnPickGpuDir" data-action="wizPickGpuInstallDir">' + L('📁 Выбрать…', '📁 Browse…') + '</button>' +
+                      '<button type="button" class="win-btn wiz-dir-pick-btn" id="wizBtnPickGpuDir" data-action="wizPickGpuInstallDir">' + L('Выбрать…', 'Browse…') + '</button>' +
                     '</div>' +
                     dirHintLine +
                   '</div>' +
                   ollInstallBlock +
                   '<label class="wiz-mini-check-row" style="margin-top:5px;" data-action="wizToggleFlag" data-arg="gpuPreferHfMirror">' +
                     '<input type="checkbox"' + (wizDraft.gpuPreferHfMirror ? ' checked' : '') + ' tabindex="-1" style="pointer-events:none;" />' +
-                    '<span>' + L('🤗 Предпочитать зеркало Hugging Face (GGUF напрямую с hf.co)', '🤗 Prefer Hugging Face mirror (GGUF directly from hf.co)') + '</span>' +
+                    '<span>' + L('Предпочитать зеркало Hugging Face (GGUF напрямую с hf.co)', 'Prefer Hugging Face mirror (GGUF directly from hf.co)') + '</span>' +
                   '</label>' +
                   '<div class="wiz-gpu-cascade-pills">' +
-                    '<button type="button" class="wiz-gpu-cascade-pill' + (pm === 'cascade' ? ' selected' : '') + '" data-action="wizSetGpuPullMode" data-arg="cascade">' + L('⬇️ Скачать весь каскад (Рекомендуется)', '⬇️ Download full cascade (Recommended)') + '</button>' +
-                    '<button type="button" class="wiz-gpu-cascade-pill' + (pm === 'active_only' ? ' selected' : '') + '" data-action="wizSetGpuPullMode" data-arg="active_only">' + L('🎯 Только текущий лимит', '🎯 Active limit only') + '</button>' +
-                    '<button type="button" class="wiz-gpu-cascade-pill' + (pm === 'skip' ? ' selected' : '') + '" data-action="wizSetGpuPullMode" data-arg="skip">' + L('⏭️ Пропустить сейчас', '⏭️ Skip for now') + '</button>' +
+                    '<button type="button" class="wiz-gpu-cascade-pill' + (pm === 'cascade' ? ' selected' : '') + '" data-action="wizSetGpuPullMode" data-arg="cascade">' + L('↓ Скачать весь каскад (Рекомендуется)', '↓ Download full cascade (Recommended)') + '</button>' +
+                    '<button type="button" class="wiz-gpu-cascade-pill' + (pm === 'active_only' ? ' selected' : '') + '" data-action="wizSetGpuPullMode" data-arg="active_only">' + L('Только текущий лимит', 'Active limit only') + '</button>' +
+                    '<button type="button" class="wiz-gpu-cascade-pill' + (pm === 'skip' ? ' selected' : '') + '" data-action="wizSetGpuPullMode" data-arg="skip">' + L('Пропустить сейчас', 'Skip for now') + '</button>' +
                   '</div>' +
                 '</div>';
               })()
             : '') +
 
           '<button type="button" class="hw-ai-tune-btn" data-action="sendHardwareTunePrompt">' +
-            L('✨ Собрать промпт по моему железу и подобрать самые свежие модели в чате', '✨ Generate hardware passport & pick latest local models in chat') +
+            L('Собрать промпт по моему железу и подобрать самые свежие модели в чате', 'Generate hardware passport & pick latest local models in chat') +
           '</button>';
       } else if (wizStep === 2) {
         if (hintEl) hintEl.textContent = L('Шаг 2 из 4 · Когда ИИ должен советоваться с вами?', 'Step 2 of 4 · When should AI confirm plans with you?');
@@ -921,53 +901,41 @@
           '<div style="font-size:10.5px;color:var(--text-sub);margin-bottom:8px;">' + L('Вы пишете задачи обычным разговорным языком — ИИ сам изучает файлы проекта. Выберите комфортный уровень контроля:', 'Describe tasks in plain language — AI scouts project files automatically. Choose your preferred level of control:') + '</div>' +
           '<div class="wiz-choice-card' + (m === 'advisor_m' ? ' selected' : '') + '" data-action="wizSelectMode" data-arg="advisor_m">' +
             '<div class="wiz-choice-head">' +
-              '<span>' + L('🛡️ Умный советник (Smart-Synergy · от M+)', '🛡️ Smart Advisor (Smart-Synergy · M+)') + '</span>' +
+              '<span>' + L('Умный советник (Smart-Synergy · от M+)', 'Smart Advisor (Smart-Synergy · M+)') + '</span>' +
               '<span style="color:var(--status-ok);">' + L('Рекомендуется', 'Recommended') + '</span>' +
             '</div>' +
             '<div class="wiz-choice-desc">' + L('Мелкие правки (S) делает сразу, а перед заметными задачами (M/L/XL) кратко показывает план, рекомендуемую модель и спрашивает «Запускаем?».', 'Executes small S edits right away; for medium/large tasks (M/L/XL) shows a brief plan, recommended model and asks "Proceed?".') + '</div>' +
           '</div>' +
           '<div class="wiz-choice-card' + (m === 'advisor_all' ? ' selected' : '') + '" data-action="wizSelectMode" data-arg="advisor_all">' +
             '<div class="wiz-choice-head">' +
-              '<span>' + L('🔒 Строгий контроль (Спрашивать план всегда)', '🔒 Strict Control (Always confirm)') + '</span>' +
+              '<span>' + L('Строгий контроль (Спрашивать план всегда)', 'Strict Control (Always confirm)') + '</span>' +
               '<span style="color:var(--accent-cyan);">' + L('Полное одобрение', 'Full approval') + '</span>' +
             '</div>' +
             '<div class="wiz-choice-desc">' + L('Перед любым изменением кода (даже небольшим S) сначала показывает объём, затронутые файлы и ждёт вашего подтверждения.', 'Before any code edit (even small S), always shows scope, affected files and waits for your approval.') + '</div>' +
           '</div>' +
           '<div class="wiz-choice-card' + (m === 'autopilot_balance' ? ' selected' : '') + '" data-action="wizSelectMode" data-arg="autopilot_balance">' +
             '<div class="wiz-choice-head">' +
-              '<span>' + L('🚀 Полный автопилот (Делать сразу без вопросов)', '🚀 Full Autopilot (Run without prompts)') + '</span>' +
+              '<span>' + L('Полный автопилот (Делать сразу без вопросов)', 'Full Autopilot (Run without prompts)') + '</span>' +
               '<span style="color:var(--accent-cyan);">' + L('Без лишних кликов', 'Zero extra clicks') + '</span>' +
             '</div>' +
             '<div class="wiz-choice-desc">' + L('Не переспрашивает план перед рутиной — сам находит нужные модули, вносит правки и запускает самопроверку.', 'Skips confirmation prompts — scouts modules, applies edits and runs self-verification automatically.') + '</div>' +
           '</div>' +
           '<div class="wiz-choice-card' + (m === 'flash_economy' ? ' selected' : '') + '" data-action="wizSelectMode" data-arg="flash_economy">' +
             '<div class="wiz-choice-head">' +
-              '<span>' + L('💰 Экономный автопилот (Максимум экономии квоты)', '💰 Economy Autopilot (Max quota savings)') + '</span>' +
+              '<span>' + L('Экономный автопилот (Максимум экономии квоты)', 'Economy Autopilot (Max quota savings)') + '</span>' +
               '<span>' + L('До 80% выгоднее', 'Up to 80% cheaper') + '</span>' +
             '</div>' +
             '<div class="wiz-choice-desc">' + L('Выполняет рутину на быстрой модели Hydrogen / Flash, советуя старшие модели только для самых сложных архитектурных задач XL.', 'Handles routine work on fast Hydrogen / Flash, recommending heavier models only for complex XL architecture tasks.') + '</div>' +
           '</div>';
       } else if (wizStep === 3) {
-        if (hintEl) hintEl.textContent = L('Шаг 3 из 4 · Палитра пульта и дизайн интерфейсов', 'Step 3 of 4 · Panel theme & UI design workflow');
+        if (hintEl) hintEl.textContent = L('Шаг 3 из 4 · Дизайн интерфейсов в проектах', 'Step 3 of 4 · UI design workflow');
         const g = wizDraft.uiDesignPreviewGate;
         const insp = wizDraft.uiInspirationMode || 'ask';
-        const th = normalizeUiTheme(wizDraft.panelTheme);
         bodyEl.innerHTML =
-          '<div class="wiz-section-label">' + L('1) Визуальная тема самого Пульта управления:', '1) Control Panel visual theme:') + '</div>' +
-          '<div class="wiz-two-col">' +
-            '<div class="wiz-choice-card' + (th === 'glass_teal' ? ' selected' : '') + '" style="margin-bottom:0;" data-action="wizSetThemePreview" data-arg="glass_teal">' +
-              '<div style="font-weight:700;font-size:11px;">' + L('💧 Жидкое стекло iOS', '💧 Liquid Glass iOS') + '</div>' +
-              '<div class="wiz-choice-desc">' + L('Глубокое тёмное стекло с мягким свечением', 'Deep dark glass with subtle glow') + '</div>' +
-            '</div>' +
-            '<div class="wiz-choice-card' + (th === 'studio_titanium' ? ' selected' : '') + '" style="margin-bottom:0;" data-action="wizSetThemePreview" data-arg="studio_titanium">' +
-              '<div style="font-weight:700;font-size:11px;">' + L('🍑 Персиковый фарфор', '🍑 Peach Porcelain') + '</div>' +
-              '<div class="wiz-choice-desc">' + L('Тёплая молочно-светлая палитра с терракотой', 'Warm light editorial palette with terracotta') + '</div>' +
-            '</div>' +
-          '</div>' +
-          '<div class="wiz-section-label">' + L('2) Когда вы просите сверстать или обновить UI в вашем проекте:', '2) When you ask to design or update UI in your project:') + '</div>' +
+          '<div class="wiz-group-title">' + L('Когда вы просите сверстать или обновить UI в вашем проекте:', 'When you ask to design or update UI in your project:') + '</div>' +
           '<div class="wiz-choice-card' + (g ? ' selected' : '') + '" data-action="wizSetDesignGate" data-arg="true">' +
             '<div class="wiz-choice-head">' +
-              '<span>' + L('🎨 Согласовывать стиль и примеры перед вёрсткой', '🎨 Preview style & prototypes before coding') + '</span>' +
+              '<span>' + L('Согласовывать стиль и примеры перед вёрсткой', 'Preview style & prototypes before coding') + '</span>' +
               '<span style="color:var(--status-ok);">' + L('Рекомендуется', 'Recommended') + '</span>' +
             '</div>' +
             '<div class="wiz-choice-desc">' + L('Защищает от шаблонных ИИ-интерфейсов: сначала уточнит направление или покажет интерактивную витрину A/B/C.', 'Prevents generic AI UI: clarifies visual direction or builds an interactive A/B/C showroom first.') + '</div>' +
@@ -976,15 +944,15 @@
             ? '<div class="wiz-gpu-cascade-box" style="margin-top:-2px;margin-bottom:8px;">' +
                 '<div style="font-size:10px;font-weight:600;margin-bottom:4px;">' + L('Как готовить визуальные референсы:', 'How to prepare visual references:') + '</div>' +
                 '<div class="wiz-gpu-cascade-pills">' +
-                  '<button type="button" class="wiz-gpu-cascade-pill' + (insp === 'ask' ? ' selected' : '') + '" data-action="wizSetInspirationMode" data-arg="ask">' + L('💬 Спрашивать по задаче', '💬 Ask per task') + '</button>' +
-                  '<button type="button" class="wiz-gpu-cascade-pill' + (insp === 'showroom' ? ' selected' : '') + '" data-action="wizSetInspirationMode" data-arg="showroom">' + L('🖼️ Сразу витрина A/B/C', '🖼️ A/B/C Showroom') + '</button>' +
-                  '<button type="button" class="wiz-gpu-cascade-pill' + (insp === 'web_refs' ? ' selected' : '') + '" data-action="wizSetInspirationMode" data-arg="web_refs">' + L('🌐 Примеры из веба', '🌐 Web References') + '</button>' +
+                  '<button type="button" class="wiz-gpu-cascade-pill' + (insp === 'ask' ? ' selected' : '') + '" data-action="wizSetInspirationMode" data-arg="ask">' + L('Спрашивать по задаче', 'Ask per task') + '</button>' +
+                  '<button type="button" class="wiz-gpu-cascade-pill' + (insp === 'showroom' ? ' selected' : '') + '" data-action="wizSetInspirationMode" data-arg="showroom">' + L('Сразу витрина A/B/C', 'A/B/C Showroom') + '</button>' +
+                  '<button type="button" class="wiz-gpu-cascade-pill' + (insp === 'web_refs' ? ' selected' : '') + '" data-action="wizSetInspirationMode" data-arg="web_refs">' + L('Примеры из веба', 'Web References') + '</button>' +
                 '</div>' +
               '</div>'
             : '') +
           '<div class="wiz-choice-card' + (!g ? ' selected' : '') + '" data-action="wizSetDesignGate" data-arg="false">' +
             '<div class="wiz-choice-head">' +
-              '<span>' + L('⚡ Сразу внедрять дизайн в код (без превью)', '⚡ Apply UI edits directly in code (no preview)') + '</span>' +
+              '<span>' + L('Сразу внедрять дизайн в код (без превью)', 'Apply UI edits directly in code (no preview)') + '</span>' +
               '<span style="color:var(--accent-cyan);">' + L('Быстрее', 'Faster') + '</span>' +
             '</div>' +
             '<div class="wiz-choice-desc">' + L('ИИ сам подберёт гармоничную палитру под ваш проект и сразу обновит вёрстку без лишних вопросов.', 'AI picks a cohesive palette matching your project and updates layout right away without extra prompts.') + '</div>' +
@@ -1003,48 +971,50 @@
         const hwSummary = (wizDraft.useRam ? ('RAM ' + recRamGb + L(' ГБ', ' GB')) : L('RAM выкл', 'RAM off'))
           + ' · ' + (wizDraft.useCpu ? ('CPU ' + wizDraft.cpuMaxThreads + L(' пот.', ' thr.')) : L('CPU 1 пот.', 'CPU 1 thr.'))
           + ' · ' + (wizDraft.useGpu ? ('GPU ' + wizDraft.gpuChatModel) : L('без GPU', 'no GPU'));
-        const themeSummary = (normalizeUiTheme(wizDraft.panelTheme) === 'studio_titanium'
-          ? L('Персиковый фарфор', 'Peach Porcelain')
-          : L('Жидкое стекло iOS', 'Liquid Glass iOS')) +
-          ' · ' + (normalizePanelViewMode(wizDraft.panelViewMode) === 'lite' ? 'Lite' : 'Full');
-        const langSummary = normalizeUiLanguage(wizDraft.uiLanguage) === 'ru' ? '🇷🇺 Русский' : '🇺🇸 English';
+        const viewModeSummary = normalizePanelViewMode(wizDraft.panelViewMode) === 'lite' ? 'Lite' : 'Full';
+        const langSummary = normalizeUiLanguage(wizDraft.uiLanguage) === 'ru' ? 'Русский' : 'English';
 
         bodyEl.innerHTML =
           '<div class="wiz-callout-info">' +
             L(
-              '🧩 <strong>Про скиллы (навыки ИИ):</strong> вам <strong>не нужно</strong> включать их вручную — все навыки работают в режиме <strong>«Умный Авто»</strong> и подключаются ровно под вашу задачу.',
-              '🧩 <strong>About AI Skills:</strong> you <strong>don\'t need</strong> to toggle them manually — all skills run in <strong>"Smart Auto"</strong> mode and activate only when relevant.'
+              '<strong>Про скиллы (навыки ИИ):</strong> вам <strong>не нужно</strong> включать их вручную — все навыки работают в режиме <strong>«Умный Авто»</strong> и подключаются ровно под вашу задачу.',
+              '<strong>About AI Skills:</strong> you <strong>don\'t need</strong> to toggle them manually — all skills run in <strong>"Smart Auto"</strong> mode and activate only when relevant.'
             ) +
           '</div>' +
           '<div class="wiz-choice-card' + (sf ? ' selected' : '') + '" data-action="wizToggleFlag" data-arg="safetyBundle">' +
             '<div class="wiz-choice-head">' +
-              '<span>' + (sf ? '☑ ' : '☐ ') + L('🛡️ Теневые снимки отката и автопроверка кода', '🛡️ Shadow Rollback Snapshots & Auto-Verify') + '</span>' +
+              '<span>' + (sf ? '✓ ' : '') + L('Теневые снимки отката и автопроверка кода', 'Shadow Rollback Snapshots & Auto-Verify') + '</span>' +
               '<span style="color:var(--status-ok);">' + (sf ? L('ВКЛ (Надёжно)', 'ON (Safe)') : L('ВЫКЛ', 'OFF')) + '</span>' +
             '</div>' +
             '<div class="wiz-choice-desc">' + L('Сохраняет резервную копию файла перед каждой правкой (откат в 1 клик) и проверяет затронутые тесты и синтаксис.', 'Saves a backup before every edit (1-click rollback) and automatically verifies syntax and impacted tests.') + '</div>' +
           '</div>' +
           '<div class="wiz-choice-card' + (sn ? ' selected' : '') + '" data-action="wizToggleFlag" data-arg="sentinelBundle">' +
             '<div class="wiz-choice-head">' +
-              '<span>' + (sn ? '☑ ' : '☐ ') + L('👁️ Фоновый Дозор (Sentinel) и Git-песочницы', '👁️ Background Sentinel & Git Sandboxes') + '</span>' +
+              '<span>' + (sn ? '✓ ' : '') + L('Фоновый Дозор (Sentinel) и Git-песочницы', 'Background Sentinel & Git Sandboxes') + '</span>' +
               '<span style="color:var(--accent-cyan);">' + (sn ? L('ВКЛ', 'ON') : L('ВЫКЛ', 'OFF')) + '</span>' +
             '</div>' +
             '<div class="wiz-choice-desc">' + L('В простое тихо проверяет изменённые файлы на скрытые ошибки и позволяет изолировать рискованные эксперименты.', 'Silently checks edited files during idle pauses for hidden bugs and lets you isolate risky experiments.') + '</div>' +
           '</div>' +
           '<div class="wiz-summary-card">' +
-            '<div style="font-size:10.5px;font-weight:700;">' + L('📋 Итоговая конфигурация перед стартом:', '📋 Configuration summary:') + '</div>' +
+            '<div style="font-size:10.5px;font-weight:700;">' + L('Итоговая конфигурация перед стартом:', 'Configuration summary:') + '</div>' +
             '<div class="wiz-summary-grid">' +
-              '<div class="wiz-summary-item"><div class="wiz-summary-k">' + L('Язык / Тариф', 'Language / Tier') + '</div><div class="wiz-summary-v">' + langSummary + ' · ' + (wizDraft.subscriptionTier === 'ultra' ? '🚀 Ultra' : '💎 Pro') + '</div></div>' +
+              '<div class="wiz-summary-item"><div class="wiz-summary-k">' + L('Язык / Тариф', 'Language / Tier') + '</div><div class="wiz-summary-v">' + langSummary + ' · ' + (wizDraft.subscriptionTier === 'ultra' ? 'Ultra' : 'Pro') + '</div></div>' +
               '<div class="wiz-summary-item"><div class="wiz-summary-k">' + L('Режим диалога', 'Workflow Mode') + '</div><div class="wiz-summary-v" title="' + escHtml(modeLabelMap[wizDraft.modePreset] || '') + '">' + escHtml(modeLabelMap[wizDraft.modePreset] || L('Советник M+', 'Advisor M+')) + '</div></div>' +
               '<div class="wiz-summary-item"><div class="wiz-summary-k">' + L('Ресурсы ПК', 'PC Resources') + '</div><div class="wiz-summary-v" title="' + escHtml(hwSummary) + '">' + escHtml(hwSummary) + '</div></div>' +
-              '<div class="wiz-summary-item"><div class="wiz-summary-k">' + L('Тема пульта', 'Panel Theme') + '</div><div class="wiz-summary-v">' + escHtml(themeSummary) + '</div></div>' +
+              '<div class="wiz-summary-item"><div class="wiz-summary-k">' + L('Режим пульта', 'Panel Mode') + '</div><div class="wiz-summary-v">' + escHtml(viewModeSummary) + '</div></div>' +
             '</div>' +
           '</div>' +
           '<div class="wiz-callout-ready">' +
             L(
-              '✨ Всё готово! Нажмите <strong>«✓ Сохранить и начать»</strong> — параметры применятся глобально для всех текущих и новых чатов.',
-              '✨ All set! Click <strong>"✓ Save & Start"</strong> — settings will apply globally to all current and future chats.'
+              'Всё готово! Нажмите <strong>«✓ Сохранить и начать»</strong> — параметры применятся глобально для всех текущих и новых чатов.',
+              'All set! Click <strong>"✓ Save & Start"</strong> — settings will apply globally to all current and future chats.'
             ) +
           '</div>';
+      }
+      if (bodyEl && bodyEl.classList) {
+        bodyEl.classList.remove('is-step-enter');
+        if (typeof bodyEl.offsetWidth === 'number') void bodyEl.offsetWidth;
+        bodyEl.classList.add('is-step-enter');
       }
     }
 
@@ -1101,7 +1071,7 @@
         panelViewMode: chosenViewMode,
         subscriptionTier: subTier,
         swarmWorkerTier: subTier === 'ultra' ? 'neon_auto' : 'hydrogen_auto',
-        panelTheme: normalizeUiTheme(wizDraft.panelTheme || 'glass_teal'),
+        panelTheme: 'glass_teal',
         ramCacheEnabled: !!wizDraft.useRam,
         ramMaxBudgetMb: Number(wizDraft.ramMaxBudgetMb || 4096),
         cpuMulticoreEnabled: !!wizDraft.useCpu,
@@ -1153,7 +1123,6 @@
 
       const modal = document.getElementById('onboardingWizardModal');
       if (modal) modal.classList.remove('visible');
-      wizThemePreviewDirty = false;
       wizSubTierPreviewDirty = false;
       wizLangPreviewDirty = false;
       wizViewModePreviewDirty = false;

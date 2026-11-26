@@ -1,0 +1,14 @@
+{
+  "positive": [
+    "Build an agent-native --json CLI harness to automate Blender or GIMP headless without GUI clicking",
+    "Probe this desktop application repo and wrap its backend engine into a scriptable CLI with exit codes",
+    "Find a CLI-Hub workflow matrix for video creation and run preflight before installing a capability",
+    "Validate our custom CLI harness against the --json, --help, tests, and consumer SKILL.md contract"
+  ],
+  "negative": [
+    "Push our latest changes to GitHub and verify no local machine paths or secrets leak",
+    "Rename a variable across five TypeScript files using an AST codemod",
+    "Design a dark glassmorphism UI theme with WCAG contrast checks",
+    "Write a Playwright browser E2E test that mocks an API route and captures a screenshot"
+  ]
+}

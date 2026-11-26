@@ -66,10 +66,13 @@ import {
 } from './lib/panel-composer-engine.mjs';
 import {
   collectKnownWorkspacesForPanel,
+  collectRoiTimeline,
   collectTelemetry,
   discoverUserProjectsForGraph,
   gpuStatusPanelCache,
+  invalidateGuardPulseCache,
   mergeRamSavingsIntoTelemetry,
+  primeGuardPulseShieldCache,
   resolveActiveWorkspaceForPanel,
   safeCheckCompaction,
   safeClearPitfalls,
@@ -77,6 +80,7 @@ import {
   safeGetCircuitState,
   safeGetCpuStatus,
   safeGetGpuStatus,
+  safeGetGuardPulse,
   safeGetHardwareProfile,
   safeGetHudAndProgressStatus,
   safeGetKnowledgeSnapshot,
@@ -209,7 +213,7 @@ function getPluginVersion() {
     const ver = typeof meta?.version === 'string' ? meta.version.trim() : '';
     if (ver) return ver;
   } catch {}
-  return '3.35.0';
+  return '4.0.0';
 }
 
 function getUiBuildVersion() {
@@ -353,8 +357,23 @@ export async function startSidecarPanel(options = {}) {
       ramCache,
     });
     const mergedTelemetry = ramCache ? mergeRamSavingsIntoTelemetry(telemetry, ramCache) : telemetry;
+    const roiTimeline = collectRoiTimeline({
+      currentTelemetry: mergedTelemetry,
+      quotaPacer,
+      workspaceRoot: activeWs,
+    });
     const skills = sec.skills ? discoverSkills(activeWs) : undefined;
     const cpu = sec.hw ? safeGetCpuStatus(state, ramCache) : undefined;
+    const guardPulse = await safeGetGuardPulse(activeWs, state, {
+      sentinel,
+      wiretapFaults,
+      circuitBreaker,
+      pitfalls,
+      bayesian,
+      gpu,
+      ramCache,
+      shadowWorktrees,
+    });
     return {
       state,
       activeWorkspace: activeWs,
@@ -364,6 +383,7 @@ export async function startSidecarPanel(options = {}) {
       ...(skills !== undefined ? { skills } : {}),
       projectDetection: detectProjectProfile(activeWs),
       telemetry: mergedTelemetry,
+      roiTimeline,
       ...(checkpoints !== undefined ? { checkpoints } : {}),
       ...(turnCheckpoints !== undefined ? { turnCheckpoints } : {}),
       ...(shadowWorktrees !== undefined ? { shadowWorktrees } : {}),
@@ -378,6 +398,7 @@ export async function startSidecarPanel(options = {}) {
       ...(gpu !== undefined ? { gpu } : {}),
       ...(cpu !== undefined ? { cpu } : {}),
       sentinel,
+      guardPulse,
       ...(hardwareProfile !== undefined ? { hardwareProfile } : {}),
       hardwareCeilings: hardwareProfile?.hardwareCeilings || getRuntimeHardwareCeilings(),
       subscriptionCapabilities: getSubscriptionCapabilities(state?.subscriptionTier),
@@ -423,6 +444,14 @@ export async function startSidecarPanel(options = {}) {
     });
     const mergedTelemetry = ramCache ? mergeRamSavingsIntoTelemetry(telemetry, ramCache) : telemetry;
     const cpu = sec.hw ? safeGetCpuStatus(state, ramCache) : undefined;
+    const guardPulse = await safeGetGuardPulse(activeWs, state, {
+      sentinel,
+      wiretapFaults,
+      circuitBreaker,
+      bayesian,
+      gpu,
+      ramCache,
+    });
     return {
       ok: true,
       activeWorkspace: activeWs,
@@ -439,6 +468,7 @@ export async function startSidecarPanel(options = {}) {
       ...(gpu !== undefined ? { gpu } : {}),
       ...(cpu !== undefined ? { cpu } : {}),
       sentinel,
+      guardPulse,
       hardwareCeilings: getRuntimeHardwareCeilings(),
       ...(bayesian !== undefined ? { bayesian } : {}),
       floatingHud: hudPack.hud,
@@ -589,6 +619,22 @@ export async function startSidecarPanel(options = {}) {
     const hasSentinelPatch = patchKeys.some((k) => k.startsWith('sentinel')) || Boolean(data && typeof data === 'object' && Object.hasOwn(data, 'hookProfile'));
     if (hasSentinelPatch) {
       sentinelPanelCache.ts = 0;
+    }
+    const touchesEnvDoctorSettings = Boolean(
+      data &&
+      typeof data === 'object' &&
+      (
+        Object.hasOwn(data, 'gpuEnabled') ||
+        Object.hasOwn(data, 'gpuMaxVramMb') ||
+        Object.hasOwn(data, 'gpuChatModel') ||
+        Object.hasOwn(data, 'gpuEmbedModel') ||
+        Object.hasOwn(data, 'ramCacheEnabled') ||
+        Object.hasOwn(data, 'ramMaxBudgetMb') ||
+        Object.hasOwn(data, 'shadowWorktreeEnabled')
+      )
+    );
+    if (touchesEnvDoctorSettings) {
+      invalidateGuardPulseCache('', ['env']);
     }
     if (
       process.env.TUNNEL_TEST_ISOLATE_INSTALLED !== '1' &&
@@ -874,13 +920,17 @@ export async function startSidecarPanel(options = {}) {
   app.api('/api/circuit-reset', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
-    return await safeResetCircuitBreaker(activeWs);
+    const res = await safeResetCircuitBreaker(activeWs);
+    invalidateGuardPulseCache(activeWs, ['fast']);
+    return res;
   }, 'POST');
 
   app.api('/api/bayesian-reset', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
-    return await safeResetBayesianPriors(activeWs, Boolean(data?.onlyFragility));
+    const res = await safeResetBayesianPriors(activeWs, Boolean(data?.onlyFragility));
+    invalidateGuardPulseCache(activeWs, ['fast']);
+    return res;
   }, 'POST');
 
   app.api('/api/compact-digest', async (data, req) => {
@@ -891,7 +941,9 @@ export async function startSidecarPanel(options = {}) {
   app.api('/api/pitfalls-clear', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
-    return await safeClearPitfalls(activeWs);
+    const res = await safeClearPitfalls(activeWs);
+    invalidateGuardPulseCache(activeWs, ['fast']);
+    return res;
   }, 'POST');
 
   app.api('/api/knowledge/recipes', async (data, req) => {
@@ -979,11 +1031,125 @@ export async function startSidecarPanel(options = {}) {
       const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
       const { auditAgentEnvironment } = await import('../../core/agent-shield.mjs');
       const includeGlobal = !(data?.workspaceOnly === '1' || data?.workspaceOnly === true || data?.workspaceOnly === 'true');
-      return auditAgentEnvironment({ workspaceRoot: activeWs, includeGlobal, lang });
+      const report = auditAgentEnvironment({ workspaceRoot: activeWs, includeGlobal, lang });
+      primeGuardPulseShieldCache(activeWs, report);
+      return report;
     } catch (err) {
       return { ok: false, error: err?.message || pickLang(lang, 'Ошибка аудита AgentShield', 'AgentShield audit failed') };
     }
   }, 'GET');
+
+  app.api('/api/guard-pulse', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const curState = loadState();
+    const lang = normalizeLang(curState?.uiLanguage, 'en');
+    try {
+      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const force = data?.force === '1' || data?.force === true || data?.force === 'true';
+      const [sentinel, wiretapFaults, gpu, ramCache, shadowWorktrees] = await Promise.all([
+        fetchSentinelPanelStatus(activeWs, curState, { force }),
+        safeGetWiretapFaults(activeWs, curState),
+        safeGetGpuStatus(),
+        safeGetRamCacheStatus(curState),
+        curState.shadowWorktreeEnabled !== false ? safeListShadowWorktrees(activeWs) : Promise.resolve([]),
+      ]);
+      const guardPulse = await safeGetGuardPulse(activeWs, curState, {
+        force,
+        sentinel,
+        wiretapFaults,
+        gpu,
+        ramCache,
+        shadowWorktrees,
+      });
+      return { ok: true, guardPulse, sentinel, wiretapFaults };
+    } catch (err) {
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка пульса защиты', 'Guard pulse failed') };
+    }
+  }, 'GET');
+
+  app.api('/api/guard-audit', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const curState = loadState();
+    const lang = normalizeLang(curState?.uiLanguage, 'en');
+    const ALLOWED_SCOPES = new Set(['all', 'bugs', 'shield', 'instincts', 'risks', 'env']);
+    const rawScope = typeof data?.scope === 'string' ? data.scope.trim().toLowerCase() : 'all';
+    const scope = ALLOWED_SCOPES.has(rawScope) ? rawScope : 'all';
+    try {
+      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      if (scope === 'all') {
+        invalidateGuardPulseCache(activeWs);
+      } else if (scope === 'shield') {
+        invalidateGuardPulseCache(activeWs, ['shield']);
+      } else if (scope === 'env') {
+        invalidateGuardPulseCache(activeWs, ['env']);
+      } else if (scope === 'instincts' || scope === 'risks') {
+        invalidateGuardPulseCache(activeWs, ['fast']);
+      }
+
+      let sentinel = null;
+      if (scope === 'all' || scope === 'bugs') {
+        sentinelPanelCache.ts = 0;
+        const actionPayload = {
+          action: 'run_now',
+          mode: 'all',
+          force: true,
+          wsPath: activeWs,
+          cfgOverride: curState,
+          lang,
+        };
+        const daemonRes = process.env.TUNNEL_TEST_ISOLATE_INSTALLED === '1'
+          ? null
+          : await postRamDaemonJson('/sentinel/action', actionPayload, 20000);
+        if (daemonRes && daemonRes.ok) {
+          sentinel = normalizeSentinelSnapshotPayload(daemonRes, curState);
+        } else {
+          const sentinelMod = await getBackgroundSentinelMod();
+          let res = null;
+          if (sentinelMod?.sentinel && typeof sentinelMod.sentinel.runAction === 'function') {
+            res = await sentinelMod.sentinel.runAction(actionPayload);
+          } else if (typeof sentinelMod?.runAction === 'function') {
+            res = await sentinelMod.runAction(actionPayload);
+          } else if (typeof sentinelMod?.runSentinelAction === 'function') {
+            res = await sentinelMod.runSentinelAction(actionPayload);
+          }
+          sentinel = res
+            ? normalizeSentinelSnapshotPayload(res, curState)
+            : await fetchSentinelPanelStatus(activeWs, curState, { force: true });
+        }
+        Object.assign(sentinelPanelCache, {
+          ts: Date.now(),
+          wsKey: String(activeWs || ''),
+          enabled: curState.sentinelEnabled !== false,
+          shadowTests: Boolean(curState.sentinelShadowTests),
+          value: sentinel,
+        });
+      } else {
+        sentinel = await fetchSentinelPanelStatus(activeWs, curState);
+      }
+
+      const [wiretapFaults, gpu, ramCache, shadowWorktrees] = await Promise.all([
+        safeGetWiretapFaults(activeWs, curState),
+        safeGetGpuStatus({ force: scope === 'all' || scope === 'env' }),
+        safeGetRamCacheStatus(curState),
+        curState.shadowWorktreeEnabled !== false ? safeListShadowWorktrees(activeWs) : Promise.resolve([]),
+      ]);
+
+      const guardPulse = await safeGetGuardPulse(activeWs, curState, {
+        force: scope === 'all',
+        forceShield: scope === 'all' || scope === 'shield',
+        forceEnv: scope === 'all' || scope === 'env',
+        forceFast: scope === 'all' || scope === 'instincts' || scope === 'risks',
+        sentinel,
+        wiretapFaults,
+        gpu,
+        ramCache,
+        shadowWorktrees,
+      });
+      return { ok: true, scope, guardPulse, sentinel, wiretapFaults, ts: Date.now() };
+    } catch (err) {
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка комплексной проверки защиты', 'Guard audit failed') };
+    }
+  }, 'POST');
 
   app.api('/api/setup-recommendations', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
@@ -1059,6 +1225,104 @@ export async function startSidecarPanel(options = {}) {
       };
     } catch (err) {
       return { ok: false, error: err?.message || pickLang(lang, 'Ошибка применения рекомендации Setup Doctor', 'Failed to apply Setup Doctor recommendation') };
+    }
+  }, 'POST');
+
+  app.api('/api/health-doctor', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const curState = loadState();
+    const lang = normalizeLang(curState?.uiLanguage, 'en');
+    try {
+      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const { diagnoseRuntimeHealth } = await import('../../core/health-doctor.mjs');
+      const [gpuStatus, ramStatus, worktrees] = await Promise.all([
+        safeGetGpuStatus(),
+        safeGetRamCacheStatus(curState),
+        safeListShadowWorktrees(activeWs),
+      ]);
+      return diagnoseRuntimeHealth({
+        workspaceRoot: activeWs,
+        state: curState,
+        gpuStatus,
+        ramStatus,
+        worktrees,
+      });
+    } catch (err) {
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка Health-Doctor', 'Health-Doctor diagnostics failed') };
+    }
+  }, 'GET');
+
+  app.api('/api/health-doctor/fix', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const curState = loadState();
+    const lang = normalizeLang(curState?.uiLanguage, 'en');
+    try {
+      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const fixAction = typeof data?.fixAction === 'string' ? data.fixAction.trim() : 'fix_all';
+      const { diagnoseRuntimeHealth, applyHealthDoctorFix } = await import('../../core/health-doctor.mjs');
+      const [gpuStatus, ramStatus, worktrees] = await Promise.all([
+        safeGetGpuStatus(),
+        safeGetRamCacheStatus(curState),
+        safeListShadowWorktrees(activeWs),
+      ]);
+      const fixRes = await applyHealthDoctorFix({
+        fixAction,
+        workspaceRoot: activeWs,
+        state: curState,
+        gpuStatus,
+        ramStatus,
+        worktrees,
+        saveStateFn: (patch) => saveState(patch),
+        startOllamaFn: async () => {
+          const mod = await getLocalGpuMod();
+          if (!mod || typeof mod.ensureOllamaRunning !== 'function') return { ok: false, error: 'GPU module unavailable' };
+          gpuStatusPanelCache.ts = 0;
+          return mod.ensureOllamaRunning();
+        },
+        warmRamFn: async (wsRoot) => {
+          const targetWs = wsRoot || activeWs;
+          const daemonRes = await postRamDaemonJson('/warm', { wsPath: targetWs }, 20000);
+          if (daemonRes && daemonRes.ok) return daemonRes;
+          const { RamMemoryEngine } = await import('../../core/ram-memory-engine.mjs');
+          const ram = new RamMemoryEngine();
+          try {
+            const warmRes = ram.warmWorkspace(targetWs);
+            return { ok: true, filesCached: warmRes?.filesCached || 0 };
+          } finally {
+            try { ram.evict('all'); } catch {}
+          }
+        },
+        pruneWorktreesFn: async (orphans) => {
+          const mod = await getShadowWorktreeMod();
+          if (!mod || typeof mod.discardShadowWorktree !== 'function') return { pruned: 0 };
+          let pruned = 0;
+          for (const ow of orphans) {
+            try {
+              const r = mod.discardShadowWorktree({ id: ow.id, workspaceRoot: activeWs, lang });
+              if (r?.ok) pruned += 1;
+            } catch {}
+          }
+          return { pruned };
+        },
+      });
+      if (!fixRes.ok) return fixRes;
+      gpuStatusPanelCache.ts = 0;
+      invalidateGuardPulseCache(activeWs, ['env']);
+      const [freshGpu, freshRam, freshWts] = await Promise.all([
+        safeGetGpuStatus(),
+        safeGetRamCacheStatus(loadState()),
+        safeListShadowWorktrees(activeWs),
+      ]);
+      const health = diagnoseRuntimeHealth({
+        workspaceRoot: activeWs,
+        state: loadState(),
+        gpuStatus: freshGpu,
+        ramStatus: freshRam,
+        worktrees: freshWts,
+      });
+      return { ...fixRes, health, state: loadState() };
+    } catch (err) {
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка авто-исправления Health-Doctor', 'Health-Doctor auto-fix failed') };
     }
   }, 'POST');
 
@@ -1140,10 +1404,47 @@ export async function startSidecarPanel(options = {}) {
         lang,
       });
       if (!res.ok) return res;
+      invalidateGuardPulseCache(activeWs, ['fast']);
+      if (panelRuntime?.discoverSkillsCache) {
+        panelRuntime.discoverSkillsCache.ts = 0;
+      }
       const listed = hub.listInstincts({ workspaceRoot: activeWs, includePromoted: false, minConfidence: 0.1, limit: 30 });
       return { ...res, items: listed.items || [], stats: hub.getStats(activeWs) };
     } catch (err) {
       return { ok: false, error: err?.message || pickLang(lang, 'Ошибка повышения инстинкта в навык', 'Failed to promote instinct to skill') };
+    }
+  }, 'POST');
+
+  app.api('/api/instincts/evolve-all', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const curState = loadState();
+    const lang = normalizeLang(curState?.uiLanguage, 'en');
+    try {
+      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const mod = await getKnowledgeHubMod();
+      const hub = mod?.knowledgeHub;
+      if (!hub) return { ok: false, error: 'Knowledge hub unavailable' };
+      const { evolveReadyInstincts } = await import('../../core/skill-crystallizer.mjs');
+      const res = evolveReadyInstincts({
+        workspaceRoot: activeWs,
+        hub,
+        lang,
+      });
+      invalidateGuardPulseCache(activeWs, ['fast']);
+      if (panelRuntime?.discoverSkillsCache) {
+        panelRuntime.discoverSkillsCache.ts = 0;
+      }
+      const listed = hub.listInstincts({ workspaceRoot: activeWs, includePromoted: false, minConfidence: 0.1, limit: 30 });
+      const guardPulse = await safeGetGuardPulse(activeWs, curState, { forceFast: true });
+      return {
+        ...res,
+        promotedCount: Array.isArray(res?.promoted) ? res.promoted.length : 0,
+        items: listed.items || [],
+        stats: hub.getStats(activeWs),
+        guardPulse,
+      };
+    } catch (err) {
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка пакетного создания навыков из инстинктов', 'Failed to evolve ready instincts') };
     }
   }, 'POST');
 
@@ -1161,6 +1462,7 @@ export async function startSidecarPanel(options = {}) {
         id: typeof data?.id === 'string' ? data.id : '',
         workspaceRoot: activeWs,
       });
+      invalidateGuardPulseCache(activeWs, ['fast']);
       const listed = hub.listInstincts({ workspaceRoot: activeWs, includePromoted: false, minConfidence: 0.1, limit: 30 });
       return { ...delRes, ok: Boolean(delRes?.ok), items: listed.items || [], stats: hub.getStats(activeWs) };
     } catch (err) {
@@ -1222,6 +1524,7 @@ export async function startSidecarPanel(options = {}) {
       const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
       const { initAcceptanceGatesMarkdown, parseAcceptanceGatesMarkdown } = await import('../../core/completion-gates.mjs');
       const initRes = initAcceptanceGatesMarkdown(activeWs, { overwrite: Boolean(data?.overwrite), lang });
+      invalidateGuardPulseCache(activeWs, ['env']);
       const gatesPath = join(activeWs, 'GATES.md');
       const parsed = existsSync(gatesPath) ? parseAcceptanceGatesMarkdown(readFileSync(gatesPath, 'utf8')) : null;
       return {

@@ -108,9 +108,93 @@
       };
     }
 
+    let _sentinelFixCooldownUntil = 0;
+    let _sentinelFixCooldownTimer = null;
+    let _sentinelFixNoticeTimer = null;
+
+    function syncSentinelNormalizedFindings(sentinelData) {
+      const sen = (sentinelData && typeof sentinelData === 'object') ? sentinelData : {};
+      const sg = (sen.shadowGuard && typeof sen.shadowGuard === 'object') ? sen.shadowGuard : {};
+      const bb = (sen.bugBot && typeof sen.bugBot === 'object') ? sen.bugBot : {};
+      const rawIssues = Array.isArray(sg.issues) ? sg.issues : [];
+      const rawCoChange = Array.isArray(sg.coChangeAlerts) ? sg.coChangeAlerts : [];
+      const rawClones = Array.isArray(sg.clonePairs) ? sg.clonePairs : [];
+      const rawBugBot = Array.isArray(bb.findings) ? bb.findings : [];
+
+      const errCount = Math.max(0, Number(sg.errorCount || 0));
+      const warnCount = Math.max(0, Number(sg.warnCount || 0)) + (Number(sg.warnCount || 0) === 0 ? Math.max(0, Number(sg.cloneCount || 0)) : 0);
+      const hasContractAlerts = !(errCount === 0 && warnCount === 0 && rawIssues.length === 0 && rawCoChange.length === 0);
+      const shownWarns = hasContractAlerts ? Math.max(warnCount, rawCoChange.length) : 0;
+      const shownErrs = hasContractAlerts
+        ? Math.max(errCount, rawIssues.length > 0 && shownWarns === 0 ? rawIssues.length : errCount)
+        : 0;
+      const bbCount = Math.max(0, Number(bb.findingsCount || 0), rawBugBot.length);
+
+      const normalizedFindings = [];
+      for (let i = 0; i < rawIssues.length && normalizedFindings.length < 18; i++) {
+        const item = normalizeSentinelFindingEntry(rawIssues[i], 'contract');
+        if (item) normalizedFindings.push(item);
+      }
+      for (let i = 0; i < rawCoChange.length && normalizedFindings.length < 18; i++) {
+        const item = normalizeSentinelFindingEntry(rawCoChange[i], 'cochange');
+        if (item) normalizedFindings.push(item);
+      }
+      for (let i = 0; i < rawBugBot.length && normalizedFindings.length < 18; i++) {
+        const item = normalizeSentinelFindingEntry(rawBugBot[i], 'bugbot');
+        if (item) normalizedFindings.push(item);
+      }
+      for (let i = 0; i < rawClones.length && normalizedFindings.length < 18; i++) {
+        const item = normalizeSentinelFindingEntry(rawClones[i], 'clone');
+        if (item) normalizedFindings.push(item);
+      }
+
+      const rawCloneCount = Math.max(0, Number(sg.cloneCount || 0));
+      const onlyClones = rawCloneCount > 0 && errCount === 0 && Number(sg.warnCount || 0) === 0 && bbCount === 0 && rawIssues.length === 0 && rawCoChange.length === 0;
+      const hasAnyAlert = normalizedFindings.length > 0 || errCount > 0 || warnCount > 0 || bbCount > 0;
+      if (hasAnyAlert && normalizedFindings.length === 0) {
+        const fallbackDesc = onlyClones
+          ? L('Обнаружены дубликаты кода (SimHash): ' + rawCloneCount + '. Нажмите ↻ для показа пар.', 'SimHash code duplicates detected: ' + rawCloneCount + '. Click ↻ to load pairs.')
+          : L('Есть предупреждения или ошибки Дозора (' + (shownErrs + shownWarns + bbCount) + '). Нажмите ↻ для деталей.', 'Sentinel warnings or errors detected (' + (shownErrs + shownWarns + bbCount) + '). Click ↻ for details.');
+        normalizedFindings.push({
+          category: onlyClones ? 'clone' : 'contract',
+          tagClass: onlyClones ? 'is-clone' : 'is-contract',
+          tagLabel: onlyClones ? L('Клон', 'Clone') : L('Дозор', 'Sentinel'),
+          loc: '',
+          desc: fallbackDesc,
+          prompt: L('Проверь и исправь находки Фонового Дозора (Shadow Guard / SimHash-клоны) в текущем проекте.', 'Check and fix Background Sentinel findings (Shadow Guard / SimHash clones) in the current project.'),
+        });
+      }
+      _lastNormalizedSentinelFindings = normalizedFindings;
+      _lastSentinelAlertCounts = { errs: shownErrs, warns: shownWarns, bugbot: bbCount };
+      return {
+        rawIssues: rawIssues,
+        rawCoChange: rawCoChange,
+        rawClones: rawClones,
+        rawBugBot: rawBugBot,
+        errCount: errCount,
+        warnCount: warnCount,
+        hasContractAlerts: hasContractAlerts,
+        shownWarns: shownWarns,
+        shownErrs: shownErrs,
+        bbCount: bbCount,
+        rawCloneCount: rawCloneCount,
+        normalizedFindings: normalizedFindings,
+        hasAnyAlert: hasAnyAlert,
+      };
+    }
+
+    function resetSentinelTransientState() {
+      _lastNormalizedSentinelFindings = [];
+      _lastSentinelAlertCounts = { errs: 0, warns: 0, bugbot: 0 };
+      if (typeof _latestWiretapFault !== 'undefined') {
+        _latestWiretapFault = null;
+      }
+    }
+
     function renderSentinelStatus(sentinelData, state) {
       const s = state || currentState || {};
       syncSentinelCheckboxes(s);
+      const parsedSen = syncSentinelNormalizedFindings(sentinelData);
       const boxEl = document.getElementById('sentinelStatusBox');
       const liteRowEl = document.getElementById('liteSentinelRow');
       if (!boxEl && !liteRowEl) return;
@@ -149,18 +233,11 @@
         }
       }
 
-      const rawIssues = Array.isArray(sg.issues) ? sg.issues : [];
-      const rawCoChange = Array.isArray(sg.coChangeAlerts) ? sg.coChangeAlerts : [];
-      const rawClones = Array.isArray(sg.clonePairs) ? sg.clonePairs : [];
-      const rawBugBot = Array.isArray(bb.findings) ? bb.findings : [];
-
-      const errCount = Math.max(0, Number(sg.errorCount || 0));
-      const warnCount = Math.max(0, Number(sg.warnCount || 0)) + (Number(sg.warnCount || 0) === 0 ? Math.max(0, Number(sg.cloneCount || 0)) : 0);
-      const hasContractAlerts = !(errCount === 0 && warnCount === 0 && rawIssues.length === 0 && rawCoChange.length === 0);
-      const shownWarns = hasContractAlerts ? Math.max(warnCount, rawCoChange.length) : 0;
-      const shownErrs = hasContractAlerts
-        ? Math.max(errCount, rawIssues.length > 0 && shownWarns === 0 ? rawIssues.length : errCount)
-        : 0;
+      const rawCoChange = parsedSen.rawCoChange;
+      const errCount = parsedSen.errCount;
+      const hasContractAlerts = parsedSen.hasContractAlerts;
+      const shownWarns = parsedSen.shownWarns;
+      const shownErrs = parsedSen.shownErrs;
 
       const healthEl = document.getElementById('sentinelHealthVal');
       if (healthEl) {
@@ -187,7 +264,7 @@
         cardsEl.title = sc.lastFile ? (L('Последний индексированный модуль: ', 'Last indexed module: ') + sc.lastFile) : L('Покрытие семантических паспортов модулей по SHA-256', 'SHA-256 semantic module passport coverage');
       }
 
-      const bbCount = Math.max(0, Number(bb.findingsCount || 0), rawBugBot.length);
+      const bbCount = parsedSen.bbCount;
       const bugBotEl = document.getElementById('sentinelBugBotVal');
       if (bugBotEl) {
         if (bbCount > 0) {
@@ -208,27 +285,9 @@
         specEl.title = L('Упреждающих сборок контекста: ', 'Speculative context packs: ') + specHits + L(' · Мгновенных P0-уступок чату: ', ' · Instant P0 yields: ') + preempts;
       }
 
-      const normalizedFindings = [];
-      for (let i = 0; i < rawIssues.length && normalizedFindings.length < 18; i++) {
-        const item = normalizeSentinelFindingEntry(rawIssues[i], 'contract');
-        if (item) normalizedFindings.push(item);
-      }
-      for (let i = 0; i < rawCoChange.length && normalizedFindings.length < 18; i++) {
-        const item = normalizeSentinelFindingEntry(rawCoChange[i], 'cochange');
-        if (item) normalizedFindings.push(item);
-      }
-      for (let i = 0; i < rawBugBot.length && normalizedFindings.length < 18; i++) {
-        const item = normalizeSentinelFindingEntry(rawBugBot[i], 'bugbot');
-        if (item) normalizedFindings.push(item);
-      }
-      for (let i = 0; i < rawClones.length && normalizedFindings.length < 18; i++) {
-        const item = normalizeSentinelFindingEntry(rawClones[i], 'clone');
-        if (item) normalizedFindings.push(item);
-      }
-
-      const hasAnyAlert = normalizedFindings.length > 0 || errCount > 0 || warnCount > 0 || bbCount > 0;
-      _lastNormalizedSentinelFindings = normalizedFindings;
-      _lastSentinelAlertCounts = { errs: shownErrs, warns: shownWarns, bugbot: bbCount };
+      const normalizedFindings = parsedSen.normalizedFindings;
+      const rawCloneCount = parsedSen.rawCloneCount;
+      const hasAnyAlert = parsedSen.hasAnyAlert;
 
       const clearBtn = document.getElementById('btnClearSentinelFindings');
       if (clearBtn) {
@@ -283,7 +342,13 @@
         } else {
           const sumParts = [];
           if (shownErrs > 0) sumParts.push(L('Ошибок: ', 'Errors: ') + shownErrs);
-          if (shownWarns > 0) sumParts.push(L('Пред.: ', 'Warn: ') + shownWarns);
+          if (shownWarns > 0) {
+            if (rawCloneCount > 0 && Number(sg.warnCount || 0) === 0 && rawCoChange.length === 0) {
+              sumParts.push(L('Дубликатов кода: ', 'Code clones: ') + shownWarns);
+            } else {
+              sumParts.push(L('Предупреждений: ', 'Warnings: ') + shownWarns);
+            }
+          }
           if (bbCount > 0) sumParts.push('BugBot: ' + bbCount);
           if (sumParts.length === 0) sumParts.push(L('Находок: ', 'Findings: ') + normalizedFindings.length);
           liteSummaryEl.className = 'lite-sentinel-summary ' + (shownErrs > 0 ? 'is-err' : 'is-warn');
@@ -298,11 +363,14 @@
 
       const liteFixBtn = document.getElementById('btnLiteSentinelFix');
       if (liteFixBtn) {
+        const inFixCooldown = Date.now() < _sentinelFixCooldownUntil;
         liteFixBtn.style.display = hasAnyAlert ? 'inline-flex' : 'none';
-        liteFixBtn.disabled = !hasAnyAlert || _sentinelActionBusy;
-        liteFixBtn.textContent = normalizedFindings.length > 1
-          ? (L('🛠️ Исправить (', '🛠️ Fix (') + normalizedFindings.length + ')')
-          : L('🛠️ Исправить', '🛠️ Fix');
+        liteFixBtn.disabled = !hasAnyAlert || _sentinelActionBusy || inFixCooldown;
+        liteFixBtn.textContent = inFixCooldown
+          ? L('✓ В новом чате', '✓ In new chat')
+          : (normalizedFindings.length > 1
+            ? (L('Исправить (', 'Fix (') + normalizedFindings.length + ')')
+            : L('Исправить', 'Fix'));
       }
 
       const liteFindingsEl = document.getElementById('liteSentinelFindings');
@@ -347,8 +415,8 @@
             itemFixBtn.className = 'win-btn lite-sentinel-item-fix-btn';
             itemFixBtn.setAttribute('data-action', 'fixSentinelFindingNow');
             itemFixBtn.setAttribute('data-prompt', lf.prompt);
-            itemFixBtn.textContent = '🛠️';
-            itemFixBtn.title = L('Отправить эту ошибку в чат на исправление', 'Send this issue to active chat to fix');
+            itemFixBtn.textContent = 'Fix';
+            itemFixBtn.title = L('Отправить эту ошибку на исправление в отдельный чат проекта', 'Send this issue to a separate project chat to fix');
 
             itemRow.appendChild(textWrap);
             itemRow.appendChild(itemFixBtn);
@@ -415,6 +483,9 @@
             listEl.appendChild(row);
           }
         }
+      }
+      if (typeof syncGuardDockFromSentinel === 'function') {
+        syncGuardDockFromSentinel(normalizedFindings, _lastSentinelAlertCounts);
       }
     }
 
@@ -484,12 +555,62 @@
       flashStatus(L('Задача из Дозора перенесена в Композер ✓', 'Sentinel task sent to Composer ✓'));
     }
 
+    function showSentinelFixNotice(noticeText) {
+      const el = document.getElementById('liteSentinelFixNotice');
+      if (!el) return;
+      el.textContent = String(noticeText || '');
+      el.style.display = noticeText ? 'flex' : 'none';
+      if (_sentinelFixNoticeTimer) {
+        clearTimeout(_sentinelFixNoticeTimer);
+        _sentinelFixNoticeTimer = null;
+      }
+      if (noticeText) {
+        _sentinelFixNoticeTimer = setTimeout(function () {
+          _sentinelFixNoticeTimer = null;
+          const node = document.getElementById('liteSentinelFixNotice');
+          if (node) {
+            node.style.display = 'none';
+            node.textContent = '';
+          }
+        }, 7000);
+      }
+    }
+
+    function armSentinelFixCooldown() {
+      _sentinelFixCooldownUntil = Date.now() + 3000;
+      const liteFixBtn = document.getElementById('btnLiteSentinelFix');
+      if (liteFixBtn) {
+        liteFixBtn.disabled = true;
+        liteFixBtn.textContent = L('✓ В новом чате', '✓ In new chat');
+      }
+      document.querySelectorAll('#liteSentinelFindings .lite-sentinel-item-fix-btn').forEach(function (btn) {
+        btn.disabled = true;
+      });
+      if (_sentinelFixCooldownTimer) clearTimeout(_sentinelFixCooldownTimer);
+      _sentinelFixCooldownTimer = setTimeout(function () {
+        _sentinelFixCooldownTimer = null;
+        _sentinelFixCooldownUntil = 0;
+        renderSentinelStatus(lastPayloadCache ? lastPayloadCache.sentinel : null, currentState);
+      }, 3050);
+    }
+
     function fixSentinelFindingNow(promptText) {
       const clean = String(promptText || '').trim();
       if (!clean) return;
+      if (Date.now() < _sentinelFixCooldownUntil) return;
       if (typeof enqueueSmartComposerMessage === 'function') {
-        enqueueSmartComposerMessage(clean);
-        flashStatus(L('Задача на исправление отправлена в чат ✓', 'Fix task sent to active chat ✓'));
+        armSentinelFixCooldown();
+        enqueueSmartComposerMessage(clean, {
+          forceNewConversation: true,
+          focusNewConversation: false,
+          title: L('Дозор: исправление', 'Sentinel: fix'),
+        });
+        const msg = L(
+          '✓ Исправление открыто в новом стороннем чате проекта — текущий диалог не затронут.',
+          '✓ Fix opened in a new separate project chat — current dialog untouched.'
+        );
+        showSentinelFixNotice(msg);
+        flashStatus(msg);
       } else {
         sendSentinelToComposer(clean);
       }
@@ -537,7 +658,7 @@
               ? (_latestWiretapFault.file + (_latestWiretapFault.line ? ':' + _latestWiretapFault.line : ''))
               : (_latestWiretapFault.source || 'runtime');
             const rep = (_latestWiretapFault.occurrences || 1) > 1 ? (' (x' + _latestWiretapFault.occurrences + ')') : '';
-            txt.textContent = '🐞 [' + loc + ']' + rep + ' ' + (_latestWiretapFault.summary || L('Сбой процесса', 'Runtime fault'));
+            txt.textContent = '[' + loc + ']' + rep + ' ' + (_latestWiretapFault.summary || L('Сбой процесса', 'Runtime fault'));
             txt.title = _latestWiretapFault.excerpt || txt.textContent;
             bar.style.display = 'block';
           } else {
@@ -572,6 +693,9 @@
             comboResetBtn.style.display = pausedCnt > 0 ? 'inline-flex' : 'none';
           }
         }
+      }
+      if (Array.isArray(wiretapFaults) && typeof renderGuardDock === 'function') {
+        renderGuardDock(null);
       }
     }
 
@@ -616,7 +740,6 @@
         case 'wizSetDesignGate': wizSetDesignGate(arg === 'true'); break;
         case 'wizSetInspirationMode': wizSetInspirationMode(arg); break;
         case 'wizSetSubTier': wizSetSubTier(arg); break;
-        case 'wizSetThemePreview': wizSetThemePreview(arg); break;
         case 'wizSetLanguage': wizSetLanguage(arg); break;
         case 'wizSetViewMode': wizSetViewMode(arg); break;
         case 'setUiLanguage': void setUiLanguage(arg); break;
@@ -626,6 +749,7 @@
         case 'toggleLiteRamGpuMaster': toggleLiteRamGpuMaster(); break;
         case 'toggleLiteRamOnly': toggleLiteRamOnly(); break;
         case 'toggleLiteGpuOnly': toggleLiteGpuOnly(); break;
+        case 'toggleLiteCpuOnly': toggleLiteCpuOnly(); break;
         case 'wizRescanHw': wizRescanHw(); break;
         case 'wizToggleFlag': wizToggleFlag(arg); break;
         case 'wizSetGpuPullMode': wizSetGpuPullMode(arg); break;
@@ -643,7 +767,6 @@
         case 'pickGpuFolder': void pickGpuFolder(arg || 'ollama'); break;
         case 'applySuggestedVramModel': if (arg) selectGpuModel('gpuChatModel', arg); break;
         case 'refreshAll': refreshAll(); break;
-        case 'setPanelTheme': setPanelTheme(arg); break;
         case 'setSwarmMode': setSwarmMode(arg); break;
         case 'setSwarmWorkerTier': setSwarmWorkerTier(arg); break;
         case 'setGpuVramCap': setGpuVramCap(Number(arg)); break;
@@ -715,14 +838,34 @@
         case 'prepareLocalCommit': prepareLocalCommit(); break;
         case 'toggleComposerVoice': toggleComposerVoice(); break;
         case 'setHookProfile': setHookProfile(arg); break;
+        case 'applyTogglePreset': applyTogglePreset(arg); break;
         case 'runAgentShield': runAgentShield(); break;
         case 'loadProjectInstincts': loadProjectInstincts(); break;
         case 'promoteInstinct': promoteInstinct(arg); break;
         case 'deleteInstinct': deleteInstinct(arg); break;
+        case 'toggleGuardTab': if (typeof toggleGuardTab === 'function') toggleGuardTab(arg); break;
+        case 'closeGuardDrawer': if (typeof closeGuardDrawer === 'function') closeGuardDrawer(arg); break;
+        case 'toggleGuardMenu': if (typeof toggleGuardMenu === 'function') toggleGuardMenu(arg); break;
+        case 'runGuardAudit': if (typeof runGuardAudit === 'function') void runGuardAudit(arg || 'all'); break;
+        case 'sendDeepStressAuditToChat': if (typeof sendDeepStressAuditToChat === 'function') sendDeepStressAuditToChat(); break;
+        case 'evolveAllInstinctsFromDock': if (typeof evolveAllInstinctsFromDock === 'function') void evolveAllInstinctsFromDock(); break;
+        case 'promoteInstinctFromDock': if (typeof promoteInstinctFromDock === 'function') void promoteInstinctFromDock(arg); break;
+        case 'deleteInstinctFromDock': if (typeof deleteInstinctFromDock === 'function') void deleteInstinctFromDock(arg); break;
+        case 'fixGuardItemInChat': if (typeof fixGuardItemInChat === 'function') fixGuardItemInChat(actionEl.getAttribute('data-prompt') || arg); break;
+        case 'fixGuardAllShieldInChat': if (typeof fixGuardAllShieldInChat === 'function') fixGuardAllShieldInChat(); break;
+        case 'runHealthDoctorFixFromDock': if (typeof runHealthDoctorFixFromDock === 'function') void runHealthDoctorFixFromDock(arg || 'fix_all'); break;
+        case 'clearPitfallsFromDock': if (typeof clearPitfallsFromDock === 'function') void clearPitfallsFromDock(); break;
+        case 'resetFragilityFromDock': if (typeof resetFragilityFromDock === 'function') void resetFragilityFromDock(); break;
+        case 'resetCircuitFromDock': if (typeof resetCircuitFromDock === 'function') void resetCircuitFromDock(); break;
+        case 'initGatesFromDock': if (typeof initGatesFromDock === 'function') void initGatesFromDock(); break;
+        case 'jumpGuardFullSection': if (typeof jumpGuardFullSection === 'function') jumpGuardFullSection(arg); break;
+        case 'openFragileInGraph': if (typeof openFragileInGraph === 'function') openFragileInGraph(arg); break;
         case 'toggleSetupDoctor': toggleSetupDoctor(); break;
         case 'closeSetupDoctor': closeSetupDoctor(); break;
         case 'loadSetupDoctor': loadSetupDoctor(); break;
         case 'applySetupDoctorItem': applySetupDoctorItem(arg); break;
+        case 'runHealthDoctorFix': runHealthDoctorFix(arg); break;
+        case 'setRoiTimelineScale': setRoiTimelineScale(arg); break;
         case 'toggleSkillRegistryDrawer': toggleSkillRegistryDrawer(); break;
         case 'searchExternalSkills': searchExternalSkills(); break;
         case 'importExternalSkill': importExternalSkill(actionEl.getAttribute('data-source') || arg, actionEl.getAttribute('data-slug') || ''); break;
@@ -815,10 +958,22 @@
     };
     const PANEL_SPOILER_IDS = new Set([
       'snapshotsBayesianSpoiler',
-      'expertDetailsBox'
+      'expertDetailsBox',
+      'hwEnginesSpoiler',
+      'sentinelEnginesSpoiler',
+      'intelBudgetSpoiler',
+      'safetyContoursSpoiler'
+    ]);
+    const NESTED_TUNE_SPOILER_IDS = new Set([
+      'hwEnginesSpoiler',
+      'sentinelEnginesSpoiler',
+      'intelBudgetSpoiler',
+      'safetyContoursSpoiler'
     ]);
     let _lastAppliedSpoilersMap = Object.create(null);
     let _spoilerListenersInitialized = false;
+    let _spoilerHydratedFromServer = false;
+    const _locallyToggledSpoilers = Object.create(null);
 
     function sanitizeBooleanIdMap(rawMap, allowedSet) {
       const out = {};
@@ -937,10 +1092,27 @@
 
     function applyAllSpoilersOpenState(serverMap) {
       const hasServerMap = serverMap && typeof serverMap === 'object' && !Array.isArray(serverMap);
+      const localMap = loadBooleanMapFromStorage(OPEN_SPOILERS_STORAGE_KEY, PANEL_SPOILER_IDS);
       const map = hasServerMap
         ? sanitizeBooleanIdMap(serverMap, PANEL_SPOILER_IDS)
-        : loadBooleanMapFromStorage(OPEN_SPOILERS_STORAGE_KEY, PANEL_SPOILER_IDS);
+        : Object.assign({}, localMap);
       if (hasServerMap) {
+        NESTED_TUNE_SPOILER_IDS.forEach(function (id) {
+          const localToggle = _locallyToggledSpoilers[id];
+          if (localToggle) {
+            if (Boolean(map[id]) === Boolean(localToggle.open)) {
+              delete _locallyToggledSpoilers[id];
+            } else {
+              // Stale in-memory sidecar server or unrelated patch response dropped nested spoiler state; preserve local toggle.
+              if (localToggle.open) map[id] = true;
+              else delete map[id];
+            }
+          } else if (!map[id] && localMap[id] === true) {
+            // Preserve locally opened nested tune spoiler even if a stale server strips it from panelOpenSpoilers.
+            map[id] = true;
+          }
+        });
+        _spoilerHydratedFromServer = true;
         saveBooleanMapToStorage(OPEN_SPOILERS_STORAGE_KEY, map, PANEL_SPOILER_IDS);
       }
       _lastAppliedSpoilersMap = map;
@@ -964,6 +1136,7 @@
           const domMap = readDomOpenSpoilersMap();
           const changed = !areBooleanMapsEqual(domMap, _lastAppliedSpoilersMap, PANEL_SPOILER_IDS);
           if (changed) {
+            _locallyToggledSpoilers[id] = { open: Boolean(el.open), at: Date.now() };
             _lastAppliedSpoilersMap = domMap;
             saveBooleanMapToStorage(OPEN_SPOILERS_STORAGE_KEY, domMap, PANEL_SPOILER_IDS);
             updateState({ panelOpenSpoilers: domMap });
@@ -972,7 +1145,9 @@
             refreshBlockVisibilityObserver();
             flushVisibleBlockRenders();
             maybeLoadMissingSectionsForBlock(id);
-            pollTelemetryTick();
+            if (!NESTED_TUNE_SPOILER_IDS.has(id)) {
+              pollTelemetryTick();
+            }
             if (id === 'expertDetailsBox') {
               if (typeof loadProjectInstincts === 'function') loadProjectInstincts({ silent: true });
               if (typeof refreshGatesStatus === 'function') refreshGatesStatus({ silent: true });
@@ -1197,6 +1372,21 @@
       }
     }
 
+    function syncPinnedWindowBodyCompanions() {
+      const windowBody = document.querySelector('.window-body');
+      const banner = document.getElementById('smartProjectBanner');
+      if (!windowBody || !banner || banner.parentElement !== windowBody) return;
+      const doctorBox = document.getElementById('setupDoctorBox');
+      if (doctorBox && doctorBox.parentElement === windowBody && banner.nextSibling !== doctorBox) {
+        windowBody.insertBefore(doctorBox, banner.nextSibling);
+      }
+      const anchor = (doctorBox && doctorBox.parentElement === windowBody) ? doctorBox : banner;
+      const fullGuardRail = document.getElementById('fullGuardRailWrap');
+      if (fullGuardRail && fullGuardRail.parentElement === windowBody && anchor.nextSibling !== fullGuardRail) {
+        windowBody.insertBefore(fullGuardRail, anchor.nextSibling);
+      }
+    }
+
     function applyPanelBlockOrder(rawOrder, syncLocal) {
       ensureBlockMoveControls();
       const order = normalizeBlockOrderList(rawOrder);
@@ -1235,6 +1425,7 @@
           }
         }
       }
+      syncPinnedWindowBodyCompanions();
       updateBlockControlsStatus();
       refreshBlockVisibilityObserver();
     }
@@ -1517,7 +1708,10 @@
         if (titleEl) titleEl.textContent = L('Идёт обновление', 'Updating') + verSuffix;
         if (descEl) descEl.textContent = localizedStatusText || L('Пожалуйста, не закрывайте окно…', 'Please keep this window open…');
         if (progressWrap) progressWrap.style.display = 'flex';
-        if (progressFill) progressFill.style.width = pct + '%';
+        if (progressFill) {
+          progressFill.style.width = pct + '%';
+          progressFill.style.setProperty('--fill-scale', (Math.max(0, Math.min(100, Number(pct) || 0)) / 100).toFixed(4));
+        }
         if (stageEl) stageEl.textContent = stageLabel;
         if (pctEl) pctEl.textContent = pct + '%';
         if (errorEl) {
@@ -1536,7 +1730,10 @@
           );
         }
         if (progressWrap) progressWrap.style.display = 'flex';
-        if (progressFill) progressFill.style.width = '100%';
+        if (progressFill) {
+          progressFill.style.width = '100%';
+          progressFill.style.setProperty('--fill-scale', '1');
+        }
         if (stageEl) stageEl.textContent = L('Готово · Требуется перезагрузка', 'Done · Restart required');
         if (pctEl) pctEl.textContent = '100%';
         if (errorEl) {
@@ -1624,7 +1821,7 @@
         if (applyBtn) {
           applyBtn.style.display = 'inline-flex';
           applyBtn.disabled = true;
-          applyBtn.textContent = L('⏳ Установка...', '⏳ Installing...');
+          applyBtn.textContent = L('Установка...', 'Installing...');
         }
         if (dismissBtn) dismissBtn.style.display = 'none';
       } else if (isDone) {
@@ -1873,4 +2070,453 @@
       updateState({ panelBlockOrder: DEFAULT_PANEL_BLOCK_ORDER.slice() });
       flashStatus(L('Восстановлен исходный порядок блоков ✓', 'Default card order restored ✓'));
     }
+
+    // =========================================================================
+    // Global Styled Tooltip Portal (replaces native browser [title] popups)
+    // =========================================================================
+    const _tooltipSavedTitles = typeof WeakMap === 'function' ? new WeakMap() : null;
+    let _stashedTooltipEls = [];
+    let _customTooltipInitialized = false;
+    let _activeTooltipOwner = null;
+    let _activeTooltipText = '';
+    let _tooltipShowTimer = 0;
+    let _tooltipLastHideAt = 0;
+    let _tooltipPointerX = null;
+    let _tooltipFocusShown = false;
+    let _tooltipClickSuppressedOwner = null;
+    let _tooltipEscapeDismissedOwner = null;
+    let _tooltipMenuSuppressedTrigger = null;
+    let _tooltipMutationObserver = null;
+
+    function isCustomSelectMenuOpen() {
+      if (typeof _openCustomSelectId !== 'undefined' && Boolean(_openCustomSelectId)) {
+        return true;
+      }
+      const menu = typeof document !== 'undefined' ? document.getElementById('lgCustomSelectMenu') : null;
+      return Boolean(menu && !menu.hidden && menu.classList && menu.classList.contains('is-open'));
+    }
+
+    function isProtectedBySuppressedMenu(el) {
+      if (!_tooltipMenuSuppressedTrigger || !el || !isCustomSelectMenuOpen()) return false;
+      if (el === _tooltipMenuSuppressedTrigger) return true;
+      return typeof el.contains === 'function' && el.contains(_tooltipMenuSuppressedTrigger);
+    }
+
+    function isTooltipHostNode(node) {
+      if (!node || typeof node.tagName !== 'string') return false;
+      if (node.nodeType !== undefined && node.nodeType !== 1) return false;
+      const tag = String(node.tagName).toUpperCase();
+      return tag !== 'HTML' && tag !== 'BODY' && tag !== 'HEAD' && tag !== 'TITLE' && tag !== 'SCRIPT' && tag !== 'STYLE';
+    }
+
+    function isTooltipElementHovered(el) {
+      if (!el || typeof el.matches !== 'function') return false;
+      try {
+        return Boolean(el.matches(':hover'));
+      } catch {
+        return false;
+      }
+    }
+
+    function findTooltipOwner(startNode) {
+      let cur = startNode;
+      while (cur && typeof cur.tagName === 'string') {
+        if (!isTooltipHostNode(cur)) break;
+        if (_tooltipSavedTitles && _tooltipSavedTitles.has(cur)) return cur;
+        if (typeof cur.getAttribute === 'function') {
+          const t = cur.getAttribute('title');
+          if (typeof t === 'string' && t.trim() !== '') return cur;
+        }
+        cur = cur.parentElement || null;
+      }
+      return null;
+    }
+
+    function stashTooltipTitle(el) {
+      if (!el || typeof el.getAttribute !== 'function') return '';
+      const live = el.getAttribute('title');
+      if (_tooltipSavedTitles && _tooltipSavedTitles.has(el)) {
+        if (typeof live === 'string' && live.trim() !== '') {
+          _tooltipSavedTitles.set(el, live);
+          if (typeof el.removeAttribute === 'function') el.removeAttribute('title');
+          if (_stashedTooltipEls.indexOf(el) === -1) _stashedTooltipEls.push(el);
+          return live;
+        }
+        return _tooltipSavedTitles.get(el) || '';
+      }
+      if (typeof live !== 'string' || !live.trim()) return '';
+      if (_tooltipSavedTitles) {
+        _tooltipSavedTitles.set(el, live);
+        if (typeof el.removeAttribute === 'function') el.removeAttribute('title');
+        if (_stashedTooltipEls.indexOf(el) === -1) _stashedTooltipEls.push(el);
+      }
+      return live;
+    }
+
+    function stashAncestorTooltipTitles(ownerEl) {
+      let cur = ownerEl ? (ownerEl.parentElement || null) : null;
+      while (cur && isTooltipHostNode(cur)) {
+        stashTooltipTitle(cur);
+        cur = cur.parentElement || null;
+      }
+    }
+
+    function restoreTooltipTitle(el) {
+      if (!el || !_tooltipSavedTitles || !_tooltipSavedTitles.has(el)) return;
+      const orig = _tooltipSavedTitles.get(el);
+      _tooltipSavedTitles.delete(el);
+      if (typeof el.getAttribute === 'function' && typeof el.setAttribute === 'function') {
+        const cur = el.getAttribute('title');
+        if ((cur === null || cur === '') && orig) {
+          el.setAttribute('title', orig);
+        }
+      }
+    }
+
+    function setTooltipTitle(el, text) {
+      if (!el) return;
+      const nextText = typeof text === 'string' ? text : String(text == null ? '' : text);
+      if ((_tooltipSavedTitles && _tooltipSavedTitles.has(el)) || isProtectedBySuppressedMenu(el)) {
+        if (nextText.trim()) {
+          if (_tooltipSavedTitles) _tooltipSavedTitles.set(el, nextText);
+          if (_stashedTooltipEls.indexOf(el) === -1) _stashedTooltipEls.push(el);
+          if (typeof el.removeAttribute === 'function' && el.getAttribute('title') !== null) {
+            el.removeAttribute('title');
+          }
+          if (el === _activeTooltipOwner && !isCustomSelectMenuOpen()) {
+            _activeTooltipText = nextText;
+            const tipEl = document.getElementById('agCustomTooltip');
+            if (tipEl && !tipEl.hidden) {
+              tipEl.textContent = nextText;
+              positionCustomTooltip(tipEl, el, _tooltipPointerX);
+            }
+          }
+        } else {
+          if (_tooltipSavedTitles) _tooltipSavedTitles.delete(el);
+          const idx = _stashedTooltipEls.indexOf(el);
+          if (idx !== -1) _stashedTooltipEls.splice(idx, 1);
+          if (typeof el.removeAttribute === 'function') el.removeAttribute('title');
+          if (el === _activeTooltipOwner) hideCustomTooltip();
+        }
+        return;
+      }
+      if (typeof el.getAttribute === 'function' && typeof el.setAttribute === 'function') {
+        if (nextText.trim()) {
+          if (el.getAttribute('title') !== nextText) {
+            el.setAttribute('title', nextText);
+          }
+        } else if (el.getAttribute('title') !== null) {
+          el.removeAttribute('title');
+        }
+      }
+    }
+
+    function positionCustomTooltip(tipEl, ownerEl, anchorX) {
+      if (!tipEl || !ownerEl || typeof ownerEl.getBoundingClientRect !== 'function') return false;
+      const rect = ownerEl.getBoundingClientRect();
+      if (!rect || (rect.width === 0 && rect.height === 0)) return false;
+
+      const vw = Math.max(200, Number(window.innerWidth) || 800);
+      const vh = Math.max(160, Number(window.innerHeight) || 600);
+      tipEl.style.left = '0px';
+      tipEl.style.top = '0px';
+      tipEl.hidden = false;
+
+      const tipW = Math.min(vw - 16, Math.max(48, Number(tipEl.offsetWidth) || 180));
+      const tipH = Math.max(22, Number(tipEl.offsetHeight) || 28);
+      const centerX = (rect.width > 260 && typeof anchorX === 'number' && anchorX >= rect.left && anchorX <= rect.right)
+        ? anchorX
+        : (rect.left + rect.width * 0.5);
+      const left = Math.max(8, Math.min(centerX - tipW * 0.5, vw - tipW - 8));
+
+      const gap = 7;
+      const spaceBelow = vh - rect.bottom - 8;
+      const spaceAbove = rect.top - 8;
+      const placeTop = spaceBelow < tipH + gap && spaceAbove > spaceBelow;
+      let top;
+      if (placeTop) {
+        top = Math.max(8, rect.top - tipH - gap);
+        tipEl.setAttribute('data-placement', 'top');
+      } else {
+        top = Math.min(vh - tipH - 8, rect.bottom + gap);
+        tipEl.setAttribute('data-placement', 'bottom');
+      }
+
+      tipEl.style.left = Math.round(left) + 'px';
+      tipEl.style.top = Math.round(top) + 'px';
+      return true;
+    }
+
+    function showCustomTooltipNow(ownerEl, text) {
+      const tipEl = document.getElementById('agCustomTooltip');
+      if (!tipEl || !ownerEl || ownerEl.isConnected === false) return;
+      tipEl.textContent = text;
+      tipEl.classList.remove('is-visible');
+      tipEl.setAttribute('aria-hidden', 'false');
+      if (!positionCustomTooltip(tipEl, ownerEl, _tooltipPointerX)) {
+        hideCustomTooltip();
+        return;
+      }
+      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(function () {
+          if (_activeTooltipOwner === ownerEl && !tipEl.hidden) {
+            tipEl.classList.add('is-visible');
+          }
+        });
+      } else {
+        tipEl.classList.add('is-visible');
+      }
+    }
+
+    function dismissCustomTooltipVisual() {
+      if (_tooltipShowTimer) {
+        clearTimeout(_tooltipShowTimer);
+        _tooltipShowTimer = 0;
+      }
+      _tooltipFocusShown = false;
+      const tipEl = document.getElementById('agCustomTooltip');
+      if (tipEl && !tipEl.hidden) {
+        _tooltipLastHideAt = Date.now();
+        tipEl.classList.remove('is-visible');
+        tipEl.setAttribute('aria-hidden', 'true');
+        tipEl.hidden = true;
+      }
+    }
+
+    function hideCustomTooltip() {
+      dismissCustomTooltipVisual();
+      if (_tooltipMenuSuppressedTrigger && isCustomSelectMenuOpen()) {
+        const remaining = [];
+        while (_stashedTooltipEls.length > 0) {
+          const el = _stashedTooltipEls.pop();
+          if (isProtectedBySuppressedMenu(el)) {
+            remaining.push(el);
+          } else {
+            restoreTooltipTitle(el);
+          }
+        }
+        _stashedTooltipEls = remaining;
+      } else {
+        while (_stashedTooltipEls.length > 0) {
+          restoreTooltipTitle(_stashedTooltipEls.pop());
+        }
+      }
+      if (_activeTooltipOwner) {
+        if (!isProtectedBySuppressedMenu(_activeTooltipOwner)) {
+          restoreTooltipTitle(_activeTooltipOwner);
+        }
+        _activeTooltipOwner = null;
+      }
+      _activeTooltipText = '';
+      _tooltipClickSuppressedOwner = null;
+    }
+
+    function suppressTooltipForOpenMenu(triggerEl) {
+      hideCustomTooltip();
+      _tooltipMenuSuppressedTrigger = triggerEl || null;
+      if (!triggerEl) return;
+      stashTooltipTitle(triggerEl);
+      stashAncestorTooltipTitles(triggerEl);
+    }
+
+    function releaseTooltipForClosedMenu() {
+      _tooltipMenuSuppressedTrigger = null;
+      hideCustomTooltip();
+    }
+
+    function activateTooltipHover(owner) {
+      if (!owner) return;
+      if (isCustomSelectMenuOpen()) {
+        hideCustomTooltip();
+        return;
+      }
+      if (_activeTooltipOwner && _activeTooltipOwner.isConnected === false) {
+        hideCustomTooltip();
+      }
+      if (owner === _activeTooltipOwner) {
+        const refreshed = stashTooltipTitle(owner);
+        if (refreshed && refreshed !== _activeTooltipText) {
+          _activeTooltipText = refreshed;
+          const tipEl = document.getElementById('agCustomTooltip');
+          if (tipEl && !tipEl.hidden) {
+            tipEl.textContent = refreshed;
+            positionCustomTooltip(tipEl, owner, _tooltipPointerX);
+          }
+        }
+        return;
+      }
+      _tooltipEscapeDismissedOwner = null;
+      hideCustomTooltip();
+      const text = stashTooltipTitle(owner);
+      if (!text) return;
+      stashAncestorTooltipTitles(owner);
+      _activeTooltipOwner = owner;
+      _activeTooltipText = text;
+      const delay = (Date.now() - _tooltipLastHideAt < 220) ? 300 : 700;
+      _tooltipShowTimer = setTimeout(function () {
+        _tooltipShowTimer = 0;
+        if (!isCustomSelectMenuOpen() && _activeTooltipOwner === owner && _tooltipClickSuppressedOwner !== owner) {
+          showCustomTooltipNow(owner, _activeTooltipText || text);
+        }
+      }, delay);
+    }
+
+    function syncMutatedTooltipTitle(target) {
+      if (!target || typeof target.getAttribute !== 'function') return;
+      const live = target.getAttribute('title');
+      if (typeof live !== 'string' || !live.trim()) return;
+      const protectedByMenu = isProtectedBySuppressedMenu(target);
+      const isTracked = target === _activeTooltipOwner || _stashedTooltipEls.indexOf(target) !== -1 || protectedByMenu;
+      if (!isTracked) {
+        if (!isCustomSelectMenuOpen() && !_activeTooltipOwner && target !== _tooltipEscapeDismissedOwner && isTooltipElementHovered(target)) {
+          activateTooltipHover(target);
+        }
+        return;
+      }
+      if (_tooltipSavedTitles) {
+        _tooltipSavedTitles.set(target, live);
+        if (typeof target.removeAttribute === 'function') target.removeAttribute('title');
+        if (_stashedTooltipEls.indexOf(target) === -1) _stashedTooltipEls.push(target);
+      }
+      if (!isCustomSelectMenuOpen() && target === _activeTooltipOwner) {
+        _activeTooltipText = live;
+        const tipEl = document.getElementById('agCustomTooltip');
+        if (tipEl && !tipEl.hidden) {
+          tipEl.textContent = live;
+          positionCustomTooltip(tipEl, target, _tooltipPointerX);
+        }
+      }
+    }
+
+    function initCustomTooltipController() {
+      if (_customTooltipInitialized) return;
+      if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') return;
+      _customTooltipInitialized = true;
+
+      if (typeof MutationObserver === 'function' && !_tooltipMutationObserver) {
+        const obsRoot = document.body || document.documentElement;
+        if (obsRoot) {
+          try {
+            _tooltipMutationObserver = new MutationObserver(function (mutations) {
+              for (let i = 0; i < mutations.length; i++) {
+                const m = mutations[i];
+                if (m && m.type === 'attributes' && m.attributeName === 'title') {
+                  syncMutatedTooltipTitle(m.target);
+                }
+              }
+            });
+            _tooltipMutationObserver.observe(obsRoot, { attributes: true, attributeFilter: ['title'], subtree: true });
+          } catch {
+            _tooltipMutationObserver = null;
+          }
+        }
+      }
+
+      document.addEventListener('mouseover', function (ev) {
+        _tooltipPointerX = (ev && typeof ev.clientX === 'number') ? ev.clientX : null;
+        if (isCustomSelectMenuOpen()) {
+          hideCustomTooltip();
+          return;
+        }
+        const owner = findTooltipOwner(ev ? ev.target : null);
+        if (!owner) {
+          if (_activeTooltipOwner) hideCustomTooltip();
+          return;
+        }
+        if (owner === _tooltipEscapeDismissedOwner) _tooltipEscapeDismissedOwner = null;
+        activateTooltipHover(owner);
+      });
+
+      document.addEventListener('mousemove', function (ev) {
+        _tooltipPointerX = (ev && typeof ev.clientX === 'number') ? ev.clientX : null;
+        if (isCustomSelectMenuOpen()) {
+          if (_activeTooltipOwner) hideCustomTooltip();
+          else dismissCustomTooltipVisual();
+          return;
+        }
+        if (_activeTooltipOwner) {
+          if (_activeTooltipOwner.isConnected === false) {
+            hideCustomTooltip();
+            return;
+          }
+          if (typeof _activeTooltipOwner.getAttribute === 'function' && _activeTooltipOwner.getAttribute('title')) {
+            syncMutatedTooltipTitle(_activeTooltipOwner);
+          }
+          return;
+        }
+        const owner = findTooltipOwner(ev ? ev.target : null);
+        if (owner && owner !== _tooltipEscapeDismissedOwner) {
+          activateTooltipHover(owner);
+        }
+      });
+
+      document.addEventListener('mouseout', function (ev) {
+        const nextOwner = findTooltipOwner(ev ? ev.relatedTarget : null);
+        if (_tooltipEscapeDismissedOwner && nextOwner !== _tooltipEscapeDismissedOwner) {
+          _tooltipEscapeDismissedOwner = null;
+        }
+        if (isCustomSelectMenuOpen()) {
+          hideCustomTooltip();
+          return;
+        }
+        if (!_activeTooltipOwner) return;
+        if (nextOwner === _activeTooltipOwner) return;
+        hideCustomTooltip();
+      });
+
+      document.addEventListener('focusin', function (ev) {
+        if (isCustomSelectMenuOpen()) {
+          hideCustomTooltip();
+          return;
+        }
+        const target = ev ? ev.target : null;
+        let isFocusVisible = false;
+        try {
+          isFocusVisible = Boolean(target && typeof target.matches === 'function' && target.matches(':focus-visible'));
+        } catch {}
+        if (!isFocusVisible) return;
+        const owner = findTooltipOwner(target);
+        if (!owner || owner === _activeTooltipOwner) return;
+        _tooltipEscapeDismissedOwner = null;
+        hideCustomTooltip();
+        const text = stashTooltipTitle(owner);
+        if (!text) return;
+        stashAncestorTooltipTitles(owner);
+        _activeTooltipOwner = owner;
+        _activeTooltipText = text;
+        _tooltipFocusShown = true;
+        _tooltipPointerX = null;
+        showCustomTooltipNow(owner, text);
+      });
+
+      document.addEventListener('focusout', function () {
+        if (_tooltipFocusShown) hideCustomTooltip();
+      });
+
+      // Keep title stashed until mouseout so clicking never exposes native tooltip under stationary cursor
+      document.addEventListener('pointerdown', function () {
+        if (_activeTooltipOwner) {
+          _tooltipClickSuppressedOwner = _activeTooltipOwner;
+        }
+        dismissCustomTooltipVisual();
+      }, true);
+
+      document.addEventListener('keydown', function (ev) {
+        if (!ev) return;
+        if (ev.key === 'Escape') {
+          _tooltipEscapeDismissedOwner = _activeTooltipOwner;
+          hideCustomTooltip();
+        } else if (ev.key === 'Enter' || ev.key === ' ') {
+          hideCustomTooltip();
+        }
+      }, true);
+
+      if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('scroll', hideCustomTooltip, true);
+        window.addEventListener('resize', hideCustomTooltip);
+        window.addEventListener('blur', hideCustomTooltip);
+      }
+    }
+
+    initCustomTooltipController();
 

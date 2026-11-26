@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * @file run-mega-diagnostic.mjs
- * @description Unified 6-contour 360-degree Mega-Diagnostic CLI for The Tunnel v3.35.0:
+ * @description Unified 6-contour 360-degree Mega-Diagnostic CLI for The Tunnel v4.0.0:
  *   1. Hygiene & Manifests (UI build check, version sync, Skill-Architect, GitHub Guard)
  *   2. Static, Security, Contracts & Sandboxed Fuzzing (Deep Stress Auditor --fuzz)
  *   3. 8 Practical Cross-System Missions (tests/mega-cross-system-e2e.test.mjs)
@@ -527,7 +527,7 @@ async function runContour6LiveCdp(screenshotsDir = '') {
       while (Date.now() < deadline) {
         const ver = document.getElementById('footerPluginVersion')?.textContent || '';
         const theme = document.body.getAttribute('data-panel-theme');
-        if (ver.includes('3.') && theme) return true;
+        if (/\bv\d+\./.test(ver) && theme) return true;
         await new Promise((r) => setTimeout(r, 40));
       }
       throw new Error('Panel UI hydration timeout');
@@ -550,7 +550,7 @@ async function runContour6LiveCdp(screenshotsDir = '') {
     });
     await savePng('cdp-panel-full-ru.png');
 
-    // Check narrow 360px + EN/RU + Lite/Full + Studio Titanium theme + scale cycling
+    // Check narrow 360px + EN/RU + Lite/Full + scale cycling
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 380, height: 780, deviceScaleFactor: 1, mobile: false });
     const layoutMetrics = await cdp.evaluate(async () => {
       const checks = [];
@@ -571,18 +571,16 @@ async function runContour6LiveCdp(screenshotsDir = '') {
       await new Promise((r) => setTimeout(r, 150));
 
       document.querySelector('[data-action="setPanelViewMode"][data-arg="lite"]')?.click();
-      document.querySelector('[data-action="setPanelTheme"][data-arg="studio_titanium"]')?.click();
       await new Promise((r) => setTimeout(r, 220));
-      measure('lite_titanium_380');
+      measure('lite_ru_380');
       return { checks, enTitle, view: document.body.getAttribute('data-panel-view'), theme: document.body.getAttribute('data-panel-theme') };
     });
-    await savePng('cdp-panel-lite-titanium.png');
+    await savePng('cdp-panel-lite-ru.png');
 
-    // Restore Full + glass_teal + test Onboarding Wizard 4 steps
+    // Restore Full + test Onboarding Wizard 4 steps
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 900, height: 720, deviceScaleFactor: 1, mobile: false });
     const wizRes = await cdp.evaluate(async () => {
       document.querySelector('[data-action="setPanelViewMode"][data-arg="full"]')?.click();
-      document.querySelector('[data-action="setPanelTheme"][data-arg="glass_teal"]')?.click();
       await new Promise((r) => setTimeout(r, 150));
       if (typeof openOnboardingWizard === 'function') openOnboardingWizard(1);
       await new Promise((r) => setTimeout(r, 150));
@@ -668,18 +666,53 @@ export async function runMegaDiagnostic(rawOpts = {}) {
   const tStart = Date.now();
   const contours = [];
 
-  // Contour 1: Hygiene & Manifests
+  // Contour 1: Hygiene, Manifests & UI/A11y Gate
   const { buildPanelUi } = await import('../core/panel-ui-builder.mjs');
   const c1Ui = buildPanelUi({ repoRoot: ROOT_DIR, checkOnly: true });
   const c1Ver = await runNodeStep('version:check', ['scripts/bump-version.mjs', '--check']);
   const c1Skills = await runNodeStep('lint:skills', ['skills/skill-architect/scripts/audit-skill.mjs', '--all', '--strict']);
   const c1Gh = await runNodeStep('audit:github', ['skills/github-publish-guard/scripts/audit-github-publish.mjs']);
+  const c1UiCraft = await runNodeStep('audit-ui', [
+    'skills/ui-ux-design-system/scripts/audit-ui.mjs',
+    'sidecars/panel/ui.html',
+    '--json',
+    ...(opts.liveCdp ? ['--viewports'] : []),
+  ]);
+  const c1Dogfood = await runNodeStep('webapp-dogfood', [
+    'skills/deep-stress-auditor/scripts/run-webapp-dogfood.mjs',
+    'sidecars/panel/ui.html',
+    '--json',
+  ]);
+  let uiCraftParsed = null;
+  let dogfoodParsed = null;
+  try { uiCraftParsed = JSON.parse(c1UiCraft.stdout); } catch {}
+  try { dogfoodParsed = JSON.parse(c1Dogfood.stdout); } catch {}
+  const uiCraftOk = Boolean(
+    c1UiCraft.ok &&
+    uiCraftParsed?.ok &&
+    Number(uiCraftParsed?.averageScore || 0) >= 19 &&
+    (!uiCraftParsed?.viewports || uiCraftParsed.viewports.skipped || uiCraftParsed.viewports.ok)
+  );
+  const dogfoodOk = Boolean(
+    c1Dogfood.ok &&
+    dogfoodParsed?.ok &&
+    Array.isArray(dogfoodParsed?.issues) &&
+    dogfoodParsed.issues.length === 0
+  );
   contours.push({
     id: 'contour_1_hygiene',
-    name: 'Hygiene & Manifests (UI Sync, SemVer, 13 Skills, GitHub Guard)',
-    ok: Boolean(c1Ui?.ok) && c1Ver.ok && c1Skills.ok && c1Gh.ok,
-    elapsedMs: c1Ver.elapsedMs + c1Skills.elapsedMs + c1Gh.elapsedMs,
-    details: { uiSync: Boolean(c1Ui?.ok), version: c1Ver.ok, skills: c1Skills.ok, githubGuard: c1Gh.ok },
+    name: 'Hygiene, Manifests & UI/A11y Gate (UI Sync, SemVer, 15 Skills, GitHub, Craft 20/20, A11y)',
+    ok: Boolean(c1Ui?.ok) && c1Ver.ok && c1Skills.ok && c1Gh.ok && uiCraftOk && dogfoodOk,
+    elapsedMs: c1Ver.elapsedMs + c1Skills.elapsedMs + c1Gh.elapsedMs + c1UiCraft.elapsedMs + c1Dogfood.elapsedMs,
+    details: {
+      uiSync: Boolean(c1Ui?.ok),
+      version: c1Ver.ok,
+      skills: c1Skills.ok,
+      githubGuard: c1Gh.ok,
+      uiCraft: uiCraftOk,
+      uiCraftScore: Number(uiCraftParsed?.averageScore || 0),
+      a11yDogfood: dogfoodOk,
+    },
   });
 
   // Contour 2: Static, Security, Contracts & Sandboxed Fuzzing
@@ -775,10 +808,15 @@ const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve
 if (isMain) {
   const args = parseMegaDiagnosticArgs(process.argv.slice(2));
   const report = await runMegaDiagnostic(args);
+  let pkgVersion = '4.0.0';
+  try {
+    const pkgMeta = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
+    if (pkgMeta?.version) pkgVersion = String(pkgMeta.version);
+  } catch {}
   if (args.json) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } else {
-    console.log(`\n=== The Tunnel v3.34.1 · Mega-Diagnostic (${report.ok ? 'PASSED' : 'FAILED'}, ${report.totalElapsedMs}ms) ===`);
+    console.log(`\n=== The Tunnel v${pkgVersion} · Mega-Diagnostic (${report.ok ? 'PASSED' : 'FAILED'}, ${report.totalElapsedMs}ms) ===`);
     for (const c of report.contours) {
       const badge = c.ok ? '✅ PASS' : '❌ FAIL';
       console.log(`${badge} [${c.id}] ${c.name} (${c.elapsedMs}ms)`);

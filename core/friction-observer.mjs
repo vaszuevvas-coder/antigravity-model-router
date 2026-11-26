@@ -163,6 +163,126 @@ export function detectEditChurnFriction(opts = {}) {
   };
 }
 
+const CLI_ERROR_CLASSIFIERS = [
+  { type: 'unknown_flag', re: /(?:unknown\s+(?:option|flag|argument)|unrecognized\s+(?:option|argument)|invalid\s+option|unexpected\s+argument|bad\s+option|no\s+such\s+option|parameter\s+cannot\s+be\s+found)/i },
+  { type: 'command_not_found', re: /(?:command\s+not\s+found|is\s+not\s+recognized\s+as\s+an?\s+internal|not\s+recognized\s+as\s+the\s+name\s+of\s+a\s+cmdlet|ENOENT)/i },
+  { type: 'wrong_path', re: /(?:no\s+such\s+file\s+or\s+directory|cannot\s+find\s+path|does\s+not\s+exist|cannot\s+open\s+file|path\s+not\s+found)/i },
+  { type: 'missing_arg', re: /(?:missing\s+(?:required\s+)?(?:argument|operand|parameter)|requires\s+an?\s+(?:argument|value)|expected\s+at\s+least)/i },
+  { type: 'permission_denied', re: /(?:permission\s+denied|access\s+is\s+denied|EACCES|EPERM)/i },
+  { type: 'wrong_syntax', re: /(?:syntax\s+error|unexpected\s+token|parse\s+error|invalid\s+syntax)/i },
+];
+
+function extractBaseCliCommand(rawCmd = '') {
+  let cleaned = String(rawCmd || '').trim();
+  const posixAssignRe = /^[A-Za-z_][A-Za-z0-9_]*=\S+\s+/;
+  const psAssignRe = /^\$env:[A-Za-z_][A-Za-z0-9_]*=\S+;\s*/i;
+  for (let i = 0; i < 16; i++) {
+    if (posixAssignRe.test(cleaned)) {
+      cleaned = cleaned.replace(posixAssignRe, '');
+    } else if (psAssignRe.test(cleaned)) {
+      cleaned = cleaned.replace(psAssignRe, '');
+    } else {
+      break;
+    }
+  }
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '';
+  const first = parts[0].replace(/^["']|["']$/g, '').toLowerCase();
+  if ((first === 'npx' || first === 'npm' || first === 'pnpm' || first === 'yarn' || first === 'git' || first === 'node' || first === 'python' || first === 'python3' || first === 'cargo' || first === 'go') && parts[1] && !parts[1].startsWith('-')) {
+    return `${first} ${parts[1].toLowerCase()}`;
+  }
+  return first;
+}
+
+function classifyCliError(errorOutput = '') {
+  const txt = String(errorOutput || '');
+  for (const item of CLI_ERROR_CLASSIFIERS) {
+    if (item.re.test(txt)) return item.type;
+  }
+  return 'other';
+}
+
+/**
+ * CLI Fail->Succeed Learner (inspired by rtk/src/learn):
+ * Records failed CLI invocations per conversation and detects when a subsequent run of the
+ * same base command succeeds with corrected flags/paths within 5 minutes.
+ * @param {object} [opts={}]
+ * @returns {{ detected: boolean, signalType: 'cli_correction'|'none', errorType: string, baseCommand: string, wrongCmd: string, rightCmd: string, candidatePattern: string }}
+ */
+export function detectCliFailRecoveryFriction(opts = {}) {
+  const {
+    conversationId = 'default',
+    commandLine = '',
+    exitCode = 0,
+    errorOutput = '',
+    stateFile = '',
+    nowMs = Date.now(),
+  } = opts && typeof opts === 'object' ? opts : {};
+
+  const cmd = cleanSnippet(commandLine, 180);
+  const empty = { detected: false, signalType: 'none', errorType: '', baseCommand: '', wrongCmd: '', rightCmd: '', candidatePattern: '' };
+  if (!cmd || cmd.length < 3) return empty;
+
+  const baseCommand = extractBaseCliCommand(cmd);
+  if (!baseCommand) return empty;
+
+  const cid = normConvoKey(conversationId);
+  const winPath = getChurnWindowPath(stateFile);
+  let matchedFail = null;
+
+  updateJsonAtomicSync(winPath, () => ({ windows: {}, cliFails: {} }), (cur) => {
+    const rawFails = cur?.cliFails && typeof cur.cliFails === 'object' && !Array.isArray(cur.cliFails) ? cur.cliFails : {};
+    const nextFails = {};
+    for (const [k, v] of Object.entries(rawFails)) {
+      if (!k || UNSAFE_KEYS.has(k) || !v || (nowMs - Number(v.updatedAt || 0)) >= CHURN_TTL_MS) continue;
+      nextFails[k] = v;
+    }
+
+    const prevList = Array.isArray(nextFails[cid]?.events) ? nextFails[cid].events : [];
+    const freshList = prevList.filter((e) => e && (nowMs - Number(e.ts || 0)) <= 5 * 60 * 1000);
+
+    if (Number(exitCode) !== 0) {
+      const errorType = classifyCliError(errorOutput);
+      const updated = [
+        ...freshList,
+        { baseCommand, cmd, errorType, ts: nowMs },
+      ].slice(-10);
+      nextFails[cid] = { updatedAt: nowMs, events: updated };
+    } else {
+      for (let i = freshList.length - 1; i >= 0; i--) {
+        const ev = freshList[i];
+        if (ev.baseCommand === baseCommand && ev.cmd !== cmd) {
+          matchedFail = ev;
+          freshList.splice(i, 1);
+          break;
+        }
+      }
+      nextFails[cid] = { updatedAt: nowMs, events: freshList };
+    }
+
+    return {
+      windows: cur?.windows && typeof cur.windows === 'object' ? cur.windows : {},
+      cliFails: nextFails,
+    };
+  }, { spaces: 0 });
+
+  if (!matchedFail) return empty;
+
+  const wrongShort = matchedFail.cmd.slice(0, 75);
+  const rightShort = cmd.slice(0, 75);
+  const candidatePattern = `CLI correction (${matchedFail.errorType}) for "${baseCommand}": avoid \`${wrongShort}\`, use \`${rightShort}\``;
+
+  return {
+    detected: true,
+    signalType: 'cli_correction',
+    errorType: matchedFail.errorType,
+    baseCommand,
+    wrongCmd: matchedFail.cmd,
+    rightCmd: cmd,
+    candidatePattern,
+  };
+}
+
 /**
  * Records a friction observation into SqliteKnowledgeHub project_instincts without modifying SKILL.md directly.
  * @param {object} [params={}]

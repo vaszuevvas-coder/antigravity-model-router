@@ -12,16 +12,16 @@ import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Script } from 'node:vm';
 import { Worker, isMainThread, parentPort } from 'node:worker_threads';
-import { createBaseLiveActivityState, isPidAlive } from './cache-dir.mjs';
+import { createBaseLiveActivityState, isPidAlive, resolveTunnelCacheDir } from './cache-dir.mjs';
 import { safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PLUGIN_ROOT = join(__dirname, '..');
 const STATE_FILE = join(PLUGIN_ROOT, 'router-state.json');
-const CACHE_DIR = join(PLUGIN_ROOT, '.cache');
-const CPU_TELEMETRY_FILE = join(CACHE_DIR, 'cpu-telemetry.json');
-const CPU_LIVE_ACTIVITY_FILE = join(CACHE_DIR, 'cpu-live-activity.json');
+const getCacheDir = () => resolveTunnelCacheDir(PLUGIN_ROOT);
+const getCpuTelemetryFile = () => join(getCacheDir(), 'cpu-telemetry.json');
+const getCpuLiveActivityFile = () => join(getCacheDir(), 'cpu-live-activity.json');
 
 export const DEFAULT_CPU_CONFIG = {
   cpuMulticoreEnabled: true,
@@ -119,10 +119,11 @@ export function resolveCpuThreadBudget(override = {}) {
 
 export function recordCpuTelemetryPatch(mutatorFn) {
   try {
-    if (!existsSync(CACHE_DIR)) {
-      mkdirSync(CACHE_DIR, { recursive: true });
+    const cacheDir = getCacheDir();
+    if (!existsSync(cacheDir)) {
+      mkdirSync(cacheDir, { recursive: true });
     }
-    return updateJsonAtomicSync(CPU_TELEMETRY_FILE, defaultCpuTelemetry, (cur) => {
+    return updateJsonAtomicSync(getCpuTelemetryFile(), defaultCpuTelemetry, (cur) => {
       const base = { ...defaultCpuTelemetry(), ...(cur && typeof cur === 'object' ? cur : {}) };
       const next = typeof mutatorFn === 'function' ? mutatorFn(base) : base;
       return { ...base, ...next };
@@ -133,7 +134,7 @@ export function recordCpuTelemetryPatch(mutatorFn) {
 }
 
 export function readCpuTelemetry() {
-  return safeReadJsonSync(CPU_TELEMETRY_FILE, defaultCpuTelemetry, { selfHeal: false }) || defaultCpuTelemetry();
+  return safeReadJsonSync(getCpuTelemetryFile(), defaultCpuTelemetry, { selfHeal: false }) || defaultCpuTelemetry();
 }
 
 const CPU_SAVING_KIND_MAP = {
@@ -746,11 +747,11 @@ export function beginCpuLiveWork({
   items = 0,
   detail = '',
   detailEn = '',
-  activityFile = CPU_LIVE_ACTIVITY_FILE,
+  activityFile = '',
 } = {}) {
   const now = Date.now();
   const jobId = `${process.pid}-${now}-${Math.random().toString(36).slice(2, 7)}`;
-  const targetFile = activityFile || CPU_LIVE_ACTIVITY_FILE;
+  const targetFile = activityFile || getCpuLiveActivityFile();
   const targetDir = dirname(targetFile);
   try {
     if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true });
@@ -781,10 +782,10 @@ export function beginCpuLiveWork({
 
 export function endCpuLiveWork(
   jobId,
-  { op = '', workers = 0, items = 0, detail = '', detailEn = '', latencyMs = 0, activityFile = CPU_LIVE_ACTIVITY_FILE } = {}
+  { op = '', workers = 0, items = 0, detail = '', detailEn = '', latencyMs = 0, activityFile = '' } = {}
 ) {
   const now = Date.now();
-  const targetFile = activityFile || CPU_LIVE_ACTIVITY_FILE;
+  const targetFile = activityFile || getCpuLiveActivityFile();
   const targetDir = dirname(targetFile);
   try {
     if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true });
@@ -821,10 +822,10 @@ export function recordCpuInstantWork({
   detail = '',
   detailEn = '',
   latencyMs = 0,
-  activityFile = CPU_LIVE_ACTIVITY_FILE,
+  activityFile = '',
 } = {}) {
   const now = Date.now();
-  const targetFile = activityFile || CPU_LIVE_ACTIVITY_FILE;
+  const targetFile = activityFile || getCpuLiveActivityFile();
   const targetDir = dirname(targetFile);
   try {
     if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true });
@@ -852,9 +853,9 @@ export function recordCpuInstantWork({
 export function getCpuLiveActivity({
   now = Date.now(),
   afterglowMs = 2800,
-  activityFile = CPU_LIVE_ACTIVITY_FILE,
+  activityFile = '',
 } = {}) {
-  const targetFile = activityFile || CPU_LIVE_ACTIVITY_FILE;
+  const targetFile = activityFile || getCpuLiveActivityFile();
   const localBusy = poolSingleton ? Number(poolSingleton.getStats().busyWorkers || 0) : 0;
   try {
     if (!existsSync(targetFile)) {

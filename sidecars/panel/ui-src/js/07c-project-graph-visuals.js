@@ -162,7 +162,7 @@
       };
     }
 
-    function pgDrawMinimap(ctx, w, h, isLight) {
+    function pgDrawMinimap(ctx, w, h) {
       const nodes = pgState.nodes;
       if (!ctx || !Array.isArray(nodes) || nodes.length === 0 || w < 340 || h < 220) {
         pgState.minimapRect = null;
@@ -193,15 +193,15 @@
       pgState.minimapRect = { mx, my, mw, mh, minX, minY, spanX, spanY, mScale, offX, offY };
 
       ctx.save();
-      pgDrawRoundedRectPath(ctx, mx, my, mw, mh, 10);
-      ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.90)' : 'rgba(11, 16, 30, 0.86)';
+      pgDrawRoundedRectPath(ctx, mx, my, mw, mh, 5);
+      ctx.fillStyle = 'rgba(18, 19, 22, 0.92)';
       ctx.fill();
-      ctx.strokeStyle = isLight ? 'rgba(124, 45, 18, 0.20)' : 'rgba(255, 255, 255, 0.16)';
+      ctx.strokeStyle = '#2a2d35';
       ctx.lineWidth = 1;
       ctx.stroke();
 
       ctx.save();
-      pgDrawRoundedRectPath(ctx, mx + 2, my + 2, mw - 4, mh - 4, 8);
+      pgDrawRoundedRectPath(ctx, mx + 2, my + 2, mw - 4, mh - 4, 4);
       ctx.clip();
 
       for (let i = 0; i < nodes.length; i++) {
@@ -213,13 +213,13 @@
         let dotCol = pgGetClusterColor(n.clusterId);
         let r = n.isFolder ? 2.6 : 1.7;
         if (sem > 0.2) {
-          dotCol = isLight ? '#0d9488' : '#10b981';
+          dotCol = '#22c55e';
           r = 2.8;
         } else if (hs > 0.45 && typeof pgGetHotspotColor === 'function') {
-          dotCol = pgGetHotspotColor(hs, isLight);
+          dotCol = pgGetHotspotColor(hs);
           r = 2.6;
         } else if (n.id === pgState.selectedNodeId) {
-          dotCol = isLight ? '#2c1e16' : '#ffffff';
+          dotCol = '#f04848';
           r = 3.0;
         }
         ctx.fillStyle = dotCol;
@@ -238,8 +238,8 @@
       const vy = offY + (viewTop - minY) * mScale;
       const vw = Math.max(8, viewW * mScale);
       const vh = Math.max(8, viewH * mScale);
-      ctx.strokeStyle = isLight ? '#ea580c' : '#64d2ff';
-      ctx.fillStyle = isLight ? 'rgba(234, 88, 12, 0.10)' : 'rgba(100, 210, 255, 0.12)';
+      ctx.strokeStyle = '#f04848';
+      ctx.fillStyle = 'rgba(240, 72, 72, 0.14)';
       ctx.lineWidth = 1.1;
       ctx.fillRect(vx, vy, vw, vh);
       ctx.strokeRect(vx, vy, vw, vh);

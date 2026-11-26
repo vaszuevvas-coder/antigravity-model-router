@@ -5,7 +5,7 @@
  */
 
 import { execFile } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -36,6 +36,8 @@ export function parseAuditCliArgs(argv = []) {
   let failOn = 'high';
   let output = '';
   let maxFiles = 0;
+  let ratchetPath = '';
+  let updateRatchet = false;
 
   for (let i = 0; i < safeArgv.length; i++) {
     const arg = safeArgv[i];
@@ -48,6 +50,8 @@ export function parseAuditCliArgs(argv = []) {
       native = true;
     } else if (arg === '--native') native = true;
     else if (arg === '--json') json = true;
+    else if (arg === '--update-ratchet') updateRatchet = true;
+    else if (arg.startsWith('--ratchet=')) ratchetPath = resolve(arg.slice('--ratchet='.length));
     else if (arg.startsWith('--fail-on=')) failOn = arg.slice('--fail-on='.length);
     else if (arg.startsWith('--max-files=')) maxFiles = Math.max(100, Math.min(50000, Number(arg.slice('--max-files='.length)) || 0));
     else if (arg.startsWith('--output=')) output = resolve(arg.slice('--output='.length));
@@ -57,7 +61,70 @@ export function parseAuditCliArgs(argv = []) {
       dirSet = true;
     }
   }
-  return { targetDir: resolve(targetDir), fuzz, deep, native, json, help, failOn, output, maxFiles };
+  return { targetDir: resolve(targetDir), fuzz, deep, native, json, help, failOn, output, maxFiles, ratchetPath, updateRatchet };
+}
+
+/**
+ * Complexity Ratchet (inspired by OmniRoute eslint.complexity-ratchets):
+ * Prevents new edits from increasing per-file cyclomatic complexity above a saved baseline JSON.
+ * @param {Array<object>} fileResults
+ * @param {string} baselinePath
+ * @param {{ updateBaseline?: boolean, newFileCeiling?: number }} [opts={}]
+ */
+export function evaluateComplexityRatchet(fileResults = [], baselinePath = '', { updateBaseline = false, newFileCeiling = 35 } = {}) {
+  const currentMap = {};
+  for (const fr of Array.isArray(fileResults) ? fileResults : []) {
+    const rel = String(fr?.relPath || '').replace(/\\/g, '/');
+    const cc = Number(fr?.cyclomaticComplexity || 0);
+    if (rel && cc > 0) currentMap[rel] = cc;
+  }
+
+  const findings = [];
+  if (baselinePath && existsSync(baselinePath)) {
+    try {
+      const prevDoc = JSON.parse(readFileSync(baselinePath, 'utf8'));
+      const prevFiles = prevDoc?.files && typeof prevDoc.files === 'object' ? prevDoc.files : {};
+      for (const [rel, cc] of Object.entries(currentMap)) {
+        const prevCc = Object.hasOwn(prevFiles, rel) ? Number(prevFiles[rel]) : null;
+        if (prevCc !== null && cc > prevCc) {
+          findings.push({
+            tier: 'T2',
+            ruleId: 'COMPLEXITY_RATCHET_REGRESSION',
+            severity: 'HIGH',
+            cwe: 'CWE-1121',
+            confidence: 0.95,
+            file: rel,
+            line: 1,
+            message: `Cyclomatic complexity regressed from baseline ${prevCc} -> ${cc} (+${cc - prevCc})`,
+            evidence: `baseline=${prevCc}, current=${cc}`,
+          });
+        } else if (prevCc === null && cc > newFileCeiling) {
+          findings.push({
+            tier: 'T2',
+            ruleId: 'COMPLEXITY_RATCHET_NEW_FILE',
+            severity: 'MEDIUM',
+            cwe: 'CWE-1121',
+            confidence: 0.9,
+            file: rel,
+            line: 1,
+            message: `New file exceeds complexity ratchet ceiling (${cc} > ${newFileCeiling})`,
+            evidence: `ceiling=${newFileCeiling}, current=${cc}`,
+          });
+        }
+      }
+    } catch {}
+  }
+
+  if (updateBaseline && baselinePath) {
+    mkdirSync(dirname(baselinePath), { recursive: true });
+    writeFileSync(
+      baselinePath,
+      JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), files: currentMap }, null, 2) + '\n',
+      'utf8'
+    );
+  }
+
+  return { ok: findings.length === 0, trackedFiles: Object.keys(currentMap).length, findings };
 }
 
 /**
@@ -150,6 +217,14 @@ export async function runStressAudit(targetDir, options = {}) {
       maxModules: deepEnabled ? 120 : 60,
     });
     allFindings.push(...fuzzFindings);
+  }
+
+  // 5b. Optional Complexity Ratchet baseline comparison
+  if (options.ratchetPath) {
+    const ratchetRes = evaluateComplexityRatchet(fileResults, options.ratchetPath, {
+      updateBaseline: Boolean(options.updateRatchet),
+    });
+    allFindings.push(...ratchetRes.findings);
   }
 
   const report = buildAuditReport({

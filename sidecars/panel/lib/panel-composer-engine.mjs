@@ -134,24 +134,24 @@ export function buildSmartContinuationChips(opts = {}) {
     const secondBase = basename(secondFile) || secondFile;
     return [
       {
-        label: `🚨 Исправить ${alertBase}`,
-        labelEn: `🚨 Fix ${alertBase}`,
+        label: `Исправить ${alertBase}`,
+        labelEn: `Fix ${alertBase}`,
         prompt: `Исправь ошибку проверки${checkerNote} в ${alertFile}${errSnippet} и убедись, что автотесты зелёные`,
         promptEn: `Fix the check error${checkerNote} in ${alertFile}${errSnippet} and verify tests pass`,
         title: `Активный алерт проверки в ${alertFile}`,
         titleEn: `Active verification alert in ${alertFile}`,
       },
       {
-        label: `🔍 Проверить ${secondBase}`,
-        labelEn: `🔍 Inspect ${secondBase}`,
+        label: `Проверить ${secondBase}`,
+        labelEn: `Inspect ${secondBase}`,
         prompt: `Проверь изменения в ${secondFile} на крайние случаи и потенциальные ошибки`,
         promptEn: `Inspect changes in ${secondFile} for edge cases and regressions`,
         title: `Вставить проверку ${secondFile}`,
         titleEn: `Insert review prompt for ${secondFile}`,
       },
       {
-        label: '🧪 Прогнать тесты',
-        labelEn: '🧪 Run tests',
+        label: 'Прогнать тесты',
+        labelEn: 'Run tests',
         prompt: `Прогони профильные автотесты по правкам в ${alertBase} и убедись, что нет регрессий`,
         promptEn: `Run relevant automated tests for ${alertBase} and ensure no regressions`,
         title: 'Вставить запрос на запуск тестов',
@@ -164,24 +164,24 @@ export function buildSmartContinuationChips(opts = {}) {
     const base = basename(topFile) || topFile;
     return [
       {
-        label: `🔍 Проверить ${base}`,
-        labelEn: `🔍 Inspect ${base}`,
+        label: `Проверить ${base}`,
+        labelEn: `Inspect ${base}`,
         prompt: `Проверь изменения в ${topFile} на крайние случаи и потенциальные ошибки`,
         promptEn: `Inspect changes in ${topFile} for edge cases and potential bugs`,
         title: `Вставить проверку ${topFile}`,
         titleEn: `Insert review prompt for ${topFile}`,
       },
       {
-        label: '🧪 Прогнать тесты',
-        labelEn: '🧪 Run tests',
+        label: 'Прогнать тесты',
+        labelEn: 'Run tests',
         prompt: `Прогони профильные автотесты по последним правкам в ${base} и убедись, что нет регрессий`,
         promptEn: `Run targeted tests for recent edits in ${base} and ensure no regressions`,
         title: 'Вставить запрос на запуск тестов',
         titleEn: 'Insert test-run prompt',
       },
       {
-        label: '⚡ Узкие места',
-        labelEn: '⚡ Bottlenecks',
+        label: 'Узкие места',
+        labelEn: 'Bottlenecks',
         prompt: `Оцени производительность и узкие места в ${topFile}, предложи точечное улучшение`,
         promptEn: `Analyze performance bottlenecks in ${topFile} and suggest a surgical fix`,
         title: 'Вставить запрос на поиск узких мест',
@@ -194,16 +194,16 @@ export function buildSmartContinuationChips(opts = {}) {
   const hasGoals = Array.isArray(recentGoals) && recentGoals.length > 0;
   return [
     {
-      label: '🧭 Ревью архитектуры',
-      labelEn: '🧭 Architecture Review',
+      label: 'Ревью архитектуры',
+      labelEn: 'Architecture Review',
       prompt: `Проведи краткое ревью архитектуры${scopeNote} и выдели слабые места`,
       promptEn: `Run a concise architecture review${scopeNoteEn} and highlight weak spots`,
       title: `Ревью архитектуры${scopeNote}`,
       titleEn: `Architecture review${scopeNoteEn}`,
     },
     {
-      label: '🐞 Найти риски и баги',
-      labelEn: '🐞 Find Risks & Bugs',
+      label: 'Найти риски и баги',
+      labelEn: 'Find Risks & Bugs',
       prompt: hasGoals
         ? `Найди потенциальные баги, гонки или необработанные ошибки в модулях после недавних задач`
         : 'Найди потенциальные баги, гонки или необработанные ошибки в ключевых модулях',
@@ -214,8 +214,8 @@ export function buildSmartContinuationChips(opts = {}) {
       titleEn: 'Search for potential bugs',
     },
     {
-      label: '📋 План доработки',
-      labelEn: '📋 Implementation Plan',
+      label: 'План доработки',
+      labelEn: 'Implementation Plan',
       prompt: 'Составь пошаговый инженерный план реализации следующей задачи: ',
       promptEn: 'Create a step-by-step engineering plan for the following task: ',
       title: 'Шаблон пошагового плана',

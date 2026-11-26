@@ -20,9 +20,9 @@ const PLUGIN_ROOT = join(__dirname, '..');
 const CACHE_DIR = resolveTunnelCacheDir(PLUGIN_ROOT);
 const ROUTER_STATE_FILE = join(PLUGIN_ROOT, 'router-state.json');
 const getCacheDir = () => resolveTunnelCacheDir(PLUGIN_ROOT);
-const RAM_DAEMON_FILE = join(CACHE_DIR, 'ram-daemon.json');
-const POST_CMD_HINTS_FILE = join(CACHE_DIR, 'post-cmd-hints.json');
-const PRE_EDIT_SNAPSHOT_FILE = join(CACHE_DIR, 'pre-edit-last.json');
+const getRamDaemonFile = () => join(getCacheDir(), 'ram-daemon.json');
+const getPostCmdHintsFile = () => join(getCacheDir(), 'post-cmd-hints.json');
+const getPreEditSnapshotFile = () => join(getCacheDir(), 'pre-edit-last.json');
 const MAX_PRE_EDIT_SNAPSHOT_BYTES = 256 * 1024;
 const MAX_TURN_ENTRIES = 64;
 const TURN_ENTRY_TTL_MS = 2 * 60 * 60 * 1000;
@@ -30,7 +30,7 @@ const HAS_EXPLICIT_CODE_ANCHOR_RE = /(?:[a-z0-9_.-]+\.(?:mjs|cjs|js|jsx|ts|tsx|j
 
 try {
   if (typeof nodeModule.enableCompileCache === 'function') {
-    nodeModule.enableCompileCache(join(CACHE_DIR, 'v8-compile-cache'));
+    nodeModule.enableCompileCache(join(getCacheDir(), 'v8-compile-cache'));
   }
 } catch {}
 
@@ -45,8 +45,8 @@ function buildStaticSessionStartHeader(state = {}) {
   const isEn = resolveUserLanguage(state) === 'en';
   const lines = [
     isEn
-      ? '# The Tunnel v3.35.0 (EN-Internal / EN-Chat)'
-      : '# The Tunnel v3.35.0 (EN-Internal / RU-Chat)',
+      ? '# The Tunnel v4.0.0 (EN-Internal / EN-Chat)'
+      : '# The Tunnel v4.0.0 (EN-Internal / RU-Chat)',
     isEn
       ? '- User replies/UI/Role/toolSummary: 100% English.'
       : '- User replies/UI/Role/toolSummary: 100% Russian.',
@@ -79,7 +79,7 @@ function enqueuePostCommandHint(convoKey = 'default', hintText = '') {
   if (!cleanHint) return;
   const key = String(convoKey || 'default');
   try {
-    updateJsonAtomicSync(POST_CMD_HINTS_FILE, () => ({ queues: {} }), (qState) => {
+    updateJsonAtomicSync(getPostCmdHintsFile(), () => ({ queues: {} }), (qState) => {
       const queues = qState && typeof qState.queues === 'object' && !Array.isArray(qState.queues)
         ? { ...qState.queues }
         : {};
@@ -101,11 +101,11 @@ function enqueuePostCommandHint(convoKey = 'default', hintText = '') {
 }
 
 function consumePostCommandHints(convoKey = 'default') {
-  if (!existsSync(POST_CMD_HINTS_FILE)) return [];
+  if (!existsSync(getPostCmdHintsFile())) return [];
   const key = String(convoKey || 'default');
   let consumed = [];
   try {
-    updateJsonAtomicSync(POST_CMD_HINTS_FILE, () => ({ queues: {} }), (qState) => {
+    updateJsonAtomicSync(getPostCmdHintsFile(), () => ({ queues: {} }), (qState) => {
       const queues = qState && typeof qState.queues === 'object' && !Array.isArray(qState.queues)
         ? { ...qState.queues }
         : {};
@@ -196,8 +196,8 @@ function pickLiveRamDaemon(info, wsPath = '') {
  */
 async function queryRamDaemon(endpoint, payload = {}, timeoutMs = 60) {
   try {
-    if (!existsSync(RAM_DAEMON_FILE)) return null;
-    const rawInfo = JSON.parse(readFileSync(RAM_DAEMON_FILE, 'utf8'));
+    if (!existsSync(getRamDaemonFile())) return null;
+    const rawInfo = JSON.parse(readFileSync(getRamDaemonFile(), 'utf8'));
     const info = pickLiveRamDaemon(rawInfo, payload?.wsPath || '');
     if (!info?.port || !info?.token) return null;
 
@@ -357,7 +357,7 @@ async function ensureHookDeps(eventName, toolName = '') {
         return loadDepsByNames(['swarmController', 'sessionHandoff', 'taskProgress']);
       }
       if (toolName === 'run_command') {
-        return loadDepsByNames(['swarmController', 'circuitBreaker', 'executionTracker', 'obsMasker', 'localGpuMod', 'securityGuard', 'taskProgress', 'sessionHandoff', 'knowledgeHub']);
+        return loadDepsByNames(['swarmController', 'circuitBreaker', 'executionTracker', 'obsMasker', 'localGpuMod', 'securityGuard', 'taskProgress', 'sessionHandoff', 'knowledgeHub', 'completionGates', 'frictionObserver']);
       }
       return loadDepsByNames([
         'swarmController',
@@ -683,12 +683,12 @@ export function buildZeroTokenUserBadgeStep(rawOpts = {}) {
         ? `Pro Architect${subSuffix}`
         : strat === 'flash_dispatcher' || strat === 'economy'
           ? `Flash Dispatcher${subSuffix}`
-          : `Autopilot v3.35.0${subSuffix}`)
+          : `Autopilot v4.0.0${subSuffix}`)
     : (strat === 'pro_architect' || strat === 'performance'
         ? `Pro-Архитектор${subSuffix}`
         : strat === 'flash_dispatcher' || strat === 'economy'
           ? `Flash-Диспетчер${subSuffix}`
-          : `Автопилот v3.35.0${subSuffix}`);
+          : `Автопилот v4.0.0${subSuffix}`);
   const executor = isEn
     ? (modelProfile?.displayEn || modelProfile?.shortLabel || modelProfile?.displayRu || modelProfile?.displayNameRu || 'Current executor')
     : (modelProfile?.displayRu || modelProfile?.displayNameRu || modelProfile?.shortLabel || 'Текущий исполнитель');
@@ -1231,7 +1231,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
       }
     }
 
-    // 2. Когнитивный ИИ-Автопилот v3.35.0 (3D-матрица Breadth × Depth × Risk + безлимитное EN-мышление на Gemini 4)
+    // 2. Когнитивный ИИ-Автопилот v4.0.0 (3D-матрица Breadth × Depth × Risk + безлимитное EN-мышление на Gemini 4)
     if (baseState.thinkingLimiter !== false && toolPruner && typeof toolPruner.estimateTaskGradeAndThinkingBudget === 'function') {
       try {
         const budgetRes = toolPruner.estimateTaskGradeAndThinkingBudget(userInput, effectiveState, {
@@ -1530,8 +1530,8 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
         : '';
       const splitTurnReminder = (prevTurnSnapshot.selectorMatch && prevTurnSnapshot.selectorMatch !== 'optimal')
         ? (isEnLang
-            ? ` [AGY 2.35+ Split-Turn] If post-scout confirms switching to ${prevTurnSnapshot.selectorRecommended || 'the optimal model'} is needed, do NOT call ask_question — output the plan + 3 numbered options + "💡 Mode tip" in plain text and end the turn so the model selector unlocks (or include "⏸ End turn to switch model" if ask_question is required for architectural forks).`
-            : ` [AGY 2.35+ Split-Turn] Если после разведки смена модели на ${prevTurnSnapshot.selectorRecommended || 'оптимальную модель'} нужна, НЕ вызывай ask_question — выведи план + 3 пронумерованных варианта + "💡 Совет по режиму" обычным текстом и заверши ход для разблокировки селектора (либо добавь вариант "⏸ Завершить ход, чтобы я переключил модель", если ask_question нужен для развилок).`)
+            ? ` [AGY 2.35.2+ Split-Turn] If post-scout confirms switching to ${prevTurnSnapshot.selectorRecommended || 'the optimal model'} is needed, do NOT call ask_question — output the plan + 3 numbered options + "💡 Mode tip" in plain text and end the turn so the next message runs on the new model (or include "⏸ End turn to switch model" if ask_question is required for architectural forks).`
+            : ` [AGY 2.35.2+ Split-Turn] Если после разведки смена модели на ${prevTurnSnapshot.selectorRecommended || 'оптимальную модель'} нужна, НЕ вызывай ask_question — выведи план + 3 пронумерованных варианта + "💡 Совет по режиму" обычным текстом и заверши ход, чтобы следующее сообщение пошло на новой модели (либо добавь вариант "⏸ Завершить ход, чтобы я переключил модель", если ask_question нужен для развилок).`)
         : '';
       const carryLine = isEnLang
         ? `🧭 [Post-Scout AI Triage | Active Selector: ${activeDisp}] Base final scope (S/M/L/XL) & optimal model strictly on the files you just inspected (override pre-read ~${prevTurnSnapshot.grade || 'M'} if code is simpler or deeper), and keep EN chat, ask_question ("Scope", "Recommended power", "💡 Mode tip" if optimal != ${activeDisp}), and option #1 100% synchronized; ALWAYS include explicit thinking/planner depth for BOTH standalone models AND Orchestrator (e.g. Hydrogen · Medium/High, Neon · High/XHigh, Carbon · High, Orchestrator (Neon · Medium/High/XHigh), Orchestrator (Carbon · Medium/High) — never bare model or bare Orchestrator names). If post-scout downgrades scope to S (or routine M), MUST also downgrade Recommended power to Hydrogen · Medium (for S) or Hydrogen · Medium/High (for routine M) — NEVER echo a heavy active selector (Neon · High/XHigh, Carbon, Orchestrator (Neon · High)) for an S task, and append "💡 Mode tip" when active selector is heavier.${orchReminder}${splitTurnReminder}`
@@ -1581,7 +1581,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
   }
 
   // 5. Извлечение накопленного предостережения Blast Radius (изолированно по convoId / ветке Роя)
-  const blastQueueFile = join(CACHE_DIR, 'blast-radius-queue.json');
+  const blastQueueFile = join(getCacheDir(), 'blast-radius-queue.json');
   try {
     if (existsSync(blastQueueFile)) {
       updateJsonAtomicSync(blastQueueFile, () => ({ queues: {} }), (qState) => {
@@ -1844,7 +1844,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
  * @param {object} params
  */
 function recordReadBatchActivity({ convoId = 'default', toolName = '' } = {}) {
-  const telemetryFile = join(CACHE_DIR, 'cache-telemetry.json');
+  const telemetryFile = join(getCacheDir(), 'cache-telemetry.json');
   try {
     updateJsonAtomicSync(telemetryFile, () => ({ streams: {} }), (state) => {
       const streams = state && typeof state.streams === 'object' && !Array.isArray(state.streams) ? state.streams : {};
@@ -1874,7 +1874,7 @@ function recordReadBatchActivity({ convoId = 'default', toolName = '' } = {}) {
  * @returns {string}
  */
 function consumeReadBatchAdvisory(convoId = 'default') {
-  const telemetryFile = join(CACHE_DIR, 'cache-telemetry.json');
+  const telemetryFile = join(getCacheDir(), 'cache-telemetry.json');
   if (!existsSync(telemetryFile)) return '';
   let advisory = '';
   try {
@@ -1908,6 +1908,15 @@ function evaluateSubagentInvokeGuard({ args = {}, convoId = 'default', modelProf
   const isEn = resolveUserLanguage(state) === 'en';
   const typeName = String(args.TypeName || '').toLowerCase();
   const subModel = String(args.Model || 'inherit').toLowerCase();
+  const ALLOWED_SUBAGENT_MODELS = new Set(['inherit', 'flash_lite', 'flash', 'pro']);
+  if (args.Model !== undefined && args.Model !== null && String(args.Model).trim() !== '' && !ALLOWED_SUBAGENT_MODELS.has(subModel)) {
+    return {
+      decision: 'deny',
+      reason: isEn
+        ? `🛡️ [Subagent Schema Guard] Invalid invoke_subagent Model:"${String(args.Model)}". Allowed values are strictly: "inherit", "flash_lite", "flash", "pro" (NEVER "hydrogen", "neon", or "carbon").`
+        : `🛡️ [Subagent Schema Guard] Недопустимое значение invoke_subagent Model:"${String(args.Model)}". Разрешены строго: "inherit", "flash_lite", "flash", "pro" (НИКОГДА "hydrogen", "neon" или "carbon").`,
+    };
+  }
   const workspace = String(args.Workspace || 'inherit').toLowerCase();
   const text = `${args.Role || ''} ${args.Prompt || ''}`;
   const isReadOnlyScout = typeName === 'research' || /\b(?:read-only|search|scout|grep|log|inspect|summary)\b/i.test(text);
@@ -1922,7 +1931,7 @@ function evaluateSubagentInvokeGuard({ args = {}, convoId = 'default', modelProf
       ? '🛡️ [Hydrogen/Neon/Orchestrator Subagent Guard] Do not downgrade code edits to Model:"flash" (3.8 Flash). Apply edits directly on Hydrogen/Neon or pass Model:"inherit" (a retry will be allowed automatically).'
       : '🛡️ [Hydrogen/Neon/Orchestrator Subagent Guard] Не понижайте правки кода до Model:"flash" (3.8 Flash). Выполняйте правки напрямую на Hydrogen/Neon или укажите Model:"inherit" (повторный вызов пропустит принудительно).';
   } else if (isWriteWork && workspace === 'inherit') {
-    const guardFile = join(CACHE_DIR, 'subagent-guard.json');
+    const guardFile = join(getCacheDir(), 'subagent-guard.json');
     let recentConcurrent = false;
     try {
       updateJsonAtomicSync(guardFile, () => ({ spawns: {}, warned: {} }), (st) => {
@@ -1944,7 +1953,7 @@ function evaluateSubagentInvokeGuard({ args = {}, convoId = 'default', modelProf
 
   if (!warningKey) return { decision: 'allow' };
 
-  const guardFile = join(CACHE_DIR, 'subagent-guard.json');
+  const guardFile = join(getCacheDir(), 'subagent-guard.json');
   let shouldDeny = false;
   try {
     updateJsonAtomicSync(guardFile, () => ({ spawns: {}, warned: {} }), (st) => {
@@ -2054,7 +2063,7 @@ export function isGenericBoilerplateAskOptions(options = [], qText = '') {
  * @returns {{ decision: 'allow' }}
  */
 function evaluateAskQuestionSelectorGuard({ args = {}, convoId = 'default', state = {} } = {}) {
-  const turnFile = join(CACHE_DIR, 'pre-invocation-turn.json');
+  const turnFile = join(getCacheDir(), 'pre-invocation-turn.json');
   if (state.confirmBeforeRun === false) {
     return { decision: 'allow' };
   }
@@ -2199,7 +2208,7 @@ function evaluateEditPreTaskGateGuard({
     return { decision: 'allow' };
   }
 
-  const turnFile = join(CACHE_DIR, 'pre-invocation-turn.json');
+  const turnFile = join(getCacheDir(), 'pre-invocation-turn.json');
   if (!existsSync(turnFile)) {
     return { decision: 'allow' };
   }
@@ -2249,8 +2258,8 @@ function evaluateEditPreTaskGateGuard({
     return {
       decision: 'deny',
       reason: isEn
-        ? `⏸️ [Model-Switch Gate Guard (AGY 2.35+)] A model switch to ${targetRec} is pending. Do NOT edit files in this turn — output the concise plan and prompt the user to switch the model, then END the turn so the IDE selector unlocks (or call ask_question only if post-scout confirmed the current model is optimal).`
-        : `⏸️ [Model-Switch Gate Guard (AGY 2.35+)] Ожидается переключение модели на ${targetRec}. Не вносите правки в этом ходе — выведите краткий план и попросите пользователя переключить модель, затем ЗАВЕРШИТЕ ход для разблокировки селектора (либо вызовите ask_question, только если после разведки текущая модель оказалась оптимальной).`,
+        ? `⏸️ [Model-Switch Gate Guard (AGY 2.35+)] A model switch to ${targetRec} is pending. Do NOT edit files in this turn (selector changes apply on the next turn) — output the concise plan and prompt the user to switch the model, then END the turn (or call ask_question only if post-scout confirmed the current model is optimal).`
+        : `⏸️ [Model-Switch Gate Guard (AGY 2.35+)] Ожидается переключение модели на ${targetRec}. Не вносите правки в этом ходе (смена модели вступит в силу со следующего хода) — выведите краткий план и попросите пользователя переключить модель, затем ЗАВЕРШИТЕ ход (либо вызовите ask_question, только если после разведки текущая модель оказалась оптимальной).`,
     };
   }
   return {
@@ -2631,7 +2640,7 @@ export async function handlePreToolUse(payload = {}, rawState = {}) {
       if (preBuf.length > 0 && preBuf.length <= MAX_PRE_EDIT_SNAPSHOT_BYTES && !preBuf.subarray(0, 512).includes(0)) {
         const snapKey = resolve(absPath).toLowerCase();
         const preText = preBuf.toString('utf8');
-        updateJsonAtomicSync(PRE_EDIT_SNAPSHOT_FILE, () => ({ entries: {} }), (st) => {
+        updateJsonAtomicSync(getPreEditSnapshotFile(), () => ({ entries: {} }), (st) => {
           const prev = st?.entries && typeof st.entries === 'object' ? { ...st.entries } : {};
           prev[snapKey] = { text: preText, ts: Date.now() };
           const keys = Object.keys(prev);
@@ -2650,7 +2659,7 @@ export async function handlePreToolUse(payload = {}, rawState = {}) {
       let activeTurnId = '';
       let activeTurnLabel = '';
       try {
-        const turnFile = join(CACHE_DIR, 'pre-invocation-turn.json');
+        const turnFile = join(getCacheDir(), 'pre-invocation-turn.json');
         const tCache = safeReadJsonSync(turnFile, () => ({ turns: {} }), { selfHeal: false });
         const fallbackCid = String(payload.conversationId || 'default');
         const tRec = tCache?.turns && Object.hasOwn(tCache.turns, convoKey)
@@ -2815,7 +2824,7 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
     const isModelSwitchPauseReply = /(?:пауз[аеыу].*модел|заверш(?:ить|и)\s+ход.*модел|смен[иыуть].*модел|переключ[иыуть].*модел|end\s+turn.*switch.*model|pause.*switch.*model)/i.test(rawOutput);
     if (isModelSwitchPauseReply) {
       try {
-        const turnFile = join(CACHE_DIR, 'pre-invocation-turn.json');
+        const turnFile = join(getCacheDir(), 'pre-invocation-turn.json');
         updateJsonAtomicSync(turnFile, () => ({ turns: {} }), (tState) => {
           const turns = tState?.turns && typeof tState.turns === 'object' ? tState.turns : {};
           const prev = Object.hasOwn(turns, postConvoKey) ? turns[postConvoKey] : { hash: '', ts: Date.now() };
@@ -3037,6 +3046,33 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
       } catch {}
     }
 
+    if (
+      state.sqliteKnowledgeEnabled !== false &&
+      frictionObserver?.detectCliFailRecoveryFriction &&
+      wsPath
+    ) {
+      try {
+        const cliCmdStr = String(args.CommandLine || args.command || args.cmd || '');
+        const cliRec = frictionObserver.detectCliFailRecoveryFriction({
+          conversationId: postConvoKey,
+          commandLine: cliCmdStr,
+          exitCode: payload.error ? 1 : 0,
+          errorOutput: payload.error ? `${safeErrStr}\n${safeCmdOutput.slice(0, 600)}` : '',
+        });
+        if (cliRec?.detected && cliRec.candidatePattern && frictionObserver.recordFrictionObservation) {
+          const obs = frictionObserver.recordFrictionObservation({
+            workspaceRoot: wsPath,
+            signalType: 'cli_correction',
+            pattern: cliRec.candidatePattern,
+            lang: resolveUserLanguage(state),
+          });
+          if (obs?.readyForPromotion && obs.promotionHint) {
+            enqueuePostCommandHint(postConvoKey, obs.promotionHint);
+          }
+        }
+      } catch {}
+    }
+
     if (state.ramCacheEnabled !== false && state.ramSotaEngines !== false && !payload.error && safeCmdOutput.length >= 600) {
       try {
         const cmdStr = String(args.CommandLine || args.command || args.cmd || '');
@@ -3229,7 +3265,7 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
     let oldTextBeforeEdit = '';
     const snapKey = resolve(filePath).toLowerCase();
     try {
-      const snapStore = safeReadJsonSync(PRE_EDIT_SNAPSHOT_FILE, () => ({ entries: {} }), { selfHeal: false });
+      const snapStore = safeReadJsonSync(getPreEditSnapshotFile(), () => ({ entries: {} }), { selfHeal: false });
       if (snapStore?.entries && Object.hasOwn(snapStore.entries, snapKey)) {
         const entry = snapStore.entries[snapKey];
         if (entry && typeof entry.text === 'string' && (Date.now() - (entry.ts || 0)) < 10 * 60 * 1000) {
@@ -3316,18 +3352,22 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
           } catch {}
         }
 
-        if (state.completionGates !== false && (completionGates?.scanAddedStubsInDiff || completionGates?.scanAddedSkippedTestsInDiff)) {
+        if (state.completionGates !== false && (completionGates?.scanAddedStubsInDiff || completionGates?.scanAddedSkippedTestsInDiff || completionGates?.scanConstraintWeakeningInDiff)) {
           const stubRes = completionGates.scanAddedStubsInDiff
             ? completionGates.scanAddedStubsInDiff(prevEditText, newCodeForGate, filePath)
             : { ok: true, skipped: true, issues: [] };
           const skipRes = completionGates.scanAddedSkippedTestsInDiff
             ? completionGates.scanAddedSkippedTestsInDiff(prevEditText, newCodeForGate, filePath)
             : { ok: true, skipped: true, issues: [] };
+          const constraintRes = completionGates.scanConstraintWeakeningInDiff
+            ? completionGates.scanConstraintWeakeningInDiff(prevEditText, newCodeForGate, filePath)
+            : { ok: true, skipped: true, issues: [] };
           const mergedIssues = [
             ...(!stubRes.skipped && !stubRes.ok ? stubRes.issues : []),
             ...(!skipRes.skipped && !skipRes.ok ? skipRes.issues : []),
+            ...(!constraintRes.skipped && !constraintRes.ok ? constraintRes.issues : []),
           ].slice(0, 8);
-          const anyScanned = !stubRes.skipped || !skipRes.skipped;
+          const anyScanned = !stubRes.skipped || !skipRes.skipped || !constraintRes.skipped;
           if (anyScanned) {
             if (mergedIssues.length > 0) {
               completionGates.recordSessionFileStubs?.({
@@ -3338,16 +3378,21 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
               });
               const locList = mergedIssues.slice(0, 3).map((it) => `L${it.line} (${it.kind})`).join(', ');
               const hasSkippedTest = mergedIssues.some((it) => it.kind === 'skipped_test');
+              const hasConstraintDrop = mergedIssues.some((it) => it.kind === 'lint_suppression' || it.kind === 'focused_test_only' || it.kind === 'stripped_assertions');
               const isEnPost = resolveUserLanguage(state) === 'en';
               enqueuePostCommandHint(
                 postConvoKey,
-                hasSkippedTest
+                hasConstraintDrop
                   ? (isEnPost
-                      ? `🚧 [Unlazy Test Gate (${basename(filePath)})] Skipped tests or stubs added in diff: ${locList}. Remove skip/todo before final reply.`
-                      : `🚧 [Unlazy Test Gate (${basename(filePath)})] В диффе добавлены отключённые тесты или заглушки: ${locList}. Уберите skip/todo до финального ответа.`)
-                  : (isEnPost
-                      ? `🚧 [Unlazy Stub Check (${basename(filePath)})] New stubs/TODOs detected: ${locList}. Finish the implementation before final reply.`
-                      : `🚧 [Unlazy Stub Check (${basename(filePath)})] Обнаружены новые заглушки/TODO: ${locList}. Доведите реализацию до конца до финального ответа.`)
+                      ? `🛡️ [Constraint Diff Guard (${basename(filePath)})] Quality bar weakened in diff: ${locList}. Fix the root issue instead of silencing checks or dropping assertions.`
+                      : `🛡️ [Constraint Diff Guard (${basename(filePath)})] В диффе ослаблены проверки качества: ${locList}. Исправьте причину вместо подавления линтеров или удаления проверок.`)
+                  : hasSkippedTest
+                    ? (isEnPost
+                        ? `🚧 [Unlazy Test Gate (${basename(filePath)})] Skipped tests or stubs added in diff: ${locList}. Remove skip/todo before final reply.`
+                        : `🚧 [Unlazy Test Gate (${basename(filePath)})] В диффе добавлены отключённые тесты или заглушки: ${locList}. Уберите skip/todo до финального ответа.`)
+                    : (isEnPost
+                        ? `🚧 [Unlazy Stub Check (${basename(filePath)})] New stubs/TODOs detected: ${locList}. Finish the implementation before final reply.`
+                        : `🚧 [Unlazy Stub Check (${basename(filePath)})] Обнаружены новые заглушки/TODO: ${locList}. Доведите реализацию до конца до финального ответа.`)
               );
             } else if (toolName === 'write_file') {
               completionGates.clearSessionFileStubs?.({ conversationId: postConvoKey, filePath });
@@ -3393,7 +3438,7 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
     }
     if (oldTextBeforeEdit) {
       try {
-        updateJsonAtomicSync(PRE_EDIT_SNAPSHOT_FILE, () => ({ entries: {} }), (st) => {
+        updateJsonAtomicSync(getPreEditSnapshotFile(), () => ({ entries: {} }), (st) => {
           const entries = st?.entries && typeof st.entries === 'object' ? { ...st.entries } : {};
           delete entries[snapKey];
           return { entries };
@@ -3451,7 +3496,7 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
             br.formattedHint ||
             `🎯 [Blast Radius] Edits in ${basename(filePath)} affect imports in: ${br.dependents.map((d) => d.file).join(', ')}. Keep exported signatures backward-compatible!`;
           updateJsonAtomicSync(
-            join(CACHE_DIR, 'blast-radius-queue.json'),
+            join(getCacheDir(), 'blast-radius-queue.json'),
             () => ({ queues: {} }),
             (qState) => {
               const queues = qState && typeof qState.queues === 'object' && !Array.isArray(qState.queues) ? qState.queues : {};

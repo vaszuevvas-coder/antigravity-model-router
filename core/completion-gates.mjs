@@ -292,6 +292,91 @@ export function scanAddedSkippedTestsInDiff(oldText = '', newText = '', filePath
   };
 }
 
+const CONSTRAINT_SUPPRESSION_PATTERNS = [
+  { kind: 'lint_suppression', rx: /(?:\/\/|\/\*)\s*(?:@ts-ignore|@ts-nocheck|eslint-disable(?:-next-line|-line)?|biome-ignore|istanbul\s+ignore|c8\s+ignore)\b/i },
+  { kind: 'lint_suppression', rx: /#\s*(?:noqa|type:\s*ignore|pylint:\s*disable)\b/i },
+  { kind: 'lint_suppression', rx: /(?:\/\/\s*nolint\b|#\[allow\()/i },
+  { kind: 'focused_test_only', rx: /^(?:test|it|describe)\.(?:only)\s*\(/ },
+];
+
+const ASSERTION_CALL_RE = /\b(?:assert(?:\.[A-Za-z]+)?|expect)\s*\(/g;
+
+/**
+ * Anti-Cheating Constraint Diff Guard (inspired by addyosmani/agent-skills `constraint-driven-development`):
+ * Detects newly added linter/type suppressions (`@ts-ignore`, `eslint-disable`, `biome-ignore`, `# noqa`),
+ * focused `.only(` tests, or net deletion of test assertions in test files.
+ * Pre-existing lines in `oldText` are ignored.
+ * @param {string} [oldText='']
+ * @param {string} [newText='']
+ * @param {string} [filePath='']
+ * @returns {{ ok: boolean, skipped: boolean, issues: Array<{ line: number, kind: string, excerpt: string }> }}
+ */
+export function scanConstraintWeakeningInDiff(oldText = '', newText = '', filePath = '') {
+  const cleanPath = String(filePath || '').replace(/\\/g, '/');
+  if (cleanPath && (SKIP_STUB_EXT_RE.test(cleanPath) || /(?:^|\/)completion-gates\.mjs$/i.test(cleanPath))) {
+    return { ok: true, skipped: true, issues: [] };
+  }
+
+  const nextStr = typeof newText === 'string' ? newText : String(newText || '');
+  const prevStr = typeof oldText === 'string' ? oldText : '';
+  if (!nextStr.trim()) {
+    return { ok: true, skipped: false, issues: [] };
+  }
+
+  const prevCounts = new Map();
+  if (prevStr.length > 0) {
+    for (const ln of prevStr.split(/\r?\n/)) {
+      const k = ln.trim();
+      if (!k) continue;
+      prevCounts.set(k, (prevCounts.get(k) || 0) + 1);
+    }
+  }
+
+  const issues = [];
+  const nextLines = nextStr.split(/\r?\n/);
+  for (let i = 0; i < nextLines.length; i++) {
+    const trimmed = nextLines[i].trim();
+    if (!trimmed) continue;
+
+    const prevCount = prevCounts.get(trimmed) || 0;
+    if (prevCount > 0) {
+      prevCounts.set(trimmed, prevCount - 1);
+      continue;
+    }
+
+    for (const pat of CONSTRAINT_SUPPRESSION_PATTERNS) {
+      if (pat.rx.test(trimmed)) {
+        issues.push({
+          line: i + 1,
+          kind: pat.kind,
+          excerpt: trimmed.slice(0, 120),
+        });
+        break;
+      }
+    }
+    if (issues.length >= 8) break;
+  }
+
+  // In test files, flag when an edit removes assertions without replacing them
+  if (cleanPath && TEST_FILE_EXPLICIT_RE.test(cleanPath) && prevStr.length > 0 && issues.length < 8) {
+    const oldAsserts = (prevStr.match(ASSERTION_CALL_RE) || []).length;
+    const newAsserts = (nextStr.match(ASSERTION_CALL_RE) || []).length;
+    if (oldAsserts >= 2 && newAsserts < oldAsserts) {
+      issues.push({
+        line: 1,
+        kind: 'stripped_assertions',
+        excerpt: `Test assertions dropped from ${oldAsserts} to ${newAsserts} (-${oldAsserts - newAsserts})`,
+      });
+    }
+  }
+
+  return {
+    ok: issues.length === 0,
+    skipped: false,
+    issues,
+  };
+}
+
 /**
  * Generates a read-only GATES.md acceptance ledger template in `targetDir`.
  * @param {string} [targetDir=process.cwd()]

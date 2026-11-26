@@ -3,11 +3,12 @@
  * @description Telemetry aggregation, workspace resolution, RAM/CPU/GPU/Bayesian/checkpoint snapshots.
  */
 
-import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { safeReadJsonSync } from '../../../core/safe-json.mjs';
+import { atomicWriteJsonSync, safeReadJsonSync } from '../../../core/safe-json.mjs';
+import { isPidAlive, resolveTunnelCacheDir } from '../../../core/cache-dir.mjs';
 import { pickLang } from '../../../core/i18n.mjs';
 import { getCpuStatusSnapshot, readCpuTelemetry } from '../../../core/cpu-worker-pool.mjs';
 import { isSubagentTranscriptFile } from '../../../core/model-profile.mjs';
@@ -1566,6 +1567,8 @@ export async function discoverUserProjectsForGraph({
 }
 
 const ramDeltaTrackerByPid = new Map();
+const RAM_STATUS_GRACE_MS = 12000;
+let lastActiveRamCacheSnap = { ts: 0, pids: [], data: null };
 
 export async function safeGetRamCacheStatus(state = {}) {
   const ceilings = getRuntimeHardwareCeilings();
@@ -1575,10 +1578,12 @@ export async function safeGetRamCacheStatus(state = {}) {
   const daemonFile = join(__dirname, '..', '..', '..', '.cache', 'ram-daemon.json');
   try {
     if (!enabled || !existsSync(daemonFile)) {
+      lastActiveRamCacheSnap = { ts: 0, pids: [], data: null };
       return { enabled, active: false, budgetMb, totalRamMb, cacheUsedMb: 0, workspaces: [], instancesCount: 0 };
     }
     const info = safeReadJsonSync(daemonFile, null, { selfHeal: true });
     if (!info || typeof info !== 'object') {
+      lastActiveRamCacheSnap = { ts: 0, pids: [], data: null };
       return { enabled, active: false, budgetMb, totalRamMb, cacheUsedMb: 0, workspaces: [], instancesCount: 0 };
     }
 
@@ -1755,7 +1760,7 @@ export async function safeGetRamCacheStatus(state = {}) {
             savedTokensEstimate: sumSotaSavedTokens,
           }
         : undefined;
-      return {
+      const resultPayload = {
         enabled,
         active: true,
         pid: primary.pid,
@@ -1773,6 +1778,25 @@ export async function safeGetRamCacheStatus(state = {}) {
         liveActivity: mergedLiveActivity,
         workspaces: mergedWorkspaces,
         instancesCount: liveResponses.length,
+      };
+      lastActiveRamCacheSnap = {
+        ts: now,
+        pids: liveResponses.map((r) => Number(r.pid || 0)).filter((p) => p > 0),
+        data: resultPayload,
+      };
+      return resultPayload;
+    }
+    // Keep active RAM status across transient /health timeouts while daemon PID is still alive
+    if (
+      lastActiveRamCacheSnap.data &&
+      Date.now() - lastActiveRamCacheSnap.ts <= RAM_STATUS_GRACE_MS &&
+      candidates.some((c) => c?.pid != null && isPidAlive(c.pid))
+    ) {
+      return {
+        ...lastActiveRamCacheSnap.data,
+        enabled,
+        budgetMb,
+        totalRamMb,
       };
     }
   } catch {}
@@ -1815,3 +1839,556 @@ export function safeGetCpuStatus(state = {}, ramCache = null) {
     return { error: err && err.message ? err.message : 'cpu status error', hardware: { vramUsedMb: 0 } };
   }
 }
+
+let lastRoiTimelineSaveTs = 0;
+
+function formatHourBucketKey(tsMs) {
+  const d = new Date(tsMs);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const h = String(d.getHours()).padStart(2, '0');
+  return `${y}-${m}-${day}T${h}`;
+}
+
+function getBucketLabelRuEn(dateObj, kind) {
+  if (kind === 'day') {
+    const hh = String(dateObj.getHours()).padStart(2, '0');
+    return { ru: hh, en: hh };
+  }
+  const RU_DAYS = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+  const EN_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const idx = dateObj.getDay();
+  return { ru: RU_DAYS[idx], en: EN_DAYS[idx] };
+}
+
+/**
+ * Aggregates and persists hourly ROI savings snapshots into rolling Day / Week / Month
+ * buckets and derives Quota Pacer bullet telemetry.
+ * @param {object} [options={}]
+ */
+export function collectRoiTimeline(options = {}) {
+  const safeOpts = options && typeof options === 'object' ? options : {};
+  const nowMs = Number.isFinite(Number(safeOpts.nowMs)) ? Number(safeOpts.nowMs) : Date.now();
+  const curTel = safeOpts.currentTelemetry && typeof safeOpts.currentTelemetry === 'object' ? safeOpts.currentTelemetry : {};
+  const bk = curTel.savingsBreakdown && typeof curTel.savingsBreakdown === 'object' ? curTel.savingsBreakdown : {};
+  const curCache = Math.max(0, Math.round(Number(bk.cache ?? curTel.cacheSavedTokens ?? 0)));
+  const curRam = Math.max(0, Math.round(Number(bk.ram ?? curTel.ramSavedTokens ?? 0)));
+  const curCpu = Math.max(0, Math.round(Number(bk.cpu ?? curTel.cpuSavedTokens ?? 0)));
+  const curGpu = Math.max(0, Math.round(Number(bk.gpu ?? curTel.gpuSavedTokens ?? 0)));
+  const curHitRate = Math.max(0, Math.min(100, Math.round(Number(bk.cacheHitRate ?? curTel.cacheHitRate ?? 0))));
+
+  const cacheDir = typeof safeOpts.cacheDir === 'string' && safeOpts.cacheDir.trim()
+    ? resolve(safeOpts.cacheDir.trim())
+    : resolveTunnelCacheDir(join(__dirname, '..', '..', '..'));
+  const timelineFile = join(cacheDir, 'roi-timeline.json');
+
+  const doc = safeReadJsonSync(timelineFile, () => ({
+    lastTotals: { cache: 0, ram: 0, cpu: 0, gpu: 0 },
+    slots: [],
+  }), { selfHeal: true });
+
+  const prevTotals = doc?.lastTotals && typeof doc.lastTotals === 'object' ? doc.lastTotals : { cache: 0, ram: 0, cpu: 0, gpu: 0 };
+  const rawSlots = Array.isArray(doc?.slots) ? doc.slots : [];
+  const slotMap = new Map();
+  const maxAgeMs = 31 * 24 * 60 * 60 * 1000;
+  for (const s of rawSlots) {
+    if (!s || typeof s !== 'object' || !s.hourKey) continue;
+    const ts = Number(s.ts || 0);
+    if (!Number.isFinite(ts) || nowMs - ts > maxAgeMs) continue;
+    slotMap.set(String(s.hourKey), {
+      hourKey: String(s.hourKey),
+      ts,
+      cache: Math.max(0, Math.round(Number(s.cache) || 0)),
+      ram: Math.max(0, Math.round(Number(s.ram) || 0)),
+      cpu: Math.max(0, Math.round(Number(s.cpu) || 0)),
+      gpu: Math.max(0, Math.round(Number(s.gpu) || 0)),
+    });
+  }
+
+  // Seed historical daily slots truthfully from brain transcript timestamps when store is empty
+  if (slotMap.size === 0 && safeOpts.seedFromTranscripts !== false) {
+    const geminiRoot = join(homedir(), '.gemini');
+    const brainDirs = Array.isArray(safeOpts.brainDirs)
+      ? safeOpts.brainDirs.filter((p) => existsSync(p))
+      : ['antigravity', 'antigravity-ide', 'antigravity-cli']
+          .map((dir) => join(geminiRoot, dir, 'brain'))
+          .filter((p) => existsSync(p));
+    const weightedFiles = [];
+    for (const bDir of brainDirs) {
+      let ents = [];
+      try { ents = readdirSync(bDir, { withFileTypes: true }); } catch { continue; }
+      for (const d of ents) {
+        if (!d.isDirectory()) continue;
+        const tp = join(bDir, d.name, '.system_generated', 'logs', 'transcript.jsonl');
+        if (!existsSync(tp)) continue;
+        try {
+          const st = statSync(tp);
+          if (st.size > 0 && nowMs - st.mtimeMs <= maxAgeMs) {
+            weightedFiles.push({ ts: st.mtimeMs, size: st.size });
+          }
+        } catch {}
+      }
+    }
+    const totalSize = weightedFiles.reduce((acc, f) => acc + f.size, 0);
+    if (totalSize > 0 && (curCache + curRam + curCpu + curGpu) > 0) {
+      for (const wf of weightedFiles) {
+        const share = wf.size / totalSize;
+        const hk = formatHourBucketKey(wf.ts);
+        const existing = slotMap.get(hk) || { hourKey: hk, ts: wf.ts, cache: 0, ram: 0, cpu: 0, gpu: 0 };
+        existing.cache += Math.round(curCache * share);
+        existing.ram += Math.round(curRam * share);
+        existing.cpu += Math.round(curCpu * share);
+        existing.gpu += Math.round(curGpu * share);
+        slotMap.set(hk, existing);
+      }
+    }
+  }
+
+  const curHourKey = formatHourBucketKey(nowMs);
+  const dCache = curCache >= Number(prevTotals.cache || 0) ? (curCache - Number(prevTotals.cache || 0)) : curCache;
+  const dRam = curRam >= Number(prevTotals.ram || 0) ? (curRam - Number(prevTotals.ram || 0)) : curRam;
+  const dCpu = curCpu >= Number(prevTotals.cpu || 0) ? (curCpu - Number(prevTotals.cpu || 0)) : curCpu;
+  const dGpu = curGpu >= Number(prevTotals.gpu || 0) ? (curGpu - Number(prevTotals.gpu || 0)) : curGpu;
+
+  const activeSlot = slotMap.get(curHourKey) || { hourKey: curHourKey, ts: nowMs, cache: 0, ram: 0, cpu: 0, gpu: 0 };
+  if (slotMap.size === 0 && (curCache + curRam + curCpu + curGpu) > 0) {
+    activeSlot.cache += curCache;
+    activeSlot.ram += curRam;
+    activeSlot.cpu += curCpu;
+    activeSlot.gpu += curGpu;
+  } else if (dCache + dRam + dCpu + dGpu > 0) {
+    activeSlot.cache += dCache;
+    activeSlot.ram += dRam;
+    activeSlot.cpu += dCpu;
+    activeSlot.gpu += dGpu;
+  }
+  activeSlot.ts = nowMs;
+  slotMap.set(curHourKey, activeSlot);
+
+  const sortedSlots = Array.from(slotMap.values()).sort((a, b) => a.ts - b.ts).slice(-720);
+  if (safeOpts.persist !== false && (nowMs - lastRoiTimelineSaveTs >= 60_000 || !existsSync(timelineFile))) {
+    lastRoiTimelineSaveTs = nowMs;
+    try {
+      if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
+      atomicWriteJsonSync(timelineFile, {
+        updatedAt: new Date(nowMs).toISOString(),
+        lastTotals: { cache: curCache, ram: curRam, cpu: curCpu, gpu: curGpu },
+        slots: sortedSlots,
+      });
+    } catch {}
+  }
+
+  // Build 8 x 3h buckets (24h rolling Day)
+  const dayBuckets = [];
+  const threeHoursMs = 3 * 60 * 60 * 1000;
+  const alignedEnd = Math.floor(nowMs / threeHoursMs) * threeHoursMs + threeHoursMs;
+  for (let i = 7; i >= 0; i--) {
+    const start = alignedEnd - (i + 1) * threeHoursMs;
+    const end = alignedEnd - i * threeHoursMs;
+    const lbl = getBucketLabelRuEn(new Date(start), 'day');
+    dayBuckets.push({ labelRu: lbl.ru, labelEn: lbl.en, start, end, cache: 0, ram: 0, cpu: 0, gpu: 0 });
+  }
+
+  // Build 7 daily buckets (Week)
+  const weekBuckets = [];
+  const oneDayMs = 24 * 60 * 60 * 1000;
+  const todayStart = new Date(nowMs);
+  todayStart.setHours(0, 0, 0, 0);
+  const todayMs = todayStart.getTime();
+  for (let i = 6; i >= 0; i--) {
+    const start = todayMs - i * oneDayMs;
+    const end = start + oneDayMs;
+    const lbl = getBucketLabelRuEn(new Date(start), 'week');
+    weekBuckets.push({ labelRu: lbl.ru, labelEn: lbl.en, start, end, cache: 0, ram: 0, cpu: 0, gpu: 0 });
+  }
+
+  // Build 4 weekly buckets (Month)
+  const monthBuckets = [];
+  const oneWeekMs = 7 * oneDayMs;
+  const weekEnd = todayMs + oneDayMs;
+  for (let i = 3; i >= 0; i--) {
+    const start = weekEnd - (i + 1) * oneWeekMs;
+    const end = weekEnd - i * oneWeekMs;
+    const wNum = 4 - i;
+    monthBuckets.push({ labelRu: `Н${wNum}`, labelEn: `W${wNum}`, start, end, cache: 0, ram: 0, cpu: 0, gpu: 0 });
+  }
+
+  const addIntoBuckets = (buckets, slot) => {
+    for (const b of buckets) {
+      if (slot.ts >= b.start && slot.ts < b.end) {
+        b.cache += slot.cache;
+        b.ram += slot.ram;
+        b.cpu += slot.cpu;
+        b.gpu += slot.gpu;
+        break;
+      }
+    }
+  };
+  for (const s of sortedSlots) {
+    addIntoBuckets(dayBuckets, s);
+    addIntoBuckets(weekBuckets, s);
+    addIntoBuckets(monthBuckets, s);
+  }
+
+  const cleanBuckets = (arr) => arr.map((b) => ({
+    labelRu: b.labelRu,
+    labelEn: b.labelEn,
+    cache: b.cache,
+    ram: b.ram,
+    cpu: b.cpu,
+    gpu: b.gpu,
+    total: b.cache + b.ram + b.cpu + b.gpu,
+  }));
+
+  const qp = safeOpts.quotaPacer && typeof safeOpts.quotaPacer === 'object' ? safeOpts.quotaPacer : {};
+  const utilizationPct = Math.max(0, Math.min(100, Math.round(Number(qp.utilizationPct || 0))));
+  const projectedPct = Math.max(utilizationPct, Math.min(100, Math.round(utilizationPct * 1.25)));
+
+  return {
+    ok: true,
+    generatedAt: new Date(nowMs).toISOString(),
+    totals: {
+      cache: curCache,
+      ram: curRam,
+      cpu: curCpu,
+      gpu: curGpu,
+      total: curCache + curRam + curCpu + curGpu,
+      cacheHitRate: curHitRate,
+    },
+    scales: {
+      day: cleanBuckets(dayBuckets),
+      week: cleanBuckets(weekBuckets),
+      month: cleanBuckets(monthBuckets),
+    },
+    quotaBullet: {
+      utilizationPct,
+      projectedPct,
+      status: qp.status || 'calm',
+      estimatedMinutesLeft: Number.isFinite(Number(qp.estimatedMinutesLeft)) ? Number(qp.estimatedMinutesLeft) : 240,
+      turnsLast60m: Number(qp.turnsLast60m || 0),
+    },
+  };
+}
+
+const GUARD_PULSE_FAST_TTL_MS = 6000;
+const GUARD_PULSE_SHIELD_TTL_MS = 60000;
+const GUARD_PULSE_ENV_TTL_MS = 45000;
+const _guardPulseCache = new Map();
+
+function normGuardWsKey(wsRoot = '') {
+  const clean = String(wsRoot || '').trim();
+  if (!clean) return '__default__';
+  return process.platform === 'win32' ? resolve(clean).toLowerCase() : resolve(clean);
+}
+
+export function invalidateGuardPulseCache(wsRoot = '', buckets = null) {
+  if (!wsRoot) {
+    if (!Array.isArray(buckets) || buckets.length === 0) {
+      _guardPulseCache.clear();
+      return;
+    }
+    for (const entry of _guardPulseCache.values()) {
+      for (const b of buckets) {
+        if (b === 'shield') entry.shieldTs = 0;
+        else if (b === 'env') entry.envTs = 0;
+        else if (b === 'fast') entry.fastTs = 0;
+      }
+    }
+    return;
+  }
+  const key = normGuardWsKey(wsRoot);
+  const entry = _guardPulseCache.get(key);
+  if (!entry) return;
+  if (!Array.isArray(buckets) || buckets.length === 0) {
+    _guardPulseCache.delete(key);
+    return;
+  }
+  for (const b of buckets) {
+    if (b === 'shield') entry.shieldTs = 0;
+    else if (b === 'env') entry.envTs = 0;
+    else if (b === 'fast') entry.fastTs = 0;
+  }
+}
+
+export function primeGuardPulseShieldCache(wsRoot = '', shieldReport = null) {
+  if (!shieldReport || typeof shieldReport !== 'object') return;
+  const key = normGuardWsKey(wsRoot);
+  const entry = _guardPulseCache.get(key) || { shieldTs: 0, shield: null, envTs: 0, env: null, fastTs: 0, fast: null };
+  entry.shield = shieldReport;
+  entry.shieldTs = Date.now();
+  _guardPulseCache.set(key, entry);
+}
+
+/**
+ * Lightweight cached summary for the Guard Dock (Lite Variant B + Full Variant C).
+ * Keeps hot polling under ~2ms while surfacing Bugs, Shield, Instincts, Risks, and Env counts.
+ */
+export async function safeGetGuardPulse(workspaceRoot = '', state = {}, options = {}) {
+  const opts = options && typeof options === 'object' ? options : {};
+  const activeWs = typeof workspaceRoot === 'string' && workspaceRoot.trim() ? resolve(workspaceRoot.trim()) : process.cwd();
+  const key = normGuardWsKey(activeWs);
+  const now = Date.now();
+  const lang = state?.uiLanguage === 'en' ? 'en' : 'ru';
+  const forceAll = Boolean(opts.force);
+  const forceShield = forceAll || Boolean(opts.forceShield);
+  const forceEnv = forceAll || Boolean(opts.forceEnv);
+  const forceFast = forceAll || Boolean(opts.forceFast);
+
+  if (_guardPulseCache.size > 12 && !_guardPulseCache.has(key)) {
+    const oldestKey = _guardPulseCache.keys().next().value;
+    if (oldestKey) _guardPulseCache.delete(oldestKey);
+  }
+  const entry = _guardPulseCache.get(key) || { shieldTs: 0, shield: null, envTs: 0, env: null, fastTs: 0, fast: null };
+
+  // 1. Bugs (Sentinel + Wiretap — always computed live from already-fetched snapshots, 0ms)
+  const sen = opts.sentinel && typeof opts.sentinel === 'object' ? opts.sentinel : {};
+  const sg = sen.shadowGuard && typeof sen.shadowGuard === 'object' ? sen.shadowGuard : {};
+  const bb = sen.bugBot && typeof sen.bugBot === 'object' ? sen.bugBot : {};
+  const sgErrs = Math.max(0, Number(sg.errorCount || 0));
+  const sgWarns = Math.max(0, Number(sg.warnCount || 0), Number(sg.cloneCount || 0));
+  const bbCount = Math.max(0, Number(bb.findingsCount || 0), Array.isArray(bb.findings) ? bb.findings.length : 0);
+  const wiretapArr = Array.isArray(opts.wiretapFaults) ? opts.wiretapFaults : [];
+  const wiretapCount = wiretapArr.length;
+  const bugsTotal = sgErrs + sgWarns + bbCount + wiretapCount;
+  const bugsSeverity = (sgErrs > 0 || bbCount > 0 || wiretapCount > 0)
+    ? 'err'
+    : (bugsTotal > 0 ? 'warn' : 'ok');
+
+  // 2. Fast local state (Instincts + Circuit Breaker + Pitfalls + Fragile files)
+  let fastData = entry.fast;
+  const hasExplicitFastPreload = opts.circuitBreaker !== undefined || opts.pitfalls !== undefined || opts.bayesian !== undefined;
+  if (!fastData || forceFast || hasExplicitFastPreload || (now - entry.fastTs > GUARD_PULSE_FAST_TTL_MS)) {
+    const [cbRaw, pitfallsRaw, bayesianRaw, instinctsRaw] = await Promise.all([
+      opts.circuitBreaker !== undefined ? Promise.resolve(opts.circuitBreaker) : safeGetCircuitState(activeWs),
+      opts.pitfalls !== undefined ? Promise.resolve(opts.pitfalls) : safeListPitfalls(10, activeWs),
+      opts.bayesian !== undefined ? Promise.resolve(opts.bayesian) : safeGetBayesianSummary(activeWs),
+      (async () => {
+        try {
+          if (state?.sqliteKnowledgeEnabled === false) return [];
+          const mod = await getKnowledgeHubMod();
+          const hub = mod?.knowledgeHub;
+          if (!hub || typeof hub.listInstincts !== 'function') return [];
+          const listed = hub.listInstincts({ workspaceRoot: activeWs, includePromoted: false, minConfidence: 0.1, limit: 30 });
+          return Array.isArray(listed?.items) ? listed.items : [];
+        } catch {
+          return [];
+        }
+      })(),
+    ]);
+
+    const cb = cbRaw && typeof cbRaw === 'object' ? cbRaw : { status: 'CLOSED', repeatCount: 0, reason: '' };
+    const cbStatus = String(cb.status || 'CLOSED').toUpperCase();
+    const pitfalls = Array.isArray(pitfallsRaw) ? pitfallsRaw : [];
+    const fragileAll = Array.isArray(bayesianRaw?.fragileFiles) ? bayesianRaw.fragileFiles : [];
+    const fragile = fragileAll.filter((f) => f && Number(f.reliabilityPercent ?? 100) < 80);
+    const instincts = Array.isArray(instinctsRaw) ? instinctsRaw : [];
+    const readyInstincts = instincts.filter((it) => it && !it.promotedSkill && it.readyForPromotion);
+
+    fastData = {
+      instincts: {
+        total: instincts.length,
+        readyCount: readyInstincts.length,
+        count: readyInstincts.length,
+        severity: readyInstincts.length > 0 ? 'info' : 'ok',
+        items: instincts.slice(0, 8).map((it) => ({
+          id: String(it.id || ''),
+          pattern: String(it.pattern || ''),
+          confidencePct: Math.round(Number(it.effectiveConfidence ?? it.confidence ?? 0) * 100),
+          evidenceCount: Number(it.evidenceCount || 1),
+          readyForPromotion: Boolean(it.readyForPromotion && !it.promotedSkill),
+        })),
+      },
+      risks: {
+        cbStatus,
+        cbRepeats: Number(cb.repeatCount || 0),
+        cbReason: String(cb.reason || ''),
+        pitfallsCount: pitfalls.length,
+        fragileCount: fragile.length,
+        count: (cbStatus !== 'CLOSED' ? 1 : 0) + pitfalls.length + fragile.length,
+        severity: cbStatus === 'OPEN' ? 'err' : ((cbStatus === 'WARNING' || pitfalls.length > 0 || fragile.length > 0) ? 'warn' : 'ok'),
+        pitfalls: pitfalls.slice(0, 5).map((p) => ({
+          id: String(p?.id || ''),
+          file: String(p?.file || p?.target || ''),
+          lesson: String(p?.lesson || p?.summary || p?.error || ''),
+          category: String(p?.category || p?.kind || 'pitfall'),
+        })),
+        fragileFiles: fragile.slice(0, 5).map((f) => ({
+          file: String(f.file || f.path || ''),
+          reliabilityPercent: Number(f.reliabilityPercent ?? 100),
+          failures: Number(f.failures || 0),
+          runs: Number(f.runs || 0),
+        })),
+      },
+    };
+    entry.fast = fastData;
+    entry.fastTs = now;
+  }
+
+  // 3. AgentShield (offline config/secret/prompt-injection audit, cached 60s)
+  let shieldRaw = entry.shield;
+  if (!shieldRaw || forceShield || (now - entry.shieldTs > GUARD_PULSE_SHIELD_TTL_MS)) {
+    try {
+      const { auditAgentEnvironment } = await import('../../../core/agent-shield.mjs');
+      const includeGlobal = process.env.TUNNEL_TEST_ISOLATE_INSTALLED !== '1';
+      shieldRaw = auditAgentEnvironment({ workspaceRoot: activeWs, includeGlobal, lang });
+      entry.shield = shieldRaw;
+      entry.shieldTs = now;
+    } catch {
+      shieldRaw = { ok: false, score: 100, grade: 'A', findings: [] };
+    }
+  }
+  const shieldFindings = Array.isArray(shieldRaw?.findings) ? shieldRaw.findings : [];
+  const shieldCritHigh = shieldFindings.filter((f) => f && (f.severity === 'critical' || f.severity === 'high')).length;
+  const shieldBucket = {
+    checked: Boolean(shieldRaw && shieldRaw.ok !== false),
+    score: Number.isFinite(Number(shieldRaw?.score)) ? Number(shieldRaw.score) : 100,
+    grade: String(shieldRaw?.grade || 'A'),
+    count: shieldFindings.length,
+    criticalHighCount: shieldCritHigh,
+    severity: shieldCritHigh > 0 ? 'err' : (shieldFindings.length > 0 ? 'warn' : 'ok'),
+    findings: shieldFindings.slice(0, 8).map((f) => ({
+      file: String(f.file || ''),
+      severity: String(f.severity || 'low'),
+      ruleId: String(f.ruleId || ''),
+      message: String(f.message || ''),
+    })),
+  };
+
+  // 4. Environment & Discipline (Health-Doctor + GATES.md + Shortcut Tech Debt, cached 45s + instant GATES.md mtime check)
+  const gatesPath = join(activeWs, 'GATES.md');
+  let gatesSig = 'missing';
+  try {
+    if (existsSync(gatesPath)) {
+      const st = statSync(gatesPath);
+      gatesSig = `${Number(st.size || 0)}:${Math.trunc(Number(st.mtimeMs || 0))}`;
+    }
+  } catch {
+    gatesSig = 'missing';
+  }
+  const gatesChanged = entry.envGatesSig !== undefined && entry.envGatesSig !== gatesSig;
+
+  let envBucket = entry.env;
+  if (!envBucket || forceEnv || gatesChanged || (now - entry.envTs > GUARD_PULSE_ENV_TTL_MS)) {
+    try {
+      const [{ diagnoseRuntimeHealth }, { parseAcceptanceGatesMarkdown }, { scanShortcutDebt }, resolvedRuntime] = await Promise.all([
+        import('../../../core/health-doctor.mjs'),
+        import('../../../core/completion-gates.mjs'),
+        import('../../../core/shortcut-debt-ledger.mjs'),
+        Promise.all([
+          opts.gpu !== undefined ? Promise.resolve(opts.gpu) : safeGetGpuStatus(),
+          opts.ramCache !== undefined ? Promise.resolve(opts.ramCache) : safeGetRamCacheStatus(state),
+          opts.shadowWorktrees !== undefined
+            ? Promise.resolve(Array.isArray(opts.shadowWorktrees) ? opts.shadowWorktrees : [])
+            : (state?.shadowWorktreeEnabled !== false ? safeListShadowWorktrees(activeWs) : Promise.resolve([])),
+        ]),
+      ]);
+      const [gpuStatus, ramStatus, worktrees] = resolvedRuntime;
+      const docRes = diagnoseRuntimeHealth({
+        workspaceRoot: activeWs,
+        state,
+        gpuStatus,
+        ramStatus,
+        worktrees,
+      });
+      const docIssues = Array.isArray(docRes?.issues) ? docRes.issues : [];
+
+      let gatesExists = false;
+      let gatesTotal = 0;
+      let gatesUnmetCount = 0;
+      let gatesItems = [];
+      if (existsSync(gatesPath)) {
+        gatesExists = true;
+        try {
+          const parsed = parseAcceptanceGatesMarkdown(readFileSync(gatesPath, 'utf8'));
+          gatesTotal = Number(parsed?.total || 0);
+          gatesUnmetCount = Array.isArray(parsed?.unmet) ? parsed.unmet.length : 0;
+          gatesItems = (Array.isArray(parsed?.unmet) ? parsed.unmet : []).slice(0, 5).map((g) => ({
+            text: String(g?.text || g?.title || g || ''),
+          }));
+        } catch {}
+      }
+
+      let debtTotal = 0;
+      let debtNoTriggerCount = 0;
+      let debtItems = [];
+      try {
+        const debtRes = scanShortcutDebt(activeWs, { maxFiles: 120, lang });
+        debtTotal = Number(debtRes?.totalMarkers || 0);
+        debtNoTriggerCount = Number(debtRes?.noTriggerCount || 0);
+        const rawMarkers = Array.isArray(debtRes?.markers) ? debtRes.markers : [];
+        debtItems = rawMarkers.slice(0, 5).map((m) => ({
+          file: String(m.file || ''),
+          line: Number(m.line || 0),
+          ceiling: String(m.ceiling || m.raw || ''),
+          rotRisk: Boolean(m.rotRisk),
+        }));
+      } catch {}
+
+      const envTotal = docIssues.length + gatesUnmetCount + debtNoTriggerCount;
+      const hasHighDoc = docIssues.some((i) => i && i.severity === 'high');
+      envBucket = {
+        count: envTotal,
+        severity: hasHighDoc ? 'err' : (envTotal > 0 ? 'warn' : 'ok'),
+        doctorCount: docIssues.length,
+        doctorScore: Number(docRes?.score ?? 100),
+        doctorIssues: docIssues.slice(0, 6).map((i) => ({
+          id: String(i.id || ''),
+          severity: String(i.severity || 'warn'),
+          titleRu: String(i.titleRu || i.title || ''),
+          titleEn: String(i.titleEn || i.title || ''),
+          detailRu: String(i.detailRu || ''),
+          detailEn: String(i.detailEn || ''),
+          fixAction: String(i.fixAction || ''),
+          canAutoFix: Boolean(i.canAutoFix),
+        })),
+        gatesExists,
+        gatesTotal,
+        gatesUnmetCount,
+        gatesItems,
+        debtTotal,
+        debtNoTriggerCount,
+        debtItems,
+      };
+      entry.env = envBucket;
+      entry.envTs = now;
+      entry.envGatesSig = gatesSig;
+    } catch {
+      envBucket = {
+        count: 0,
+        severity: 'ok',
+        doctorCount: 0,
+        doctorScore: 100,
+        doctorIssues: [],
+        gatesExists: false,
+        gatesTotal: 0,
+        gatesUnmetCount: 0,
+        gatesItems: [],
+        debtTotal: 0,
+        debtNoTriggerCount: 0,
+        debtItems: [],
+      };
+    }
+  }
+
+  _guardPulseCache.set(key, entry);
+
+  return {
+    ok: true,
+    workspaceRoot: activeWs,
+    updatedAt: now,
+    bugs: {
+      count: bugsTotal,
+      severity: bugsSeverity,
+      sentinelErrors: sgErrs,
+      sentinelWarnings: sgWarns,
+      bugBotCount: bbCount,
+      wiretapCount,
+    },
+    shield: shieldBucket,
+    instincts: fastData.instincts,
+    risks: fastData.risks,
+    env: envBucket,
+  };
+}
+

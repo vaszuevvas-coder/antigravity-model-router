@@ -762,6 +762,7 @@ export function readCachedSentinelSnapshot(wsPath = '', stateOverride = null, { 
       errorCount: Number(shadowGuard.errorCount || 0),
       warnCount: Number(shadowGuard.warnCount || 0),
       cloneCount: Number(shadowGuard.cloneCount || 0),
+      clonePairs: Array.isArray(shadowGuard.clonePairs) ? shadowGuard.clonePairs : [],
       issues: Array.isArray(shadowGuard.issues) ? shadowGuard.issues : [],
       coChangeAlerts: Array.isArray(shadowGuard.coChangeAlerts) ? shadowGuard.coChangeAlerts : [],
       lastRunAt: shadowGuard.lastRunAt || null,

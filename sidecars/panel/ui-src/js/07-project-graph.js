@@ -2,14 +2,9 @@
     // 07. INTERACTIVE PROJECT GRAPH (OBSIDIAN GRAPH + SPLIT INSPECTOR)
     // =========================================================================
     const PG_CLUSTER_PALETTE_DARK = [
-      '#0a84ff', '#30d158', '#ff9f0a', '#bf5af2',
-      '#64d2ff', '#ff375f', '#ffd60a', '#5e5ce6',
-      '#32ade6', '#ac8e68'
-    ];
-    const PG_CLUSTER_PALETTE_LIGHT = [
-      '#0284c7', '#16a34a', '#ea580c', '#9333ea',
-      '#0d9488', '#dc2626', '#d97706', '#4f46e5',
-      '#2563eb', '#b45309'
+      '#f04848', '#3fb950', '#e09f3e', '#d4a373',
+      '#e07a5f', '#9ca3af', '#84a98c', '#c98a5b',
+      '#7c8696', '#b56576'
     ];
 
     const pgState = {
@@ -215,10 +210,6 @@
       } catch {}
     }
 
-    function pgIsLightTheme() {
-      return document.body && document.body.getAttribute('data-panel-theme') === 'studio_titanium';
-    }
-
     function pgPrefersReducedMotion() {
       try {
         return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -228,7 +219,7 @@
     }
 
     function pgGetClusterPalette() {
-      return pgIsLightTheme() ? PG_CLUSTER_PALETTE_LIGHT : PG_CLUSTER_PALETTE_DARK;
+      return PG_CLUSTER_PALETTE_DARK;
     }
 
     function pgGetClusterColor(clusterId) {
@@ -351,31 +342,20 @@
       return Math.max(0.85, Math.min(1.45, factor));
     }
 
-    function pgGetLayerRolePalette(role, colIndex, isLight) {
+    function pgGetLayerRolePalette(role, colIndex) {
       if (role === 'entry') {
-        return isLight
-          ? { accentRgb: '2, 132, 199', accentHex: '#0284c7', laneEvenAlpha: 0.045, laneOddAlpha: 0.045 }
-          : { accentRgb: '56, 189, 248', accentHex: '#38bdf8', laneEvenAlpha: 0.055, laneOddAlpha: 0.055 };
+        return { accentRgb: '224, 159, 62', accentHex: '#e09f3e', laneEvenAlpha: 0.05, laneOddAlpha: 0.05 };
       }
       if (role === 'core') {
-        return isLight
-          ? { accentRgb: '194, 65, 12', accentHex: '#c2410c', laneEvenAlpha: 0.048, laneOddAlpha: 0.048 }
-          : { accentRgb: '245, 158, 11', accentHex: '#f59e0b', laneEvenAlpha: 0.055, laneOddAlpha: 0.055 };
+        return { accentRgb: '240, 72, 72', accentHex: '#f04848', laneEvenAlpha: 0.055, laneOddAlpha: 0.055 };
       }
       if (role === 'single') {
-        return isLight
-          ? { accentRgb: '2, 132, 199', accentHex: '#0284c7', laneEvenAlpha: 0.04, laneOddAlpha: 0.04 }
-          : { accentRgb: '96, 165, 250', accentHex: '#60a5fa', laneEvenAlpha: 0.045, laneOddAlpha: 0.045 };
+        return { accentRgb: '156, 163, 175', accentHex: '#9ca3af', laneEvenAlpha: 0.045, laneOddAlpha: 0.045 };
       }
       const even = (Number(colIndex) || 0) % 2 === 0;
-      if (isLight) {
-        return even
-          ? { accentRgb: '124, 45, 18', accentHex: '#7c2d12', laneEvenAlpha: 0.032, laneOddAlpha: 0.014 }
-          : { accentRgb: '100, 116, 139', accentHex: '#64748b', laneEvenAlpha: 0.032, laneOddAlpha: 0.014 };
-      }
       return even
-        ? { accentRgb: '129, 140, 248', accentHex: '#818cf8', laneEvenAlpha: 0.036, laneOddAlpha: 0.016 }
-        : { accentRgb: '148, 163, 184', accentHex: '#94a3b8', laneEvenAlpha: 0.036, laneOddAlpha: 0.016 };
+        ? { accentRgb: '148, 163, 184', accentHex: '#94a3b8', laneEvenAlpha: 0.035, laneOddAlpha: 0.016 }
+        : { accentRgb: '113, 113, 122', accentHex: '#71717a', laneEvenAlpha: 0.035, laneOddAlpha: 0.016 };
     }
 
     function pgFindLayerHeaderAtScreen(sx, sy) {
@@ -509,12 +489,13 @@
         if (n.y > maxY) maxY = n.y;
       }
       const uiScale = pgGetUiScale();
-      const headerPad = pgState.layoutMode === 'layered' ? Math.round(38 * uiScale) : 0;
+      const headerPad = pgState.layoutMode === 'layered' ? Math.round(42 * uiScale) : 0;
       const spanX = Math.max(140, (maxX - minX) + 90);
       const spanY = Math.max(120, (maxY - minY) + 90);
       const w = Math.max(240, pgState.width || 600);
       const h = Math.max(180, (pgState.height || 420) - headerPad);
-      const scale = Math.max(0.28, Math.min(2.1, Math.min(w / spanX, h / spanY) * 0.88));
+      const minScale = pgState.layoutMode === 'layered' ? 0.16 : 0.28;
+      const scale = Math.max(minScale, Math.min(2.1, Math.min(w / spanX, h / spanY) * 0.88));
       pgState.camX = (minX + maxX) * 0.5;
       pgState.camY = (minY + maxY) * 0.5 - (headerPad * 0.5) / scale;
       pgState.camScale = scale;
@@ -1452,7 +1433,6 @@
       const dpr = pgState.dpr || 1;
       const scale = pgState.camScale || 1;
       const uiScale = pgGetUiScale();
-      const isLight = pgIsLightTheme();
       const isLayered = pgState.layoutMode === 'layered';
       const isMacro = Boolean(pgState.graphData?.isMacro);
 
@@ -1558,8 +1538,9 @@
         }
       }
 
-      // Draw Combo Swimlanes (1) + Focus Lane Highlight (2) + Node-Bounding Layer Frames (3) + Sticky Clickable Headers
+      // Draw Combo Swimlanes (1) + Focus Lane Highlight (2) + Node-Bounding Layer Frames (3); sticky headers draw after nodes
       pgState.layerHeaderRects = [];
+      let deferredLayeredHeaders = null;
       if (isLayered && pgState.layeredColumns.length > 0) {
         const cols = pgState.layeredColumns;
         ctx.save();
@@ -1616,29 +1597,29 @@
           const col = cols[c];
           const lb = laneBounds[c];
           if (lb.right < -80 || lb.left > w + 80) continue;
-          const pal = pgGetLayerRolePalette(col.role, c, isLight);
+          const pal = pgGetLayerRolePalette(col.role, c);
           const tb = tierBounds ? tierBounds.get(col.tier) : null;
           const hasAttached = Boolean(tb && tb.count > 0);
           const isFocused = focusTier === col.tier;
           const isDimmed = hasLockedLayer && pgState.activeLayerTier !== col.tier;
 
           if (isFocused) {
-            ctx.fillStyle = 'rgba(' + pal.accentRgb + ', ' + (isLight ? '0.09' : '0.115') + ')';
+            ctx.fillStyle = 'rgba(' + pal.accentRgb + ', 0.11)';
           } else if (isDimmed) {
-            ctx.fillStyle = isLight ? 'rgba(124, 45, 18, 0.014)' : 'rgba(6, 10, 20, 0.24)';
+            ctx.fillStyle = 'rgba(10, 11, 13, 0.28)';
           } else {
             const baseAlpha = (c % 2 === 0) ? pal.laneEvenAlpha : pal.laneOddAlpha;
             const bgAlpha = hasAttached ? baseAlpha : (baseAlpha * 0.45);
             ctx.fillStyle = 'rgba(' + pal.accentRgb + ', ' + bgAlpha + ')';
           }
-          pgDrawRoundedRectPath(ctx, lb.left + 2, laneTop, Math.max(8, lb.width - 4), laneHeight, Math.round(10 * uiScale));
+          pgDrawRoundedRectPath(ctx, lb.left + 2, laneTop, Math.max(8, lb.width - 4), laneHeight, Math.round(5 * uiScale));
           ctx.fill();
 
           if (pos > 0 && lb.left >= -20 && lb.left <= w + 20) {
             const prevFocus = focusTier === cols[sortedOrder[pos - 1]].tier;
             ctx.strokeStyle = (isFocused || prevFocus)
-              ? ('rgba(' + pal.accentRgb + ', ' + (isLight ? '0.28' : '0.28') + ')')
-              : (isLight ? 'rgba(124, 45, 18, 0.11)' : 'rgba(255, 255, 255, 0.07)');
+              ? ('rgba(' + pal.accentRgb + ', 0.28)')
+              : 'rgba(255, 255, 255, 0.07)';
             ctx.lineWidth = 1;
             ctx.beginPath();
             ctx.moveTo(lb.left, laneTop + 4);
@@ -1648,7 +1629,7 @@
 
           if (isFocused && colScreenXs[c] >= -40 && colScreenXs[c] <= w + 40) {
             ctx.save();
-            ctx.strokeStyle = 'rgba(' + pal.accentRgb + ', ' + (isLight ? '0.22' : '0.22') + ')';
+            ctx.strokeStyle = 'rgba(' + pal.accentRgb + ', 0.22)';
             ctx.lineWidth = 1;
             ctx.setLineDash([4, 5]);
             ctx.beginPath();
@@ -1669,7 +1650,7 @@
           const lb = laneBounds[c];
           const tb = tierBounds ? tierBounds.get(col.tier) : null;
           if (!tb || tb.count === 0) continue;
-          const pal = pgGetLayerRolePalette(col.role, c, isLight);
+          const pal = pgGetLayerRolePalette(col.role, c);
           const isFocused = focusTier === col.tier;
           const isDimmed = hasLockedLayer && pgState.activeLayerTier !== col.tier;
 
@@ -1683,19 +1664,19 @@
           const fH = fBot - fTop;
           if (fH <= 14 || fRight < -60 || fLeft > w + 60) continue;
 
-          pgDrawRoundedRectPath(ctx, fLeft, fTop, fW, fH, Math.round(12 * uiScale));
+          pgDrawRoundedRectPath(ctx, fLeft, fTop, fW, fH, Math.round(6 * uiScale));
           if (isFocused) {
-            ctx.fillStyle = 'rgba(' + pal.accentRgb + ', ' + (isLight ? '0.075' : '0.095') + ')';
+            ctx.fillStyle = 'rgba(' + pal.accentRgb + ', 0.095)';
             ctx.fill();
-            ctx.strokeStyle = 'rgba(' + pal.accentRgb + ', ' + (isLight ? '0.62' : '0.68') + ')';
+            ctx.strokeStyle = 'rgba(' + pal.accentRgb + ', 0.68)';
             ctx.lineWidth = 1.5;
             ctx.stroke();
           } else {
             ctx.fillStyle = isDimmed
-              ? (isLight ? 'rgba(255, 252, 249, 0.16)' : 'rgba(12, 16, 28, 0.18)')
-              : (isLight ? 'rgba(255, 252, 249, 0.44)' : 'rgba(14, 20, 36, 0.38)');
+              ? 'rgba(18, 19, 22, 0.24)'
+              : 'rgba(18, 19, 22, 0.56)';
             ctx.fill();
-            ctx.strokeStyle = 'rgba(' + pal.accentRgb + ', ' + (isDimmed ? '0.09' : (isLight ? '0.24' : '0.26')) + ')';
+            ctx.strokeStyle = 'rgba(' + pal.accentRgb + ', ' + (isDimmed ? '0.09' : '0.28') + ')';
             ctx.lineWidth = 1;
             ctx.stroke();
           }
@@ -1708,15 +1689,15 @@
             const badgeH = Math.round(15 * uiScale);
             const bx = fLeft + 8;
             const by = fTop - badgeH * 0.5;
-            pgDrawRoundedRectPath(ctx, bx, by, badgeW, badgeH, badgeH * 0.5);
-            ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.94)' : 'rgba(15, 22, 38, 0.92)';
+            pgDrawRoundedRectPath(ctx, bx, by, badgeW, badgeH, 4);
+            ctx.fillStyle = '#121316';
             ctx.fill();
-            ctx.strokeStyle = 'rgba(' + pal.accentRgb + ', ' + (isFocused ? '0.62' : '0.32') + ')';
+            ctx.strokeStyle = 'rgba(' + pal.accentRgb + ', ' + (isFocused ? '0.65' : '0.35') + ')';
             ctx.lineWidth = 1;
             ctx.stroke();
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillStyle = isFocused ? pal.accentHex : (isLight ? '#5c3422' : 'rgba(226, 232, 240, 0.85)');
+            ctx.fillStyle = isFocused ? pal.accentHex : '#e4e6eb';
             ctx.fillText(cornerTxt, bx + badgeW * 0.5, by + badgeH * 0.5 + 0.5);
             ctx.restore();
           }
@@ -1727,12 +1708,12 @@
           const focusColIdx = cols.findIndex(function (c) { return c.tier === focusTier; });
           if (focusColIdx >= 0) {
             const fCol = cols[focusColIdx];
-            const fPal = pgGetLayerRolePalette(fCol.role, focusColIdx, isLight);
+            const fPal = pgGetLayerRolePalette(fCol.role, focusColIdx);
             const fHdrX = Math.max(12, Math.min(w - 12, colScreenXs[focusColIdx]));
             const fHdrY = headerY + headerH;
             const dNodes = detachedNodesByTier.get(focusTier) || [];
             ctx.save();
-            ctx.strokeStyle = 'rgba(' + fPal.accentRgb + ', ' + (isLight ? '0.38' : '0.42') + ')';
+            ctx.strokeStyle = 'rgba(' + fPal.accentRgb + ', 0.42)';
             ctx.lineWidth = 1.1;
             ctx.setLineDash([4, 4]);
             for (let di = 0; di < dNodes.length; di++) {
@@ -1746,102 +1727,17 @@
           }
         }
 
-        // Pass 3: Sticky clickable/draggable header rail
-        const hdrFontPx = Math.max(9.5, Math.round(10 * uiScale));
-        ctx.font = '700 ' + hdrFontPx + 'px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-
-        if (cols.length > 1 && colStepScreen < 28) {
-          const firstCx = colScreenXs[sortedOrder[0]];
-          const lastCx = colScreenXs[sortedOrder[sortedOrder.length - 1]];
-          const midX = (firstCx + lastCx) * 0.5;
-          const summaryTxt = isRu() ? 'Входы / UI  →  Ядро / Хабы' : 'Entries / UI  →  Core / Hubs';
-          const chipW = Math.min(220 * uiScale, ctx.measureText(summaryTxt).width + 20 * uiScale);
-          pgDrawRoundedRectPath(ctx, midX - chipW * 0.5, headerY, chipW, headerH, headerH * 0.5);
-          ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.92)' : 'rgba(18, 24, 40, 0.90)';
-          ctx.fill();
-          ctx.strokeStyle = isLight ? 'rgba(124, 45, 18, 0.22)' : 'rgba(255, 255, 255, 0.16)';
-          ctx.lineWidth = 1;
-          ctx.stroke();
-          ctx.fillStyle = isLight ? '#7c2d12' : 'rgba(235, 235, 245, 0.88)';
-          ctx.fillText(summaryTxt, midX, headerY + headerH * 0.5 + 0.5);
-        } else {
-          for (let pos = 0; pos < sortedOrder.length; pos++) {
-            const c = sortedOrder[pos];
-            const col = cols[c];
-            const lb = laneBounds[c];
-            if (lb.right < -20 || lb.left > w + 20) continue;
-            const pal = pgGetLayerRolePalette(col.role, c, isLight);
-            const isActiveFilter = pgState.activeLayerTier === col.tier;
-            const isFocused = focusTier === col.tier;
-            const maxPillW = Math.max(26, lb.width - 8);
-            const dotExtra = Math.round(12 * uiScale);
-            const clearExtra = isActiveFilter ? Math.round(12 * uiScale) : 0;
-
-            const fullLbl = (isRu() ? col.labelRu : col.labelEn) + ' · ' + col.count;
-            const shortLbl = (isRu() ? col.shortRu : col.shortEn) + ' · ' + col.count;
-            const microLbl = (col.role === 'mid') ? String(c + 1) : (isRu() ? col.shortRu : col.shortEn);
-            const padText = Math.round(16 * uiScale) + dotExtra + clearExtra;
-
-            let lblText = fullLbl;
-            if (ctx.measureText(fullLbl).width + padText > maxPillW) {
-              lblText = shortLbl;
-              if (ctx.measureText(shortLbl).width + padText > maxPillW) {
-                lblText = microLbl;
-              }
-            }
-
-            const measuredW = ctx.measureText(lblText).width + padText;
-            const pillW = Math.min(maxPillW, Math.max(28, measuredW));
-            const minX = Math.max(4, lb.left + 4);
-            const maxX = Math.min(w - pillW - 4, lb.right - pillW - 4);
-            const pillX = minX <= maxX
-              ? Math.max(minX, Math.min(maxX, colScreenXs[c] - pillW * 0.5))
-              : Math.max(4, Math.min(w - pillW - 4, colScreenXs[c] - pillW * 0.5));
-
-            pgDrawRoundedRectPath(ctx, pillX, headerY, pillW, headerH, headerH * 0.5);
-            if (isActiveFilter) {
-              ctx.fillStyle = 'rgba(' + pal.accentRgb + ', ' + (isLight ? '0.20' : '0.26') + ')';
-            } else if (isFocused) {
-              ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.98)' : 'rgba(26, 35, 58, 0.96)';
-            } else {
-              ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.92)' : 'rgba(18, 24, 40, 0.90)';
-            }
-            ctx.fill();
-            ctx.strokeStyle = (isActiveFilter || isFocused)
-              ? ('rgba(' + pal.accentRgb + ', ' + (isLight ? '0.72' : '0.78') + ')')
-              : ('rgba(' + pal.accentRgb + ', ' + (isLight ? '0.32' : '0.28') + ')');
-            ctx.lineWidth = isActiveFilter ? 1.5 : 1;
-            ctx.stroke();
-
-            const cy = headerY + headerH * 0.5;
-            if (pillW >= 40) {
-              ctx.beginPath();
-              ctx.arc(pillX + Math.round(9 * uiScale), cy, Math.max(2.6, 3 * uiScale), 0, Math.PI * 2);
-              ctx.fillStyle = pal.accentHex;
-              ctx.fill();
-            }
-            const textCenterX = pillX + (pillW >= 40 ? (dotExtra * 0.45) : 0) + (pillW - clearExtra) * 0.5;
-            ctx.fillStyle = isActiveFilter
-              ? (isLight ? '#2c1e16' : '#ffffff')
-              : (isFocused ? (isLight ? '#2c1e16' : '#f8fafc') : (isLight ? '#5c3422' : 'rgba(235, 235, 245, 0.88)'));
-            ctx.fillText(lblText + (isActiveFilter ? ' ×' : ''), textCenterX, cy + 0.5);
-
-            pgState.layerHeaderRects.push({
-              tier: col.tier,
-              index: col.index,
-              x: pillX,
-              y: headerY,
-              w: pillW,
-              h: headerH,
-              labelRu: col.labelRu,
-              labelEn: col.labelEn,
-              count: col.count,
-              role: col.role
-            });
-          }
-        }
+        // Defer sticky clickable/draggable header rail until after nodes & labels so nodes never obscure headers
+        deferredLayeredHeaders = {
+          cols,
+          sortedOrder,
+          colScreenXs,
+          laneBounds,
+          colStepScreen,
+          headerY,
+          headerH,
+          focusTier,
+        };
         ctx.restore();
       }
 
@@ -1962,7 +1858,6 @@
         h,
         dpr,
         scale,
-        isLight,
         isLayered,
         isMacro,
         activeId,
@@ -2003,18 +1898,18 @@
           if (sHop !== undefined && tHop !== undefined && sHop !== tHop) {
             isLensEdge = true;
             lensEdgeColor = typeof pgGetHopColor === 'function'
-              ? pgGetHopColor(Math.max(sHop, tHop), isLight)
-              : (isLight ? '#ea580c' : '#ff9f0a');
+              ? pgGetHopColor(Math.max(sHop, tHop))
+              : '#ff9f0a';
           }
         } else if (hasActiveCycleHighlight) {
           if (activeCycleEdges.has(edgePairKey)) {
             isLensEdge = true;
-            lensEdgeColor = isLight ? '#dc2626' : '#ff375f';
+            lensEdgeColor = '#f04848';
           }
         } else if (hasPathHighlight) {
           if (pgState.pathEdgeSet.has(edgePairKey)) {
             isLensEdge = true;
-            lensEdgeColor = isLight ? '#ea580c' : '#0a84ff';
+            lensEdgeColor = '#f04848';
           }
         }
         if (renderedWebgl && !isActiveEdge && !isLensEdge) continue;
@@ -2053,12 +1948,12 @@
         } else if (isActiveEdge) {
           const isIncoming = e.target.id === activeId;
           edgeStrokeColor = isIncoming
-            ? (isLight ? 'rgba(234, 88, 12, 0.88)' : 'rgba(100, 210, 255, 0.90)')
-            : (isLight ? 'rgba(22, 163, 74, 0.80)' : 'rgba(48, 209, 88, 0.84)');
+            ? 'rgba(240, 72, 72, 0.92)'
+            : 'rgba(34, 197, 94, 0.86)';
           ctx.strokeStyle = edgeStrokeColor;
           ctx.lineWidth = Math.max(1.7, weightWidth + 0.45);
         } else {
-          edgeStrokeColor = isLight ? 'rgba(124, 45, 18, 0.19)' : 'rgba(200, 215, 245, 0.18)';
+          edgeStrokeColor = 'rgba(228, 230, 235, 0.16)';
           ctx.strokeStyle = edgeStrokeColor;
           ctx.lineWidth = weightWidth;
         }
@@ -2240,7 +2135,7 @@
             ctx.fill();
 
             ctx.globalAlpha = g.alpha * 0.96;
-            ctx.fillStyle = isLight ? '#fff7ed' : '#ffffff';
+            ctx.fillStyle = '#ffffff';
             ctx.beginPath();
             ctx.arc(headPt.x, headPt.y, 2.0, 0, Math.PI * 2);
             ctx.fill();
@@ -2258,13 +2153,13 @@
         for (let i = 0; i < edgeMidBadges.length; i++) {
           const b = edgeMidBadges[i];
           const bw = Math.max(16, ctx.measureText(b.text).width + 8);
-          pgDrawRoundedRectPath(ctx, b.x - bw * 0.5, b.y - 7.5, bw, 15, 7.5);
-          ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.95)' : 'rgba(12, 16, 28, 0.95)';
+          pgDrawRoundedRectPath(ctx, b.x - bw * 0.5, b.y - 7.5, bw, 15, 4);
+          ctx.fillStyle = '#121316';
           ctx.fill();
           ctx.strokeStyle = b.color;
           ctx.lineWidth = 1;
           ctx.stroke();
-          ctx.fillStyle = isLight ? '#2c1e16' : '#f5f5f7';
+          ctx.fillStyle = '#e4e6eb';
           ctx.fillText(b.text, b.x, b.y + 0.5);
         }
         ctx.restore();
@@ -2348,46 +2243,46 @@
           if (n.isFolder) {
             const x0 = n._sx - n._bw * 0.5;
             const y0 = n._sy - n._bh * 0.5;
-            pgDrawRoundedRectPath(ctx, x0, y0, n._bw, n._bh, 9 * cardScale);
-            ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.96)' : 'rgba(20, 26, 44, 0.94)';
+            pgDrawRoundedRectPath(ctx, x0, y0, n._bw, n._bh, 5 * cardScale);
+            ctx.fillStyle = '#14161a';
             ctx.fill();
-            let cardBorderColor = color;
+            let cardBorderColor = '#2a2d35';
             let cardBorderWidth = 1.1;
             if (isWaveNode && typeof pgGetHopColor === 'function') {
-              cardBorderColor = pgGetHopColor(waveHop, isLight);
+              cardBorderColor = pgGetHopColor(waveHop);
               cardBorderWidth = waveHop === 0 ? 2.4 : 1.7;
             } else if (isCycleNode) {
-              cardBorderColor = isLight ? '#dc2626' : '#ff375f';
+              cardBorderColor = '#f04848';
               cardBorderWidth = 2.1;
             } else if (hotspotScore > 0.15 && typeof pgGetHotspotColor === 'function') {
-              cardBorderColor = pgGetHotspotColor(hotspotScore, isLight);
+              cardBorderColor = pgGetHotspotColor(hotspotScore);
               cardBorderWidth = hotspotScore >= 0.65 ? 2.3 : 1.7;
             } else if (semanticScore > 0.15) {
-              cardBorderColor = isLight ? '#0d9488' : '#10b981';
+              cardBorderColor = '#22c55e';
               cardBorderWidth = 2.1;
             } else if (isPathNode) {
-              cardBorderColor = isLight ? '#ea580c' : '#0a84ff';
+              cardBorderColor = '#f04848';
               cardBorderWidth = isPathEndpoint ? 2.4 : 1.8;
             } else if (isSelected || isHovered) {
-              cardBorderColor = isLight ? '#2c1e16' : '#ffffff';
+              cardBorderColor = '#f04848';
               cardBorderWidth = 2;
             } else if (n.isFragile) {
-              cardBorderColor = isLight ? '#dc2626' : '#ff453a';
+              cardBorderColor = '#f04848';
             }
             ctx.lineWidth = cardBorderWidth;
             ctx.strokeStyle = cardBorderColor;
             ctx.stroke();
 
             if (isCartNode) {
-              pgDrawRoundedRectPath(ctx, x0 - 2.5, y0 - 2.5, n._bw + 5, n._bh + 5, 11 * cardScale);
-              ctx.strokeStyle = isLight ? '#16a34a' : '#30d158';
+              pgDrawRoundedRectPath(ctx, x0 - 2.5, y0 - 2.5, n._bw + 5, n._bh + 5, 6 * cardScale);
+              ctx.strokeStyle = '#22c55e';
               ctx.lineWidth = 1.6;
               ctx.stroke();
             }
 
             if (aiRank > 0) {
-              pgDrawRoundedRectPath(ctx, x0 - 3, y0 - 3, n._bw + 6, n._bh + 6, 11 * cardScale);
-              ctx.strokeStyle = isLight ? '#7c3aed' : '#a855f7';
+              pgDrawRoundedRectPath(ctx, x0 - 3, y0 - 3, n._bw + 6, n._bh + 6, 6 * cardScale);
+              ctx.strokeStyle = '#f04848';
               ctx.lineWidth = 2.1;
               ctx.stroke();
             }
@@ -2395,17 +2290,17 @@
             // Left subsystem color stripe
             if (typeof ctx.clip === 'function') {
               ctx.save();
-              pgDrawRoundedRectPath(ctx, x0, y0, n._bw, n._bh, 9 * cardScale);
+              pgDrawRoundedRectPath(ctx, x0, y0, n._bw, n._bh, 5 * cardScale);
               ctx.clip();
               ctx.fillStyle = color;
-              ctx.fillRect(x0, y0, 4 * cardScale, n._bh);
+              ctx.fillRect(x0, y0, 3.5 * cardScale, n._bh);
               ctx.restore();
             }
 
             if (isDiffNode) {
               ctx.beginPath();
               ctx.arc(x0 + n._bw - 6 * cardScale, y0 + 6 * cardScale, 3.2, 0, Math.PI * 2);
-              ctx.fillStyle = isLight ? '#ea580c' : '#ff9f0a';
+              ctx.fillStyle = '#f59e0b';
               ctx.fill();
             }
 
@@ -2415,7 +2310,7 @@
               ctx.textAlign = 'left';
               ctx.textBaseline = 'middle';
               ctx.font = '700 ' + titleFont + 'px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
-              ctx.fillStyle = isLight ? '#2c1e16' : '#f5f5f7';
+              ctx.fillStyle = '#eef0f3';
               let titleTxt = String(n.label || '');
               const maxTextW = Math.max(24, n._bw - 15 * cardScale);
               if (ctx.measureText(titleTxt).width > maxTextW) {
@@ -2427,16 +2322,16 @@
               ctx.fillText(titleTxt, x0 + 9 * cardScale, n._sy - 5.5 * cardScale);
 
               ctx.font = '500 ' + subFont + 'px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
-              ctx.fillStyle = isLight ? 'rgba(92, 52, 34, 0.78)' : 'rgba(235, 235, 245, 0.68)';
+              ctx.fillStyle = '#8a8f98';
               const metaTxt = L(n.filesCount + ' ф.', n.filesCount + ' f.') +
-                (n.godCount > 0 ? ' · ★' : '') +
-                (n.fragileCount > 0 ? ' · ⚠' : '');
+                (n.godCount > 0 ? ' · HUB' : '') +
+                (n.fragileCount > 0 ? ' · !' : '');
               ctx.fillText(metaTxt, x0 + 9 * cardScale, n._sy + 7 * cardScale);
             }
             if (isLayered && n._detachedFromLayer && typeof n._tier === 'number') {
               const dCol = (pgState.layeredColumns || []).find(function (c) { return c.tier === n._tier; });
               if (dCol) {
-                const dPal = pgGetLayerRolePalette(dCol.role, dCol.index, isLight);
+                const dPal = pgGetLayerRolePalette(dCol.role, dCol.index);
                 const dTxt = isRu() ? dCol.shortRu : dCol.shortEn;
                 const dFont = Math.max(8, Math.round(8.5 * uiScale));
                 ctx.save();
@@ -2446,7 +2341,7 @@
                 const dX = x0 + n._bw - dW + 4;
                 const dY = y0 - dH * 0.65;
                 pgDrawRoundedRectPath(ctx, dX, dY, dW, dH, dH * 0.5);
-                ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.96)' : 'rgba(13, 19, 34, 0.95)';
+                ctx.fillStyle = 'rgba(13, 19, 34, 0.95)';
                 ctx.fill();
                 ctx.strokeStyle = 'rgba(' + dPal.accentRgb + ', 0.72)';
                 ctx.lineWidth = 1;
@@ -2465,13 +2360,13 @@
           if (isWaveNode && typeof pgGetHopColor === 'function') {
             ctx.beginPath();
             ctx.arc(n._sx, n._sy, n._sr + (waveHop === 0 ? 4.4 : 3.2), 0, Math.PI * 2);
-            ctx.strokeStyle = pgGetHopColor(waveHop, isLight);
+            ctx.strokeStyle = pgGetHopColor(waveHop);
             ctx.lineWidth = waveHop === 0 ? 2.4 : 1.7;
             ctx.stroke();
           } else if (isCycleNode) {
             ctx.beginPath();
             ctx.arc(n._sx, n._sy, n._sr + 3.6, 0, Math.PI * 2);
-            ctx.strokeStyle = isLight ? '#dc2626' : '#ff375f';
+            ctx.strokeStyle = '#f04848';
             ctx.lineWidth = 2.0;
             ctx.stroke();
           } else if (hasCycleLens && isOrphanNode) {
@@ -2479,20 +2374,20 @@
             ctx.setLineDash([2.5, 2.5]);
             ctx.beginPath();
             ctx.arc(n._sx, n._sy, n._sr + 3.2, 0, Math.PI * 2);
-            ctx.strokeStyle = isLight ? '#64748b' : '#94a3b8';
+            ctx.strokeStyle = '#94a3b8';
             ctx.lineWidth = 1.4;
             ctx.stroke();
             ctx.restore();
           } else if (isPathNode) {
             ctx.beginPath();
             ctx.arc(n._sx, n._sy, n._sr + (isPathEndpoint ? 4.5 : 3.2), 0, Math.PI * 2);
-            ctx.strokeStyle = isLight ? '#ea580c' : '#0a84ff';
+            ctx.strokeStyle = '#f04848';
             ctx.lineWidth = isPathEndpoint ? 2.4 : 1.7;
             ctx.stroke();
           } else if (hotspotScore > 0.12 && typeof pgGetHotspotColor === 'function') {
             ctx.beginPath();
             ctx.arc(n._sx, n._sy, n._sr + 2.4 + hotspotScore * 3.2, 0, Math.PI * 2);
-            ctx.strokeStyle = pgGetHotspotColor(hotspotScore, isLight);
+            ctx.strokeStyle = pgGetHotspotColor(hotspotScore);
             ctx.lineWidth = hotspotScore >= 0.65 ? 2.3 : 1.5;
             ctx.stroke();
           }
@@ -2500,7 +2395,7 @@
           if (semanticScore > 0.12) {
             ctx.beginPath();
             ctx.arc(n._sx, n._sy, n._sr + 3.5 + semanticScore * 2.5, 0, Math.PI * 2);
-            ctx.strokeStyle = isLight ? '#0d9488' : '#10b981';
+            ctx.strokeStyle = '#10b981';
             ctx.lineWidth = 2.0;
             ctx.stroke();
           }
@@ -2508,7 +2403,7 @@
           if (n.isFragile) {
             ctx.beginPath();
             ctx.arc(n._sx, n._sy, n._sr + 2.5, 0, Math.PI * 2);
-            ctx.strokeStyle = isLight ? '#dc2626' : '#ff453a';
+            ctx.strokeStyle = '#ff453a';
             ctx.lineWidth = 1.6;
             ctx.stroke();
           }
@@ -2516,7 +2411,7 @@
           if (isCartNode) {
             ctx.beginPath();
             ctx.arc(n._sx, n._sy, n._sr + 5.2, 0, Math.PI * 2);
-            ctx.strokeStyle = isLight ? '#16a34a' : '#30d158';
+            ctx.strokeStyle = '#30d158';
             ctx.lineWidth = 1.8;
             ctx.stroke();
           }
@@ -2524,13 +2419,13 @@
           if (isSelected || isHovered || n.hop === 0) {
             ctx.beginPath();
             ctx.arc(n._sx, n._sy, n._sr + (isSelected ? 3.8 : 2.8), 0, Math.PI * 2);
-            ctx.strokeStyle = isLight ? '#2c1e16' : '#ffffff';
+            ctx.strokeStyle = '#ffffff';
             ctx.lineWidth = isSelected ? 1.9 : 1.4;
             ctx.stroke();
           }
 
           const fillNodeColor = (hotspotScore >= 0.45 && typeof pgGetHotspotColor === 'function')
-            ? pgGetHotspotColor(hotspotScore, isLight)
+            ? pgGetHotspotColor(hotspotScore)
             : color;
               if (n.isSymbol && n.kind === 'class') {
               const rs = n._sr * 1.12;
@@ -2552,7 +2447,7 @@
             if (aiRank > 0) {
               ctx.beginPath();
               ctx.arc(n._sx, n._sy, n._sr + 4.8, 0, Math.PI * 2);
-              ctx.strokeStyle = isLight ? '#7c3aed' : '#a855f7';
+              ctx.strokeStyle = '#f04848';
               ctx.lineWidth = 2.1;
               ctx.stroke();
             }
@@ -2560,12 +2455,12 @@
           if (n.isSymbol && n.isExternal) {
             ctx.save();
             ctx.setLineDash([2.2, 2.2]);
-            ctx.strokeStyle = isLight ? 'rgba(44, 30, 22, 0.55)' : 'rgba(255, 255, 255, 0.55)';
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
             ctx.lineWidth = 1.1;
             ctx.stroke();
             ctx.restore();
           } else if (n.isGod) {
-            ctx.strokeStyle = isLight ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.78)';
+            ctx.strokeStyle = 'rgba(255,255,255,0.78)';
             ctx.lineWidth = 1.1;
             ctx.stroke();
           }
@@ -2573,13 +2468,13 @@
           if (isDiffNode) {
             ctx.beginPath();
             ctx.arc(n._sx + n._sr * 0.78, n._sy - n._sr * 0.78, 2.7, 0, Math.PI * 2);
-            ctx.fillStyle = isLight ? '#ea580c' : '#ff9f0a';
+            ctx.fillStyle = '#ff9f0a';
             ctx.fill();
           }
           if (isLayered && n._detachedFromLayer && typeof n._tier === 'number') {
             const dCol = (pgState.layeredColumns || []).find(function (c) { return c.tier === n._tier; });
             if (dCol) {
-              const dPal = pgGetLayerRolePalette(dCol.role, dCol.index, isLight);
+              const dPal = pgGetLayerRolePalette(dCol.role, dCol.index);
               const dTxt = isRu() ? dCol.shortRu : dCol.shortEn;
               const dFont = Math.max(7.5, Math.round(8 * uiScale));
               ctx.font = '700 ' + dFont + 'px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
@@ -2587,8 +2482,8 @@
               const dH = Math.round(12 * uiScale);
               const dX = n._sx - dW * 0.5;
               const dY = n._sy - n._sr - dH - 3;
-              pgDrawRoundedRectPath(ctx, dX, dY, dW, dH, dH * 0.5);
-              ctx.fillStyle = isLight ? 'rgba(255, 252, 249, 0.94)' : 'rgba(13, 19, 34, 0.94)';
+              pgDrawRoundedRectPath(ctx, dX, dY, dW, dH, Math.round(3 * uiScale));
+              ctx.fillStyle = 'rgba(18, 19, 22, 0.96)';
               ctx.fill();
               ctx.strokeStyle = 'rgba(' + dPal.accentRgb + ', 0.70)';
               ctx.lineWidth = 1;
@@ -2609,7 +2504,7 @@
           if (renderedWebgl) {
             ctx.beginPath();
             ctx.arc(n._sx, n._sy, n._sr + 4.8, 0, Math.PI * 2);
-            ctx.strokeStyle = isLight ? '#7c3aed' : '#a855f7';
+            ctx.strokeStyle = '#f04848';
             ctx.lineWidth = 2.1;
             ctx.stroke();
           }
@@ -2617,9 +2512,9 @@
           const by = n._sy - n._sr * 0.85;
           ctx.beginPath();
           ctx.arc(bx, by, 6.2, 0, Math.PI * 2);
-          ctx.fillStyle = isLight ? '#7c3aed' : '#9333ea';
+          ctx.fillStyle = '#f04848';
           ctx.fill();
-          ctx.strokeStyle = isLight ? '#ffffff' : '#0b1020';
+          ctx.strokeStyle = '#121316';
           ctx.lineWidth = 1.2;
           ctx.stroke();
           ctx.font = '700 8.5px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
@@ -2685,8 +2580,8 @@
         ctx.textBaseline = 'top';
         ctx.lineJoin = 'round';
         ctx.lineWidth = 3;
-        const outlineColor = isLight ? 'rgba(255, 248, 242, 0.92)' : 'rgba(8, 12, 22, 0.92)';
-        const fillColor = isLight ? 'rgba(44, 30, 22, 0.94)' : 'rgba(245, 245, 247, 0.94)';
+        const outlineColor = 'rgba(8, 12, 22, 0.92)';
+        const fillColor = 'rgba(245, 245, 247, 0.94)';
         const placedBoxes = [];
         const maxLabelsDraw = renderedWebgl ? 160 : labelCandidates.length;
 
@@ -2725,7 +2620,7 @@
           if (item.subCaption) {
             ctx.save();
             ctx.font = '500 ' + subFontPx + 'px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
-            ctx.fillStyle = isLight ? 'rgba(92, 52, 34, 0.78)' : 'rgba(185, 200, 224, 0.78)';
+            ctx.fillStyle = 'rgba(185, 200, 224, 0.78)';
             ctx.fillText(item.subCaption, lx, ly + Math.round(11.5 * uiScale));
             ctx.restore();
           }
@@ -2733,8 +2628,124 @@
         ctx.restore();
       }
 
+      if (deferredLayeredHeaders) {
+        const {
+          cols,
+          sortedOrder,
+          colScreenXs,
+          laneBounds,
+          colStepScreen,
+          headerY,
+          headerH,
+          focusTier,
+        } = deferredLayeredHeaders;
+        ctx.save();
+        ctx.fillStyle = 'rgba(10, 11, 13, 0.88)';
+        ctx.fillRect(0, 0, w, headerY + headerH + 4);
+        const hdrFontPx = Math.max(9.5, Math.round(10 * uiScale));
+        ctx.font = '700 ' + hdrFontPx + 'px -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        if (cols.length > 1 && colStepScreen < 28) {
+          const firstCx = colScreenXs[sortedOrder[0]];
+          const lastCx = colScreenXs[sortedOrder[sortedOrder.length - 1]];
+          const midX = (firstCx + lastCx) * 0.5;
+          const summaryTxt = isRu() ? 'Входы / UI  →  Ядро / Хабы' : 'Entries / UI  →  Core / Hubs';
+          const chipW = Math.min(220 * uiScale, ctx.measureText(summaryTxt).width + 20 * uiScale);
+          pgDrawRoundedRectPath(ctx, midX - chipW * 0.5, headerY, chipW, headerH, Math.round(4 * uiScale));
+          ctx.fillStyle = 'rgba(18, 19, 22, 0.96)';
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.fillStyle = '#e4e6eb';
+          ctx.fillText(summaryTxt, midX, headerY + headerH * 0.5 + 0.5);
+        } else {
+          for (let pos = 0; pos < sortedOrder.length; pos++) {
+            const c = sortedOrder[pos];
+            const col = cols[c];
+            const lb = laneBounds[c];
+            if (lb.right < -20 || lb.left > w + 20) continue;
+            const pal = pgGetLayerRolePalette(col.role, c);
+            const isActiveFilter = pgState.activeLayerTier === col.tier;
+            const isFocused = focusTier === col.tier;
+            const maxPillW = Math.max(26, lb.width - 8);
+            const dotExtra = Math.round(12 * uiScale);
+            const clearExtra = isActiveFilter ? Math.round(12 * uiScale) : 0;
+
+            const fullLbl = (isRu() ? col.labelRu : col.labelEn) + ' · ' + col.count;
+            const shortLbl = (isRu() ? col.shortRu : col.shortEn) + ' · ' + col.count;
+            const microLbl = (col.role === 'mid') ? String(c + 1) : (isRu() ? col.shortRu : col.shortEn);
+            const padText = Math.round(16 * uiScale) + dotExtra + clearExtra;
+
+            let lblText = fullLbl;
+            if (ctx.measureText(fullLbl).width + padText > maxPillW) {
+              lblText = shortLbl;
+              if (ctx.measureText(shortLbl).width + padText > maxPillW) {
+                lblText = microLbl;
+              }
+            }
+
+            const measuredW = ctx.measureText(lblText).width + padText;
+            const pillW = Math.min(maxPillW, Math.max(28, measuredW));
+            const minX = Math.max(4, lb.left + 4);
+            const maxX = Math.min(w - pillW - 4, lb.right - pillW - 4);
+            const pillX = minX <= maxX
+              ? Math.max(minX, Math.min(maxX, colScreenXs[c] - pillW * 0.5))
+              : Math.max(4, Math.min(w - pillW - 4, colScreenXs[c] - pillW * 0.5));
+
+            pgDrawRoundedRectPath(ctx, pillX, headerY, pillW, headerH, Math.round(4 * uiScale));
+            if (isActiveFilter) {
+              ctx.fillStyle = 'rgba(26, 28, 34, 0.98)';
+            } else if (isFocused) {
+              ctx.fillStyle = 'rgba(27, 30, 36, 0.98)';
+            } else {
+              ctx.fillStyle = 'rgba(18, 19, 22, 0.96)';
+            }
+            ctx.fill();
+            if (isActiveFilter) {
+              ctx.fillStyle = 'rgba(' + pal.accentRgb + ', 0.22)';
+              ctx.fill();
+            }
+            ctx.strokeStyle = (isActiveFilter || isFocused)
+              ? ('rgba(' + pal.accentRgb + ', 0.78)')
+              : ('rgba(' + pal.accentRgb + ', 0.28)');
+            ctx.lineWidth = isActiveFilter ? 1.5 : 1;
+            ctx.stroke();
+
+            const cy = headerY + headerH * 0.5;
+            if (pillW >= 40) {
+              ctx.beginPath();
+              ctx.arc(pillX + Math.round(9 * uiScale), cy, Math.max(2.6, 3 * uiScale), 0, Math.PI * 2);
+              ctx.fillStyle = pal.accentHex;
+              ctx.fill();
+            }
+            const textCenterX = pillX + (pillW >= 40 ? (dotExtra * 0.45) : 0) + (pillW - clearExtra) * 0.5;
+            ctx.fillStyle = isActiveFilter
+              ? '#ffffff'
+              : (isFocused ? '#f4f5f7' : '#d1d5db');
+            ctx.fillText(lblText + (isActiveFilter ? ' ×' : ''), textCenterX, cy + 0.5);
+
+            pgState.layerHeaderRects.push({
+              tier: col.tier,
+              index: col.index,
+              x: pillX,
+              y: headerY,
+              w: pillW,
+              h: headerH,
+              labelRu: col.labelRu,
+              labelEn: col.labelEn,
+              count: col.count,
+              role: col.role
+            });
+          }
+        }
+        ctx.restore();
+      }
+
       if (pgState.showMinimap && typeof pgDrawMinimap === 'function') {
-        pgDrawMinimap(ctx, w, h, isLight);
+        pgDrawMinimap(ctx, w, h);
       } else {
         pgState.minimapRect = null;
       }
@@ -2803,8 +2814,8 @@
         tip.textContent = 'ƒ ' + node.label + ' [' + (node.kind || 'fn') + '] · ' + (node.file || '') + ':' + (node.startLine || 1) + '  (← ' + inCount + ' · → ' + outCount + ')';
       } else {
         const churnCnt = pgState.churnByFile && pgState.churnByFile[node.id] ? pgState.churnByFile[node.id] : 0;
-        const relStr = node.isFragile ? (' · ⚠️ ' + node.reliabilityPercent + '%') : '';
-        const churnStr = (pgState.lens === 'hotspots' && churnCnt > 0) ? (' · 🔥 ' + churnCnt + 'c') : '';
+        const relStr = node.isFragile ? (' · ! ' + node.reliabilityPercent + '%') : '';
+        const churnStr = (pgState.lens === 'hotspots' && churnCnt > 0) ? (' · ' + churnCnt + 'c') : '';
         tip.textContent = node.id + '  (← ' + inCount + ' · → ' + outCount + relStr + churnStr + ')';
       }
       tip.style.left = '0px';
@@ -3014,8 +3025,8 @@
       }
       if (askAiBtn && node) {
         askAiBtn.textContent = node.isFolder
-          ? L('🤖 Спросить ИИ о папке ▾', '🤖 Ask AI about folder ▾')
-          : (node.isSymbol ? L('🤖 Спросить ИИ о символе ▾', '🤖 Ask AI about symbol ▾') : L('🤖 Спросить ИИ о файле ▾', '🤖 Ask AI about file ▾'));
+          ? L('Спросить ИИ о папке ▾', 'Ask AI about folder ▾')
+          : (node.isSymbol ? L('Спросить ИИ о символе ▾', 'Ask AI about symbol ▾') : L('Спросить ИИ о файле ▾', 'Ask AI about file ▾'));
       }
       if (!node) {
         if (fnEl) fnEl.textContent = L('Выберите узел на карте', 'Select a node on the graph');
@@ -3037,7 +3048,7 @@
       }
 
       if (fnEl) {
-        fnEl.textContent = node.isFolder ? ('📁 ' + node.label) : (node.isSymbol ? ('ƒ ' + node.label) : node.label);
+        fnEl.textContent = node.isFolder ? node.label : (node.isSymbol ? ('ƒ ' + node.label) : node.label);
       }
       if (pathEl) {
         pathEl.textContent = node.isFolder
@@ -3060,24 +3071,24 @@
         const cColor = pgGetClusterColor(node.clusterId);
         bList.push('<span class="pg-badge-pill"><span class="pg-cluster-dot" style="background:' + escapeHtml(cColor) + ';"></span>' + escapeHtml(node.clusterLabel) + '</span>');
         if (node.isFolder) {
-          if (node.godCount > 0) bList.push('<span class="pg-badge-pill is-god">★ God ×' + Number(node.godCount) + '</span>');
-          if (node.fragileCount > 0) bList.push('<span class="pg-badge-pill is-fragile">⚠️ ' + L('Хрупких: ', 'Fragile: ') + Number(node.fragileCount) + '</span>');
+          if (node.godCount > 0) bList.push('<span class="pg-badge-pill is-god">God ×' + Number(node.godCount) + '</span>');
+          if (node.fragileCount > 0) bList.push('<span class="pg-badge-pill is-fragile">! ' + L('Хрупких: ', 'Fragile: ') + Number(node.fragileCount) + '</span>');
         } else if (node.isSymbol) {
           bList.push('<span class="pg-symbol-kind-pill">' + escapeHtml(node.kind || 'function') + '</span>');
           if (node.isExternal) bList.push('<span class="pg-badge-pill">' + L('Внешний файл', 'External file') + '</span>');
-          if (node.isGod) bList.push('<span class="pg-badge-pill is-god">★ God Symbol</span>');
+          if (node.isGod) bList.push('<span class="pg-badge-pill is-god">God Symbol</span>');
           if (nodeInCart) bList.push('<span class="pg-badge-pill is-cart">✓ ' + L('В пакете', 'In Cart') + '</span>');
         } else {
-          if (node.isGod) bList.push('<span class="pg-badge-pill is-god">★ God Node</span>');
-          if (node.isFragile) bList.push('<span class="pg-badge-pill is-fragile">⚠️ ' + L('Хрупкий', 'Fragile') + '</span>');
+          if (node.isGod) bList.push('<span class="pg-badge-pill is-god">God Node</span>');
+          if (node.isFragile) bList.push('<span class="pg-badge-pill is-fragile">! ' + L('Хрупкий', 'Fragile') + '</span>');
           if (node.isTest) bList.push('<span class="pg-badge-pill">' + L('Тест', 'Test') + '</span>');
           const churnCnt = pgState.churnByFile && pgState.churnByFile[node.id] ? Number(pgState.churnByFile[node.id]) : 0;
-          if (churnCnt > 0) bList.push('<span class="pg-badge-pill is-diff">🔥 ' + churnCnt + ' ' + L('правок', 'commits') + '</span>');
+          if (churnCnt > 0) bList.push('<span class="pg-badge-pill is-diff">' + churnCnt + ' ' + L('правок', 'commits') + '</span>');
           const semPct = pgState.semanticScores && pgState.semanticScores.get(node.id);
           if (semPct > 0) bList.push('<span class="pg-sem-pill">GPU ' + Math.round(semPct * 100) + '%</span>');
           if (pgState.cycleNodeSet && pgState.cycleNodeSet.has(node.id)) bList.push('<span class="pg-badge-pill is-cycle">⟳ ' + L('Цикл', 'Cycle') + '</span>');
           if (pgState.orphanSet && pgState.orphanSet.has(node.id)) bList.push('<span class="pg-badge-pill is-orphan">○ ' + L('Сирота', 'Orphan') + '</span>');
-          if (pgState.gitDiffSet && pgState.gitDiffSet.has(node.id)) bList.push('<span class="pg-badge-pill is-diff">✎ Diff</span>');
+          if (pgState.gitDiffSet && pgState.gitDiffSet.has(node.id)) bList.push('<span class="pg-badge-pill is-diff">Diff</span>');
           if (nodeInCart) bList.push('<span class="pg-badge-pill is-cart">✓ ' + L('В пакете', 'In Cart') + '</span>');
         }
         badgesEl.innerHTML = bList.join('');
@@ -3130,7 +3141,7 @@
         actionsEl.style.display = 'flex';
         if (focusBtn) {
           if (node.isFolder) {
-            focusBtn.textContent = L('📂 Раскрыть', '📂 Drill in');
+            focusBtn.textContent = L('Раскрыть', 'Drill in');
             focusBtn.setAttribute('data-action', 'pgDrillIntoFolder');
             focusBtn.setAttribute('data-arg', node.folderKey || '');
             focusBtn.title = L('Открыть файлы этой папки на карте', 'Open files inside this folder');
@@ -3145,7 +3156,7 @@
             focusBtn.setAttribute('data-arg', 'files');
             focusBtn.title = L('Вернуться к графу файлов', 'Return to files dependency map');
           } else {
-            focusBtn.textContent = L('🎯 Фокус', '🎯 Focus');
+            focusBtn.textContent = L('Фокус', 'Focus');
             focusBtn.setAttribute('data-action', 'pgFocusSelectedNode');
             focusBtn.removeAttribute('data-arg');
             focusBtn.title = L('Показать 1–2 хопа вокруг этого файла', 'Focus 1–2 hops around this file');
@@ -3166,8 +3177,8 @@
         }
         if (composerBtn) {
           composerBtn.textContent = node.isFolder
-            ? L('✦ Хаб в Композер', '✦ Hub to Composer')
-            : L('✦ В Композер', '✦ To Composer');
+            ? L('Хаб в Композер', 'Hub to Composer')
+            : L('В Композер', 'To Composer');
         }
       }
 
@@ -3183,7 +3194,7 @@
             listEl.innerHTML = fList.slice(0, 60).map(function (fId) {
               const isHub = fId === node.topHubFile;
               return '<button type="button" class="pg-dep-row" data-action="pgOpenFileFromFolder" data-arg="' + escapeHtml(fId) + '" title="' + escapeHtml(fId) + '">' +
-                '<span class="pg-dep-name">' + escapeHtml(fId) + (isHub ? ' ★' : '') + '</span>' +
+                '<span class="pg-dep-name">' + escapeHtml(fId) + (isHub ? ' [HUB]' : '') + '</span>' +
                 '<span class="pg-dep-kind">' + L('откр.', 'open') + '</span>' +
               '</button>';
             }).join('');
@@ -3217,11 +3228,11 @@
           } else {
             listEl.innerHTML = items.map(function (edgeItem) {
               const targetNode = pgState.nodeById.get(edgeItem.id);
-              const displayLabel = targetNode && targetNode.isFolder ? ('📁 ' + targetNode.label) : edgeItem.id;
+              const displayLabel = targetNode && targetNode.isFolder ? targetNode.label : edgeItem.id;
               const kindBadge = node.isFolder && edgeItem.weight
                 ? (edgeItem.weight + ' ' + (edgeItem.kind === 'doc' ? L('док', 'doc') : L('св.', 'lnk')))
                 : (edgeItem.kind === 'doc' ? L('док', 'doc') : L('имп.', 'imp'));
-              const extraBadge = targetNode && targetNode.isFragile ? ' ⚠️' : (targetNode && targetNode.isGod ? ' ★' : '');
+              const extraBadge = targetNode && targetNode.isFragile ? ' [!]' : (targetNode && targetNode.isGod ? ' [HUB]' : '');
               return '<button type="button" class="pg-dep-row" data-action="pgSelectNodeById" data-arg="' + escapeHtml(edgeItem.id) + '" title="' + escapeHtml(edgeItem.id) + '">' +
                 '<span class="pg-dep-name">' + escapeHtml(displayLabel) + escapeHtml(extraBadge) + '</span>' +
                 '<span class="pg-dep-kind">' + escapeHtml(kindBadge) + '</span>' +
@@ -3834,8 +3845,7 @@
           if (typeof currentState !== 'undefined' && currentState) {
             Object.assign(currentState, st);
           }
-          const th = typeof normalizeUiTheme === 'function' ? normalizeUiTheme(st.panelTheme) : (st.panelTheme || 'glass_teal');
-          if (document.body) document.body.setAttribute('data-panel-theme', th);
+          if (document.body) document.body.setAttribute('data-panel-theme', 'glass_teal');
           const lang = typeof normalizeUiLanguage === 'function' ? normalizeUiLanguage(st.uiLanguage) : (st.uiLanguage || 'ru');
           if (typeof applyUiLanguageDom === 'function') applyUiLanguageDom(lang);
           if (typeof applyPanelUiScaleDom === 'function') applyPanelUiScaleDom(st.panelUiScale || 'auto', false);
@@ -3933,8 +3943,8 @@
         const autoOpt = document.createElement('option');
         autoOpt.value = '';
         autoOpt.textContent = autoLabel
-          ? L('🔄 Авто (' + autoLabel + ')', '🔄 Auto (' + autoLabel + ')')
-          : L('🔄 Авто (активный чат)', '🔄 Auto (active chat)');
+          ? L('Авто (' + autoLabel + ')', 'Auto (' + autoLabel + ')')
+          : L('Авто (активный чат)', 'Auto (active chat)');
         autoOpt.title = autoCandidate || L('Автоопределение проекта по активному чату', 'Auto-detect project from active chat');
         sel.appendChild(autoOpt);
 
@@ -3945,7 +3955,7 @@
           const lbl = item.displayLabel || item.projectName || pgWsBasename(item.workspaceRoot);
           const isLive = item.status === 'running' || item.status === 'waiting_user';
           const isOpenIde = Boolean(item.isOpenInIde || item.source === 'open_ide');
-          opt.textContent = (isLive ? '● ' : (isOpenIde ? '🟢 ' : '📁 ')) + lbl;
+          opt.textContent = (isLive ? '● ' : (isOpenIde ? '○ ' : '')) + lbl;
           opt.title = item.workspaceRoot + (isOpenIde ? L(' (открыт в Antigravity)', ' (open in Antigravity)') : '');
           sel.appendChild(opt);
         }
@@ -4652,19 +4662,19 @@
       const stageEl = document.getElementById('pgCanvasStage');
       if (!menuEl) return;
 
-      const icon = node.isFolder ? '📁' : (node.isSymbol ? 'ƒ' : '📄');
+      const icon = node.isSymbol ? 'ƒ ' : '';
       const title = node.label || node.id;
       const targetCartId = node.isSymbol && node.file ? node.file : node.id;
       const inCart = Boolean(pgState.contextCart && pgState.contextCart.has(targetCartId));
 
       const nodeItems = [];
       if (node.isFolder) {
-        nodeItems.push({ arg: 'drill', label: L('📂 Раскрыть папку', '📂 Open folder') });
-        nodeItems.push({ arg: 'focus', label: L('🎯 Фокус (1–2 хопа)', '🎯 Focus (1–2 hops)') });
+        nodeItems.push({ arg: 'drill', label: L('Раскрыть папку', 'Open folder') });
+        nodeItems.push({ arg: 'focus', label: L('Фокус (1–2 хопа)', 'Focus (1–2 hops)') });
       } else if (node.isSymbol) {
-        nodeItems.push({ arg: 'focus', label: L('🎯 Фокус', '🎯 Focus') });
+        nodeItems.push({ arg: 'focus', label: L('Фокус', 'Focus') });
       } else {
-        nodeItems.push({ arg: 'focus', label: L('🎯 Фокус (1–2 хопа)', '🎯 Focus (1–2 hops)') });
+        nodeItems.push({ arg: 'focus', label: L('Фокус (1–2 хопа)', 'Focus (1–2 hops)') });
         nodeItems.push({ arg: 'symbols', label: L('ƒ Символы файла', 'ƒ File symbols') });
       }
       nodeItems.push({ arg: 'path', label: L('⇄ Найти путь A→B', '⇄ Find path A→B') });
@@ -4674,22 +4684,22 @@
           ? L('✓ Убрать из пакета', '✓ Remove from bundle')
           : L('＋ Добавить в пакет', '＋ Add to bundle'),
       });
-      nodeItems.push({ arg: 'composer', label: L('✦ Добавить @file в Композер', '✦ Add @file to Composer') });
-      nodeItems.push({ arg: 'copy', label: L('📋 Копировать путь', '📋 Copy path') });
+      nodeItems.push({ arg: 'composer', label: L('Добавить @file в Композер', 'Add @file to Composer') });
+      nodeItems.push({ arg: 'copy', label: L('Копировать путь', 'Copy path') });
 
       const explainLbl = node.isFolder
-        ? L('📖 Объяснить, за что отвечает папка', '📖 Explain what this folder does')
+        ? L('Объяснить, за что отвечает папка', 'Explain what this folder does')
         : (node.isSymbol
-            ? L('📖 Объяснить, за что отвечает символ', '📖 Explain what this symbol does')
-            : L('📖 Объяснить, за что отвечает файл', '📖 Explain what this file does'));
+            ? L('Объяснить, за что отвечает символ', 'Explain what this symbol does')
+            : L('Объяснить, за что отвечает файл', 'Explain what this file does'));
 
       const aiItems = [
         { arg: 'ai:explain', label: explainLbl },
-        { arg: 'ai:risks', label: L('🔗 Зависимости и риски (Blast Radius)', '🔗 Dependencies & risks (Blast Radius)') },
-        { arg: 'ai:bugs', label: L('🐛 Найти баги и слабые места', '🐛 Find bugs & weak spots') },
-        { arg: 'ai:tests', label: L('🧪 Что проверить тестами', '🧪 What to cover with tests') },
-        { arg: 'ai:custom', label: L('💬 Задать свой вопрос…', '💬 Ask a custom question…') },
-        { arg: 'ai:composer', label: L('✦ Открыть вопрос в Умном Композере', '✦ Open question in Smart Composer') },
+        { arg: 'ai:risks', label: L('Зависимости и риски (Blast Radius)', 'Dependencies & risks (Blast Radius)') },
+        { arg: 'ai:bugs', label: L('Найти баги и слабые места', 'Find bugs & weak spots') },
+        { arg: 'ai:tests', label: L('Что проверить тестами', 'What to cover with tests') },
+        { arg: 'ai:custom', label: L('Задать свой вопрос…', 'Ask a custom question…') },
+        { arg: 'ai:composer', label: L('Открыть вопрос в Умном Композере', 'Open question in Smart Composer') },
       ];
 
       const renderBtn = function (item) {
@@ -4698,10 +4708,10 @@
       };
 
       menuEl.innerHTML =
-        '<div class="pg-ctx-header" title="' + escapeHtml(node.id) + '">' + icon + ' ' + escapeHtml(title) + '</div>' +
+        '<div class="pg-ctx-header" title="' + escapeHtml(node.id) + '">' + icon + escapeHtml(title) + '</div>' +
         nodeItems.map(renderBtn).join('') +
         '<div class="pg-ctx-sep" role="separator"></div>' +
-        '<div class="pg-ctx-section-lbl">' + escapeHtml(L('🤖 Спросить ИИ', '🤖 Ask AI')) + '</div>' +
+        '<div class="pg-ctx-section-lbl">' + escapeHtml(L('Спросить ИИ', 'Ask AI')) + '</div>' +
         aiItems.map(renderBtn).join('');
 
       menuEl.hidden = false;
@@ -4984,18 +4994,18 @@
         pills.push('<span class="pg-ai-metric-pill">' + Number(d.lines) + ' ' + escapeHtml(L('стр.', 'L')) + '</span>');
       }
       if (d.spotlightCount > 1) {
-        pills.push('<span class="pg-ai-metric-pill is-god">✦ ' + d.spotlightCount + ' ' + escapeHtml(L('на карте', 'on map')) + '</span>');
+        pills.push('<span class="pg-ai-metric-pill is-god">' + d.spotlightCount + ' ' + escapeHtml(L('на карте', 'on map')) + '</span>');
       }
       el.innerHTML =
         '<div class="pg-ai-callout-head">' +
-          '<span class="pg-ai-callout-title">🤖 ' + escapeHtml(d.title || '') + '</span>' +
+          '<span class="pg-ai-callout-title">' + escapeHtml(d.title || '') + '</span>' +
           '<button type="button" class="pg-mini-btn" style="width:20px;height:20px;font-size:11px;" data-action="pgDismissAiMapCallout" title="' + escapeHtml(L('Скрыть выноску с карты', 'Hide map callout')) + '">×</button>' +
         '</div>' +
         '<div class="pg-ai-callout-tldr">' + escapeHtml(d.tldr || '') + '</div>' +
         '<div class="pg-ai-callout-meta">' + pills.join('') + '</div>' +
         '<div class="pg-ai-callout-actions">' +
           '<button type="button" class="win-btn" style="padding:2px 7px;font-size:9.5px;" data-action="pgExpandAiFromCallout">' + escapeHtml(L('Полный ответ', 'Full reply')) + '</button>' +
-          '<button type="button" class="win-btn active" style="padding:2px 7px;font-size:9.5px;" data-action="pgSendAiToComposer">' + escapeHtml(L('✦ В Композер', '✦ To Composer')) + '</button>' +
+          '<button type="button" class="win-btn active" style="padding:2px 7px;font-size:9.5px;" data-action="pgSendAiToComposer">' + escapeHtml(L('В Композер', 'To Composer')) + '</button>' +
         '</div>';
       el.hidden = false;
     }
@@ -5121,8 +5131,8 @@
         ? L('Символ: ', 'Symbol: ') + ctx.symbolName + ' (' + ctx.targetFile + ')'
         : (ctx.isFolder ? L('Подсистема: ', 'Subsystem: ') + ctx.nodeLabel : L('Файл: ', 'File: ') + ctx.targetFile);
       const flags = [];
-      if (ctx.isGod) flags.push('★ God Node');
-      if (ctx.isFragile) flags.push(L('⚠️ Хрупкий (', '⚠️ Fragile (') + ctx.reliabilityPct + '%)');
+      if (ctx.isGod) flags.push('God Node');
+      if (ctx.isFragile) flags.push(L('! Хрупкий (', '! Fragile (') + ctx.reliabilityPct + '%)');
       const lines = [
         header + (ctx.clusterLabel ? (' · [' + ctx.clusterLabel + ']') : ''),
         L('Метрики: ', 'Metrics: ') +
@@ -5197,7 +5207,7 @@
       pgState.aiHistory.push({
         role: 'assistant',
         error: true,
-        content: L('⏹ Генерация остановлена пользователем.', '⏹ Generation stopped by user.'),
+        content: L('Генерация остановлена пользователем.', 'Generation stopped by user.'),
       });
       pgRenderAiChatBox();
     }
@@ -5216,7 +5226,7 @@
 
       if (boxEl) boxEl.style.display = pgState.aiBoxOpen && node ? 'flex' : 'none';
       if (titleEl && ctx) {
-        titleEl.textContent = '🤖 ' + (ctx.nodeLabel || ctx.targetFile);
+        titleEl.textContent = ctx.nodeLabel || ctx.targetFile;
       }
       if (badgeEl) {
         if (badgeEl.classList && typeof badgeEl.classList.toggle === 'function') {
@@ -5282,8 +5292,8 @@
           if (card.lines > 0) {
             pills.push('<span class="pg-ai-metric-pill">' + card.lines + ' ' + escapeHtml(L('стр.', 'L')) + '</span>');
           }
-          if (card.isGod) pills.push('<span class="pg-ai-metric-pill is-god">★ God</span>');
-          if (card.isFragile) pills.push('<span class="pg-ai-metric-pill is-fragile">⚠ ' + card.reliabilityPct + '%</span>');
+          if (card.isGod) pills.push('<span class="pg-ai-metric-pill is-god">God</span>');
+          if (card.isFragile) pills.push('<span class="pg-ai-metric-pill is-fragile">! ' + card.reliabilityPct + '%</span>');
           bodyHtml =
             '<div class="pg-ai-card">' +
               '<div class="pg-ai-card-head">' +
@@ -5294,7 +5304,7 @@
               '<div class="pg-ai-card-metrics">' + pills.join('') + '</div>' +
               renderRefChips(card.incoming, L('Зависимые (Blast Radius):', 'Dependents (Blast Radius):')) +
               renderRefChips(card.outgoing, L('Импортирует:', 'Imports:')) +
-              (card.warningText ? '<div class="pg-ai-warn-callout">⚠ ' + escapeHtml(card.warningText) + '</div>' : '') +
+              (card.warningText ? '<div class="pg-ai-warn-callout">! ' + escapeHtml(card.warningText) + '</div>' : '') +
             '</div>';
         } else if (m.role === 'assistant') {
           const mdHtml = typeof formatSafeLocalRagMarkdown === 'function'
@@ -5353,8 +5363,8 @@
       if (!gpuOn) {
         const staticSummary = pgBuildStaticGraphSummary(ctx);
         const hintLine = L(
-          'Локальный GPU сейчас выключен — нажмите «✦ В Композер», чтобы отправить готовый вопрос с @file:' + ctx.targetFile + ' агенту.',
-          'Local GPU is currently disabled — click "✦ To Composer" to send this question with @file:' + ctx.targetFile + ' to the agent.'
+          'Локальный GPU сейчас выключен — нажмите «В Композер», чтобы отправить готовый вопрос с @file:' + ctx.targetFile + ' агенту.',
+          'Local GPU is currently disabled — click "To Composer" to send this question with @file:' + ctx.targetFile + ' to the agent.'
         );
         const offMsg = {
           role: 'assistant',
@@ -5420,11 +5430,11 @@
         } else {
           const fallbackErr = (data && data.error) || L('Локальный GPU недоступен', 'Local GPU unavailable');
           const warnMsg = fallbackErr + ' — ' +
-            L('нажмите «✦ В Композер» для отправки в чат.', 'click "✦ To Composer" to send to agent chat.');
+            L('нажмите «В Композер» для отправки в чат.', 'click "To Composer" to send to agent chat.');
           const errMsg = {
             role: 'assistant',
             error: true,
-            content: pgBuildStaticGraphSummary(ctx) + '\n\n⚠️ ' + warnMsg,
+            content: pgBuildStaticGraphSummary(ctx) + '\n\n! ' + warnMsg,
             summaryCard: pgBuildStaticSummaryCard(ctx, warnMsg),
             sources: ctx.targetFile ? [{ file: ctx.targetFile, startLine: 1 }] : [],
           };
@@ -5438,7 +5448,7 @@
         const catchMsg = {
           role: 'assistant',
           error: true,
-          content: pgBuildStaticGraphSummary(ctx) + '\n\n⚠️ ' + netWarn,
+          content: pgBuildStaticGraphSummary(ctx) + '\n\n! ' + netWarn,
           summaryCard: pgBuildStaticSummaryCard(ctx, netWarn),
         };
         pgState.aiHistory.push(catchMsg);

@@ -79,6 +79,9 @@ import {
   buildFileSearchStructures,
   toRelPath,
   resolveImportRel,
+  loadJsAliasRules,
+  extractMarkdownSection,
+  buildGraphUncertaintyNote,
   inferContextPruningPhase,
   selectDiverseSlicesWithTelemetry,
   COMPOSER_STOPWORDS,
@@ -339,6 +342,14 @@ export class RamMemoryEngine {
     return { goModulePrefix: ws.goModulePrefix, goPkgMainFile: ws.goPkgMainFile };
   }
 
+  _ensureJsAliasMeta(ws) {
+    if (!ws) return null;
+    if (ws.jsAliasMeta === undefined) {
+      ws.jsAliasMeta = loadJsAliasRules(ws.absRoot);
+    }
+    return ws.jsAliasMeta;
+  }
+
   /**
    * Links outgoing dependency edges for a single file entry in O(imports).
    * @param {object} ws
@@ -348,10 +359,13 @@ export class RamMemoryEngine {
     this.unlinkFileDeps(ws, entry.relPath);
     const isGoTest = entry.relPath.endsWith('_test.go');
     if ((!entry.imports || entry.imports.length === 0) && !isGoTest) return;
+    const isJsTs = /\.(?:[cm]?[jt]sx?)$/i.test(entry.relPath);
     const goMeta = entry.relPath.endsWith('.go') ? this._ensureGoDepMeta(ws) : null;
+    const jsAliases = isJsTs ? this._ensureJsAliasMeta(ws) : null;
+    const resolveOpts = (goMeta || jsAliases) ? { ...(goMeta || {}), ...(jsAliases ? { jsAliases } : {}) } : undefined;
     const targets = new Set();
     for (const spec of entry.imports || []) {
-      const targetRel = resolveImportRel(entry.relPath, spec, ws.files, goMeta || undefined);
+      const targetRel = resolveImportRel(entry.relPath, spec, ws.files, resolveOpts);
       if (!targetRel || targetRel === entry.relPath) continue;
       targets.add(targetRel);
       let depSet = ws.reverseDeps.get(targetRel);
@@ -2029,7 +2043,13 @@ export class RamMemoryEngine {
       }
       const pathRes = this.findGraphPath(ws.absRoot, srcStr, dstStr, { maxDepth, direction });
       if (!pathRes.found) {
-        return { ...pathRes, mode: 'path', formatted: pathRes.formattedHint };
+        const uNote = buildGraphUncertaintyNote({ mode: 'path', target: resolveTargetRel(srcStr) || srcStr, ws, resultCount: 0 });
+        return {
+          ...pathRes,
+          mode: 'path',
+          uncertaintyNote: uNote,
+          formatted: uNote ? `${pathRes.formattedHint}\n${uNote}` : pathRes.formattedHint,
+        };
       }
       const stepLines = [pathRes.formattedHint];
       for (let i = 0; i < pathRes.edges.length; i++) {
@@ -2082,7 +2102,18 @@ export class RamMemoryEngine {
         maxDepth,
       });
       this.recordCompletedOp('ram_graph_query', { target: `affected:${tgt}`, latencyMs: 0.6 });
-      return { ...aff, mode: 'affected' };
+      const affectedCount = Array.isArray(aff?.affected) ? aff.affected.length : 0;
+      const uNote = buildGraphUncertaintyNote({
+        mode: 'affected',
+        target: resolveTargetRel(tgt) || tgt,
+        ws,
+        resultCount: affectedCount,
+      });
+      return {
+        ...aff,
+        mode: 'affected',
+        ...(uNote ? { uncertaintyNote: uNote, formatted: `${aff.formatted || ''}\n${uNote}`.trim() } : {}),
+      };
     }
 
     if (qMode === 'report') {
@@ -2175,12 +2206,14 @@ export class RamMemoryEngine {
       }
       const docRes = queryDocRefsForFile(ws.docRefGraph, rel, { maxRefs: 16, includeChangelog: true });
       if (docRes.refs.length === 0) {
+        const uNote = buildGraphUncertaintyNote({ mode: 'doc_refs', target: rel, ws, resultCount: 0 });
         return {
           ok: true,
           mode: 'doc_refs',
           target: rel,
           refs: [],
-          formatted: `📎 [Doc/Config Refs] No doc/config references found for "${rel}".`,
+          uncertaintyNote: uNote,
+          formatted: `📎 [Doc/Config Refs] No doc/config references found for "${rel}".${uNote ? `\n${uNote}` : ''}`,
         };
       }
       const lines = [
@@ -2676,6 +2709,7 @@ export class RamMemoryEngine {
     filePath,
     {
       symbol = '',
+      section = '',
       startLine = 1,
       endLine = 120,
       skeleton = false,
@@ -2707,6 +2741,40 @@ export class RamMemoryEngine {
         this.sotaStats.sliceSavedChars += saved;
       }
     };
+
+    if (section && String(section).trim()) {
+      const secQuery = String(section).trim();
+      const rawText = entry.buf.toString('utf8');
+      const sec = extractMarkdownSection(rawText, secQuery);
+      if (sec.found) {
+        const slicedSec = sliceBufferLines(entry.buf, entry.lineOffsets, sec.startLine, sec.endLine, { compactLines });
+        const formatted = `// [RAM Section L${sec.startLine}-L${sec.endLine}/${entry.lineCount}] ${entry.relPath} # ${sec.heading}\n${slicedSec}`;
+        recordSliceSaving(formatted);
+        this.recordCompletedOp('ram_slice', {
+          target: `${entry.relPath}#sec:${sec.heading}`,
+          latencyMs: performance.now() - t0,
+        });
+        return {
+          ok: true,
+          source: 'ram',
+          file: entry.relPath,
+          totalLines: entry.lineCount,
+          section: sec.heading,
+          startLine: sec.startLine,
+          endLine: sec.endLine,
+          formatted,
+        };
+      }
+      const toc = sec.availableHeadings.slice(0, 24).map((h) => `- L${h.line} ${'#'.repeat(h.level)} ${h.title}`).join('\n');
+      return {
+        ok: false,
+        source: 'ram',
+        file: entry.relPath,
+        totalLines: entry.lineCount,
+        availableHeadings: sec.availableHeadings,
+        formatted: `// [RAM Section Not Found] "${secQuery}" in ${entry.relPath} (${entry.lineCount}L).\n${toc ? `Available headings:\n${toc}` : 'No Markdown headings found in file.'}`,
+      };
+    }
 
     if (symbol && symbol.trim()) {
       const symNeedle = symbol.trim();

@@ -1356,7 +1356,8 @@ export function evaluateSelectorMatchForTask({
   matrix2D = null,
   state = {},
 } = {}) {
-  const subscriptionTier = state?.subscriptionTier || null;
+  const rawSub = String(state?.subscriptionTier || '').trim().toLowerCase();
+  const subscriptionTier = rawSub === 'pro' ? 'pro' : (rawSub === 'ultra' ? 'ultra' : null);
   const isProSub = subscriptionTier === 'pro';
   const res = evaluateSelectorMatchBase({ modelProfile, grade, isDeepAuditOrArch, matrix2D, subscriptionTier });
   if (!modelProfile || modelProfile.tier === 'unknown') return res;
@@ -1459,7 +1460,7 @@ export function resolveOptimalModelTargetRu({ grade = 'M', isDeepAuditOrArch = f
   const breadth = matrix2D?.breadth || null;
   const depth = matrix2D?.depth || null;
   const isHighBlast = Boolean(matrix2D?.isHighBlast || matrix2D?.riskMode === 'critical_blast');
-  const isProSub = subscriptionTier === 'pro';
+  const isProSub = String(subscriptionTier || '').trim().toLowerCase() === 'pro';
   if (depth === 'deep_arch' && (breadth === 'narrow' || breadth === 'moderate')) {
     return isProSub
       ? 'Orchestrator (Neon · Высокий/XHigh) / Neon · Высокий/XHigh'
@@ -1498,7 +1499,7 @@ export function resolveOptimalModelTargetEn({ grade = 'M', isDeepAuditOrArch = f
   const breadth = matrix2D?.breadth || null;
   const depth = matrix2D?.depth || null;
   const isHighBlast = Boolean(matrix2D?.isHighBlast || matrix2D?.riskMode === 'critical_blast');
-  const isProSub = subscriptionTier === 'pro';
+  const isProSub = String(subscriptionTier || '').trim().toLowerCase() === 'pro';
   if (depth === 'deep_arch' && (breadth === 'narrow' || breadth === 'moderate')) {
     return isProSub
       ? 'Orchestrator (Neon · High/XHigh) / Neon · High/XHigh'

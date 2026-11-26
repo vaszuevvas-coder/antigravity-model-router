@@ -1,6 +1,6 @@
 /**
  * @file tool-pruner.mjs
- * @description Когнитивный 3D-маршрутизатор The Tunnel (3D Cognitive Router v3.35.0):
+ * @description Когнитивный 3D-маршрутизатор The Tunnel (3D Cognitive Router v4.0.0):
  * Оценивает реальный охват графа кода (Scope-Scout + PageRank), строит 3D-тензор
  * Ширина × Глубина × Неопределённость/Риск, генерирует адаптивные варианты плана и проверяет селектор модели Gemini 4.
  */
@@ -87,12 +87,16 @@ export function detectPromptIntentSignals(promptText = '') {
     /(?:^\s*(?:(?:а|ну|и|слушай|скажи|смотри|кстати)[,\s]+)*(?:как\s+(?:мы\s+можем|нам|можно|лучше|правильнее|бы\s+ты|вообще|эффективнее|максимально)|(?:можем|можешь)\s+ли(?:\s+(?:мы|ты))?|можно\s+ли|может\s+(?:быть|сейчас|ли|уже)|а\s+может|стоит\s+ли|имеет\s+ли\s+смысл|каким\s+образом|насколько\s+(?:сложно|правильно|выгодно|реально)|(?:что\s+)?если\s+мы|как\s+думаешь|что\s+думаешь|в\s+чём\s+(?:проблема|причина|несовершенство|ошибка|баг|подвох)|это\s+какой[-\s]?то\s+баг|какие\s+есть\s+(?:идеи|варианты|способы))|(?:это\s+(?:какой[-\s]?то\s+)?баг\s+или|может\s+сейчас\s+наши\s+алгоритмы|предложил\s+улучшить))/i.test(clean);
 
   const isExplicitAuditOrTest = /(?:проведи|запусти|протестируй|стресс[-\s]?тест|большие\s+тесты|аудит\s+кода|проверь\s+всё|проверь\s+все\s+500)/i.test(clean);
+  const isArchDesignFork =
+    /(?:(?:нужно|надо|хочу|требуется)\s+спроектир[а-яё]+|спроектируй\b|\bdesign\s+(?:a\s+)?new\s+arch)/i.test(clean) &&
+    /(?:архитектур|систем[уеы]|синхронизац|миграц|выбрат[ьи]|компромисс|вариант|redis|sqlite|ring\s*buffer|trade-?offs?)/i.test(clean);
   const isReadOnlyQuestion =
     hasInquiryPattern &&
     (!hasMutationVerb ||
       isModalAnalyticalQuestion ||
       /(?:нет,\s*просто\s+объясни|покажи\s+список\s+мест|покажи\s+список\s+основных|объясни\s+логику|подскажи\s+как\s+увеличить)/i.test(clean)) &&
-    !isExplicitAuditOrTest;
+    !isExplicitAuditOrTest &&
+    !isArchDesignFork;
 
   const isExtendExisting = /(?:дополн[иим]|доработ[аей]|расшир[ьи]|уже\s+имеющ|в\s+существующ|к\s+существующ|чуть\s+поправ|добавь\s+в\s+(?:функц|модул|класс|компонент|игр|приложен|магазин)|давай\s+там\s+добавим)/i.test(clean);
 
@@ -585,6 +589,7 @@ export function classifyTaskAndPruneTools(userPrompt = '', state = {}, context =
     { slug: 'skill-architect', rx: /(?:\bskill\.md\b|отрицательн[а-яё]*\s+перенос|\baudit-skill\b)/i },
     { slug: 'context-fork', rx: /(?:\b(?:context[-\s]?fork|implicit\s+cache)\b|(?:экономи[яю]\s+токенов|сжать\s+контекст|переполнен[а-яё]*\s+контекст))/i },
     { slug: 'model-router', rx: /(?:бюджет\s+токенов|\brouter-state\.json\b|какая\s+модель\s+лучше)/i },
+    { slug: 'playwright-cli', rx: /(?:\bplaywright[-\s]?cli\b|\bplaywright\b.*(?:e2e|тест|клик|снапшот|скриншот|мок)|(?:браузерн[а-яё]*\s+e2e|автотест[а-яё]*\s+в\s+браузере))/i },
   ];
 
   const rawSemanticSkills = Array.isArray(context?.semanticSkills) ? context.semanticSkills : [];
@@ -1092,7 +1097,7 @@ export function detectGrillMeSignals(promptText = '', matrix3D = null, state = {
     Boolean(matrix3D?.isExploratory) ||
     grade === 'L' ||
     grade === 'XL' ||
-    /(?:с\s+нуля|нов(?:ую|ый|ое)\s+(?:фич|модул|систем|страниц|приложен)|спроектируй|придумай)/i.test(text);
+    /(?:с\s+нуля|нов(?:ую|ый|ое)\s+(?:фич|модул|систем|страниц|приложен)|спроектир\w+|придумай)/i.test(text);
   if (!isReadOnly && isFeatureOrExploratory) {
     return { active: true, mode: 'offer_in_gate', reason: 'auto_exploratory_or_large' };
   }
@@ -1334,7 +1339,7 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
   let budgetHint = '';
   let optionsBlueprint = null;
   let modelSwitchSplitTurn = false;
-  const isProSub = state.subscriptionTier !== 'ultra';
+  const isProSub = String(state?.subscriptionTier || '').trim().toLowerCase() === 'pro';
   const subTag = isProSub ? 'Sub: Pro (max: Neon, no Carbon)' : 'Sub: Ultra';
   const modelExamples = isEnUi
     ? (isProSub
@@ -1408,8 +1413,8 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
       if (hasSelectorMismatch) {
         lines.push(
           isEnUi
-            ? `⏸️ [Model-Switch Split-Turn (AGY 2.35+)] In AGY 2.35+, the model selector is locked while ask_question is open. If post-scout triage confirms switching to ${recModel} is needed: do NOT call ask_question — output the concise plan, 3 numbered options (1/2/3), and a clear prompt to switch the model to ${recModel} in a normal reply and END the turn so the selector unlocks (on the next turn after "go" / "1", execute immediately without repeating the gate). If post-scout confirms the current model fits, call ask_question as usual.`
-            : `⏸️ [Model-Switch Split-Turn (AGY 2.35+)] В AGY 2.35+ селектор моделей заблокирован во время открытого ask_question. Если после разведки кода смена модели на ${recModel} действительно нужна: НЕ вызывай ask_question — выведи краткий план, 3 пронумерованных варианта (1/2/3) и явную просьбу переключить модель на ${recModel} в обычном ответе и ЗАВЕРШИ ход, чтобы селектор разблокировался (на следующем ходе после «пуск» / «1» сразу выполни план без повторного gate). Если после разведки текущая модель подходит — вызывай ask_question как обычно.`
+            ? `⏸️ [Model-Switch Split-Turn (AGY 2.35+)] In AGY 2.35.2+, changing the model selector mid-turn only applies on the next turn (not inside ask_question). If post-scout triage confirms switching to ${recModel} is needed: do NOT call ask_question — output the concise plan, 3 numbered options (1/2/3), and a clear prompt to switch the model to ${recModel} in a normal reply and END the turn so the next message runs on ${recModel} (on the next turn after "go" / "1", execute immediately without repeating the gate). If post-scout confirms the current model fits, call ask_question as usual.`
+            : `⏸️ [Model-Switch Split-Turn (AGY 2.35+)] В AGY 2.35.2+ смена модели в селекторе применяется только со следующего хода (а не внутри ask_question). Если после разведки кода смена модели на ${recModel} действительно нужна: НЕ вызывай ask_question — выведи краткий план, 3 пронумерованных варианта (1/2/3) и явную просьбу переключить модель на ${recModel} в обычном ответе и ЗАВЕРШИ ход, чтобы следующее сообщение пошло на ${recModel} (на следующем ходе после «пуск» / «1» сразу выполни план без повторного gate). Если после разведки текущая модель подходит — вызывай ask_question как обычно.`
         );
       }
       if (optionsBlueprint?.formattedBlueprint) {

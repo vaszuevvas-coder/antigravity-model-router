@@ -90,7 +90,7 @@
   <text x="44" y="39" font-family="Consolas, 'Courier New', monospace" font-size="12" font-weight="700" fill="#e0f2fe" text-anchor="middle">T</text>
 
   <text x="64" y="39" font-family="Consolas, 'Courier New', monospace" font-size="12.5" font-weight="700" fill="#f8fafc" letter-spacing="0.8">
-    THE TUNNEL · v3.35.0
+    THE TUNNEL · v4.0.0
   </text>
   <text x="235" y="39" font-family="Segoe UI, Inter, Arial, sans-serif" font-size="11.5" fill="#94a3b8" letter-spacing="0.4">
     3D AI AUTOPILOT &amp; COPROCESSOR FOR GOOGLE ANTIGRAVITY
@@ -107,7 +107,7 @@
   <!-- LEFT COLUMN: Title + 3D Gemini 4 Routing Schematic -->
   <g transform="translate(36, 70)">
     <text x="0" y="26" font-family="Segoe UI, Inter, Arial, sans-serif" font-size="27" font-weight="700" fill="#f8fafc" letter-spacing="-0.3">
-      The Tunnel <tspan fill="#38bdf8">v3.35.0</tspan>
+      The Tunnel <tspan fill="#38bdf8">v4.0.0</tspan>
     </text>
     <text x="0" y="48" font-family="Segoe UI, Inter, Arial, sans-serif" font-size="12.5" fill="#cbd5e1">
       Breadth × Depth × Risk triage across Gemini 4, In-RAM MCP, CPU Pool &amp; Ollama GPU
@@ -197,13 +197,13 @@
     <rect x="312" y="194" width="300" height="74" rx="7" fill="url(#cardFill)" stroke="#22d3ee" stroke-opacity="0.38" stroke-width="1"/>
     <text x="326" y="215" font-family="Segoe UI, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#67e8f9">🎛️ Sidecar Control Panel (EN/RU)</text>
     <text x="326" y="233" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#e2e8f0">Smart Composer 2.0 (@chips, Vision, Voice)</text>
-    <text x="326" y="250" font-family="Consolas, monospace" font-size="10" fill="#94a3b8">Token ROI HUD · 12 Skills · AgentShield · CCR</text>
+    <text x="326" y="250" font-family="Consolas, monospace" font-size="10" fill="#94a3b8">Token ROI HUD · 15 Skills · AgentShield · CCR</text>
   </g>
 
   <!-- Bottom Metrics & Attribution Strip -->
   <line x1="19" y1="348" x2="1181" y2="348" stroke="#38bdf8" stroke-opacity="0.2" stroke-width="1"/>
   <text x="36" y="370" font-family="Consolas, monospace" font-size="11" fill="#94a3b8">
-    <tspan fill="#34d399" font-weight="700">53</tspan> Core Modules · <tspan fill="#38bdf8" font-weight="700">12</tspan> Built-in Skills · <tspan fill="#a78bfa" font-weight="700">36</tspan> Test Suites · SQLite Episodic Memory &amp; CCR · Local-Only Loopback Security
+    <tspan fill="#34d399" font-weight="700">57</tspan> Core Modules · <tspan fill="#38bdf8" font-weight="700">15</tspan> Built-in Skills · <tspan fill="#a78bfa" font-weight="700">46</tspan> Test Suites · SQLite Episodic Memory &amp; CCR · Local-Only Loopback Security
   </text>
   <text x="1164" y="370" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#cbd5e1" text-anchor="end">
     Created by Vasili Zuev

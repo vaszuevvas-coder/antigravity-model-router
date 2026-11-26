@@ -46,55 +46,34 @@ export function buildWpfFloatingHudScript(opts = {}) {
     progressFile = TASK_PROGRESS_FILE,
     runtimeFile = HUD_RUNTIME_FILE,
     positionFile = HUD_POSITION_FILE,
-    panelTheme = '',
     lang = '',
   } = opts && typeof opts === 'object' ? opts : {};
   const esc = (p) => String(p).replace(/'/g, "''");
-  let resolvedTheme = String(panelTheme || '').trim().toLowerCase();
   let resolvedLangRaw = String(lang || '').trim().toLowerCase();
-  if (!resolvedTheme || (resolvedLangRaw !== 'en' && resolvedLangRaw !== 'ru')) {
+  if (resolvedLangRaw !== 'en' && resolvedLangRaw !== 'ru') {
     try {
       const st = safeReadJsonSync(join(PLUGIN_ROOT, 'router-state.json'), null, { selfHeal: false });
-      if (!resolvedTheme) resolvedTheme = String(st?.panelTheme || '').trim().toLowerCase();
       if (!resolvedLangRaw) resolvedLangRaw = String(st?.uiLanguage || '').trim().toLowerCase();
     } catch {}
   }
   const hudLang = normalizeLang(resolvedLangRaw || readActiveUiLanguage(PLUGIN_ROOT), 'en');
   const isEnHud = hudLang === 'en';
-  const isLightTheme = resolvedTheme === 'studio_titanium' || resolvedTheme === 'conductor_paper';
-  const palette = isLightTheme
-    ? {
-        outerBg: '#F0FDF5EE',
-        outerBorder: '#D9B99F',
-        shadowColor: '#7C2D12',
-        shadowOpacity: '0.24',
-        innerBg: '#FAFFF9F3',
-        innerBorder: '#E8D5C5',
-        stageFg: '#1C1917',
-        trackBg: '#EAE0D6',
-        percentFg: '#443833',
-        glowGrad1: '#FB923C',
-        glowGrad2: '#EA580C',
-        glowShadow: '#F97316',
-        accentCore: '#EA580C',
-        accentHalo: '#66FB923C',
-      }
-    : {
-        outerBg: '#E81E202B',
-        outerBorder: '#343746',
-        shadowColor: '#000000',
-        shadowOpacity: '0.68',
-        innerBg: '#F5252734',
-        innerBorder: '#45485C',
-        stageFg: '#F3F4F6',
-        trackBg: '#3A3D4E',
-        percentFg: '#E5E7EB',
-        glowGrad1: '#9F7AEA',
-        glowGrad2: '#C4B5FD',
-        glowShadow: '#A78BFA',
-        accentCore: '#B794F4',
-        accentHalo: '#66A78BFA',
-      };
+  const palette = {
+    outerBg: '#E81E202B',
+    outerBorder: '#343746',
+    shadowColor: '#000000',
+    shadowOpacity: '0.68',
+    innerBg: '#F5252734',
+    innerBorder: '#45485C',
+    stageFg: '#F3F4F6',
+    trackBg: '#3A3D4E',
+    percentFg: '#E5E7EB',
+    glowGrad1: '#9F7AEA',
+    glowGrad2: '#C4B5FD',
+    glowShadow: '#A78BFA',
+    accentCore: '#B794F4',
+    accentHalo: '#66A78BFA',
+  };
   return `\uFEFF# Antigravity Floating Pill Progress HUD (WPF TopMost Overlay)
 Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore

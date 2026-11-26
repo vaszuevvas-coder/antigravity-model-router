@@ -552,3 +552,133 @@ export function resolveScoreDrivenComboTarget(opts = {}) {
     scoredCandidates: scored,
   };
 }
+
+const AGY_CREDITS_KEYWORDS = [
+  'google_one_ai',
+  'insufficient credit',
+  'insufficient credits',
+  'not enough credit',
+  'billing',
+];
+
+const AGY_QUOTA_EXHAUSTED_KEYWORDS = [
+  'quota_exhausted',
+  'quota exhausted',
+  'quota reached',
+  'enable overages',
+  'individual quota',
+  'daily limit',
+  'weekly limit',
+  'plan limit reached',
+];
+
+const AGY_RATE_LIMIT_KEYWORDS = [
+  'rate_limit_exceeded',
+  'rate limit exceeded',
+  'per minute',
+  'requests per minute',
+  'rpm',
+  'too many requests',
+  'resource_exhausted',
+  '429',
+];
+
+const AGY_SOFT_LIMIT_KEYWORDS = [
+  'temporarily overloaded',
+  'overloaded',
+  'try again shortly',
+  'burst limit',
+  'capacity',
+  '503',
+  '529',
+];
+
+function parseRetryAfterMsFromText(text = '') {
+  const s = String(text || '');
+  const m = /retry[\s_-]*after[:\s=]+(\d+(?:\.\d+)?)\s*(ms|s|sec|seconds|m|min|minutes|h|hr|hours)?/i.exec(s)
+    || /try\s+again\s+in\s+(\d+(?:\.\d+)?)\s*(ms|s|sec|seconds|m|min|minutes|h|hr|hours)?/i.exec(s);
+  if (!m) return null;
+  const val = Number(m[1]);
+  if (!Number.isFinite(val) || val <= 0) return null;
+  const unit = String(m[2] || 's').toLowerCase();
+  if (unit === 'ms') return Math.round(val);
+  if (unit.startsWith('h')) return Math.round(val * 3600 * 1000);
+  if (unit.startsWith('m')) return Math.round(val * 60 * 1000);
+  return Math.round(val * 1000);
+}
+
+/**
+ * Antigravity 429 & Quota Classifier (inspired by OmniRoute `antigravity429Engine.ts`).
+ * Distinguishes burst soft-limits, per-minute RPM caps, daily/plan quota exhaustion, and billing/credits limits,
+ * returning deterministic cooldown windows and localized recovery actions.
+ * @param {string} [rawErrorText='']
+ * @param {{ lang?: 'ru'|'en', retryAfterMs?: number }} [opts={}]
+ */
+export function classifyAntigravity429(rawErrorText = '', opts = {}) {
+  const text = asStr(rawErrorText, 2000);
+  const low = text.toLowerCase();
+  const isEn = String(opts?.lang || 'ru').toLowerCase() === 'en';
+  const parsedRetryMs = Number.isFinite(Number(opts?.retryAfterMs)) && Number(opts.retryAfterMs) > 0
+    ? Number(opts.retryAfterMs)
+    : parseRetryAfterMsFromText(text);
+
+  const hasAny = (list) => list.some((k) => low.includes(k));
+
+  if (hasAny(AGY_CREDITS_KEYWORDS)) {
+    return {
+      category: 'credits_exhausted',
+      decision: 'full_quota_exhausted',
+      cooldownMs: parsedRetryMs || 24 * 60 * 60 * 1000,
+      shouldSwitchModel: true,
+      recommendation: isEn
+        ? 'Credits/billing cap reached: switch to a lighter tier or local Ollama GPU until credits reset.'
+        : 'Достигнут лимит кредитов: переключитесь на более лёгкую модель или локальную GPU Ollama до обновления лимита.',
+    };
+  }
+
+  if (hasAny(AGY_QUOTA_EXHAUSTED_KEYWORDS)) {
+    return {
+      category: 'quota_exhausted',
+      decision: 'full_quota_exhausted',
+      cooldownMs: parsedRetryMs || 24 * 60 * 60 * 1000,
+      shouldSwitchModel: true,
+      recommendation: isEn
+        ? 'Plan/daily quota exhausted for this model family: switch to a fallback family (e.g. Hydrogen or Orchestrator).'
+        : 'Дневная/тарифная квота семейства исчерпана: переключитесь на резервное семейство (например, Hydrogen или Оркестратор).',
+    };
+  }
+
+  if (hasAny(AGY_SOFT_LIMIT_KEYWORDS)) {
+    return {
+      category: 'soft_rate_limit',
+      decision: 'soft_retry',
+      cooldownMs: parsedRetryMs || 12_000,
+      shouldSwitchModel: false,
+      recommendation: isEn
+        ? 'Temporary burst/capacity limit: wait ~12s and retry on the same model.'
+        : 'Временный всплеск нагрузки: подождите ~12 сек и повторите запрос на той же модели.',
+    };
+  }
+
+  if (hasAny(AGY_RATE_LIMIT_KEYWORDS)) {
+    return {
+      category: 'rate_limited',
+      decision: 'short_cooldown_switch_auth',
+      cooldownMs: parsedRetryMs || 5 * 60 * 1000,
+      shouldSwitchModel: true,
+      recommendation: isEn
+        ? 'Per-minute RPM rate limit (429): apply 5m cooldown or switch to a sibling tier in the combo chain.'
+        : 'Минутный лимит RPM (429): пауза 5 мин или переключение на соседнюю модель из комбо-цепочки.',
+    };
+  }
+
+  return {
+    category: 'unknown',
+    decision: 'soft_retry',
+    cooldownMs: parsedRetryMs || 30_000,
+    shouldSwitchModel: false,
+    recommendation: isEn
+      ? 'Unclassified throttling error: retry with exponential backoff (30s).'
+      : 'Неклассифицированный троттлинг: повторите с экспоненциальной задержкой (30 сек).',
+  };
+}

@@ -198,6 +198,123 @@ export function compressRtkCommandOutput(cleanText = '', exitCode = 0, cmdHint =
     }
   }
 
+  // 5. Git Log verbose history profile (>= 6 commits -> compact hash | subject table)
+  if (/^commit\s+[0-9a-f]{7,40}\b/m.test(text) && lines.length >= 24) {
+    const commits = [];
+    let curHash = '';
+    let curAuthor = '';
+    let curSubject = '';
+    const flushCommit = () => {
+      if (curHash) {
+        commits.push(`${curHash.slice(0, 8)} | ${curAuthor || '?'} | ${curSubject || '(no subject)'}`);
+      }
+      curHash = '';
+      curAuthor = '';
+      curSubject = '';
+    };
+    for (const l of lines) {
+      const mHash = /^commit\s+([0-9a-f]{7,40})\b/.exec(l);
+      if (mHash) {
+        flushCommit();
+        curHash = mHash[1];
+        continue;
+      }
+      if (!curHash) continue;
+      if (/^Author:\s*/i.test(l)) {
+        curAuthor = l.replace(/^Author:\s*/i, '').replace(/<[^>]+>/g, '').trim().slice(0, 24);
+      } else if (!curSubject && /^\s{2,}\S/.test(l)) {
+        curSubject = l.trim().slice(0, 90);
+      }
+    }
+    flushCommit();
+    if (commits.length >= 6) {
+      const compressed = [
+        `[⚡ RTK-GitLog: ${commits.length} commits compressed from ${lines.length}L]`,
+        ...commits.slice(0, 25),
+        ...(commits.length > 25 ? [`... +${commits.length - 25} older commits`] : []),
+      ].join('\n');
+      if (compressed.length < text.length * 0.75) {
+        return {
+          matched: true,
+          profile: 'git_log',
+          compressed,
+          savedChars: text.length - compressed.length,
+        };
+      }
+    }
+  }
+
+  // 6. Declarative CLI Noise Filters (inspired by rtk/src/filters/*.toml)
+  const hintLower = String(cmdHint || '').toLowerCase();
+  const declarativeProfiles = [
+    {
+      name: 'pkg_install',
+      cmdRx: /\b(?:npm|pnpm|yarn|bun|pip|pip3|uv|poetry|cargo|composer|brew)\s+(?:i|install|ci|add|sync|update|fetch)\b/i,
+      contentRx: /(?:added\s+\d+\s+packages|Downloading\s+|Using\s+cached|Requirement\s+already\s+satisfied|Resolved\s+\d+\s+packages|Compiling\s+\S+\s+v\d)/i,
+      stripRx: /^\s*(?:Downloading\s+|Using\s+cached|Requirement\s+already\s+satisfied|Installing\s+collected|Progress:|Packages:\s+\+|Resolving\s+|Fetching\s+|Compiling\s+|Checking\s+|npm\s+http\s+|GET\s+https?:)/i,
+      maxKept: 20,
+    },
+    {
+      name: 'linter_compiler',
+      cmdRx: /\b(?:biome|oxlint|eslint|tsc|pyright|basedpyright|ruff|mypy|shellcheck|yamllint|golangci-lint|dotnet\s+build|cargo\s+check|cargo\s+clippy)\b/i,
+      contentRx: /(?:error\s+TS\d+|warning\[|error\[|\d+\s+errors?,\s+\d+\s+warnings?|Checked\s+\d+\s+files|Found\s+\d+\s+errors?)/i,
+      stripRx: /^\s*(?:\d*\s*\|\s*$|─+|━+|·+|\s*\^+\s*$|\s*help:\s+for\s+further\s+information|Using\s+config|Loading\s+)/i,
+      maxKept: 32,
+    },
+    {
+      name: 'infra_build',
+      cmdRx: /\b(?:docker\s+build|terraform\s+plan|tofu\s+plan|helm\s+|turbo\s+|nx\s+|make\b|rsync\b)/i,
+      contentRx: /(?:#\d+\s+(?:CACHED|DONE|sha256:)|Refreshing\s+state\.\.\.|Plan:\s+\d+\s+to\s+add|cache\s+hit,\s+replaying\s+logs)/i,
+      stripRx: /^\s*(?:#\d+\s+(?:CACHED|DONE|transferring|resolve\s+image|load\s+metadata)|.*:\s+Refreshing\s+state\.\.\.|.*:\s+Reading\.\.\.|.*:\s+Read\s+complete|sending\s+incremental\s+file\s+list)/i,
+      maxKept: 28,
+    },
+  ];
+  for (const prof of declarativeProfiles) {
+    if (lines.length < 18) break;
+    if ((hintLower && prof.cmdRx.test(hintLower)) || prof.contentRx.test(text)) {
+      const kept = lines.filter((l) => l.trim() && !prof.stripRx.test(l));
+      const dropped = lines.length - kept.length;
+      if (dropped >= 8) {
+        const sliced = kept.slice(0, prof.maxKept);
+        const tailNote = kept.length > prof.maxKept ? [`... (+${kept.length - prof.maxKept} lines omitted)`] : [];
+        const compressed = [
+          `[⚡ RTK-${prof.name}: stripped ${dropped} noise lines (${lines.length}L -> ${sliced.length}L)]`,
+          ...sliced,
+          ...tailNote,
+        ].join('\n');
+        if (compressed.length < text.length * 0.78) {
+          return {
+            matched: true,
+            profile: prof.name,
+            compressed,
+            savedChars: text.length - compressed.length,
+          };
+        }
+      }
+    }
+  }
+
+  // 7. Large HTML / DOM structural compressor (inspired by caveman/engine/compressors/html_structural.go)
+  if (text.length >= 2000 && /<(?:!doctype\s+html|html|head|body|div|main|section)\b/i.test(text.slice(0, 600))) {
+    const stripped = text
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '<script/>')
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '<style/>')
+      .replace(/<svg\b[^>]*>[\s\S]*?<\/svg>/gi, '<svg/>')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    if (stripped.length < text.length * 0.65) {
+      const preview = stripped.length > 1600 ? `${stripped.slice(0, 1600)}\n... (+${stripped.length - 1600} chars stripped HTML)` : stripped;
+      const compressed = `[⚡ RTK-HTML: ${text.length}c -> ${preview.length}c (scripts/styles/svgs stripped)]\n${preview}`;
+      return {
+        matched: true,
+        profile: 'html_structural',
+        compressed,
+        savedChars: text.length - compressed.length,
+      };
+    }
+  }
+
   return { matched: false, profile: 'none', compressed: text, savedChars: 0 };
 }
 
@@ -475,7 +592,8 @@ export function maskTerminalOutput(rawOutput = '', exitCode = 0, options = {}) {
   const compressionKind = wasCrushed ? 'json' : (wasCompressed ? 'drain' : 'none');
   let ccrHash = '';
 
-  const ccrActive = Boolean(options.enableCcr || options.ccrHub);
+  // Auto-spill giant outputs (>=10KB) into local SQLite CCR/FTS5 index (Context-Mode pattern) unless explicitly disabled
+  const ccrActive = options.enableCcr !== false && (Boolean(options.enableCcr || options.ccrHub) || originalChars >= 10000);
   if (ccrActive && originalChars >= 1200 && savedChars >= 600 && (masked.length + 140) < originalChars) {
     try {
       const hub = options.ccrHub || knowledgeHub;

@@ -79,14 +79,58 @@ function scoreItem(item, tokens, queryLower) {
   return score;
 }
 
-function pickTop(items = [], tokens = [], queryLower = '', limit = 3) {
+function readDealHistory(historyPath = '') {
+  if (!historyPath || typeof historyPath !== 'string' || historyPath.includes('\0')) return { palettes: [], typography: [] };
+  try {
+    if (!fs.existsSync(historyPath)) return { palettes: [], typography: [] };
+    const parsed = JSON.parse(fs.readFileSync(historyPath, 'utf8'));
+    return {
+      palettes: Array.isArray(parsed?.palettes) ? parsed.palettes.map(String) : [],
+      typography: Array.isArray(parsed?.typography) ? parsed.typography.map(String) : [],
+    };
+  } catch {
+    return { palettes: [], typography: [] };
+  }
+}
+
+function writeDealHistory(historyPath = '', history = { palettes: [], typography: [] }, chosenPalette = null, chosenType = null) {
+  if (!historyPath || typeof historyPath !== 'string' || historyPath.includes('\0')) return;
+  const next = {
+    palettes: [...(history.palettes || [])],
+    typography: [...(history.typography || [])],
+  };
+  const pKey = chosenPalette ? String(chosenPalette.productType || chosenPalette.primary || '') : '';
+  const tKey = chosenType ? String(chosenType.name || chosenType.heading || '') : '';
+  if (pKey) next.palettes = [...next.palettes.filter((x) => x !== pKey), pKey].slice(-12);
+  if (tKey) next.typography = [...next.typography.filter((x) => x !== tKey), tKey].slice(-12);
+  try {
+    fs.mkdirSync(path.dirname(path.resolve(historyPath)), { recursive: true });
+    fs.writeFileSync(path.resolve(historyPath), JSON.stringify(next, null, 2), 'utf8');
+  } catch {
+    // Non-fatal: history persistence should never block matrix queries
+  }
+}
+
+function pickTop(items = [], tokens = [], queryLower = '', limit = 3, recentKeys = [], keyFn = null) {
   if (!Array.isArray(items) || items.length === 0) return [];
-  if (tokens.length === 0 && !queryLower) return items.slice(0, limit);
+  const recentSet = new Set(Array.isArray(recentKeys) ? recentKeys : []);
+  const applyHistoryOrder = (list) => {
+    if (recentSet.size === 0 || typeof keyFn !== 'function') return list;
+    const fresh = [];
+    const used = [];
+    for (const item of list) {
+      if (recentSet.has(String(keyFn(item) || ''))) used.push(item);
+      else fresh.push(item);
+    }
+    return [...fresh, ...used];
+  };
+  if (tokens.length === 0 && !queryLower) return applyHistoryOrder(items).slice(0, limit);
   const scored = items
     .map((item, idx) => ({ item, idx, score: scoreItem(item, tokens, queryLower) }))
     .filter((r) => r.score > 0)
     .sort((a, b) => b.score - a.score || a.idx - b.idx);
-  return (scored.length > 0 ? scored.map((r) => r.item) : items).slice(0, limit);
+  const ordered = scored.length > 0 ? scored.map((r) => r.item) : items;
+  return applyHistoryOrder(ordered).slice(0, limit);
 }
 
 /**
@@ -101,8 +145,10 @@ export function queryUxMatrix(opts = {}) {
     includeCharts = false,
     limit = 3,
     matrixPath = MATRIX_PATH,
+    historyPath = '',
   } = opts && typeof opts === 'object' ? opts : {};
   const matrix = loadUxMatrix(matrixPath);
+  const history = readDealHistory(historyPath);
   const queryText = [domain, stack].filter(Boolean).join(' ').trim();
   const { expandedText, extraTokens } = expandBilingualUxQuery(queryText);
   const queryLower = expandedText.toLowerCase();
@@ -131,6 +177,26 @@ export function queryUxMatrix(opts = {}) {
     ? pickTop(matrix.stacks, stackTokens, String(stack || '').toLowerCase(), Math.min(3, safeLimit))
     : [];
 
+  const palettes = pickTop(
+    matrix.palettes,
+    tokens,
+    queryLower,
+    safeLimit,
+    history.palettes,
+    (p) => p?.productType || p?.primary || ''
+  );
+  const typography = pickTop(
+    matrix.typography,
+    tokens,
+    queryLower,
+    safeLimit,
+    history.typography,
+    (t) => t?.name || t?.heading || ''
+  );
+  if (historyPath) {
+    writeDealHistory(historyPath, history, palettes[0], typography[0]);
+  }
+
   return {
     ok: true,
     query: queryText || '(general)',
@@ -139,8 +205,8 @@ export function queryUxMatrix(opts = {}) {
     surfaceMode,
     tasteDials: surfaceMode.recommendedDials,
     reasoning: pickTop(matrix.reasoning, tokens, queryLower, safeLimit),
-    palettes: pickTop(matrix.palettes, tokens, queryLower, safeLimit),
-    typography: pickTop(matrix.typography, tokens, queryLower, safeLimit),
+    palettes,
+    typography,
     uxGuidelines: pickTop(matrix.uxGuidelines, tokens, queryLower, Math.max(3, safeLimit)),
     stackGuidelines,
     motion: pickTop(matrix.motion, tokens, queryLower, 2),
@@ -228,12 +294,14 @@ if (isMain) {
   let includeCharts = false;
   let asJson = false;
   let initDir = '';
+  let historyPath = '';
   let overwrite = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--domain' && i + 1 < args.length) domain = args[++i];
     else if (a === '--mode' && i + 1 < args.length) mode = args[++i];
     else if (a === '--stack' && i + 1 < args.length) stack = args[++i];
+    else if (a === '--history' && i + 1 < args.length) historyPath = args[++i];
     else if (a === '--init-design-md' && i + 1 < args.length) initDir = args[++i];
     else if (a === '--charts') includeCharts = true;
     else if (a === '--json') asJson = true;
@@ -245,6 +313,6 @@ if (isMain) {
     console.log(JSON.stringify(initRes, null, 2));
     process.exit(initRes.ok ? 0 : 1);
   }
-  const res = queryUxMatrix({ domain, mode, stack, includeCharts });
+  const res = queryUxMatrix({ domain, mode, stack, includeCharts, historyPath });
   console.log(asJson ? JSON.stringify(res, null, 2) : formatUxBrief(res));
 }

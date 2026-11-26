@@ -22,7 +22,7 @@
       syncComposerGrillToggleUi();
       flashComposerStatus(
         _composerGrillArmed
-          ? L('🔥 Детальный опрос (Grill-Me) включён для следующего запроса', '🔥 Deep interview (Grill-Me) armed for the next prompt')
+          ? L('Детальный опрос (Grill-Me) включён для следующего запроса', 'Deep interview (Grill-Me) armed for the next prompt')
           : L('Режим детального опроса отключён', 'Deep interview (Grill-Me) disabled'),
         'info',
         2600
@@ -72,6 +72,26 @@
       syncSmartComposerSizeAndScroll();
     }
 
+    function getComposerChipIconSvg(lbl) {
+      const s = String(lbl || '').toLowerCase();
+      if (/тест|test|check/.test(s)) {
+        return '<svg class="composer-chip-svg" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.5 3.5l8 4.5-8 4.5V3.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
+      }
+      if (/узк|bottleneck|perf/.test(s)) {
+        return '<svg class="composer-chip-svg" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.5 11.5l3.5-4 3 2.5L13.5 4.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+      }
+      if (/провер|inspect|review|ревью/.test(s)) {
+        return '<svg class="composer-chip-svg" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.3"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
+      }
+      if (/исправ|fix|риск|баг|risk|bug/.test(s)) {
+        return '<svg class="composer-chip-svg" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.5L13.5 12.5H2.5L8 2.5Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6.5v3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
+      }
+      if (/план|plan/.test(s)) {
+        return '<svg class="composer-chip-svg" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 4.5h10M3 8h10M3 11.5h6.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
+      }
+      return '<svg class="composer-chip-svg" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3"/><rect x="5.75" y="9" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3"/></svg>';
+    }
+
     function renderSmartComposerChips(chips) {
       const rowEl = document.getElementById('composerChipsRow');
       if (Array.isArray(chips) && chips.length > 0) {
@@ -86,7 +106,8 @@
       for (let i = 0; i < list.length; i++) {
         const c = list[i];
         if (!c || !c.label || !c.prompt) continue;
-        const lbl = pickText(c, 'label', 'labelEn', c.label);
+        const rawLbl = pickText(c, 'label', 'labelEn', c.label);
+        const lbl = String(rawLbl).replace(/^[\p{Emoji_Presentation}\p{Extended_Pictographic}\u2600-\u27BF]\s*/u, '').trim();
         const prm = pickText(c, 'prompt', 'promptEn', c.prompt);
         const ttl = pickText(c, 'title', 'titleEn', prm);
         const btn = document.createElement('button');
@@ -94,7 +115,10 @@
         btn.className = 'composer-chip-btn';
         btn.setAttribute('data-action', 'applyComposerChip');
         btn.setAttribute('data-prompt', String(prm));
-        btn.textContent = String(lbl);
+        btn.innerHTML = getComposerChipIconSvg(lbl);
+        const span = document.createElement('span');
+        span.textContent = lbl;
+        btn.appendChild(span);
         btn.title = String(ttl);
         rowEl.appendChild(btn);
       }
@@ -266,6 +290,20 @@
       checkSmartComposerAtTrigger(val);
     }
 
+    let _composerAcceptFlashTimer = null;
+    function flashComposerWellAccepted() {
+      const wellEl = document.querySelector('.composer-well');
+      if (!wellEl) return;
+      wellEl.classList.remove('is-accepted');
+      if (typeof wellEl.offsetWidth === 'number') void wellEl.offsetWidth;
+      wellEl.classList.add('is-accepted');
+      if (_composerAcceptFlashTimer) clearTimeout(_composerAcceptFlashTimer);
+      _composerAcceptFlashTimer = setTimeout(function () {
+        _composerAcceptFlashTimer = null;
+        wellEl.classList.remove('is-accepted');
+      }, 320);
+    }
+
     function acceptSmartComposerGhost(wordOnly) {
       const inputEl = document.getElementById('smartComposerInput');
       if (!inputEl || !_smartGhostText) return;
@@ -285,6 +323,7 @@
       const endPos = inputEl.value.length;
       inputEl.focus();
       try { inputEl.setSelectionRange(endPos, endPos); } catch {}
+      flashComposerWellAccepted();
       renderSmartComposerMirror();
       if (!_smartGhostText && inputEl.value.trim().length >= 3 && inputEl.value.length <= 1200) {
         scheduleSmartAutocomplete(inputEl.value, { afterAccept: true });
@@ -354,12 +393,12 @@
         const roleSpan = document.createElement('span');
         roleSpan.textContent = msg.role === 'user'
           ? L('Вы', 'You')
-          : (msg.error ? L('⚠ Локальная модель', '⚠ Local model') : ('🧠 ' + (msg.model || 'GPU') + L(' · 0 тк', ' · 0 tok')));
+          : (msg.error ? L('! Локальная модель', '! Local model') : ((msg.model || 'GPU') + L(' · 0 тк', ' · 0 tok')));
         head.appendChild(roleSpan);
         let displayMetaText = msg.metaText || '';
         if (!displayMetaText && msg.grounding && typeof msg.grounding === 'object') {
           if (msg.grounding.grounded === false) {
-            displayMetaText = L('⚠ Есть неподтверждённые имена', '⚠ Contains unverified symbols');
+            displayMetaText = L('! Есть неподтверждённые имена', '! Contains unverified symbols');
           } else {
             const vf = Array.isArray(msg.grounding.verifiedFiles) ? msg.grounding.verifiedFiles.length : 0;
             const vs = Array.isArray(msg.grounding.verifiedSymbols) ? msg.grounding.verifiedSymbols.length : 0;
@@ -433,7 +472,7 @@
     function clearLocalRagChat() {
       _localRagHistory.length = 0;
       const labelEl = document.getElementById('localRagMetaLabel');
-      if (labelEl) labelEl.textContent = L('🧠 Локальный RAG-диалог · 0 тк', '🧠 Local RAG Chat · 0 tok');
+      if (labelEl) labelEl.textContent = L('Локальный RAG-диалог · 0 тк', 'Local RAG Chat · 0 tok');
       renderLocalRagMessages();
     }
 
@@ -490,7 +529,7 @@
           let groundingBadgeText = '';
           if (groundingObj) {
             if (groundingObj.grounded === false) {
-              groundingBadgeText = L('⚠ Есть неподтверждённые имена', '⚠ Contains unverified symbols');
+              groundingBadgeText = L('! Есть неподтверждённые имена', '! Contains unverified symbols');
             } else {
               const vFilesCount = Array.isArray(groundingObj.verifiedFiles) ? groundingObj.verifiedFiles.length : 0;
               const vSymsCount = Array.isArray(groundingObj.verifiedSymbols) ? groundingObj.verifiedSymbols.length : 0;
@@ -508,7 +547,7 @@
             sources: Array.isArray(data.sources) ? data.sources : [],
           });
           if (metaEl) {
-            metaEl.textContent = '🧠 ' + (data.model || 'GPU') + (data.numCtxUsed ? (' · ctx ' + data.numCtxUsed) : '') + L(' · 0 тк облака', ' · 0 cloud tok');
+            metaEl.textContent = (data.model || 'GPU') + (data.numCtxUsed ? (' · ctx ' + data.numCtxUsed) : '') + L(' · 0 тк облака', ' · 0 cloud tok');
           }
           updateComposerEngineBadge('gpu', L('GPU · 0 тк', 'GPU · 0 tok'));
           flashComposerStatus(L('✓ Ответ получен локально (0% облачной квоты)', '✓ Local answer received (0% cloud quota)'), 'ok', 4200);
@@ -516,18 +555,18 @@
           const errText = (data && data.error) ? String(data.error) : L('Локальная модель не ответила (проверьте Ollama и переключатель GPU)', 'Local model did not respond (check Ollama and GPU toggle)');
           _localRagHistory.push({ role: 'assistant', content: errText, error: true });
           updateComposerEngineBadge('', L('RAM + GPU · 0 тк', 'RAM + GPU · 0 tok'));
-          flashComposerStatus('⚠ ' + errText, 'err', 5500);
+          flashComposerStatus('! ' + errText, 'err', 5500);
         }
       } catch (err) {
         const errMsg = (err && err.message) ? String(err.message) : L('Сетевой сбой sidecar при обращении к /api/local-chat', 'Sidecar network error calling /api/local-chat');
         _localRagHistory.push({ role: 'assistant', content: errMsg, error: true });
         updateComposerEngineBadge('', L('RAM + GPU · 0 тк', 'RAM + GPU · 0 tok'));
-        flashComposerStatus('⚠ ' + errMsg, 'err', 5500);
+        flashComposerStatus('! ' + errMsg, 'err', 5500);
       } finally {
         _localRagBusy = false;
         if (btnEl) {
           btnEl.disabled = false;
-          btnEl.textContent = L('💬 Локально · 0 тк', '💬 Local · 0 tok');
+          btnEl.textContent = L('Локально · 0 тк', 'Local · 0 tok');
         }
         renderLocalRagMessages();
       }
@@ -584,6 +623,7 @@
       _smartLastDraft = text;
       inputEl.focus();
       try { inputEl.setSelectionRange(text.length, text.length); } catch {}
+      flashComposerWellAccepted();
       renderSmartComposerMirror();
       scheduleSmartAutocomplete(text);
     }
@@ -640,7 +680,7 @@
       }, 0);
     }
 
-    function enqueueSmartComposerMessage(text) {
+    function enqueueSmartComposerMessage(text, options) {
       const now = Date.now();
       let dropped = pruneSmartSendQueue();
       let guard = 0;
@@ -652,6 +692,7 @@
       }
       _smartSendQueue.push({
         text: String(text || ''),
+        options: (options && typeof options === 'object') ? options : null,
         createdAt: now,
         expiresAt: now + _SMART_SEND_QUEUE_TTL_MS,
       });
@@ -686,11 +727,16 @@
         syncSmartSendButtonLabel();
         let res = null;
         try {
+          const itemOpts = item.options || null;
+          const isForceNew = Boolean(itemOpts && itemOpts.forceNewConversation);
           res = await dispatchPromptToChatDetailed(
             item.text,
             L('✓ Запрос отправлен в активный чат', '✓ Sent to active chat'),
-            L('📋 Активный чат недоступен — запрос скопирован в буфер (Ctrl+V)', '📋 Active chat unavailable — copied to clipboard (Ctrl+V)'),
-            L('✓ Открыт новый чат и отправлен запрос', '✓ Opened new chat and sent prompt')
+            L('Активный чат недоступен — запрос скопирован в буфер (Ctrl+V)', 'Active chat unavailable — copied to clipboard (Ctrl+V)'),
+            isForceNew
+              ? L('✓ Исправление запущено в отдельном чате проекта', '✓ Fix started in a separate project chat')
+              : L('✓ Открыт новый чат и отправлен запрос', '✓ Opened new chat and sent prompt'),
+            itemOpts
           );
         } catch (err) {
           res = {
@@ -712,7 +758,7 @@
             }, 1800);
           }
         } else if (res && res.copied) {
-          flashComposerStatus(res.statusText || L('📋 Запрос скопирован в буфер — вставьте в чат (Ctrl+V)', '📋 Copied to clipboard — paste in chat (Ctrl+V)'), 'warn', 5500);
+          flashComposerStatus(res.statusText || L('Запрос скопирован в буфер — вставьте в чат (Ctrl+V)', 'Copied to clipboard — paste in chat (Ctrl+V)'), 'warn', 5500);
           if (_smartSendQueue.length === 0) {
             syncSmartSendButtonLabel(L('В буфере ✓', 'Copied ✓'));
             _smartSendBtnResetTimer = setTimeout(function () {
@@ -721,7 +767,7 @@
             }, 2200);
           }
         } else {
-          flashComposerStatus('⚠ ' + ((res && res.statusText) || L('Не удалось отправить запрос в чат', 'Failed to send prompt to chat')), 'err', 6000);
+          flashComposerStatus('! ' + ((res && res.statusText) || L('Не удалось отправить запрос в чат', 'Failed to send prompt to chat')), 'err', 6000);
         }
       } finally {
         _smartSendProcessing = false;
@@ -858,7 +904,7 @@
       _composerAttachedImageB64 = '';
       const bar = document.getElementById('composerImagePreviewBar');
       const thumb = document.getElementById('composerImageThumb');
-      if (thumb) thumb.removeAttribute('src');
+      if (thumb) thumb.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
       if (bar) bar.style.display = 'none';
     }
 
@@ -879,7 +925,7 @@
         if (thumb) thumb.src = resultStr;
         if (meta) meta.textContent = (file.name || L('Скриншот', 'Screenshot')) + ' · ' + Math.max(1, Math.round(file.size / 1024)) + L(' КБ', ' KB');
         if (bar) bar.style.display = 'block';
-        flashComposerStatus(L('Скриншот прикреплён — нажмите «🔍 Разобрать UI · 0 тк»', 'Screenshot attached — click "🔍 Audit UI · 0 tok"'), 'ok', 3500);
+        flashComposerStatus(L('Скриншот прикреплён — нажмите «Разобрать UI · 0 тк»', 'Screenshot attached — click "Audit UI · 0 tok"'), 'ok', 3500);
       };
       reader.readAsDataURL(file);
     }
@@ -913,7 +959,7 @@
           const patchTxt = pickText(data, 'promptPatchRu', 'promptPatchEn', '');
           _localRagHistory.push({
             role: 'assistant',
-            content: L('🖼️ Визуальный разбор UI:\n', '🖼️ Visual UI Audit:\n') + analysisTxt + defects +
+            content: L('Визуальный разбор UI:\n', 'Visual UI Audit:\n') + analysisTxt + defects +
               (patchTxt ? (L('\n\nПромпт для правки:\n', '\n\nFix prompt:\n') + patchTxt) : ''),
             model: data.model || 'GPU Vision',
           });
@@ -925,12 +971,12 @@
           }
           flashComposerStatus(L('✓ UI разобран локально (0 тк облака)', '✓ UI audited locally (0 cloud tok)'), 'ok', 4200);
         } else {
-          flashComposerStatus('⚠ ' + ((data && data.error) || L('Локальный GPU недоступен', 'Local GPU unavailable')), 'err', 4800);
+          flashComposerStatus('! ' + ((data && data.error) || L('Локальный GPU недоступен', 'Local GPU unavailable')), 'err', 4800);
         }
       } catch {
-        flashComposerStatus(L('⚠ Ошибка обращения к /api/composer/vision', '⚠ Error calling /api/composer/vision'), 'err', 4500);
+        flashComposerStatus(L('! Ошибка обращения к /api/composer/vision', '! Error calling /api/composer/vision'), 'err', 4500);
       } finally {
-        if (btn) { btn.disabled = false; btn.textContent = L('🔍 Разобрать UI · 0 тк', '🔍 Audit UI · 0 tok'); }
+        if (btn) { btn.disabled = false; btn.textContent = L('Разобрать UI · 0 тк', 'Audit UI · 0 tok'); }
       }
     }
 
@@ -947,10 +993,10 @@
         const pc = data && data.preCommit ? data.preCommit : null;
         if (pc && pc.ok) {
           const statusLine = pc.readyToCommit
-            ? L('✅ Готово к коммиту (0 критических блокеров)', '✅ Ready to commit (0 critical blockers)')
-            : (L('🛑 Блокеры перед коммитом:\n• ', '🛑 Pre-commit blockers:\n• ') + (pc.blockers || []).join('\n• '));
+            ? L('✓ Готово к коммиту (0 критических блокеров)', '✓ Ready to commit (0 critical blockers)')
+            : (L('[!] Блокеры перед коммитом:\n• ', '[!] Pre-commit blockers:\n• ') + (pc.blockers || []).join('\n• '));
           const warnLine = Array.isArray(pc.warnings) && pc.warnings.length
-            ? (L('\n\n⚠ Замечания:\n• ', '\n\n⚠ Warnings:\n• ') + pc.warnings.join('\n• '))
+            ? (L('\n\n! Замечания:\n• ', '\n\n! Warnings:\n• ') + pc.warnings.join('\n• '))
             : '';
           const sumTxt = pickText(pc, 'summaryRu', 'summaryEn', '');
           const msgLine = pc.commitMessage
@@ -963,15 +1009,15 @@
           });
           renderLocalRagMessages();
           flashComposerStatus(
-            pc.readyToCommit ? L('✓ Pre-Commit пройден', '✓ Pre-Commit passed') : L('⚠ Найдены блокеры перед коммитом', '⚠ Pre-Commit blockers found'),
+            pc.readyToCommit ? L('✓ Pre-Commit пройден', '✓ Pre-Commit passed') : L('! Найдены блокеры перед коммитом', '! Pre-Commit blockers found'),
             pc.readyToCommit ? 'ok' : 'warn',
             4500
           );
         } else {
-          flashComposerStatus('⚠ ' + ((data && data.error) || L('Pre-Commit завершился с ошибкой', 'Pre-Commit failed')), 'err', 4500);
+          flashComposerStatus('! ' + ((data && data.error) || L('Pre-Commit завершился с ошибкой', 'Pre-Commit failed')), 'err', 4500);
         }
       } catch {
-        flashComposerStatus(L('⚠ Ошибка вызова /api/sentinel prepare_commit', '⚠ Error calling /api/sentinel prepare_commit'), 'err', 4500);
+        flashComposerStatus(L('! Ошибка вызова /api/sentinel prepare_commit', '! Error calling /api/sentinel prepare_commit'), 'err', 4500);
       } finally {
         if (btn) { btn.disabled = false; btn.textContent = L('✓ Коммит · 0 тк', '✓ Commit · 0 tok'); }
       }
@@ -997,7 +1043,7 @@
         rec.interimResults = false;
         rec.maxAlternatives = 1;
         if (btn) btn.classList.add('active');
-        flashComposerStatus(L('🎙️ Слушаю диктовку...', '🎙️ Listening for dictation...'), 'info', 10000);
+        flashComposerStatus(L('Слушаю диктовку...', 'Listening for dictation...'), 'info', 10000);
         rec.onresult = async function (ev) {
           const rawTranscript = (ev.results && ev.results[0] && ev.results[0][0] && ev.results[0][0].transcript) || '';
           if (!rawTranscript) return;

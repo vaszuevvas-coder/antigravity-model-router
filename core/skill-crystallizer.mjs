@@ -1254,6 +1254,7 @@ export function evolveReadyInstincts({
 export {
   detectUserCorrectionFriction,
   detectEditChurnFriction,
+  detectCliFailRecoveryFriction,
   recordFrictionObservation,
 } from './friction-observer.mjs';
 

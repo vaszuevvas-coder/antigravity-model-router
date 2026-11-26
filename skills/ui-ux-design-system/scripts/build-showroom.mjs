@@ -1421,7 +1421,7 @@ if (isMain) {
 
   if (positional[0] && fs.existsSync(positional[0])) {
     try {
-      spec = JSON.parse(fs.readFileSync(positional[0], 'utf8'));
+      spec = JSON.parse(fs.readFileSync(positional[0], 'utf8').replace(/^\uFEFF/, ''));
     } catch (e) {
       console.error(JSON.stringify({ ok: false, error: `Invalid JSON spec: ${e.message}` }));
       process.exit(1);

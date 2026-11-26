@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="The Tunnel v3.35.0 — 3D AI Autopilot & Coprocessor for Google Antigravity" width="100%" />
+  <img src="assets/banner.svg" alt="The Tunnel v4.0.0 — 3D AI Autopilot & Coprocessor for Google Antigravity" width="100%" />
 </p>
 
-# The Tunnel `v3.35.0` — 3D AI Autopilot & Model Router
+# The Tunnel `v4.0.0` — 3D AI Autopilot & Model Router
 
 > Intelligent 3D model routing, multi-core CPU coprocessing, adaptive In-RAM project memory (`4–32 GB`), optional local Ollama Int8 GPU acceleration, and 59 safety & verification guardrails for **Google Antigravity** — built with zero external runtime dependencies on **Node.js `>=22` ESM**.
 
@@ -38,7 +38,7 @@
 
 ### 6. Turn-Level Time-Machine, Shadow Worktrees & Sidecar Control Panel (`EN / RU`)
 - **Atomic Turn Rollback & Git Sandboxes**: `core/shadow-guard.mjs` and `core/shadow-worktree.mjs` bind checkpoints to user turns (`rollbackTurn`) and run risky experiments inside detached git worktrees before promoting changes.
-- **Sidecar Control Panel (`sidecars/panel/`)**: CSP-safe localhost HUD (`server.mjs` + `ui.html`) with **Lite / Full** view modes (`panelViewMode`), adaptive UI scaling (`panelUiScale`), safe 1-click GitHub Plugin Updater (`core/plugin-updater.mjs`), native folder pickers, live **EN / RU** switching (`00-i18n.js`), dark & studio-light themes, **Smart Composer 2.0** (`@file:`, `@symbol:`, `@git:diff`, `@error:last` chips, Ghost Text, local Vision screenshot audit, optional voice dictation, and `0-token` pre-commit check), live token/cache/CPU/RAM/GPU telemetry, and one-click management of all 13 built-in skills.
+- **Sidecar Control Panel (`sidecars/panel/`)**: CSP-safe localhost HUD (`server.mjs` + `ui.html`) with **Lite / Full** view modes (`panelViewMode`), adaptive UI scaling (`panelUiScale`), safe 1-click GitHub Plugin Updater (`core/plugin-updater.mjs`), native folder pickers, live **EN / RU** switching (`00-i18n.js`), Crimson Rail industrial dark theme, 5-contour Hybrid Guard Dock & 1-click Runtime Health-Doctor, **Smart Composer 2.0** (`@file:`, `@symbol:`, `@git:diff`, `@error:last` chips, Ghost Text, local Vision screenshot audit, optional voice dictation, and `0-token` pre-commit check), live token/cache/CPU/RAM/GPU telemetry, and one-click management of all 15 built-in skills.
 - **Interactive Project Map (`?view=graph` & modal)**: Multi-level architecture map (`Folders / Files / Symbols` via `core/project-graph-builder.mjs` + `07*.js`) featuring hybrid architectural layer columns (interactive layer header filter/drag, free node detachment/reattachment & reset), Layered (Sugiyama) and Force layouts, 5 engineering lenses (**Architecture**, **Blast & Diff**, **Tarjan SCC Cycles & Orphans**, **Git Hotspots**, **Path A→B**), a Context Cart (`@file:` batching to Smart Composer with token budget), Edge Bundling, interactive Minimap, GPU semantic search, Mermaid/PNG export, and **Barnes-Hut `O(N log N)` + WebGL2 Instanced Renderer** scaling up to 25k nodes.
 
 ---
@@ -52,7 +52,7 @@
 - **Runtime Wiretap & Automated `git bisect`**: `core/runtime-wiretap.mjs` (`node core/ag-cli.mjs watch <cmd...>`) captures crashes with `±6`-line code frames and SimHash64 deduplication, paired with `git_bisect_auto` in an isolated worktree.
 - **Security, Secret Redaction & AgentShield**: `core/security-guard.mjs` (including UTF-16LE BOM `.agentignore` support), `core/obs-masker.mjs`, and `core/agent-shield.mjs` block destructive root wipes, protect `.env`/secrets, and audit MCP servers, hooks, and imported skills.
 - **Self-Evolution, Stack Recommender & Skill Bridge**: `core/friction-observer.mjs` + `core/skill-crystallizer.mjs` distill repeated pitfalls into skills; `core/project-setup-recommender.mjs` & `core/skill-registry-bridge.mjs` recommend stack setups and quarantine-scan external skills before import.
-- **13 Built-in Specialized Skills (`skills/`)**: `model-router`, `context-fork`, `deep-stress-auditor` (with interactive webapp dogfooding), `ui-ux-design-system` (with `DESIGN.md` extractor, WCAG/i18n UI auditor, UX matrix & open media search), `ast-codemod-refactor`, `program-slicer-ocd`, `delta-bug-minimizer`, `skill-architect`, `github-publish-guard` (pre-publish privacy, GitHub policy & release-parity auditor), `game-systems-architect`, `binary-app-localizer`, `programmatic-video-studio`, and `vj-video-fx-studio`.
+- **15 Built-in Specialized Skills (`skills/`)**: `model-router`, `context-fork`, `deep-stress-auditor` (with interactive webapp dogfooding), `ui-ux-design-system` (with `DESIGN.md` extractor, WCAG/i18n UI auditor, UX matrix & open media search), `ast-codemod-refactor`, `program-slicer-ocd`, `delta-bug-minimizer`, `skill-architect`, `github-publish-guard` (pre-publish privacy, GitHub policy & release-parity auditor), `cli-anything-harness`, `playwright-cli`, `game-systems-architect`, `binary-app-localizer`, `programmatic-video-studio`, and `vj-video-fx-studio`.
 
 ---
 
@@ -60,7 +60,7 @@
 
 ```text
 antigravity-model-router/
-├── plugin.json                # Plugin manifest (The Tunnel v3.35.0)
+├── plugin.json                # Plugin manifest (The Tunnel v4.0.0)
 ├── package.json               # ESM scripts (test, audit, lint:skills, pack, version:check)
 ├── router-state.json          # Sanitized default router & guardrail template
 ├── hooks.json                 # SessionStart / PreInvocation / PreToolUse / PostToolUse / Stop hooks
@@ -68,11 +68,11 @@ antigravity-model-router/
 ├── install.js                 # Cross-platform installer & i8bin-v2 cache migrator
 ├── SECURITY.md                # Security policy & local-only architecture guarantees
 ├── CHANGELOG.md               # Release history
-├── core/                      # 56 core ESM modules (64 total with gpu/progress/ram submodules)
+├── core/                      # 57 core ESM modules (65 total with gpu/progress/ram submodules)
 ├── sidecars/panel/            # Localhost Control Panel (server.mjs, ui-src/, ui.html)
 ├── agents/                    # Read-only verifier subagent (router-verifier.md)
-├── skills/                    # 13 built-in domain skills & deterministic scripts
-├── tests/                     # 43 automated test suites (node:test)
+├── skills/                    # 15 built-in domain skills & deterministic scripts
+├── tests/                     # 46 automated test suites (node:test)
 └── rules/                     # Autopilot & routing rules (AGENTS.md)
 ```
 
@@ -90,7 +90,7 @@ node install.js
 Then restart **Google Antigravity** (or reload the sidecar panel) to activate hooks, In-RAM MCP, and **The Tunnel** HUD.
 
 ### Option 2 — Windows 1-Click Installer (`Setup.exe`) & Portable `.zip`
-- Download `The-Tunnel-v3.35.0-Setup.exe` or `The-Tunnel-v3.35.0.zip` from [GitHub Releases](https://github.com/vaszuevvas-coder/antigravity-model-router/releases/latest).
+- Download `The-Tunnel-v4.0.0-Setup.exe` or `The-Tunnel-v4.0.0.zip` from [GitHub Releases](https://github.com/vaszuevvas-coder/antigravity-model-router/releases/latest).
 - `Setup.exe`, `install.js`, and `install.sh` auto-detect your OS locale (`en` / `ru`, overridable via `--lang=en|ru` or `TUNNEL_LANG`), and `Setup.exe` supports both GUI and silent CLI flags (`--silent` / `/S`, `--uninstall`) while keeping a backup of `router-state.json`.
 - In the portable `.zip`, run `install.bat` / `uninstall.bat` (or `Установить плагин.bat` / `Удалить плагин.bat`) on Windows, or `./install.sh` on macOS / Linux. Direct extraction or `git clone` into `~/.gemini/config/plugins/antigravity-model-router` is also supported — `The Tunnel` auto-calibrates hardware limits and MCP paths on first launch.
 

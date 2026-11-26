@@ -270,7 +270,245 @@ export function toRelPath(rootDir, targetPath) {
 }
 
 /**
- * Resolves candidate local import relative path within workspace (JS/TS ESM NodeNext, Vite queries, Python relative).
+ * Strips JSONC comments and trailing commas for safe tsconfig.json / jsconfig.json parsing.
+ * @param {string} raw
+ * @returns {string}
+ */
+function stripJsonComments(raw = '') {
+  let out = '';
+  let inStr = false;
+  let escaped = false;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    const next = raw[i + 1];
+    if (inStr) {
+      out += ch;
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inStr = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inStr = true;
+      out += ch;
+      continue;
+    }
+    if (ch === '/' && next === '/') {
+      while (i < raw.length && raw[i] !== '\n') i++;
+      if (i < raw.length) out += '\n';
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      i += 2;
+      while (i < raw.length && !(raw[i] === '*' && raw[i + 1] === '/')) i++;
+      i += 1;
+      continue;
+    }
+    out += ch;
+  }
+  return out.replace(/,\s*([}\]])/g, '$1');
+}
+
+/**
+ * Loads JS/TS path alias rules from tsconfig.json, jsconfig.json, and package.json `imports` (#alias).
+ * Inspired by code-review-graph tsconfig_resolver + npm_alias_resolver.
+ * @param {string} absRoot
+ * @returns {{ baseUrl: string, rules: Array<{ prefix: string, suffix: string, targets: string[] }> }}
+ */
+export function loadJsAliasRules(absRoot = '') {
+  const result = { baseUrl: '', rules: [] };
+  if (!absRoot || typeof absRoot !== 'string') return result;
+
+  const seenRule = new Set();
+  const addRule = (pattern, rawTargets, basePrefix = '') => {
+    const pat = String(pattern || '').trim();
+    if (!pat) return;
+    const starIdx = pat.indexOf('*');
+    const prefix = starIdx === -1 ? pat : pat.slice(0, starIdx);
+    const suffix = starIdx === -1 ? '' : pat.slice(starIdx + 1);
+    const targets = (Array.isArray(rawTargets) ? rawTargets : [rawTargets])
+      .map((t) => {
+        const clean = String(t || '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
+        if (!clean) return '';
+        return basePrefix ? path.posix.normalize(path.posix.join(basePrefix, clean)) : clean;
+      })
+      .filter(Boolean);
+    if (targets.length === 0) return;
+    const key = `${prefix}|${suffix}|${targets.join(',')}`;
+    if (seenRule.has(key)) return;
+    seenRule.add(key);
+    result.rules.push({ prefix, suffix, targets });
+  };
+
+  for (const cfgName of ['tsconfig.json', 'jsconfig.json']) {
+    try {
+      const cfgPath = path.join(absRoot, cfgName);
+      if (!fs.existsSync(cfgPath)) continue;
+      const raw = fs.readFileSync(cfgPath, 'utf8').slice(0, 64 * 1024);
+      const parsed = JSON.parse(stripJsonComments(raw));
+      const co = parsed?.compilerOptions;
+      if (!co || typeof co !== 'object') continue;
+      const baseUrl = typeof co.baseUrl === 'string'
+        ? co.baseUrl.trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '')
+        : '';
+      if (baseUrl && baseUrl !== '.' && !result.baseUrl) {
+        result.baseUrl = baseUrl;
+      }
+      if (co.paths && typeof co.paths === 'object') {
+        for (const [pat, arr] of Object.entries(co.paths)) {
+          addRule(pat, arr, baseUrl && baseUrl !== '.' ? baseUrl : '');
+        }
+      }
+    } catch {}
+  }
+
+  try {
+    const pkgPath = path.join(absRoot, 'package.json');
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8').slice(0, 64 * 1024));
+      if (pkg?.imports && typeof pkg.imports === 'object') {
+        for (const [pat, val] of Object.entries(pkg.imports)) {
+          if (!pat.startsWith('#')) continue;
+          const targets = [];
+          if (typeof val === 'string') {
+            targets.push(val);
+          } else if (val && typeof val === 'object') {
+            for (const sub of [val.default, val.import, val.node, val.require]) {
+              if (typeof sub === 'string') targets.push(sub);
+            }
+          }
+          addRule(pat, targets, '');
+        }
+      }
+    }
+  } catch {}
+
+  // Longer prefixes win first (e.g. `@/components/*` before `@/*`)
+  result.rules.sort((a, b) => b.prefix.length - a.prefix.length);
+  return result;
+}
+
+/**
+ * Extracts a single Markdown section by heading title or slug without reading the entire document.
+ * Inspired by graphify/sections.py (`get_section`).
+ * @param {string} rawText
+ * @param {string} sectionQuery
+ * @returns {{ found: boolean, heading: string, level: number, startLine: number, endLine: number, availableHeadings: Array<{ line: number, level: number, title: string }> }}
+ */
+export function extractMarkdownSection(rawText = '', sectionQuery = '') {
+  const text = typeof rawText === 'string' ? rawText : '';
+  const query = String(sectionQuery || '').trim();
+  const lines = text.split(/\r?\n/);
+  const headings = [];
+  let inFence = false;
+  let fenceChar = '';
+
+  const slugify = (s) => String(s || '')
+    .toLowerCase()
+    .replace(/`+/g, '')
+    .replace(/[^\p{L}\p{N}\s-]/gu, '')
+    .trim()
+    .replace(/\s+/g, '-');
+
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i];
+    const fenceM = /^\s*(`{3,}|~{3,})/.exec(ln);
+    if (fenceM) {
+      if (!inFence) {
+        inFence = true;
+        fenceChar = fenceM[1][0];
+      } else if (fenceM[1][0] === fenceChar) {
+        inFence = false;
+        fenceChar = '';
+      }
+      continue;
+    }
+    if (inFence) continue;
+    const hM = /^\s*(#{1,6})\s+(.+?)\s*#*\s*$/.exec(ln);
+    if (hM) {
+      const title = hM[2].trim();
+      headings.push({
+        line: i + 1,
+        level: hM[1].length,
+        title,
+        lower: title.toLowerCase(),
+        slug: slugify(title),
+      });
+    }
+  }
+
+  const availableHeadings = headings.map((h) => ({ line: h.line, level: h.level, title: h.title }));
+  if (!query || headings.length === 0) {
+    return { found: false, heading: '', level: 0, startLine: 1, endLine: lines.length, availableHeadings };
+  }
+
+  const qLower = query.replace(/^#+\s*/, '').trim().toLowerCase();
+  const qSlug = slugify(qLower);
+  let matchedIdx = headings.findIndex((h) => h.lower === qLower || (qSlug && h.slug === qSlug));
+  if (matchedIdx === -1) {
+    matchedIdx = headings.findIndex((h) => h.lower.includes(qLower) || (qSlug && h.slug.includes(qSlug)));
+  }
+  if (matchedIdx === -1) {
+    return { found: false, heading: '', level: 0, startLine: 1, endLine: lines.length, availableHeadings };
+  }
+
+  const hit = headings[matchedIdx];
+  let endLine = lines.length;
+  for (let j = matchedIdx + 1; j < headings.length; j++) {
+    if (headings[j].level <= hit.level) {
+      endLine = headings[j].line - 1;
+      break;
+    }
+  }
+  while (endLine > hit.line && !lines[endLine - 1]?.trim()) {
+    endLine -= 1;
+  }
+
+  return {
+    found: true,
+    heading: hit.title,
+    level: hit.level,
+    startLine: hit.line,
+    endLine: Math.max(hit.line, endLine),
+    availableHeadings,
+  };
+}
+
+const REGEX_STATIC_BLIND_SPOT_EXTS = new Set(['.py', '.go', '.rs', '.rb', '.php', '.java', '.kt', '.cs', '.cpp', '.c', '.swift']);
+
+/**
+ * Builds a concise honest uncertainty marker (<= 190 chars) ONLY when a graph query returns 0 hits.
+ * Inspired by code-review-graph/uncertainty.py: prevents blind fallback grepping across the whole repo.
+ * @param {{ mode?: string, target?: string, ws?: object, resultCount?: number }} [opts={}]
+ * @returns {string}
+ */
+export function buildGraphUncertaintyNote({ mode = '', target = '', ws = null, resultCount = 0 } = {}) {
+  if (Number(resultCount) > 0) return '';
+  const cleanTarget = String(target || '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
+  const totalFiles = ws?.files?.size || 0;
+  if (totalFiles === 0) {
+    return '⚠️ [Graph Uncertainty] RAM index is empty for this workspace; warm the workspace before relying on 0 results.';
+  }
+  if (cleanTarget && !ws.files.has(cleanTarget)) {
+    const ext = path.posix.extname(cleanTarget).toLowerCase();
+    if (ext && !TEXT_EXTENSIONS.has(ext)) {
+      return `⚠️ [Graph Uncertainty] "${cleanTarget}" uses unindexed extension (${ext}); static graph cannot trace it.`;
+    }
+    return `⚠️ [Graph Uncertainty] "${cleanTarget}" is not in the warm RAM index (${totalFiles} files); check exact path or warm workspace.`;
+  }
+  const ext = cleanTarget ? path.posix.extname(cleanTarget).toLowerCase() : '';
+  if (ext && REGEX_STATIC_BLIND_SPOT_EXTS.has(ext)) {
+    return `ℹ️ [Graph Uncertainty] 0 static ${mode || 'graph'} edges for ${ext}; dynamic dispatch/reflection/DI may be invisible to static AST.`;
+  }
+  return `ℹ️ [Graph Uncertainty] 0 static ${mode || 'graph'} edges found; target may be an entrypoint, test, or wired dynamically (DI/string path/CLI).`;
+}
+
+/**
+ * Resolves candidate local import relative path within workspace (JS/TS ESM NodeNext, tsconfig/@/# aliases, Vite queries, Python/Go).
  * @param {string} fromRel
  * @param {string} spec
  * @param {Map<string, object>} filesMap
@@ -278,7 +516,8 @@ export function toRelPath(rootDir, targetPath) {
  */
 export function resolveImportRel(fromRel, spec, filesMap, options = {}) {
   if (!spec || typeof spec !== 'string') return null;
-  const cleanSpec = spec.split('?')[0].split('#')[0].trim();
+  const noQuery = spec.split('?')[0].trim();
+  const cleanSpec = noQuery.startsWith('#') ? noQuery : noQuery.split('#')[0].trim();
   if (!cleanSpec) return null;
 
   const baseDir = path.posix.dirname(fromRel);
@@ -344,48 +583,76 @@ export function resolveImportRel(fromRel, spec, filesMap, options = {}) {
     }
   }
 
-  if (!cleanSpec.startsWith('./') && !cleanSpec.startsWith('../')) return null;
-  const joined = path.posix.normalize(path.posix.join(baseDir, cleanSpec));
-  const candidates = [joined];
-
-  // TypeScript NodeNext / ESM convention: `.js`/`.mjs`/`.cjs` import specifiers -> `.ts`/`.tsx`/`.mts`/`.cts`/`.d.ts`
-  if (/\.(?:[cm]?js|jsx)$/i.test(joined)) {
-    const stem = joined.replace(/\.(?:[cm]?js|jsx)$/i, '');
+  const probeJoinedCandidates = (joinedRaw) => {
+    const joined = path.posix.normalize(String(joinedRaw || '').replace(/^\/+/, ''));
+    if (!joined || joined.startsWith('../')) return null;
+    const candidates = [joined];
+    // TypeScript NodeNext / ESM convention: `.js`/`.mjs`/`.cjs` import specifiers -> `.ts`/`.tsx`/`.mts`/`.cts`/`.d.ts`
+    if (/\.(?:[cm]?js|jsx)$/i.test(joined)) {
+      const stem = joined.replace(/\.(?:[cm]?js|jsx)$/i, '');
+      candidates.push(
+        `${stem}.ts`,
+        `${stem}.tsx`,
+        `${stem}.mts`,
+        `${stem}.cts`,
+        `${stem}.d.ts`,
+        `${stem}.d.mts`,
+        `${stem}.d.cts`,
+        `${stem}.jsx`
+      );
+    }
     candidates.push(
-      `${stem}.ts`,
-      `${stem}.tsx`,
-      `${stem}.mts`,
-      `${stem}.cts`,
-      `${stem}.d.ts`,
-      `${stem}.d.mts`,
-      `${stem}.d.cts`,
-      `${stem}.jsx`
+      `${joined}.mjs`,
+      `${joined}.js`,
+      `${joined}.ts`,
+      `${joined}.tsx`,
+      `${joined}.mts`,
+      `${joined}.cts`,
+      `${joined}.d.ts`,
+      `${joined}.cjs`,
+      `${joined}.jsx`,
+      `${joined}.py`,
+      `${joined}/index.mjs`,
+      `${joined}/index.js`,
+      `${joined}/index.ts`,
+      `${joined}/index.tsx`,
+      `${joined}/index.mts`,
+      `${joined}/index.d.ts`,
+      `${joined}/__init__.py`
     );
+    for (const c of candidates) {
+      if (filesMap.has(c)) return c;
+    }
+    return null;
+  };
+
+  if (cleanSpec.startsWith('./') || cleanSpec.startsWith('../')) {
+    return probeJoinedCandidates(path.posix.join(baseDir, cleanSpec));
   }
 
-  candidates.push(
-    `${joined}.mjs`,
-    `${joined}.js`,
-    `${joined}.ts`,
-    `${joined}.tsx`,
-    `${joined}.mts`,
-    `${joined}.cts`,
-    `${joined}.d.ts`,
-    `${joined}.cjs`,
-    `${joined}.jsx`,
-    `${joined}.py`,
-    `${joined}/index.mjs`,
-    `${joined}/index.js`,
-    `${joined}/index.ts`,
-    `${joined}/index.tsx`,
-    `${joined}/index.mts`,
-    `${joined}/index.d.ts`,
-    `${joined}/__init__.py`
-  );
-
-  for (const c of candidates) {
-    if (filesMap.has(c)) return c;
+  // JS/TS tsconfig.json / jsconfig.json paths & package.json #imports aliases
+  const jsAliases = options?.jsAliases;
+  if (jsAliases && typeof jsAliases === 'object') {
+    const rawSpec = spec.split('?')[0].trim(); // keep leading `#` for package.json imports
+    const rules = Array.isArray(jsAliases.rules) ? jsAliases.rules : [];
+    for (const rule of rules) {
+      const hasStar = rule.prefix !== '' || rule.suffix !== '';
+      if (!hasStar) continue;
+      if (rawSpec.startsWith(rule.prefix) && (!rule.suffix || rawSpec.endsWith(rule.suffix))) {
+        const matchedMid = rawSpec.slice(rule.prefix.length, rule.suffix ? rawSpec.length - rule.suffix.length : undefined);
+        for (const t of rule.targets) {
+          const expanded = t.includes('*') ? t.replace('*', matchedMid) : (matchedMid ? `${t}/${matchedMid}` : t);
+          const hit = probeJoinedCandidates(expanded);
+          if (hit) return hit;
+        }
+      }
+    }
+    if (jsAliases.baseUrl && !rawSpec.startsWith('#') && !rawSpec.startsWith('node:')) {
+      const hit = probeJoinedCandidates(path.posix.join(jsAliases.baseUrl, rawSpec));
+      if (hit) return hit;
+    }
   }
+
   return null;
 }
 

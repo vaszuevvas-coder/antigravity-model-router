@@ -246,19 +246,24 @@ export function checkFileSecurity(opts = {}) {
     }
   }
 
-  // 3. Config Protection: prevent silent weakening of linter/formatter/typecheck configs on edits
+  // 3. Config Protection: prevent silent weakening of linter/formatter/typecheck/router configs on edits
   if (configProtection && (toolName === 'edit_file' || toolName === 'write_file')) {
     const protectedConfigRe = /^(?:\.eslintrc(?:\.[a-z0-9]+)?|eslint\.config\.[cm]?[jt]s|biome\.jsonc?|tsconfig(?:\.[a-z0-9_-]+)?\.json|\.prettierrc(?:\.[a-z0-9]+)?|prettier\.config\.[cm]?[jt]s|\.stylelintrc(?:\.[a-z0-9]+)?|\.ruff\.toml|ruff\.toml|\.flake8|\.pylintrc|mypy\.ini)$/i;
-    if (protectedConfigRe.test(base)) {
+    const isRouterState = /^router-state\.json$/i.test(base);
+    if (protectedConfigRe.test(base) || isRouterState) {
       const promptLower = userPrompt.toLowerCase();
-      const explicitlyAuthorized =
-        (base && promptLower.includes(base.toLowerCase())) ||
-        /(?:eslint|biome|tsconfig|prettier|stylelint|ruff|flake8|pylint|mypy|линтер|форматтер|типизац|конфиг|правил[ао]?\s+линтер|config\s+file)/i.test(userPrompt);
+      const explicitlyAuthorized = isRouterState
+        ? (promptLower.includes('router-state.json') ||
+            /(?:router-state|настройк[аиу]\s+роутер|конфиг\s+роутер|router\s+config|router\s+state)/i.test(userPrompt))
+        : ((base && promptLower.includes(base.toLowerCase())) ||
+            /(?:eslint|biome|tsconfig|prettier|stylelint|ruff|flake8|pylint|mypy|линтер|форматтер|типизац|конфиг|правил[ао]?\s+линтер|config\s+file)/i.test(userPrompt));
       if (!explicitlyAuthorized) {
         return {
           allow: false,
           category: 'config_protection',
-          reason: `🛡️ [Config Protection] Editing quality/linter config '${base}' is blocked unless explicitly requested by the user. Fix the source code instead of weakening config rules.`
+          reason: isRouterState
+            ? `🛡️ [Config Protection] Editing router config '${base}' is blocked unless explicitly requested by the user.`
+            : `🛡️ [Config Protection] Editing quality/linter config '${base}' is blocked unless explicitly requested by the user. Fix the source code instead of weakening config rules.`
         };
       }
     }
@@ -485,6 +490,22 @@ function checkCommandSecurityImpl(opts = {}, positionalWorkspaceRoot = '') {
     };
   }
 
+  // Env-var secret exfiltration via network commands (inspect trimmed so quoted "$GITHUB_TOKEN" is caught)
+  const netToolRe = /\b(?:curl|wget|Invoke-WebRequest|Invoke-RestMethod|iwr|irm|nc|ncat)\b/i;
+  const envSecretRefRe = /(?:\$(?:env:)?|\$\{|%)(?:[A-Z0-9_]*(?:TOKEN|SECRET|API_KEY|PRIVATE_KEY|PASSWORD|PASSWD|CREDENTIALS?|AUTH_KEY)[A-Z0-9_]*)\b/i;
+  if (netToolRe.test(trimmed) && envSecretRefRe.test(trimmed)) {
+    const urls = trimmed.match(/https?:\/\/[^\s"'`]+/gi) || [];
+    const loopbackOnly = urls.length > 0 && urls.every((u) => /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:\/|$)/i.test(u)) && !/\b(?:nc|ncat)\b/i.test(trimmed);
+    if (!loopbackOnly) {
+      return {
+        allow: false,
+        category: 'secret_exfil',
+        reason: '🛑 [Security Firewall] Blocked potential secret environment-variable exfiltration via network command.',
+        suggestedCmd: ''
+      };
+    }
+  }
+
   // Root or home wipe: token-level check so project subfolders (e.g. rm -rf dist/, ./build/, C:/project/dist/) are allowed
   const isDangerousWipeTarget = (rawTok = '') => {
     const tok = String(rawTok).trim().replace(/^['"]|['"]$/g, '');
@@ -599,15 +620,18 @@ function checkCommandSecurityImpl(opts = {}, positionalWorkspaceRoot = '') {
     };
   }
 
-  if (/\b(?:Get-ChildItem|gci)\b[^\n]*-(?:r|recurse)\b/i.test(unquoted)) {
-    const hasBounding = /(?:-Depth\b|Select-Object\b|Measure-Object\b|Where-Object\b|ForEach-Object\b|\|\s*%\b|obs-masker)/i.test(unquoted);
-    if (!hasBounding) {
-      return {
-        allow: false,
-        category: 'rtk_noisy_cmd',
-        suggestedCmd: 'Get-ChildItem -Depth 2',
-        reason: '⚡ [RTK Token Guard] Unbounded recursive directory listing floods context. Add -Depth 2 or Select-Object -First 40.'
-      };
+  const hasPipeOrFilterBounding = /(?:-Depth\b|Select-Object\b|Measure-Object\b|Where-Object\b|ForEach-Object\b|\|\s*%\b|obs-masker)/i.test(unquoted);
+  if (!hasPipeOrFilterBounding) {
+    const gciSegments = unquoted.split(/[|;&\r\n]+/);
+    for (const seg of gciSegments) {
+      if (/\b(?:Get-ChildItem|gci)\b/i.test(seg) && /(?:^|\s)-(?:r|recurse)\b/i.test(seg) && !/-Depth\b/i.test(seg)) {
+        return {
+          allow: false,
+          category: 'rtk_noisy_cmd',
+          suggestedCmd: 'Get-ChildItem -Depth 2',
+          reason: '⚡ [RTK Token Guard] Unbounded recursive directory listing floods context. Add -Depth 2 or Select-Object -First 40.'
+        };
+      }
     }
   }
 

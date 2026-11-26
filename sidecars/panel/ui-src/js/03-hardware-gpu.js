@@ -1,3 +1,12 @@
+    function setHwTooltipTitle(el, text) {
+      if (!el) return;
+      if (typeof setTooltipTitle === 'function') {
+        setTooltipTitle(el, text);
+      } else {
+        el.title = String(text == null ? '' : text);
+      }
+    }
+
     function resolvePanelOllamaVram(oll, hw) {
       const rawList = Array.isArray(oll && oll.loadedModels) ? oll.loadedModels : [];
       if (rawList.length === 0) {
@@ -200,7 +209,35 @@
       syncHwLimitSelect('sel-liteCpuThreadsCap', CPU_THREAD_PRESETS, maxCpu, cpuMaxThreads, fmtLiteCpu, true);
     }
 
+    const CLIENT_RAM_GRACE_MS = 20000;
+    const CLIENT_RAM_GRACE_MAX_MISSES = 4;
+    let _lastActiveRamSnap = { ts: 0, data: null };
+    let _clientRamInactiveMisses = 0;
+
     function renderGpuAndRam(gpu, ramCache, s, cpu) {
+      const prevHwCtx = _lastHwRenderCtx;
+      if (!gpu && prevHwCtx && prevHwCtx.gpu) gpu = prevHwCtx.gpu;
+      if (!ramCache && prevHwCtx && prevHwCtx.ramCache) ramCache = prevHwCtx.ramCache;
+      if (!cpu && prevHwCtx && prevHwCtx.cpu) cpu = prevHwCtx.cpu;
+      const ramOn = !(s && s.ramCacheEnabled === false);
+      if (!ramOn) {
+        _lastActiveRamSnap = { ts: 0, data: null };
+        _clientRamInactiveMisses = 0;
+      } else if (ramCache && ramCache.active === true) {
+        _lastActiveRamSnap = { ts: Date.now(), data: ramCache };
+        _clientRamInactiveMisses = 0;
+      } else if (
+        _lastActiveRamSnap.data &&
+        (Date.now() - _lastActiveRamSnap.ts <= CLIENT_RAM_GRACE_MS) &&
+        _clientRamInactiveMisses < CLIENT_RAM_GRACE_MAX_MISSES
+      ) {
+        _clientRamInactiveMisses += 1;
+        ramCache = Object.assign({}, _lastActiveRamSnap.data, {
+          enabled: true,
+          budgetMb: (ramCache && ramCache.budgetMb) || _lastActiveRamSnap.data.budgetMb,
+          totalRamMb: (ramCache && ramCache.totalRamMb) || _lastActiveRamSnap.data.totalRamMb,
+        });
+      }
       const cfg = (gpu && gpu.config) || {};
       const cpuCfg = (cpu && cpu.config) || {};
       const ceilings = resolveClientHardwareCeilings(gpu, ramCache, cpu);
@@ -252,29 +289,76 @@
       const chkUnloadExit = document.getElementById('chk-gpuUnloadOnExit');
       if (chkUnloadExit) chkUnloadExit.checked = s.gpuUnloadOnExit !== false;
 
+      if (typeof syncTogglePresetsUi === 'function') {
+        syncTogglePresetsUi(s);
+      }
+
       syncAllHwLimitSelects(ceilings, capMb, ramBudgetMb, cpuMaxThreads);
 
       const vramHintEl = document.getElementById('gpuVramCapHint');
+      const vramHintText = ceilings
+        ? (ceilings.gpuAvailable
+          ? (L('(до ', '(up to ') + Math.round(ceilings.maxVramMb / 1024) + L(' ГБ)', ' GB)'))
+          : L('(GPU не найдена · мин. 4 ГБ)', '(No GPU detected · min 4 GB)'))
+        : '';
       if (vramHintEl) {
-        if (ceilings) {
-          vramHintEl.textContent = ceilings.gpuAvailable
-            ? (L('(до ', '(up to ') + Math.round(ceilings.maxVramMb / 1024) + L(' ГБ)', ' GB)'))
-            : L('(GPU не найдена · мин. 4 ГБ)', '(No GPU detected · min 4 GB)');
-        } else {
-          vramHintEl.textContent = '';
-        }
+        vramHintEl.textContent = vramHintText;
       }
       const ramHintEl = document.getElementById('ramBudgetCapHint');
+      const ramHintText = ceilings && ceilings.totalRamGb > 0
+        ? (L('(до ', '(up to ') + Math.round(ceilings.maxRamBudgetMb / 1024) + L(' из ', ' of ') + ceilings.totalRamGb + L(' ГБ ОЗУ)', ' GB RAM)'))
+        : '';
       if (ramHintEl) {
-        ramHintEl.textContent = ceilings && ceilings.totalRamGb > 0
-          ? (L('(до ', '(up to ') + Math.round(ceilings.maxRamBudgetMb / 1024) + L(' из ', ' of ') + ceilings.totalRamGb + L(' ГБ ОЗУ)', ' GB RAM)'))
-          : '';
+        ramHintEl.textContent = ramHintText;
       }
       const cpuHintEl = document.getElementById('cpuThreadsCapHint');
+      const cpuHintText = ceilings && ceilings.logicalCores > 0
+        ? (L('(до ', '(up to ') + ceilings.maxCpuThreads + L(' из ', ' of ') + ceilings.logicalCores + L(' пот.)', ' thr.)'))
+        : '';
       if (cpuHintEl) {
-        cpuHintEl.textContent = ceilings && ceilings.logicalCores > 0
-          ? (L('(до ', '(up to ') + ceilings.maxCpuThreads + L(' из ', ' of ') + ceilings.logicalCores + L(' пот.)', ' thr.)'))
-          : '';
+        cpuHintEl.textContent = cpuHintText;
+      }
+
+      const btnVramCap = document.getElementById('btn-gpuVramCap');
+      if (btnVramCap) {
+        setHwTooltipTitle(btnVramCap, L('Лимит видеопамяти GPU (VRAM)', 'GPU VRAM limit') + (vramHintText ? (' ' + vramHintText) : ''));
+      }
+      const btnRamCap = document.getElementById('btn-ramBudgetMain');
+      if (btnRamCap) {
+        setHwTooltipTitle(btnRamCap, L('Лимит оперативной памяти In-RAM', 'In-RAM cache limit') + (ramHintText ? (' ' + ramHintText) : ''));
+      }
+      const btnCpuCap = document.getElementById('btn-cpuThreadsCap');
+      if (btnCpuCap) {
+        setHwTooltipTitle(btnCpuCap, L('Лимит потоков процессора (CPU-пул)', 'CPU worker pool thread cap') + (cpuHintText ? (' ' + cpuHintText) : ''));
+      }
+      const ramLimitLbl = document.getElementById('ramUnitLimitLabel');
+      if (ramLimitLbl) {
+        setHwTextIfChanged(ramLimitLbl, L('Лимит', 'Limit'));
+        setHwTooltipTitle(ramLimitLbl, L('Лимит оперативной памяти для кэша проекта In-RAM', 'System RAM cap for In-RAM project cache') + (ramHintText ? (' ' + ramHintText) : ''));
+      }
+      const gpuLimitLbl = document.getElementById('gpuUnitLimitLabel');
+      if (gpuLimitLbl) {
+        setHwTextIfChanged(gpuLimitLbl, 'VRAM');
+        setHwTooltipTitle(gpuLimitLbl, L('Лимит видеопамяти GPU (Ollama)', 'GPU VRAM cap (Ollama)') + (vramHintText ? (' ' + vramHintText) : ''));
+      }
+      const cpuLimitLbl = document.getElementById('cpuUnitLimitLabel');
+      if (cpuLimitLbl) {
+        setHwTextIfChanged(cpuLimitLbl, L('Потоки', 'Threads'));
+        setHwTooltipTitle(cpuLimitLbl, L('Лимит потоков пула CPU для AST, чанков и проверок', 'CPU pool thread cap for AST, chunks, and checks') + (cpuHintText ? (' ' + cpuHintText) : ''));
+      }
+      const gpuSwitchLbl = document.getElementById('gpuEnableSwitchLabel');
+      if (gpuSwitchLbl) {
+        setHwTooltipTitle(gpuSwitchLbl, L('Включить или выключить локального GPU-помощника (Ollama)', 'Enable or disable local GPU copilot (Ollama)'));
+      }
+      if (chkGpu) {
+        chkGpu.setAttribute('aria-label', L('Включить GPU-помощник', 'Enable GPU copilot'));
+      }
+      const cpuSwitchLbl = document.getElementById('cpuEnableSwitchLabel');
+      if (cpuSwitchLbl) {
+        setHwTooltipTitle(cpuSwitchLbl, L('Включить или выключить многопоточный пул CPU', 'Enable or disable multi-core CPU worker pool'));
+      }
+      if (chkCpuPool) {
+        chkCpuPool.setAttribute('aria-label', L('Включить пул потоков CPU', 'Enable CPU worker pool'));
       }
 
       syncExpertInput('inp-gpuEndpoint', (s && s.gpuEndpoint) || cfg.gpuEndpoint || 'http://127.0.0.1:11434');
@@ -285,8 +369,6 @@
       syncExpertInput('inp-gpuContextTokens', (s && s.gpuContextTokens) || cfg.gpuContextTokens || 4096);
       syncExpertInput('inp-gpuModelsDir', (s && s.gpuModelsDir !== undefined) ? s.gpuModelsDir : (cfg.gpuModelsDir || ''));
       syncExpertInput('inp-gpuOllamaDir', (s && s.gpuOllamaDir !== undefined) ? s.gpuOllamaDir : (cfg.gpuOllamaDir || ''));
-
-      const ramSubEl = document.getElementById('ramCacheSubLine');
 
       const enabled = Boolean(s && s.gpuEnabled);
       const oll = (gpu && gpu.ollama) || {};
@@ -299,7 +381,7 @@
         const gpuLbl = hw && hw.available && hw.name
           ? (hw.name.replace(/NVIDIA GeForce |AMD Radeon |Intel\(R\) /i, '').trim() + L(' (до ', ' (up to ') + capGb + L(' ГБ)', ' GB)'))
           : (enabled ? (L('Локальный GPU (до ', 'Local GPU (up to ') + capGb + L(' ГБ)', ' GB)')) : L('Контур CPU + In-RAM', 'CPU + In-RAM Mode'));
-        legendEl.textContent = '🎮 ' + gpuLbl + L(' и память проекта (', ' & Project Memory (') + ramGbLbl + L(' ГБ RAM)', ' GB RAM)');
+        legendEl.textContent = gpuLbl + L(' и память проекта (', ' & Project Memory (') + ramGbLbl + L(' ГБ RAM)', ' GB RAM)');
       }
 
       const ollResolved = resolvePanelOllamaVram(oll, hw);
@@ -308,32 +390,6 @@
       renderGpuVramFitAlert(s, vramFit);
       renderGpuCascadePullStatus(gpu ? gpu.pullStatus : null, gpu, s);
       renderGpuOllamaInstallStatus(gpu ? gpu.ollamaInstallStatus : null, gpu, s);
-
-      if (ramSubEl) {
-        const instSuffix = ramCache && ramCache.active && Number(ramCache.instancesCount || 1) > 1
-          ? (L(' · Демонов ОЗУ: ', ' · RAM Daemons: ') + ramCache.instancesCount)
-          : '';
-        const sotaInfo = ramCache && ramCache.sota ? ramCache.sota : null;
-        const sotaOpsCount = sotaInfo
-          ? (Number(sotaInfo.memoHits || 0) + Number(sotaInfo.repairRecalls || 0))
-          : 0;
-        const sotaSuffix = (sotaInfo && (Number(sotaInfo.memoHits || 0) > 0 || Number(sotaInfo.repairRecalls || 0) > 0))
-          ? (L(' · Мемо/RepairKV: +', ' · Memo/RepairKV: +') + sotaOpsCount)
-          : '';
-        const hostWarmedLbl = formatHostRamWarmedLabel(tel.hostRamWarmedMb);
-        const ddr5Suffix = (hostWarmedLbl && (!s || s.gpuWarmHostRamCache !== false))
-          ? (' · DDR5 GGUF: ' + hostWarmedLbl)
-          : '';
-        ramSubEl.textContent =
-          L('Векторный индекс: проиндексировано ', 'Vector index: indexed ') +
-          (tel.indexedFiles || 0) +
-          L(' файлов (', ' files (') +
-          (tel.indexedChunks || 0) +
-          L(' фрагментов)', ' chunks)') +
-          instSuffix +
-          sotaSuffix +
-          ddr5Suffix;
-      }
 
       updateLiveHardwareOpticalUi(gpu, ollResolved, ramCache, s, capGb, ramBudgetMb, cpu);
     }
@@ -348,7 +404,7 @@
       const vramGb = Math.max(2, Math.round(Number(st.gpuMaxVramMb || (gpu && gpu.config && gpu.config.gpuMaxVramMb) || 4096) / 1024));
       if (isWorkingOverride) {
         badgeEl.className = 'swarm-pill active';
-        badgeEl.textContent = L('⚡ В работе', '⚡ Active');
+        badgeEl.textContent = L('В работе', 'Active');
         return;
       }
       badgeEl.className = 'swarm-pill idle';
@@ -450,6 +506,215 @@
         ? (' · ' + live.lastLatencyMs + L(' мс', ' ms'))
         : '';
       return base + msTag;
+    }
+
+    function setHwMetricSplit(el, primaryText, capText) {
+      if (!el) return;
+      const p = String(primaryText == null ? '' : primaryText);
+      const c = String(capText == null ? '' : capText);
+      const raw = c ? (p + ' ' + c) : p;
+      if (el.dataset && el.dataset.hwRaw === raw && el.childElementCount >= 1) return;
+      if (el.dataset) el.dataset.hwRaw = raw;
+      while (el.firstChild) el.removeChild(el.firstChild);
+      const valSpan = document.createElement('span');
+      valSpan.className = 'hw-metric-val';
+      valSpan.textContent = p;
+      el.appendChild(valSpan);
+      if (c) {
+        const capSpan = document.createElement('span');
+        capSpan.className = 'hw-metric-cap';
+        capSpan.textContent = ' ' + c;
+        el.appendChild(capSpan);
+      }
+    }
+
+    const _hwB4Units = {
+      ram: { level: 0, target: 0, mode: 'off' },
+      gpu: { level: 0, target: 0, mode: 'off' },
+      cpu: { level: 0, target: 0, mode: 'off' },
+    };
+    const _hwB4CanvasIds = { ram: 'ramB4Canvas', gpu: 'gpuB4Canvas', cpu: 'cpuB4Canvas' };
+    const _hwB4Colors = { ram: [148, 163, 184], gpu: [77, 139, 140], cpu: [240, 72, 72], over: [239, 68, 68] };
+    const _hwB4Rates = { ram: { scan: 0.48, wave: 2.8 }, gpu: { scan: 0.65, wave: 3.8 }, cpu: { scan: 0.92, wave: 6.0 } };
+    let _hwB4RafId = 0;
+    let _hwB4LastTs = 0;
+    let _hwB4LifecycleBound = false;
+
+    function hwB4PrefersReducedMotion() {
+      try {
+        return Boolean(typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+      } catch {
+        return false;
+      }
+    }
+
+    function hwB4IsCardCollapsed() {
+      const card = document.getElementById('gpuRamCard');
+      return Boolean(card && card.classList.contains('is-collapsed'));
+    }
+
+    function drawHwB4Rect(ctx, x, y, w, h, r) {
+      if (typeof ctx.roundRect === 'function') {
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, h, r);
+        ctx.fill();
+      } else {
+        ctx.fillRect(x, y, w, h);
+      }
+    }
+
+    function drawHwB4Canvas(unit, cv, d, t, reducedMotion) {
+      if (!cv || typeof cv.getContext !== 'function' || typeof cv.getBoundingClientRect !== 'function') return;
+      const rect = cv.getBoundingClientRect();
+      if (rect.width < 10 || rect.height < 8) return;
+      const dpr = Math.min((typeof window !== 'undefined' && window.devicePixelRatio) || 1, 2);
+      const w = Math.max(60, Math.round(rect.width * dpr));
+      const h = Math.max(16, Math.round(rect.height * dpr));
+      if (cv.width !== w || cv.height !== h) {
+        cv.width = w;
+        cv.height = h;
+      }
+      const ctx = cv.getContext('2d');
+      if (!ctx) return;
+      ctx.clearRect(0, 0, w, h);
+
+      const midY = h / 2;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.07)';
+      ctx.fillRect(0, midY - 0.5 * dpr, w, Math.max(1, dpr));
+
+      const count = 26;
+      const gap = Math.max(2 * dpr, w * 0.015);
+      const bw = Math.max(1.5 * dpr, (w - gap * (count - 1)) / count);
+      const radius = 1.4 * dpr;
+      const dotH = 3 * dpr;
+
+      if (d.mode === 'off') {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+        for (let i = 0; i < count; i++) {
+          drawHwB4Rect(ctx, i * (bw + gap), midY - dotH / 2, bw, dotH, radius);
+        }
+        return;
+      }
+
+      const lit = Math.max(d.target > 0.005 ? 1 : 0, Math.round(d.level * count));
+      const rgb = d.mode === 'over' ? _hwB4Colors.over : _hwB4Colors[unit];
+      const rates = _hwB4Rates[unit];
+      const active = d.mode === 'working' || d.mode === 'over';
+      const mult = d.mode === 'over' ? 1.25 : 1.0;
+      const scan = ((t * rates.scan * mult) % 1.35) * Math.max(1, lit);
+
+      for (let i = 0; i < count; i++) {
+        const x = i * (bw + gap);
+        if (i >= lit) {
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.14)';
+          drawHwB4Rect(ctx, x, midY - dotH / 2, bw, dotH, radius);
+          continue;
+        }
+        let halfH;
+        let alpha;
+        if (reducedMotion) {
+          halfH = Math.max(2.5 * dpr, h * 0.34);
+          alpha = 0.78;
+        } else if (!active) {
+          const idleWave = 0.5 + 0.5 * Math.sin(t * 1.4 - i * 0.45);
+          halfH = Math.max(2.2 * dpr, h * (0.14 + 0.08 * idleWave));
+          alpha = 0.48;
+        } else {
+          const focus = Math.max(0, 1 - Math.abs(i - scan) / 3.4);
+          const wave = 0.5 + 0.5 * Math.sin(t * rates.wave * mult - i * 0.55);
+          halfH = Math.max(2.5 * dpr, (h * 0.46) * (0.28 + focus * 0.46 + wave * 0.26));
+          alpha = 0.52 + focus * 0.45;
+        }
+        const isTip = i === lit - 1 && active && !reducedMotion;
+        ctx.fillStyle = isTip
+          ? '#ffffff'
+          : ('rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + alpha.toFixed(3) + ')');
+        drawHwB4Rect(ctx, x, midY - halfH, bw, halfH * 2, radius);
+      }
+    }
+
+    function drawAllHwB4Static() {
+      const t = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+      const reduced = hwB4PrefersReducedMotion();
+      for (const unit of ['ram', 'gpu', 'cpu']) {
+        const d = _hwB4Units[unit];
+        d.level = d.target;
+        drawHwB4Canvas(unit, document.getElementById(_hwB4CanvasIds[unit]), d, t, reduced);
+      }
+    }
+
+    function stopHwB4Loop() {
+      if (_hwB4RafId && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(_hwB4RafId);
+      }
+      _hwB4RafId = 0;
+      _hwB4LastTs = 0;
+    }
+
+    function hwB4Tick(now) {
+      _hwB4RafId = 0;
+      const reduced = hwB4PrefersReducedMotion();
+      const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+      const allOff = _hwB4Units.ram.mode === 'off' && _hwB4Units.gpu.mode === 'off' && _hwB4Units.cpu.mode === 'off';
+      if (hidden || hwB4IsCardCollapsed() || allOff || reduced) {
+        if (!hidden && !hwB4IsCardCollapsed()) drawAllHwB4Static();
+        _hwB4LastTs = 0;
+        return;
+      }
+      const dt = _hwB4LastTs ? Math.min(0.05, (now - _hwB4LastTs) / 1000) : 0.016;
+      _hwB4LastTs = now;
+      const t = now / 1000;
+      for (const unit of ['ram', 'gpu', 'cpu']) {
+        const d = _hwB4Units[unit];
+        d.level += (d.target - d.level) * Math.min(1, dt * 6);
+        drawHwB4Canvas(unit, document.getElementById(_hwB4CanvasIds[unit]), d, t, false);
+      }
+      _hwB4RafId = requestAnimationFrame(hwB4Tick);
+    }
+
+    function bindHwB4LifecycleOnce() {
+      if (_hwB4LifecycleBound || typeof document === 'undefined') return;
+      _hwB4LifecycleBound = true;
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'hidden') stopHwB4Loop();
+        else ensureHwB4Loop();
+      });
+      const card = document.getElementById('gpuRamCard');
+      if (card && typeof MutationObserver === 'function') {
+        const mo = new MutationObserver(function () {
+          if (hwB4IsCardCollapsed()) stopHwB4Loop();
+          else ensureHwB4Loop();
+        });
+        mo.observe(card, { attributes: true, attributeFilter: ['class'] });
+      }
+    }
+
+    function ensureHwB4Loop() {
+      bindHwB4LifecycleOnce();
+      const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+      if (hidden || hwB4IsCardCollapsed()) {
+        stopHwB4Loop();
+        return;
+      }
+      const reduced = hwB4PrefersReducedMotion();
+      const allOff = _hwB4Units.ram.mode === 'off' && _hwB4Units.gpu.mode === 'off' && _hwB4Units.cpu.mode === 'off';
+      if (reduced || allOff || typeof requestAnimationFrame !== 'function') {
+        stopHwB4Loop();
+        drawAllHwB4Static();
+        return;
+      }
+      if (!_hwB4RafId) {
+        _hwB4LastTs = 0;
+        _hwB4RafId = requestAnimationFrame(hwB4Tick);
+      }
+    }
+
+    function syncHwB4Unit(unit, targetFrac, mode) {
+      const d = _hwB4Units[unit];
+      if (!d) return;
+      d.target = Math.max(0, Math.min(1, Number(targetFrac) || 0));
+      d.mode = mode || 'off';
+      if (d.mode === 'off') d.level = 0;
     }
 
     function formatHwCapPctLabel(usedVal, maxVal) {
@@ -571,7 +836,7 @@
       } else if (ramWorking) {
         const shortOp = ramLive.lastOp === 'ram_slice' ? L('Срез кода', 'Slice') : (ramLive.lastOp === 'ram_search' ? L('Поиск', 'Search') : L('Чтение', 'Read'));
         ramPillCls = 'is-working-ram';
-        ramPillText = 'RAM · ⚡ ' + shortOp;
+        ramPillText = 'RAM · ' + shortOp;
       } else if (ramWarm) {
         ramPillCls = 'is-standby';
         ramPillText = L('RAM · В фоне (', 'RAM · Standby (') + Math.round(ramCache.cacheUsedMb || 0) + L(' МБ)', ' MB)');
@@ -581,6 +846,7 @@
       const topRamTxt = document.getElementById('topRamLiveText');
       if (topRamPill && topRamTxt) {
         topRamPill.className = 'hw-live-pill ' + ramPillCls;
+        topRamPill.setAttribute('aria-pressed', ramEnabled ? 'true' : 'false');
         topRamTxt.textContent = ramPillText;
       }
 
@@ -592,7 +858,7 @@
       } else if (gpuWorking) {
         const activeModShort = String(gpuLive.currentModel || (s && s.gpuChatModel) || 'Ollama').split(':')[0];
         gpuPillCls = 'is-working-gpu';
-        gpuPillText = 'GPU · 🔥 ' + activeModShort;
+        gpuPillText = 'GPU · ' + activeModShort;
       } else if (gpuWarmInVram) {
         gpuPillCls = 'is-standby';
         gpuPillText = L('GPU · В фоне (', 'GPU · Standby (') + (loadedVramMb / 1024).toFixed(1) + L(' ГБ)', ' GB)');
@@ -602,6 +868,7 @@
       const topGpuTxt = document.getElementById('topGpuLiveText');
       if (topGpuPill && topGpuTxt) {
         topGpuPill.className = 'hw-live-pill ' + gpuPillCls;
+        topGpuPill.setAttribute('aria-pressed', gpuEnabled ? 'true' : 'false');
         topGpuTxt.textContent = gpuPillText;
       }
 
@@ -611,13 +878,14 @@
         liteMasterBtn.classList.toggle('is-on', anyHwOn);
         liteMasterBtn.classList.toggle('is-off', !anyHwOn);
         liteMasterBtn.setAttribute('aria-pressed', anyHwOn ? 'true' : 'false');
-        liteMasterBtn.textContent = anyHwOn ? L('⚡ Активно', '⚡ Active') : L('⏸ Пауза', '⏸ Paused');
+        liteMasterBtn.textContent = anyHwOn ? L('Активно', 'Active') : L('Пауза', 'Paused');
       }
 
       const topCpuPill = document.getElementById('topCpuLivePill');
       const topCpuTxt = document.getElementById('topCpuLiveText');
       if (topCpuPill && topCpuTxt) {
-        if (!cpuEnabled) {
+        topCpuPill.setAttribute('aria-pressed', cpuPoolOn ? 'true' : 'false');
+        if (!cpuPoolOn) {
           topCpuPill.className = 'hw-live-pill is-off';
           topCpuTxt.textContent = L('CPU · Выкл', 'CPU · Off');
         } else if (cpuWorking) {
@@ -626,7 +894,7 @@
             ? 'Rerank'
             : (opRaw === 'parallel_verify' || opRaw === 'ddmin_parallel' ? L('Проверка', 'Verify') : L('Воркеры', 'Workers'));
           topCpuPill.className = 'hw-live-pill is-working-cpu';
-          topCpuTxt.textContent = 'CPU · ⚡ ' + shortCpuOp;
+          topCpuTxt.textContent = 'CPU · ' + shortCpuOp;
         } else {
           topCpuPill.className = 'hw-live-pill is-standby';
           topCpuTxt.textContent = L('CPU · В фоне (', 'CPU · Standby (') + effThreads + L(' пот.)', ' thr.)');
@@ -640,64 +908,86 @@
       const ramOp = document.getElementById('ramUnitOpText');
       const ramFill = document.getElementById('ramUnitAfterglowFill');
       const ramCapPct = document.getElementById('ramUnitCapPct');
-      syncRamSavedPillFromState(ramCache);
       if (ramCard && ramBadge && ramMetric && ramOp && ramFill) {
         const usedMb = ramCache && ramCache.active ? (ramCache.cacheUsedMb || 0) : 0;
         const capRam = Math.max(256, Number(ramBudgetMb || (ramCache && ramCache.budgetMb) || 4096));
         const rawRamFrac = Math.max(0, Math.min(1, usedMb / capRam));
-        ramMetric.textContent = usedMb + ' / ' + capRam + L(' МБ', ' MB');
+        if (capRam >= 1024) {
+          const capGbStr = (capRam % 1024 === 0) ? String(capRam / 1024) : (capRam / 1024).toFixed(1);
+          const usedGbStr = usedMb === 0 ? '0' : (usedMb < 1024 ? (usedMb / 1024).toFixed(2).replace(/0$/, '') : (usedMb / 1024).toFixed(1));
+          setHwMetricSplit(ramMetric, usedGbStr, '/ ' + capGbStr + L(' ГБ', ' GB'));
+        } else {
+          setHwMetricSplit(ramMetric, String(usedMb), '/ ' + capRam + L(' МБ', ' MB'));
+        }
         if (ramCapPct) {
-          ramCapPct.textContent = !ramEnabled ? L('Выкл', 'Off') : formatHwCapPctLabel(usedMb, capRam);
+          setHwTextIfChanged(ramCapPct, !ramEnabled ? L('Выкл', 'Off') : formatHwCapPctLabel(usedMb, capRam));
         }
         if (!ramEnabled) {
           ramCard.className = 'hw-optical-unit ram-unit is-off';
-          ramBadge.textContent = L('⚪ Выкл', '⚪ Off');
+          ramBadge.textContent = L('Выкл', 'Off');
           ramOp.textContent = L('In-RAM буфер отключён в настройках', 'In-RAM cache is disabled in settings');
           ramFill.style.setProperty('--hw-fill', '0');
+          syncHwB4Unit('ram', 0, 'off');
         } else if (ramWorking) {
           const workFill = Math.min(1, Math.max(rawRamFrac, usedMb > 0 ? 0.08 : 0.04, 0.16 + 0.56 * ramRatio));
           ramCard.className = 'hw-optical-unit ram-unit is-working';
-          ramBadge.textContent = L('⚡ В работе', '⚡ Active');
+          ramBadge.textContent = L('В работе', 'Active');
           ramOp.textContent = formatRamLiveOpRu(ramLive);
           ramFill.style.setProperty('--hw-fill', workFill.toFixed(3));
+          syncHwB4Unit('ram', workFill, 'working');
         } else if (ramWarm) {
           const wsArr = Array.isArray(ramCache.workspaces) ? ramCache.workspaces : [];
           const filesCount = wsArr.reduce((acc, w) => acc + (Number(w && w.files) || 0), 0);
+          const sotaInfo = ramCache && ramCache.sota ? ramCache.sota : null;
+          const sotaOpsCount = sotaInfo
+            ? (Number(sotaInfo.memoHits || 0) + Number(sotaInfo.repairRecalls || 0))
+            : 0;
+          const sotaSuffix = sotaOpsCount > 0
+            ? (L(' · Мемо/RepairKV: +', ' · Memo/RepairKV: +') + sotaOpsCount)
+            : '';
           const standbyFill = usedMb > 0 ? Math.max(0.065, rawRamFrac) : 0.045;
           ramCard.className = 'hw-optical-unit ram-unit is-standby';
-          ramBadge.textContent = L('🟡 В фоне', '🟡 Standby');
-          ramOp.textContent = filesCount > 0
+          ramBadge.textContent = L('В фоне', 'Standby');
+          ramOp.textContent = (filesCount > 0
             ? (L('Прогрето в ОЗУ: ', 'Warmed in RAM: ') + filesCount + L(' файлов · ждёт запроса', ' files · awaiting query'))
-            : (L('Демон активен · ждёт обращений (хитов: ', 'Daemon active · awaiting requests (hits: ') + (ramCache.hits || 0) + ')');
+            : (L('Демон активен · ждёт обращений (хитов: ', 'Daemon active · awaiting requests (hits: ') + (ramCache.hits || 0) + ')')) + sotaSuffix;
           ramFill.style.setProperty('--hw-fill', standbyFill.toFixed(3));
+          syncHwB4Unit('ram', standbyFill, 'standby');
         } else {
           ramCard.className = 'hw-optical-unit ram-unit is-off';
-          ramBadge.textContent = L('⚪ Спит', '⚪ Sleep');
+          ramBadge.textContent = L('Спит', 'Sleep');
           ramOp.textContent = L('Автостарт при первом обращении ИИ', 'Auto-starts on first AI request');
           ramFill.style.setProperty('--hw-fill', '0.032');
+          syncHwB4Unit('ram', 0.032, 'off');
         }
+        setHwTooltipTitle(ramCard, ramBadge.textContent + ' · ' + ramOp.textContent);
       }
 
       const gpuCard = document.getElementById('gpuLiveUnitCard');
       const gpuBadge = document.getElementById('gpuUnitStateBadge');
       const gpuMetric = document.getElementById('gpuUnitMetricVal');
-      const gpuSavedPill = document.getElementById('gpuUnitSavedPill');
+      const gpuGgufPill = document.getElementById('gpuUnitGgufPill');
       const gpuOp = document.getElementById('gpuUnitOpText');
       const gpuFill = document.getElementById('gpuUnitAfterglowFill');
       const gpuCapPct = document.getElementById('gpuUnitCapPct');
       const gpuTel = (gpu && gpu.telemetry) || {};
       const gpuHw = (gpu && gpu.hardware) || {};
       const gpuGuard = (gpu && gpu.thermalGuard) || {};
-      if (gpuSavedPill) {
-        const savedGpuTok = Math.max(
-          Number(gpuTel.savedTokensEstimate || 0),
-          Number((_lastTelemetrySnapshot && _lastTelemetrySnapshot.gpuSavedTokens) || 0)
-        );
-        gpuSavedPill.textContent = '~' + formatK(savedGpuTok) + L(' ток.', ' tok');
-        gpuSavedPill.title =
-          L('Экономия видеомодели GPU: ~', 'Local GPU savings: ~') + formatExactInt(savedGpuTok) + L(' ток. ', ' tok ') +
-          L('(сжатий логов: ', '(log distills: ') + formatExactInt(gpuTel.distillCalls || 0) +
-          L(' · семантических поисков: ', ' · semantic searches: ') + formatExactInt(gpuTel.semanticSearches || 0) + ')';
+      if (gpuGgufPill) {
+        const hostWarmedLbl = formatHostRamWarmedLabel(gpuTel.hostRamWarmedMb);
+        const ddr5WarmOn = Boolean(gpuEnabled && hostWarmedLbl && (!s || s.gpuWarmHostRamCache !== false));
+        if (ddr5WarmOn) {
+          gpuGgufPill.style.display = 'inline-flex';
+          setHwTextIfChanged(gpuGgufPill, 'GGUF: ' + hostWarmedLbl);
+          setHwTooltipTitle(
+            gpuGgufPill,
+            L('Веса GGUF прогреты в системной DDR5 ОЗУ (', 'GGUF weights warmed in system DDR5 RAM (') +
+            hostWarmedLbl +
+            L(') для быстрого подъёма в VRAM', ') for fast VRAM load')
+          );
+        } else {
+          gpuGgufPill.style.display = 'none';
+        }
       }
       if (gpuCard && gpuBadge && gpuMetric && gpuOp && gpuFill) {
         const usedVramGb = (loadedVramMb / 1024).toFixed(1);
@@ -708,52 +998,60 @@
         const hwSensorsSuffix = (gpuEnabled && gpuHw.available && (liveTempC > 0 || liveUtilPct > 0))
           ? (' · ' + liveUtilPct + '% · ' + (liveTempC > 0 ? (liveTempC + '°C') : '—'))
           : '';
-        gpuMetric.textContent = usedVramGb + ' / ' + capGb + L(' ГБ', ' GB');
+        setHwMetricSplit(gpuMetric, usedVramGb, '/ ' + capGb + L(' ГБ', ' GB'));
         if (gpuCapPct) {
-          gpuCapPct.textContent = !gpuEnabled
+          setHwTextIfChanged(gpuCapPct, !gpuEnabled
             ? L('Выкл', 'Off')
-            : (formatHwCapPctLabel(loadedVramMb, capVramMb) + hwSensorsSuffix);
+            : (formatHwCapPctLabel(loadedVramMb, capVramMb) + hwSensorsSuffix));
         }
-        gpuMetric.title = gpuHw.available
-          ? (
-            isRu()
-              ? (
-                gpuHw.name +
-                ' · Модели Ollama: ' + usedVramGb + ' ГБ' +
-                ' · Всего на GPU: ' + ((gpuHw.usedMb || 0) / 1024).toFixed(1) + ' / ' + ((gpuHw.totalMb || 0) / 1024).toFixed(1) + ' ГБ' +
-                ' (свободно ' + ((gpuHw.freeMb || 0) / 1024).toFixed(1) + ' ГБ) · Ядро: ' + liveUtilPct + '% · ' + liveTempC + '°C'
-              )
-              : (
-                gpuHw.name +
-                ' · Ollama models: ' + usedVramGb + ' GB' +
-                ' · Total GPU: ' + ((gpuHw.usedMb || 0) / 1024).toFixed(1) + ' / ' + ((gpuHw.totalMb || 0) / 1024).toFixed(1) + ' GB' +
-                ' (free ' + ((gpuHw.freeMb || 0) / 1024).toFixed(1) + ' GB) · Core: ' + liveUtilPct + '% · ' + liveTempC + '°C'
-              )
-          )
-          : '';
+        setHwTooltipTitle(
+          gpuMetric,
+          gpuHw.available
+            ? (
+              isRu()
+                ? (
+                  gpuHw.name +
+                  ' · Модели Ollama: ' + usedVramGb + ' ГБ' +
+                  ' · Всего на GPU: ' + ((gpuHw.usedMb || 0) / 1024).toFixed(1) + ' / ' + ((gpuHw.totalMb || 0) / 1024).toFixed(1) + ' ГБ' +
+                  ' (свободно ' + ((gpuHw.freeMb || 0) / 1024).toFixed(1) + ' ГБ) · Ядро: ' + liveUtilPct + '% · ' + liveTempC + '°C'
+                )
+                : (
+                  gpuHw.name +
+                  ' · Ollama models: ' + usedVramGb + ' GB' +
+                  ' · Total GPU: ' + ((gpuHw.usedMb || 0) / 1024).toFixed(1) + ' / ' + ((gpuHw.totalMb || 0) / 1024).toFixed(1) + ' GB' +
+                  ' (free ' + ((gpuHw.freeMb || 0) / 1024).toFixed(1) + ' GB) · Core: ' + liveUtilPct + '% · ' + liveTempC + '°C'
+                )
+            )
+            : ''
+        );
+        let gpuOpTipText = '';
         if (!gpuEnabled) {
           gpuCard.className = 'hw-optical-unit gpu-unit is-off';
-          gpuBadge.textContent = L('⚪ Выкл', '⚪ Off');
+          gpuBadge.textContent = L('Выкл', 'Off');
           gpuOp.textContent = L('Локальный GPU-помощник выключен', 'Local GPU copilot is disabled');
-          gpuOp.title = '';
+          gpuOpTipText = '';
           gpuFill.style.setProperty('--hw-fill', '0');
+          syncHwB4Unit('gpu', 0, 'off');
         } else if (gpuGuard.throttled && !gpuWorking) {
           const isThermal = gpuGuard.reason === 'thermal_throttle';
+          const guardFill = Math.max(0.08, rawGpuFrac);
           gpuCard.className = 'hw-optical-unit gpu-unit is-standby is-over-cap';
-          gpuBadge.textContent = isThermal ? ('🌡️ ' + liveTempC + '°C') : ('🎮 GPU ' + liveUtilPct + '%');
+          gpuBadge.textContent = isThermal ? (liveTempC + '°C') : ('GPU ' + liveUtilPct + '%');
           gpuOp.textContent = isThermal
             ? (L('Пауза по перегреву GPU (', 'GPU thermal pause (') + liveTempC + L('°C) · фоновые задачи приостановлены', '°C) · background tasks paused'))
             : (L('Внешняя нагрузка GPU (', 'External GPU load (') + liveUtilPct + L('%) · фоновый индекс отложен', '%) · background indexing deferred'));
-          gpuOp.title = pickText(gpuGuard, 'message', 'messageEn', gpuGuard.message || '');
-          gpuFill.style.setProperty('--hw-fill', Math.max(0.08, rawGpuFrac).toFixed(3));
+          gpuOpTipText = pickText(gpuGuard, 'message', 'messageEn', gpuGuard.message || '');
+          gpuFill.style.setProperty('--hw-fill', guardFill.toFixed(3));
+          syncHwB4Unit('gpu', guardFill, 'over');
         } else if (gpuWorking) {
           const liveText = formatGpuLiveOpRu(gpuLive, (s && s.gpuChatModel) || 'gemma4:12b');
           const workVramFill = Math.min(1, Math.max(rawGpuFrac, loadedVramMb > 0 ? 0.08 : 0.18 + 0.58 * gpuRatio));
           gpuCard.className = 'hw-optical-unit gpu-unit is-working';
-          gpuBadge.textContent = gpuInFlight ? L('🔥 В работе', '🔥 Working') : L('⚡ Завершено', '⚡ Done');
+          gpuBadge.textContent = gpuInFlight ? L('В работе', 'Working') : L('Завершено', 'Done');
           gpuOp.textContent = liveText;
-          gpuOp.title = liveText;
+          gpuOpTipText = liveText;
           gpuFill.style.setProperty('--hw-fill', workVramFill.toFixed(3));
+          syncHwB4Unit('gpu', workVramFill, 'working');
         } else if (gpuWarmInVram) {
           const names = Array.isArray(ollResolved && ollResolved.loadedModels)
             ? ollResolved.loadedModels.map((m) => m.name).join(' + ')
@@ -761,8 +1059,9 @@
           const isOverCap = loadedVramMb > (capGb * 1024 + 128);
           const hostWarmedLbl = formatHostRamWarmedLabel(gpuTel.hostRamWarmedMb);
           const ddr5WarmOn = Boolean(hostWarmedLbl && (!s || s.gpuWarmHostRamCache !== false));
+          const warmFill = isOverCap ? 1 : Math.max(0.065, rawGpuFrac);
           gpuCard.className = isOverCap ? 'hw-optical-unit gpu-unit is-standby is-over-cap' : 'hw-optical-unit gpu-unit is-standby';
-          gpuBadge.textContent = isOverCap ? L('⚠️ Сверх лимита', '⚠️ Over cap') : L('🟡 В фоне', '🟡 Standby');
+          gpuBadge.textContent = isOverCap ? L('Сверх лимита', 'Over cap') : L('В фоне', 'Standby');
           if (isOverCap) {
             gpuOp.textContent = L('Превышен лимит ', 'Exceeded ') + capGb + L(' ГБ · требуется выгрузка или компактная модель', ' GB cap · unload or pick smaller model');
           } else {
@@ -773,91 +1072,86 @@
             }
             if (ddr5WarmOn) gpuOp.textContent = L('Дежурит в VRAM · DDR5 GGUF: ', 'Warm in VRAM · DDR5 GGUF: ') + hostWarmedLbl;
           }
-          gpuOp.title = L('В видеопамяти: ', 'In VRAM: ') + names + (ddr5WarmOn ? (L(' · Прогрето в DDR5 ОЗУ: ', ' · Warmed in DDR5 RAM: ') + hostWarmedLbl) : '');
-          gpuFill.style.setProperty('--hw-fill', (isOverCap ? 1 : Math.max(0.065, rawGpuFrac)).toFixed(3));
+          gpuOpTipText = L('В видеопамяти: ', 'In VRAM: ') + names + (ddr5WarmOn ? (L(' · Прогрето в DDR5 ОЗУ: ', ' · Warmed in DDR5 RAM: ') + hostWarmedLbl) : '');
+          gpuFill.style.setProperty('--hw-fill', warmFill.toFixed(3));
+          syncHwB4Unit('gpu', warmFill, isOverCap ? 'over' : 'standby');
         } else {
           const hostWarmedLbl = formatHostRamWarmedLabel(gpuTel.hostRamWarmedMb);
           const ddr5WarmOn = Boolean(hostWarmedLbl && (!s || s.gpuWarmHostRamCache !== false));
           gpuCard.className = 'hw-optical-unit gpu-unit is-off';
-          gpuBadge.textContent = oll.running ? L('⚪ Выгружена', '⚪ Unloaded') : L('⚪ Спит', '⚪ Sleep');
+          gpuBadge.textContent = oll.running ? L('Выгружена', 'Unloaded') : L('Спит', 'Sleep');
           gpuOp.textContent = oll.running
             ? (ddr5WarmOn
                 ? L('0 ГБ в VRAM · в DDR5 ОЗУ: ' + hostWarmedLbl, '0 GB in VRAM · in DDR5 RAM: ' + hostWarmedLbl)
                 : L('0 ГБ в видеопамяти · ждёт задачи', '0 GB in VRAM · awaiting task'))
             : L('Сервер Ollama в режиме ожидания', 'Ollama server in standby');
-          gpuOp.title = (oll.running && ddr5WarmOn)
+          gpuOpTipText = (oll.running && ddr5WarmOn)
             ? (L('Веса GGUF прогреты в системной DDR5 ОЗУ (', 'GGUF weights warmed in system DDR5 RAM (') + hostWarmedLbl + L(') для быстрого подъёма в VRAM', ') for fast VRAM load'))
             : '';
           gpuFill.style.setProperty('--hw-fill', '0.032');
+          syncHwB4Unit('gpu', 0.032, 'off');
         }
+        setHwTooltipTitle(gpuOp, gpuOpTipText);
+        setHwTooltipTitle(gpuCard, gpuBadge.textContent + ' · ' + gpuOp.textContent + (gpuOpTipText ? (' · ' + gpuOpTipText) : ''));
       }
 
       const cpuCard = document.getElementById('cpuLiveUnitCard');
       const cpuBadge = document.getElementById('cpuUnitStateBadge');
       const cpuMetric = document.getElementById('cpuUnitMetricVal');
-      const cpuSavedPill = document.getElementById('cpuUnitSavedPill');
       const cpuOp = document.getElementById('cpuUnitOpText');
       const cpuFill = document.getElementById('cpuUnitAfterglowFill');
       const cpuCapPct = document.getElementById('cpuUnitCapPct');
-      const wsListForCpu = Array.isArray(ramCache && ramCache.workspaces) ? ramCache.workspaces : [];
-      const triCount = (cpu && Number(cpu.ramTrigramsIndexed)) ||
-        wsListForCpu.reduce((sum, w) => sum + (Number(w && w.trigramsIndexed) || 0), 0);
       const totalBatches = Number(cpuTel.workerBatches || 0);
       const lastRerankMs = Number(cpuTel.lastRerankMs || 0);
-      if (cpuSavedPill) {
-        if (triCount > 0) {
-          cpuSavedPill.textContent = formatK(triCount) + L(' тригр.', ' trigrams');
-        } else if (totalBatches > 0) {
-          cpuSavedPill.textContent = formatExactInt(totalBatches) + L(' батч.', ' batches');
-        } else {
-          cpuSavedPill.textContent = L('0 тригр.', '0 trigrams');
-        }
-        cpuSavedPill.title =
-          L('Индекс триграмм BM25F: ', 'BM25F trigram index: ') + formatExactInt(triCount) +
-          L(' · Батчей воркеров: ', ' · Worker batches: ') + formatExactInt(totalBatches) +
-          L(' · Вызовов Rerank: ', ' · Rerank calls: ') + formatExactInt(cpuTel.rerankCalls || 0) +
-          (lastRerankMs > 0 ? (' (' + lastRerankMs + L(' мс)', ' ms)')) : '');
-      }
       if (cpuCard && cpuBadge && cpuMetric && cpuOp && cpuFill) {
         const rawActiveThreads = cpuInFlight
           ? Math.max(1, Number(cpuLive.activeThreads || cpuPool.busyWorkers || 1))
           : (cpuWorking ? Math.max(1, Number(cpuLive.recentThreads || 1)) : 0);
         const shownThreads = cpuEnabled ? Math.min(effThreads, rawActiveThreads) : 0;
         const threadFrac = Math.max(0, Math.min(1, shownThreads / Math.max(1, effThreads)));
-        cpuMetric.textContent = shownThreads + ' / ' + effThreads + L(' потоков', ' threads');
+        setHwMetricSplit(cpuMetric, String(shownThreads), '/ ' + effThreads + L(' пот.', ' thr.'));
         if (cpuCapPct) {
-          cpuCapPct.textContent = !cpuEnabled ? L('Выкл', 'Off') : (Math.round(threadFrac * 100) + '%');
+          setHwTextIfChanged(cpuCapPct, !cpuEnabled ? L('Выкл', 'Off') : (Math.round(threadFrac * 100) + '%'));
         }
-        cpuMetric.title =
+        setHwTooltipTitle(
+          cpuMetric,
           L('Лимит пула: ', 'Pool cap: ') + effThreads + L(' из ', ' of ') + logCores + L(' логических потоков', ' logical threads') +
           L(' · Активно в пуле: ', ' · Active in pool: ') + Number(cpuPool.activeWorkers || 0) +
-          L(' · Пик нагрузки: ', ' · Peak load: ') + Math.max(Number(cpuTel.peakWorkersUsed || 0), shownThreads) + L(' пот.', ' thr.');
+          L(' · Пик нагрузки: ', ' · Peak load: ') + Math.max(Number(cpuTel.peakWorkersUsed || 0), shownThreads) + L(' пот.', ' thr.')
+        );
         if (!cpuEnabled) {
           cpuCard.className = 'hw-optical-unit cpu-unit is-off';
-          cpuBadge.textContent = L('⚪ Выкл', '⚪ Off');
+          cpuBadge.textContent = L('Выкл', 'Off');
           cpuOp.textContent = L('Контур CPU-сопроцессора отключён в настройках', 'CPU coprocessor is disabled in settings');
-          cpuOp.title = '';
+          setHwTooltipTitle(cpuOp, '');
           cpuFill.style.setProperty('--hw-fill', '0');
+          syncHwB4Unit('cpu', 0, 'off');
         } else if (cpuWorking) {
           const liveCpuText = formatCpuLiveOpRu(cpuLive);
           const workCpuFill = Math.min(1, Math.max(threadFrac, shownThreads > 0 ? 0.08 : 0.04, 0.16 + 0.56 * cpuRatio));
           cpuCard.className = 'hw-optical-unit cpu-unit is-working';
-          cpuBadge.textContent = cpuInFlight ? L('⚡ В работе', '⚡ Working') : L('⚡ Завершено', '⚡ Done');
+          cpuBadge.textContent = cpuInFlight ? L('В работе', 'Working') : L('Завершено', 'Done');
           cpuOp.textContent = liveCpuText;
-          cpuOp.title = liveCpuText;
+          setHwTooltipTitle(cpuOp, liveCpuText);
           cpuFill.style.setProperty('--hw-fill', workCpuFill.toFixed(3));
+          syncHwB4Unit('cpu', workCpuFill, 'working');
         } else {
           const batchStat = totalBatches > 0 ? (L(' · батчей: ', ' · batches: ') + totalBatches) : '';
           const rerankStat = lastRerankMs > 0 ? (' · rerank ' + lastRerankMs + L(' мс', ' ms')) : '';
+          const standbyCpuFill = threadFrac > 0 ? Math.max(0.04, threadFrac) : 0;
           cpuCard.className = 'hw-optical-unit cpu-unit is-standby';
-          cpuBadge.textContent = L('🟡 В фоне', '🟡 Standby');
+          cpuBadge.textContent = L('В фоне', 'Standby');
           cpuOp.textContent = (!cpuPoolOn
             ? L('Пул потоков выкл · активен быстрый индекс', 'Thread pool off · fast index active')
             : L('Дежурит в пуле · внутренних задач сейчас нет', 'Standing by in pool · no background tasks')) + batchStat + rerankStat;
-          cpuOp.title = cpuOp.textContent;
-          cpuFill.style.setProperty('--hw-fill', threadFrac > 0 ? Math.max(0.04, threadFrac).toFixed(3) : '0');
+          setHwTooltipTitle(cpuOp, cpuOp.textContent);
+          cpuFill.style.setProperty('--hw-fill', standbyCpuFill > 0 ? standbyCpuFill.toFixed(3) : '0');
+          syncHwB4Unit('cpu', standbyCpuFill > 0 ? standbyCpuFill : 0.02, 'standby');
         }
+        setHwTooltipTitle(cpuCard, cpuBadge.textContent + ' · ' + cpuOp.textContent);
       }
+
+      ensureHwB4Loop();
 
       if (_hwAfterglowDecayTimer) {
         clearTimeout(_hwAfterglowDecayTimer);
@@ -1133,6 +1427,9 @@
         menu.hidden = true;
         menu.innerHTML = '';
       }
+      if (typeof releaseTooltipForClosedMenu === 'function') {
+        releaseTooltipForClosedMenu();
+      }
       if (restoreFocus && trigger && typeof trigger.focus === 'function') {
         try { trigger.focus({ preventScroll: true }); } catch {}
       }
@@ -1263,6 +1560,9 @@
 
       _openCustomSelectId = selId;
       trigger.setAttribute('aria-expanded', 'true');
+      if (typeof suppressTooltipForOpenMenu === 'function') {
+        suppressTooltipForOpenMenu(trigger);
+      }
       highlightCustomSelectOption(selectedIdx);
 
       window.requestAnimationFrame(function () {
@@ -1404,7 +1704,7 @@
         : '';
 
       if (vramFit.needsModelDownload) {
-        titleEl.textContent = L('⚠️ Нет подходящей модели под лимит ', '⚠️ No compatible model for ') + vramFit.capGb + L(' ГБ VRAM', ' GB VRAM limit');
+        titleEl.textContent = L('Нет подходящей модели под лимит ', 'No compatible model for ') + vramFit.capGb + L(' ГБ VRAM', ' GB VRAM limit');
         descEl.textContent = L(
           'Выбранная модель ' + vramFit.selectedChatModel + estGbText +
           ' не помещается в лимит ' + vramFit.capGb + ' ГБ — её загрузка строго заблокирована, сжатие переведено на CPU. ' +
@@ -1414,9 +1714,9 @@
           'Download a compact model (e.g. ' + vramFit.recommendedPullModel + ').'
         );
         if (fallbackBtn) fallbackBtn.style.display = 'none';
-        if (promptBtn) promptBtn.textContent = L('💬 Подобрать в чате', '💬 Pick in chat');
+        if (promptBtn) promptBtn.textContent = L('Подобрать в чате', 'Pick in chat');
       } else if (!vramFit.selectedChatFits && vramFit.bestFallbackChatModel) {
-        titleEl.textContent = L('⚠️ Модель ', '⚠️ Model ') + vramFit.selectedChatModel + L(' превышает лимит ', ' exceeds ') + vramFit.capGb + L(' ГБ VRAM', ' GB VRAM limit');
+        titleEl.textContent = L('Модель ', 'Model ') + vramFit.selectedChatModel + L(' превышает лимит ', ' exceeds ') + vramFit.capGb + L(' ГБ VRAM', ' GB VRAM limit');
         descEl.textContent = L(
           'Модель требует' + (estGbText || (' > ' + vramFit.capGb + ' ГБ')) +
           '. Для работы в пределах лимита переключитесь на скачанную ' + vramFit.bestFallbackChatModel + '.',
@@ -1428,15 +1728,15 @@
           fallbackBtn.setAttribute('data-arg', vramFit.bestFallbackChatModel);
           fallbackBtn.textContent = L('Включить ', 'Use ') + vramFit.bestFallbackChatModel;
         }
-        if (promptBtn) promptBtn.textContent = L('💬 Подобрать в чате', '💬 Pick in chat');
+        if (promptBtn) promptBtn.textContent = L('Подобрать в чате', 'Pick in chat');
       } else if (vramFit.overBudgetLoaded) {
-        titleEl.textContent = L('⚠️ В VRAM занято ', '⚠️ VRAM usage is ') + (vramFit.loadedVramMb / 1024).toFixed(1) + L(' ГБ при лимите ', ' GB over ') + vramFit.capGb + L(' ГБ', ' GB cap');
+        titleEl.textContent = L('В VRAM занято ', 'VRAM usage is ') + (vramFit.loadedVramMb / 1024).toFixed(1) + L(' ГБ при лимите ', ' GB over ') + vramFit.capGb + L(' ГБ', ' GB cap');
         descEl.textContent = L(
           'В видеопамяти остаётся тяжёлая модель сверх установленного лимита — выгрузите её или подберите более лёгкую модель.',
           'A heavy model remains loaded above your VRAM limit — unload it or select a lighter model.'
         );
         if (fallbackBtn) fallbackBtn.style.display = 'none';
-        if (promptBtn) promptBtn.textContent = L('💬 Подобрать в чате', '💬 Pick in chat');
+        if (promptBtn) promptBtn.textContent = L('Подобрать в чате', 'Pick in chat');
       }
     }
 
@@ -1502,9 +1802,12 @@
         toolbarBtn.disabled = isActive;
         if (showCascadeBtn) {
           toolbarBtn.textContent = L('⬇️ Докачать каскад (', '⬇️ Pull missing cascade (') + missingCount + (missingGb > 0 ? (' · ~' + missingGb.toFixed(1) + L(' ГБ', ' GB')) : '') + ')';
-          toolbarBtn.title = missingModels.length > 0
-            ? (L('Не скачаны модели каскада: ', 'Missing cascade models: ') + missingModels.join(', ') + L(' — нажмите, чтобы скачать в фоне', ' — click to download in background'))
-            : L('Скачать недостающие модели каскада под все лимиты вашей видеокарты (с автофоллбэком на Hugging Face)', 'Download missing cascade models for your VRAM limits (with Hugging Face fallback)');
+          setHwTooltipTitle(
+            toolbarBtn,
+            missingModels.length > 0
+              ? (L('Не скачаны модели каскада: ', 'Missing cascade models: ') + missingModels.join(', ') + L(' — нажмите, чтобы скачать в фоне', ' — click to download in background'))
+              : L('Скачать недостающие модели каскада под все лимиты вашей видеокарты (с автофоллбэком на Hugging Face)', 'Download missing cascade models for your VRAM limits (with Hugging Face fallback)')
+          );
         }
       }
       if (toolbarHfBtn) {
@@ -1541,13 +1844,14 @@
 
       if (titleEl) {
         titleEl.textContent = isActive
-          ? (L('⬇️ Загрузка каскада моделей (', '⬇️ Downloading model cascade (') + Math.min(done + 1, total) + '/' + total + ')')
-          : (hasError ? L('⚠️ Ошибка скачивания моделей Ollama', '⚠️ Ollama model download error') : L('✓ Каскад моделей готов', '✓ Model cascade ready'));
+          ? (L('↓ Загрузка каскада моделей (', '↓ Downloading model cascade (') + Math.min(done + 1, total) + '/' + total + ')')
+          : (hasError ? L('Ошибка скачивания моделей Ollama', 'Ollama model download error') : L('✓ Каскад моделей готов', '✓ Model cascade ready'));
       }
       if (cancelBtn) cancelBtn.style.display = isActive ? 'inline-flex' : 'none';
       if (trackEl) trackEl.style.display = (hasError && !isActive && done === 0) ? 'none' : '';
       if (fillEl) {
         fillEl.style.width = overallPct + '%';
+        fillEl.style.setProperty('--fill-scale', (Math.max(0, Math.min(100, Number(overallPct) || 0)) / 100).toFixed(4));
       }
       if (subEl) {
         const srcBadge = effectiveStatus.source === 'huggingface' ? ' [Hugging Face]' : (effectiveStatus.source === 'ollama' ? ' [Ollama]' : '');
@@ -1736,18 +2040,22 @@
 
       if (titleEl) {
         if (isActive) {
-          titleEl.textContent = L('⚙️ Установка Ollama...', '⚙️ Installing Ollama...');
+          titleEl.textContent = L('Установка Ollama...', 'Installing Ollama...');
         } else if (hasErr) {
-          titleEl.textContent = L('⚠️ Ошибка установки Ollama', '⚠️ Ollama setup error');
+          titleEl.textContent = L('Ошибка установки Ollama', 'Ollama setup error');
         } else if (recentlyDone) {
           titleEl.textContent = L('✓ Ollama готова к работе', '✓ Ollama ready');
         } else {
-          titleEl.textContent = L('⚠️ Ollama не найдена в системе', '⚠️ Ollama not detected');
+          titleEl.textContent = L('Ollama не найдена в системе', 'Ollama not detected');
         }
       }
 
       if (trackEl) trackEl.style.display = isActive ? 'block' : 'none';
-      if (fillEl) fillEl.style.width = (inst ? Math.max(0, Math.min(100, Number(inst.percent || 0))) : 0) + '%';
+      if (fillEl) {
+        const instPct = inst ? Math.max(0, Math.min(100, Number(inst.percent || 0))) : 0;
+        fillEl.style.width = instPct + '%';
+        fillEl.style.setProperty('--fill-scale', (instPct / 100).toFixed(4));
+      }
 
       if (subEl) {
         if (isActive || hasErr || recentlyDone) {
@@ -1921,7 +2229,7 @@
           if (checkBudget && chatBudgetMb > 0) {
             const estMb = estimateClientModelVramMb(name, downloaded, loadedMap);
             if (estMb > chatBudgetMb + 128) {
-              parts.push('⚠️ > ' + capGb + L(' ГБ', ' GB'));
+              parts.push('> ' + capGb + L(' ГБ', ' GB'));
             }
           }
           const label = parts.length > 0 ? (name + ' (' + parts.join(' · ') + ')') : name;
@@ -1932,7 +2240,7 @@
           const vramText = vramMb > 0 ? ('VRAM ' + (vramMb / 1024).toFixed(1) + L(' ГБ', ' GB')) : '';
           const missingText = vramMb <= 0 && oll && oll.running ? L('не скачана', 'not downloaded') : '';
           const estMb = checkBudget && chatBudgetMb > 0 ? estimateClientModelVramMb(currentVal, downloaded, loadedMap) : 0;
-          const overTag = estMb > chatBudgetMb + 128 ? (' · ⚠️ > ' + capGb + L(' ГБ', ' GB')) : '';
+          const overTag = estMb > chatBudgetMb + 128 ? (' · > ' + capGb + L(' ГБ', ' GB')) : '';
           const suffix = vramMb > 0
             ? (L(' (в VRAM ', ' (in VRAM ') + (vramMb / 1024).toFixed(1) + L(' ГБ', ' GB') + overTag + ')')
             : (missingText ? (' (' + missingText + overTag + ')') : (overTag ? (' (' + overTag.replace(/^ · /, '') + ')') : ''));
@@ -2072,10 +2380,14 @@
 
     let _activeFallbackSidecarConvId = '';
 
-    async function dispatchPromptToChatDetailed(promptText, sentStatus, copiedStatus, newChatStatus) {
-      const directConvId = (window.sidecar && window.sidecar.conversationId)
-        || _activeFallbackSidecarConvId
-        || '';
+    async function dispatchPromptToChatDetailed(promptText, sentStatus, copiedStatus, newChatStatus, options) {
+      const opts = (options && typeof options === 'object') ? options : {};
+      const forceNew = Boolean(opts.forceNewConversation);
+      const shouldFocusNew = opts.focusNewConversation !== false;
+      const customTitle = typeof opts.title === 'string' ? opts.title.trim() : '';
+      const directConvId = forceNew
+        ? ''
+        : ((window.sidecar && window.sidecar.conversationId) || _activeFallbackSidecarConvId || '');
       const wsUris = await getSidecarWorkspaceUrisFast();
       const pinnedWs = (_selectedWorkspaceMode !== '__auto__' && _selectedWorkspaceMode !== '__all__')
         ? _selectedWorkspaceMode
@@ -2091,6 +2403,7 @@
             conversationId: directConvId,
             workspaceUris: wsUris,
             rootDir: rootDir,
+            title: customTitle,
             allowNewConversation: true,
           }),
         });
@@ -2099,7 +2412,7 @@
           if (data && data.ok) {
             const targetCid = data.conversationId || directConvId || '';
             if (data.mode === 'new_conversation') {
-              if (targetCid) {
+              if (targetCid && shouldFocusNew) {
                 _activeFallbackSidecarConvId = targetCid;
                 focusSidecarConversationIfPossible(targetCid);
               }
@@ -2132,7 +2445,7 @@
           if (typeof window.sidecar.agent.startConversation === 'function') {
             const startRes = await window.sidecar.agent.startConversation(promptText);
             const startedCid = extractSidecarConvIdFromClientPayload(startRes, 0);
-            if (startedCid) {
+            if (startedCid && shouldFocusNew) {
               _activeFallbackSidecarConvId = startedCid;
               focusSidecarConversationIfPossible(startedCid);
             }

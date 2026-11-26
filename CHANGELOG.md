@@ -2,7 +2,25 @@
 
 Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
 
-> Хронология с `v3.8.0` по `v3.35.0` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`56` основных / `64` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `13` навыков и `43` наборов автотестов).
+> Хронология с `v3.8.0` по `v4.0.0` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`57` основных / `65` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `46` наборов автотестов).
+
+---
+
+## [4.0.0] — 2026-11-26
+
+### Добавлено и обновлено (Редизайн «Crimson Rail», Hybrid Guard Dock, Health-Doctor, 4 волны усиления ядра и 15 встроенных навыков)
+- **Индустриальный редизайн боковой панели «Crimson Rail» и 5-контурный Hybrid Guard Dock ([DESIGN.md](DESIGN.md), [sidecars/panel/ui-src/js/04b-guard-dock.js](sidecars/panel/ui-src/js/04b-guard-dock.js), [sidecars/panel/ui-src/styles.css](sidecars/panel/ui-src/styles.css), [sidecars/panel/ui-src/head-body.html](sidecars/panel/ui-src/head-body.html), [sidecars/panel/ui-src/js/00-i18n.js](sidecars/panel/ui-src/js/00-i18n.js), [sidecars/panel/ui-src/js/02-telemetry-cards.js](sidecars/panel/ui-src/js/02-telemetry-cards.js), [sidecars/panel/ui-src/js/03-hardware-gpu.js](sidecars/panel/ui-src/js/03-hardware-gpu.js), [sidecars/panel/ui-src/js/04-sentinel-layout.js](sidecars/panel/ui-src/js/04-sentinel-layout.js), [sidecars/panel/ui.html](sidecars/panel/ui.html), [sidecars/panel/server.mjs](sidecars/panel/server.mjs), [sidecars/panel/lib/panel-telemetry-collectors.mjs](sidecars/panel/lib/panel-telemetry-collectors.mjs), [tests/guard-dock-panel.test.mjs](tests/guard-dock-panel.test.mjs))**:
+  - Оформлен дизайн-контракт `Crimson Rail` (`DESIGN.md`): высокоплотный инженерный кокпит без тяжёлого glassmorphism, с монохромными SVG-иконками, компактной карточкой GPU/GGUF/RAM и двуязычным охватом `00-i18n.js`.
+  - Внедрён **Hybrid Guard Dock** (плитки в Lite + 36px-панель в Full): автономная синхронизация 5 контуров защиты (Баги/Дозор, Щит AgentShield, Инстинкты, Риски, Среда/Health-Doctor) и живая проверка пульса безопасности через `/api/guard-pulse`.
+- **Контур самодиагностики Runtime Health-Doctor и таймлайн экономии ROI ([core/health-doctor.mjs](core/health-doctor.mjs), [sidecars/panel/lib/panel-telemetry-collectors.mjs](sidecars/panel/lib/panel-telemetry-collectors.mjs), [sidecars/panel/server.mjs](sidecars/panel/server.mjs), [tests/v335-stage2-features.test.mjs](tests/v335-stage2-features.test.mjs))**:
+  - Добавлен модуль `core/health-doctor.mjs` для диагностики и 1-кликового безопасного восстановления: очистка зависших `.lock`/`.tmp`-файлов, удаление осиротевших shadow worktrees, запуск Ollama, VRAM fallback и прогрев RAM-демона.
+  - Реализован сбор таймлайна экономии токенов `collectRoiTimeline` и API-маршруты самолечения панели.
+- **4 волны усиления ядра и In-RAM движка ([core/ram/ram-index-helpers.mjs](core/ram/ram-index-helpers.mjs), [core/ram-memory-engine.mjs](core/ram-memory-engine.mjs), [core/obs-masker.mjs](core/obs-masker.mjs), [core/friction-observer.mjs](core/friction-observer.mjs), [core/completion-gates.mjs](core/completion-gates.mjs), [core/quota-pacer.mjs](core/quota-pacer.mjs), [core/security-guard.mjs](core/security-guard.mjs), [core/hook-runner.mjs](core/hook-runner.mjs), [core/router-cli.mjs](core/router-cli.mjs), [core/auto-verifier.mjs](core/auto-verifier.mjs), [core/bayesian-router.mjs](core/bayesian-router.mjs), [core/pitfall-ledger.mjs](core/pitfall-ledger.mjs), [skills/deep-stress-auditor/scripts/run-stress-audit.mjs](skills/deep-stress-auditor/scripts/run-stress-audit.mjs), [tests/v336-github-skills-4waves.test.mjs](tests/v336-github-skills-4waves.test.mjs))**:
+  - Поддержка алиасов `tsconfig.json` (`@/*`) и `package.json` (`#imports`), точный срез Markdown-секций с обходом code-fences, RTK-профили сжатия терминального вывода, детектор ослабления ограничений в диффе и классификация 429-ограничений квоты.
+  - Усилены `evaluateComplexityRatchet` в `deep-stress-auditor`, защита `security-guard` и телеметрия `hook-runner`.
+- **Новые встроенные навыки (`13 → 15`) и дизайн-система ([skills/cli-anything-harness/SKILL.md](skills/cli-anything-harness/SKILL.md), [skills/playwright-cli/SKILL.md](skills/playwright-cli/SKILL.md), [skills/ui-ux-design-system/SKILL.md](skills/ui-ux-design-system/SKILL.md), [scripts/run-mega-diagnostic.mjs](scripts/run-mega-diagnostic.mjs))**:
+  - Добавлены навыки `cli-anything-harness` (генерация и валидация `--json` CLI-обёрток над GUI-приложениями) и `playwright-cli` (экономичная CLI-автоматизация браузера, маршрутизация и трассировка), а также 4 новых референса в `ui-ux-design-system`.
+  - Синхронизирован чистый шаблон `createSanitizedDefaultState` в `scripts/pack-release.mjs` (`liteQuickCard` в `panelBlockOrder`, `panelTheme`, `panelViewMode`) для безупречной первой установки.
 
 ---
 

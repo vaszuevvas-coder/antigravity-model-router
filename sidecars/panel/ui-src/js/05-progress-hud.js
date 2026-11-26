@@ -286,7 +286,7 @@
             const tip = L('Переключить панель на активный проект ', 'Switch panel to active project ') + rp.projectName +
               (rpStage ? (' · ' + rpStage) : '') +
               (rpStep ? (' · ' + rpStep) : '');
-            return '<button type="button" class="ag-step-chip active" data-action="selectPanelWorkspaceChip" data-ws="' + escapeHtml(rpWs) + '" title="' + escapeHtml(tip) + '">📁 ' +
+            return '<button type="button" class="ag-step-chip active" data-action="selectPanelWorkspaceChip" data-ws="' + escapeHtml(rpWs) + '" title="' + escapeHtml(tip) + '">' +
               escapeHtml(rp.projectName) + countSuffix + ' · ' + rpPct + '%</button>';
           }).join('');
         } else {
@@ -320,30 +320,38 @@
             '<span class="ag-bloom-dot idle"></span>' +
             '<span class="ag-chat-num-badge" style="display: none;"></span>' +
             '<span class="ag-progress-title">' + L('Ожидание задачи', 'Waiting for task') + '</span>' +
+            '<div class="ag-hud-meta-row ag-hud-seg-group" style="display: none;">' +
+              '<button type="button" class="ag-subagent-toggle-btn" data-action="toggleSubagentsList" data-arg="' + escapeHtml(slotKey) + '" aria-expanded="false" style="display: none;" title="' + L('Раскрыть список субагентов', 'Expand subagents list') + '">' +
+                '<svg class="ag-subagent-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
+                  '<path d="M6 3.75L10.25 8L6 12.25" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>' +
+                '</svg>' +
+                '<svg class="ag-subagent-ico" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
+                  '<circle cx="5.5" cy="5.5" r="2.2" stroke="currentColor" stroke-width="1.5"/>' +
+                  '<circle cx="11" cy="6.5" r="1.8" stroke="currentColor" stroke-width="1.4"/>' +
+                  '<path d="M2.2 12.8c.5-1.9 1.8-2.8 3.3-2.8s2.8.9 3.3 2.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>' +
+                  '<path d="M9.6 12.5c.3-1.2 1.1-1.9 2.2-1.9 1 0 1.7.6 2 1.9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>' +
+                '</svg>' +
+                '<span class="ag-hud-pill-lbl">' + L('Агенты', 'Agents') + '</span>' +
+                '<span class="ag-subagent-count">0</span>' +
+              '</button>' +
+              '<button type="button" class="ag-bgtask-toggle-btn" data-action="toggleBgTasksList" data-arg="' + escapeHtml(slotKey) + '" aria-expanded="false" style="display: none;" title="' + L('Раскрыть список фоновых задач', 'Expand background tasks list') + '">' +
+                '<svg class="ag-bgtask-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
+                  '<path d="M6 3.75L10.25 8L6 12.25" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>' +
+                '</svg>' +
+                '<svg class="ag-bgtask-ico" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
+                  '<rect x="2" y="2.8" width="12" height="10.4" rx="2" stroke="currentColor" stroke-width="1.4"/>' +
+                  '<path d="M5 6.3L7.3 8 5 9.7M8.5 9.7H11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>' +
+                '</svg>' +
+                '<span class="ag-hud-pill-lbl">' + L('Фон', 'Bg') + '</span>' +
+                '<span class="ag-bgtask-count">0</span>' +
+              '</button>' +
+            '</div>' +
             '<div class="ag-bloom-track">' +
-              '<div class="ag-bloom-fill idle" style="width: 0%;"><div class="ag-bloom-shimmer"></div></div>' +
+              '<div class="ag-bloom-fill idle" style="width: 0%; --fill-scale: 0;"><div class="ag-bloom-shimmer"></div></div>' +
             '</div>' +
             '<span class="ag-progress-pct"><span class="ag-pct-num">0</span>%</span>' +
           '</div>' +
           '<div class="ag-steps-mini-list" style="display: none;"></div>' +
-          '<div class="ag-context-pills-row" style="display: none;"></div>' +
-          '<div class="ag-hud-meta-row" style="display: none;">' +
-            '<button type="button" class="ag-subagent-toggle-btn" data-action="toggleSubagentsList" data-arg="' + escapeHtml(slotKey) + '" aria-expanded="false" style="display: none;" title="' + L('Раскрыть список субагентов', 'Expand subagents list') + '">' +
-              '<svg class="ag-subagent-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
-                '<path d="M6 3.75L10.25 8L6 12.25" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>' +
-              '</svg>' +
-              '<span class="ag-hud-pill-lbl">' + L('Субагенты', 'Subagents') + '</span>' +
-              '<span class="ag-subagent-count">0</span>' +
-            '</button>' +
-            '<button type="button" class="ag-bgtask-toggle-btn" data-action="toggleBgTasksList" data-arg="' + escapeHtml(slotKey) + '" aria-expanded="false" style="display: none;" title="' + L('Раскрыть список фоновых задач', 'Expand background tasks list') + '">' +
-              '<svg class="ag-bgtask-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
-                '<path d="M6 3.75L10.25 8L6 12.25" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>' +
-              '</svg>' +
-              '<span class="ag-bgtask-term-ico" aria-hidden="true">&gt;_</span>' +
-              '<span class="ag-hud-pill-lbl">' + L('Фоновые', 'Tasks') + '</span>' +
-              '<span class="ag-bgtask-count">0</span>' +
-            '</button>' +
-          '</div>' +
           '<div class="ag-subagents-drawer" aria-hidden="true">' +
             '<div class="ag-subagents-drawer-inner">' +
               '<div class="ag-subagents-list"></div>' +
@@ -353,7 +361,8 @@
             '<div class="ag-bgtasks-drawer-inner">' +
               '<div class="ag-bgtasks-list"></div>' +
             '</div>' +
-          '</div>';
+          '</div>' +
+          '<div class="ag-context-pills-row" style="display: none;"></div>';
         return el;
       }
 
@@ -367,7 +376,7 @@
             '<span class="ag-subagent-badge">' + L('Агент #1', 'Agent #1') + '</span>' +
             '<span class="ag-subagent-title">' + L('Работа субагента', 'Subagent running') + '</span>' +
             '<div class="ag-bloom-track is-mini">' +
-              '<div class="ag-bloom-fill" style="width: 0%;"><div class="ag-bloom-shimmer"></div></div>' +
+              '<div class="ag-bloom-fill" style="width: 0%; --fill-scale: 0;"><div class="ag-bloom-shimmer"></div></div>' +
             '</div>' +
             '<span class="ag-progress-pct is-mini"><span class="ag-pct-num">0</span>%</span>' +
           '</div>';
@@ -380,8 +389,20 @@
         if (!metaRow) return;
         const subBtn = metaRow.querySelector('.ag-subagent-toggle-btn');
         const bgBtn = metaRow.querySelector('.ag-bgtask-toggle-btn');
-        const hasVisible = (subBtn && subBtn.style.display !== 'none') || (bgBtn && bgBtn.style.display !== 'none');
-        metaRow.style.display = hasVisible ? 'flex' : 'none';
+        const hasSub = Boolean(subBtn && subBtn.style.display !== 'none');
+        const hasBg = Boolean(bgBtn && bgBtn.style.display !== 'none');
+        const hasVisible = hasSub || hasBg;
+        const subActive = Boolean(hasSub && subBtn.classList.contains('is-active-glow'));
+        const bgActive = Boolean(hasBg && bgBtn.classList.contains('is-active-glow'));
+        metaRow.style.display = hasVisible ? 'inline-flex' : 'none';
+        metaRow.classList.toggle('is-only-sub', hasSub && !hasBg);
+        metaRow.classList.toggle('is-only-bg', !hasSub && hasBg);
+        metaRow.classList.toggle('is-both', hasSub && hasBg);
+        metaRow.classList.toggle('is-sub-active', subActive);
+        metaRow.classList.toggle('is-bg-active', bgActive);
+        metaRow.classList.toggle('is-calm', hasVisible && !subActive && !bgActive);
+        const capEl = itemEl.querySelector('.ag-progress-capsule');
+        if (capEl) capEl.classList.toggle('has-seg-group', hasVisible);
       }
 
       function syncSubagentsDrawerForChat(itemEl, cid, subagents) {
@@ -433,7 +454,7 @@
           countEl.textContent = String(subs.length);
         }
         if (lblEl) {
-          lblEl.textContent = L('Субагенты', 'Subagents');
+          lblEl.textContent = L('Агенты', 'Agents');
         }
         syncHudMetaRowVisibility(itemEl);
         if (drawerEl) {
@@ -480,6 +501,7 @@
           }
           if (sFill) {
             sFill.style.width = subPct + '%';
+            sFill.style.setProperty('--fill-scale', (Math.max(0, Math.min(100, Number(subPct) || 0)) / 100).toFixed(4));
             if (s.status === 'completed' || subPct >= 100) {
               sFill.className = 'ag-bloom-fill completed idle';
             } else if (s.status === 'waiting_user') {
@@ -585,7 +607,8 @@
           countEl.textContent = badgeText;
         }
         if (lblEl) {
-          lblEl.textContent = L('Фоновые', 'Tasks');
+          const nextLbl = L('Фон', 'Bg');
+          if (lblEl.textContent !== nextLbl) lblEl.textContent = nextLbl;
         }
         syncHudMetaRowVisibility(itemEl);
         if (drawerEl) {
@@ -594,85 +617,132 @@
         }
         if (!listEl) return;
 
-        const sig = [
-          getUiLanguage(),
-          total,
-          runningCount,
-          isShowAll ? '1' : '0',
-          tasks.map(function (t) {
-            return (t.taskId || t.id || '') + ':' + (t.status || '') + ':' + (t.updatedAt || 0) + ':' + (t.label || '');
-          }).join('|'),
-        ].join('::');
+        // Reconcile items in-place by data-task-id so agBarSlideIn never replays on step/label updates
+        let headerEl = listEl.querySelector('.ag-bgtasks-header');
+        if (!headerEl) {
+          headerEl = document.createElement('div');
+          headerEl.className = 'ag-bgtasks-header';
+          const headerTitle = document.createElement('span');
+          headerTitle.className = 'ag-bgtasks-header-title';
+          const headerBadge = document.createElement('span');
+          headerBadge.className = 'ag-bgtasks-header-badge';
+          headerEl.appendChild(headerTitle);
+          headerEl.appendChild(headerBadge);
+          listEl.insertBefore(headerEl, listEl.firstChild);
+        }
+        const headerTitle = headerEl.querySelector('.ag-bgtasks-header-title');
+        const headerBadge = headerEl.querySelector('.ag-bgtasks-header-badge');
+        const nextHeaderTitle = L('Фоновые задачи', 'Background Tasks');
+        const nextHeaderBadge = String(total);
+        if (headerTitle && headerTitle.textContent !== nextHeaderTitle) headerTitle.textContent = nextHeaderTitle;
+        if (headerBadge && headerBadge.textContent !== nextHeaderBadge) headerBadge.textContent = nextHeaderBadge;
 
-        if (listEl.dataset.sig === sig) return;
-        listEl.dataset.sig = sig;
-        listEl.textContent = '';
+        const existingByTaskId = Object.create(null);
+        Array.from(listEl.querySelectorAll('.ag-bgtask-item')).forEach(function (node) {
+          const tid = node.getAttribute('data-task-id');
+          if (tid) existingByTaskId[tid] = node;
+        });
 
-        const headerEl = document.createElement('div');
-        headerEl.className = 'ag-bgtasks-header';
-        const headerTitle = document.createElement('span');
-        headerTitle.className = 'ag-bgtasks-header-title';
-        headerTitle.textContent = L('Фоновые задачи', 'Background Tasks');
-        const headerBadge = document.createElement('span');
-        headerBadge.className = 'ag-bgtasks-header-badge';
-        headerBadge.textContent = String(total);
-        headerEl.appendChild(headerTitle);
-        headerEl.appendChild(headerBadge);
-        listEl.appendChild(headerEl);
+        const activeTaskIds = new Set();
+        let prevNode = headerEl;
 
         tasks.forEach(function (t, tIdx) {
+          const taskId = String((t && (t.taskId || t.id)) || ('bg-' + tIdx));
+          activeTaskIds.add(taskId);
           const st = String((t && t.status) || 'done');
           const statusCls = st === 'running'
             ? 'is-running'
             : (st === 'error' ? 'is-error' : (st === 'cancelled' ? 'is-cancelled' : 'is-done'));
           const isOverflowHidden = !isShowAll && tIdx >= AG_BG_TASKS_PREVIEW_LIMIT;
-          const rowItem = document.createElement('div');
-          rowItem.className = 'ag-bgtask-item ' + statusCls + (isOverflowHidden ? ' is-overflow-hidden' : '');
-          rowItem.setAttribute('aria-hidden', isOverflowHidden ? 'true' : 'false');
-          rowItem.setAttribute('data-task-id', String((t && (t.taskId || t.id)) || ('bg-' + tIdx)));
+          const nextCls = 'ag-bgtask-item ' + statusCls + (isOverflowHidden ? ' is-overflow-hidden' : '');
+          const nextAriaHidden = isOverflowHidden ? 'true' : 'false';
 
-          const rowInner = document.createElement('div');
-          rowInner.className = 'ag-bgtask-row';
+          let rowItem = existingByTaskId[taskId];
+          let icoEl;
+          let titleEl;
+          let metaEl;
+          if (!rowItem) {
+            rowItem = document.createElement('div');
+            rowItem.setAttribute('data-task-id', taskId);
+            const rowInner = document.createElement('div');
+            rowInner.className = 'ag-bgtask-row';
+            icoEl = document.createElement('span');
+            titleEl = document.createElement('span');
+            titleEl.className = 'ag-bgtask-title';
+            metaEl = document.createElement('span');
+            rowInner.appendChild(icoEl);
+            rowInner.appendChild(titleEl);
+            rowInner.appendChild(metaEl);
+            rowItem.appendChild(rowInner);
+          } else {
+            icoEl = rowItem.querySelector('.ag-bgtask-ico');
+            titleEl = rowItem.querySelector('.ag-bgtask-title');
+            metaEl = rowItem.querySelector('.ag-bgtask-meta');
+          }
 
-          const icoEl = document.createElement('span');
-          icoEl.className = 'ag-bgtask-ico ' + statusCls;
-          icoEl.setAttribute('aria-hidden', 'true');
-          icoEl.textContent = (st === 'error' || st === 'cancelled') ? '×' : '>_';
+          if (rowItem.className !== nextCls) rowItem.className = nextCls;
+          if (rowItem.getAttribute('aria-hidden') !== nextAriaHidden) {
+            rowItem.setAttribute('aria-hidden', nextAriaHidden);
+          }
+
+          const nextIcoCls = 'ag-bgtask-ico ' + statusCls;
+          const nextIcoTxt = (st === 'error' || st === 'cancelled') ? '×' : '>_';
+          if (icoEl) {
+            if (icoEl.className !== nextIcoCls) icoEl.className = nextIcoCls;
+            if (icoEl.getAttribute('aria-hidden') !== 'true') icoEl.setAttribute('aria-hidden', 'true');
+            if (icoEl.textContent !== nextIcoTxt) icoEl.textContent = nextIcoTxt;
+          }
 
           const titleText = pickText(t, 'label', 'labelEn', '') || (t && t.commandPreview) || L('Фоновая задача', 'Background task');
           const previewText = String((t && t.commandPreview) || '').trim();
           const fullTip = previewText && previewText !== titleText
             ? (titleText + '\n' + previewText)
             : titleText;
+          if (titleEl) {
+            if (titleEl.textContent !== titleText) titleEl.textContent = titleText;
+            if (titleEl.title !== fullTip) titleEl.title = fullTip;
+          }
 
-          const titleEl = document.createElement('span');
-          titleEl.className = 'ag-bgtask-title';
-          titleEl.textContent = titleText;
-          titleEl.title = fullTip;
+          const nextMetaCls = 'ag-bgtask-meta ' + statusCls;
+          const nextMetaTxt = formatBgTaskMeta(t);
+          if (metaEl) {
+            if (metaEl.className !== nextMetaCls) metaEl.className = nextMetaCls;
+            if (metaEl.textContent !== nextMetaTxt) metaEl.textContent = nextMetaTxt;
+          }
 
-          const metaEl = document.createElement('span');
-          metaEl.className = 'ag-bgtask-meta ' + statusCls;
-          metaEl.textContent = formatBgTaskMeta(t);
-
-          rowInner.appendChild(icoEl);
-          rowInner.appendChild(titleEl);
-          rowInner.appendChild(metaEl);
-          rowItem.appendChild(rowInner);
-          listEl.appendChild(rowItem);
+          const expectedRef = prevNode.nextSibling;
+          if (rowItem.parentNode !== listEl || rowItem !== expectedRef) {
+            listEl.insertBefore(rowItem, expectedRef);
+          }
+          prevNode = rowItem;
         });
 
+        Array.from(listEl.querySelectorAll('.ag-bgtask-item')).forEach(function (node) {
+          const tid = node.getAttribute('data-task-id');
+          if (!activeTaskIds.has(tid)) node.remove();
+        });
+
+        let seeAllBtn = listEl.querySelector('.ag-bgtasks-see-all-btn');
         if (tasks.length > AG_BG_TASKS_PREVIEW_LIMIT) {
-          const seeAllBtn = document.createElement('button');
-          seeAllBtn.type = 'button';
-          seeAllBtn.className = 'ag-bgtasks-see-all-btn';
-          seeAllBtn.setAttribute('data-action', 'toggleBgTasksShowAll');
-          seeAllBtn.setAttribute('data-arg', cid);
-          seeAllBtn.setAttribute('data-total', String(total));
-          seeAllBtn.setAttribute('aria-expanded', isShowAll ? 'true' : 'false');
-          seeAllBtn.textContent = isShowAll
+          if (!seeAllBtn) {
+            seeAllBtn = document.createElement('button');
+            seeAllBtn.type = 'button';
+            seeAllBtn.className = 'ag-bgtasks-see-all-btn';
+            seeAllBtn.setAttribute('data-action', 'toggleBgTasksShowAll');
+            listEl.appendChild(seeAllBtn);
+          } else if (seeAllBtn.parentNode !== listEl || seeAllBtn !== listEl.lastElementChild) {
+            listEl.appendChild(seeAllBtn);
+          }
+          const nextSeeTxt = isShowAll
             ? L('Свернуть', 'Collapse')
             : (L('Показать все (', 'See all (') + total + ')');
-          listEl.appendChild(seeAllBtn);
+          const nextSeeExpanded = isShowAll ? 'true' : 'false';
+          if (seeAllBtn.getAttribute('data-arg') !== cid) seeAllBtn.setAttribute('data-arg', cid);
+          if (seeAllBtn.getAttribute('data-total') !== String(total)) seeAllBtn.setAttribute('data-total', String(total));
+          if (seeAllBtn.getAttribute('aria-expanded') !== nextSeeExpanded) seeAllBtn.setAttribute('aria-expanded', nextSeeExpanded);
+          if (seeAllBtn.textContent !== nextSeeTxt) seeAllBtn.textContent = nextSeeTxt;
+        } else if (seeAllBtn) {
+          seeAllBtn.remove();
         }
       }
 
@@ -742,6 +812,7 @@
         }
         if (fillEl) {
           fillEl.style.width = '0%';
+          fillEl.style.setProperty('--fill-scale', '0');
           fillEl.className = 'ag-bloom-fill idle';
         }
         if (pctWrapEl) pctWrapEl.classList.add('is-idle');
@@ -809,8 +880,8 @@
           : (String(c.projectName || projName).trim() || projName);
         if (badgeEl) {
           badgeEl.style.display = 'inline-flex';
-          badgeEl.textContent = isUnscopedRow ? ('💬 ' + chatNumLabel) : chatNumLabel;
-          badgeEl.title = (isUnscopedRow ? '💬 ' : '📁 ') + cProj + ' · ' + chatNumLabel + (topic ? (': ' + topic) : '');
+          badgeEl.textContent = chatNumLabel;
+          badgeEl.title = cProj + ' · ' + chatNumLabel + (topic ? (': ' + topic) : '');
         }
 
         const isWaitingRow = c.status === 'waiting_user';
@@ -860,6 +931,7 @@
 
         if (fillEl) {
           fillEl.style.width = pct + '%';
+          fillEl.style.setProperty('--fill-scale', (Math.max(0, Math.min(100, Number(pct) || 0)) / 100).toFixed(4));
           if (c.status === 'completed' || pct >= 100) {
             fillEl.className = 'ag-bloom-fill completed idle';
           } else if (c.status === 'waiting_user') {
@@ -967,7 +1039,7 @@
               skills.forEach(function (slug) {
                 const pill = document.createElement('span');
                 pill.className = 'ag-ctx-pill';
-                pill.textContent = '⚡ ' + slug;
+                pill.textContent = slug;
                 pill.title = L('Активный скилл: ', 'Active skill: ') + slug;
                 ctxRowEl.appendChild(pill);
               });
@@ -1021,7 +1093,7 @@
               : (L('Проект: ', 'Project: ') + (grpWs || grp.projectName));
           }
           if (nameEl) {
-            nameEl.textContent = (grp.isUnscopedChat ? '💬 ' : '📁 ') + grp.projectName;
+            nameEl.textContent = grp.projectName;
           }
           if (countEl) {
             countEl.textContent = formatChatsWord(grp.chats.length);
@@ -1117,6 +1189,10 @@
           return;
         }
       }
+      const clickedControl = ev.target && ev.target.closest ? ev.target.closest('button, summary') : null;
+      if (ev && ev.detail > 0 && clickedControl && typeof clickedControl.blur === 'function') {
+        clickedControl.blur();
+      }
       const target = ev.target && ev.target.closest ? ev.target.closest('[data-action]') : null;
       if (!target) return;
       if (target.tagName === 'INPUT' && target.type === 'checkbox') return;
@@ -1141,7 +1217,7 @@
         if (!blockEl || !blockEl.parentElement) return null;
         if (headerEl !== blockEl && headerEl.parentElement !== blockEl) return null;
 
-        const interactive = target.closest('button, a, input, select, textarea, label, [role="combobox"], .lg-card-collapse-btn, .lg-select-wrap, .win-btn, .lg-icon-btn, .lang-pill-btn, .theme-dot-btn, .ag-project-pill, .smart-badge-btn');
+        const interactive = target.closest('button, a, input, select, textarea, label, [role="combobox"], .lg-card-collapse-btn, .lg-select-wrap, .win-btn, .lg-icon-btn, .lang-pill-btn, .ag-project-pill, .smart-badge-btn');
         if (interactive && headerEl.contains(interactive)) return null;
 
         return { handle: headerEl, blockEl: blockEl, immediate: false };
@@ -1228,6 +1304,9 @@
           if (clientY < prevMid) {
             const rects = recordFlipRects(siblings);
             parentEl.insertBefore(blockEl, prevEl);
+            if (parentEl.classList && parentEl.classList.contains('window-body') && typeof syncPinnedWindowBodyCompanions === 'function') {
+              syncPinnedWindowBodyCompanions();
+            }
             playFlipAnimation(siblings, rects, blockEl);
             dragState.moved = true;
             updateBlockControlsStatus();
@@ -1241,6 +1320,9 @@
           if (clientY > nextMid) {
             const rects = recordFlipRects(siblings);
             parentEl.insertBefore(blockEl, nextEl.nextSibling);
+            if (parentEl.classList && parentEl.classList.contains('window-body') && typeof syncPinnedWindowBodyCompanions === 'function') {
+              syncPinnedWindowBodyCompanions();
+            }
             playFlipAnimation(siblings, rects, blockEl);
             dragState.moved = true;
             updateBlockControlsStatus();
@@ -1264,6 +1346,9 @@
         } catch {}
         st.blockEl.classList.remove('is-dragging-lift');
         if (st.moved) {
+          if (st.parentEl && st.parentEl.classList && st.parentEl.classList.contains('window-body') && typeof syncPinnedWindowBodyCompanions === 'function') {
+            syncPinnedWindowBodyCompanions();
+          }
           st.blockEl.classList.add('is-just-moved');
           setTimeout(function () { st.blockEl.classList.remove('is-just-moved'); }, 360);
           persistCurrentBlockOrder(L('Порядок блоков сохранён ✓', 'Card order saved ✓'));

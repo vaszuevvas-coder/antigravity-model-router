@@ -10,12 +10,13 @@ import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWriteJsonSync, safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
+import { resolveTunnelCacheDir } from './cache-dir.mjs';
 import { normalizeLang, pickLang } from './i18n.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
-const CACHE_DIR = join(PLUGIN_ROOT, '.cache');
-const PRIORS_FILE = join(CACHE_DIR, 'domain-priors.json');
+const getCacheDir = () => resolveTunnelCacheDir(PLUGIN_ROOT);
+const getPriorsFile = () => join(getCacheDir(), 'domain-priors.json');
 const TIME_DECAY_MS = 12 * 60 * 60 * 1000; // 12 часов: минимальный шаг до старта непрерывного экспоненциального распада
 const HALF_LIFE_MS = 14 * 24 * 60 * 60 * 1000; // 14-дневный период полураспада апостериорных весов Beta
 const MAX_FRAGILITY_FILES = 200; // Максимум отслеживаемых файлов хрупкости
@@ -230,8 +231,9 @@ export function sampleThompsonConfidence(alpha = 4, beta = 1, rng = Math.random)
  * Обеспечивает наличие директории кэша.
  */
 function ensureCacheDir() {
-  if (!existsSync(CACHE_DIR)) {
-    mkdirSync(CACHE_DIR, { recursive: true });
+  const cacheDir = getCacheDir();
+  if (!existsSync(cacheDir)) {
+    mkdirSync(cacheDir, { recursive: true });
   }
 }
 
@@ -346,7 +348,7 @@ export function extractDirKey(filePath = '', workspaceRoot = '') {
 function savePriorsState(state) {
   ensureCacheDir();
   state.updatedAt = new Date().toISOString();
-  atomicWriteJsonSync(PRIORS_FILE, state);
+  atomicWriteJsonSync(getPriorsFile(), state);
 }
 
 function decayBucketInPlace(bucket, now, nowIso, persistTs) {
@@ -478,10 +480,11 @@ function applyTimeDecayMut(state) {
  * @returns {object} Объект состояния с priors.
  */
 function loadPriorsState() {
-  if (!existsSync(PRIORS_FILE)) {
+  const priorsFile = getPriorsFile();
+  if (!existsSync(priorsFile)) {
     return createInitialState();
   }
-  const state = safeReadJsonSync(PRIORS_FILE, createInitialState, { selfHeal: false });
+  const state = safeReadJsonSync(priorsFile, createInitialState, { selfHeal: false });
   return applyTimeDecayReadOnly(state);
 }
 
@@ -580,7 +583,7 @@ export function recordModelOutcome(opts = {}) {
     retries: retryCount,
   });
 
-  const updatedState = updateJsonAtomicSync(PRIORS_FILE, createInitialState, (rawState) => {
+  const updatedState = updateJsonAtomicSync(getPriorsFile(), createInitialState, (rawState) => {
     const state = applyTimeDecayMut(
       (rawState && typeof rawState === 'object' && rawState.priors)
         ? rawState
@@ -990,7 +993,7 @@ export function resetBayesianPriors(options = {}) {
     const abs = resolve(cleanWs);
     const norm = process.platform === 'win32' ? abs.toLowerCase() : abs;
     const prefix = `${createHash('sha1').update(norm).digest('hex').slice(0, 8)}:`;
-    updateJsonAtomicSync(PRIORS_FILE, createInitialState, (rawState) => {
+    updateJsonAtomicSync(getPriorsFile(), createInitialState, (rawState) => {
       const state = (rawState && typeof rawState === 'object' && rawState.priors)
         ? { ...rawState, fileFragility: { ...(rawState.fileFragility || {}) } }
         : createInitialState();
@@ -1012,7 +1015,7 @@ export function resetBayesianPriors(options = {}) {
     };
   }
 
-  updateJsonAtomicSync(PRIORS_FILE, createInitialState, () => createInitialState());
+  updateJsonAtomicSync(getPriorsFile(), createInitialState, () => createInitialState());
   return {
     ok: true,
     summary: getBayesianSummary(isScopedWs ? cleanWs : ''),
@@ -1110,7 +1113,7 @@ export function recordFileFragility(opts = {}) {
 
   ensureCacheDir();
 
-  const updatedState = updateJsonAtomicSync(PRIORS_FILE, createInitialState, (rawState) => {
+  const updatedState = updateJsonAtomicSync(getPriorsFile(), createInitialState, (rawState) => {
     const state = applyTimeDecayMut(
       (rawState && typeof rawState === 'object' && rawState.priors)
         ? rawState

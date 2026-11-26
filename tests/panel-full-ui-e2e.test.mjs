@@ -1017,10 +1017,9 @@ test('1. Full Panel E2E: UI DOM click-through for themes, wizard, workspace, com
     await dom.waitIdle();
     await waitFor(() => dom.doc.getElementById('agProgressProjectBadge').textContent.includes(path.basename(tmpRepo)), 3500, 15, 'workspace badge');
 
-    // 2. Header Themes, Collapsible Cards (all 11), Spoilers (all 3), Block Order & Reset
-    await clickAndWaitState('[data-action="setPanelTheme"][data-arg="studio_titanium"]', (s) => s.panelTheme === 'studio_titanium', 'studio_titanium');
-    assert.equal(dom.doc.body.getAttribute('data-panel-theme'), 'studio_titanium');
-    await clickAndWaitState('[data-action="setPanelTheme"][data-arg="glass_teal"]', (s) => s.panelTheme === 'glass_teal', 'glass_teal');
+    // 2. Single Dark Theme Hygiene, Collapsible Cards (all 11), Spoilers (all 3), Block Order & Reset
+    assert.equal(dom.doc.getElementById('panelThemeGroup'), null, 'Theme switcher must be removed from header');
+    assert.equal(dom.doc.body.getAttribute('data-panel-theme'), 'glass_teal');
 
     for (const cardId of COLLAPSIBLE_PANEL_CARD_IDS) {
       const btn = dom.doc.querySelector(`.lg-card-collapse-btn[data-arg="${cardId}"]`);
@@ -1072,21 +1071,21 @@ test('1. Full Panel E2E: UI DOM click-through for themes, wizard, workspace, com
     assert.ok(dom.doc.querySelector('#smartProjectBanner [data-action="openOnboardingWizard"]'));
 
     // Cold first-run auto-launch simulation (`onboardingCompleted: false`, default English on fresh installs)
-    await vm.runInContext('wizAutoOpenedOnce = false; updateState({ onboardingCompleted: false, panelTheme: "glass_teal", uiLanguage: "en" })', dom.ctx);
+    await vm.runInContext('wizAutoOpenedOnce = false; updateState({ onboardingCompleted: false, panelViewMode: "full", uiLanguage: "en" })', dom.ctx);
     await waitFor(() => dom.doc.getElementById('onboardingWizardModal').classList.contains('visible') === true);
     assert.equal(dom.doc.body.getAttribute('data-ui-language'), 'en');
     assert.equal(dom.doc.getElementById('wizLaunchBadge').textContent, 'First Run');
 
-    // Live-preview Russian on Step 1 & studio_titanium on Step 3, then press Escape -> must revert BOTH to en + glass_teal
+    // Live-preview Russian & Lite view mode on Step 1, then press Escape -> must revert BOTH to en + full
     dom.doc.querySelector('[data-action="wizSetLanguage"][data-arg="ru"]').click();
     assert.equal(dom.doc.body.getAttribute('data-ui-language'), 'ru');
     assert.equal(dom.doc.getElementById('wizLaunchBadge').textContent, 'Первый запуск');
-    dom.doc.querySelector('[data-action="wizGoStep"][data-arg="3"]').click();
-    dom.doc.querySelector('[data-action="wizSetThemePreview"][data-arg="studio_titanium"]').click();
-    assert.equal(dom.doc.body.getAttribute('data-panel-theme'), 'studio_titanium');
+    dom.doc.querySelector('[data-action="wizSetViewMode"][data-arg="lite"]').click();
+    assert.equal(dom.doc.body.getAttribute('data-panel-view'), 'lite');
     dom.doc.dispatchEvent({ type: 'keydown', key: 'Escape', bubbles: true });
     await waitFor(() => !dom.doc.getElementById('onboardingWizardModal').classList.contains('visible') && loadState().onboardingCompleted === true);
     assert.equal(dom.doc.body.getAttribute('data-panel-theme'), 'glass_teal');
+    assert.equal(dom.doc.body.getAttribute('data-panel-view'), 'full');
     assert.equal(dom.doc.body.getAttribute('data-ui-language'), 'en');
 
     // Reopen manually via the single Setup button & verify advisor_all preservation + Steps 1-4 save (switching to RU)
@@ -1754,6 +1753,56 @@ test('2. All 56 Boolean Toggles: UI checkbox sync, server persistence & real dow
     const senSnap = await sen.getStatusSnapshot(tmpRepo);
     assert.equal(senSnap.enabled, false);
     assert.equal(senSnap.state, 'disabled');
+
+    // G) Relocated checkboxes + 4 Preset Groups + Live N/M Badges + Custom Pill
+    const clickAndWaitState = async (selector, checkFn, label) => {
+      const el = dom.doc.querySelector(selector);
+      assert.ok(el, `Element not found: ${selector} (${label})`);
+      el.click();
+      await waitFor(() => checkFn(loadState()), 3500, 15, label);
+      await dom.waitIdle();
+    };
+    assert.ok(dom.doc.getElementById('chk-gpuPreferHfMirror')?.closest('#gpuRamCard'), 'chk-gpuPreferHfMirror must live in #gpuRamCard');
+    assert.ok(dom.doc.getElementById('chk-runtimeWiretapEnabled')?.closest('#sentinelSectionCard'), 'chk-runtimeWiretapEnabled must live in #sentinelSectionCard');
+    assert.ok(dom.doc.getElementById('chk-composerVoiceEnabled')?.closest('#expertProfileCard'), 'chk-composerVoiceEnabled must live in #expertProfileCard');
+
+    await clickAndWaitState('[data-action="applyTogglePreset"][data-arg="hw:eco"]', (s) => s.gpuSemanticSearch === false && s.ramSotaEngines === false, 'hw:eco');
+    assert.equal(dom.doc.getElementById('hwEnginesCountBadge').textContent, '2/9');
+    assert.equal(dom.doc.getElementById('hwPresetCustomPill').style.display, 'none');
+    assert.equal(dom.doc.querySelector('[data-action="applyTogglePreset"][data-arg="hw:eco"]').classList.contains('active'), true);
+
+    const chkSem = dom.doc.getElementById('chk-gpuSemanticSearch');
+    chkSem.checked = true;
+    chkSem.dispatchEvent({ type: 'change', bubbles: true });
+    await waitFor(() => loadState().gpuSemanticSearch === true, 4000, 15, 'hw custom flip');
+    await dom.waitIdle();
+    assert.equal(dom.doc.getElementById('hwEnginesCountBadge').textContent, '3/9');
+    assert.notEqual(dom.doc.getElementById('hwPresetCustomPill').style.display, 'none');
+
+    await clickAndWaitState('[data-action="applyTogglePreset"][data-arg="hw:max"]', (s) => s.gpuSemanticSearch === true && s.ramSotaEngines === true && s.gpuWarmHostRamCache === true, 'hw:max');
+    assert.equal(dom.doc.getElementById('hwEnginesCountBadge').textContent, '9/9');
+
+    await clickAndWaitState('[data-action="applyTogglePreset"][data-arg="sentinel:quiet"]', (s) => s.sentinelEnabled === true && s.sentinelLocalBugBot === false, 'sentinel:quiet');
+    assert.equal(dom.doc.getElementById('sentinelEnginesCountBadge').textContent, '5/8');
+
+    await clickAndWaitState('[data-action="applyTogglePreset"][data-arg="sentinel:off"]', (s) => s.sentinelEnabled === false, 'sentinel:off');
+    assert.equal(dom.doc.querySelector('[data-action="applyTogglePreset"][data-arg="sentinel:off"]').classList.contains('active'), true);
+    assert.equal(dom.doc.getElementById('sentinelEnginesCountBadge').textContent, '0/8');
+
+    await clickAndWaitState('[data-action="applyTogglePreset"][data-arg="sentinel:full"]', (s) => s.sentinelEnabled === true && s.sentinelLocalBugBot === true, 'sentinel:full');
+    assert.equal(dom.doc.getElementById('sentinelEnginesCountBadge').textContent, '7/8');
+
+    await clickAndWaitState('[data-action="applyTogglePreset"][data-arg="intel:raw"]', (s) => s.thinkingLimiter === false && s.quotaPacerEnabled === false, 'intel:raw');
+    assert.equal(dom.doc.getElementById('intelBudgetCountBadge').textContent, '1/12');
+
+    await clickAndWaitState('[data-action="applyTogglePreset"][data-arg="intel:full"]', (s) => s.thinkingLimiter === true && s.quotaPacerEnabled === true, 'intel:full');
+    assert.equal(dom.doc.getElementById('intelBudgetCountBadge').textContent, '12/12');
+
+    await clickAndWaitState('[data-action="applyTogglePreset"][data-arg="safety:strict"]', (s) => s.mutationGuardEnabled === true, 'safety:strict');
+    assert.equal(dom.doc.getElementById('safetyContoursCountBadge').textContent, '12/12');
+
+    await clickAndWaitState('[data-action="applyTogglePreset"][data-arg="safety:standard"]', (s) => s.mutationGuardEnabled === false, 'safety:standard');
+    assert.equal(dom.doc.getElementById('safetyContoursCountBadge').textContent, '11/12');
   } finally {
     dom.destroy();
     await app.close();
@@ -1837,10 +1886,10 @@ test('4. Audit v3.32.1 regression: updateState merges panelCollapsedCards patche
     assert.equal(stAfterMerge.panelCollapsedCards?.skillsSectionCard, undefined);
 
     // (b) Failed /api/update (HTTP 500) must roll back to pre-optimistic snapshot (not the failed optimistic value)
-    const themeSeedOk = await vm.runInContext(`updateState({ panelTheme: 'glass_teal' })`, dom.ctx);
-    assert.equal(themeSeedOk, true);
+    const viewSeedOk = await vm.runInContext(`updateState({ panelViewMode: 'full' })`, dom.ctx);
+    assert.equal(viewSeedOk, true);
     await dom.waitIdle();
-    assert.equal(dom.doc.body.getAttribute('data-panel-theme'), 'glass_teal');
+    assert.equal(dom.doc.body.getAttribute('data-panel-view'), 'full');
 
     const failOk = await vm.runInContext(`(async () => {
       const origPanelFetch = panelFetch;
@@ -1855,15 +1904,15 @@ test('4. Audit v3.32.1 regression: updateState merges panelCollapsedCards patche
         return origPanelFetch(url, opts);
       };
       try {
-        return await updateState({ panelTheme: 'studio_titanium' });
+        return await updateState({ panelViewMode: 'lite' });
       } finally {
         panelFetch = origPanelFetch;
       }
     })()`, dom.ctx);
 
     assert.equal(failOk, false);
-    assert.equal(dom.doc.body.getAttribute('data-panel-theme'), 'glass_teal');
-    assert.equal(vm.runInContext('currentState.panelTheme', dom.ctx), 'glass_teal');
+    assert.equal(dom.doc.body.getAttribute('data-panel-view'), 'full');
+    assert.equal(vm.runInContext('currentState.panelViewMode', dom.ctx), 'full');
   } finally {
     dom.destroy();
     await app.close();
@@ -2006,7 +2055,39 @@ test('5. Panel Lite/Full view mode: switcher, adaptive telemetry pruning, quick 
     liteFixBtn.click();
     await waitFor(() => dom.sentAgentMessages.length > msgBeforeLiteFix, 3500, 15, 'lite sentinel 1-click fix');
     const lastSentLiteFix = dom.sentAgentMessages[dom.sentAgentMessages.length - 1];
+    assert.equal(lastSentLiteFix?.type, 'startConversation', 'Sentinel fix must open a separate new conversation instead of interrupting the active chat');
     assert.match(String(lastSentLiteFix?.msg || lastSentLiteFix || ''), /core\/demo\.mjs:L12/);
+    const liteFixNotice = dom.doc.getElementById('liteSentinelFixNotice');
+    assert.equal(liteFixNotice.style.display, 'flex');
+    assert.match(liteFixNotice.textContent, /новом стороннем чате|separate project chat/i);
+    assert.equal(liteFixBtn.disabled, true);
+
+    // Fallback finding: clones-only vs mixed (clones + errors / BugBot)
+    await vm.runInContext(`
+      renderSentinelStatus({
+        enabled: true,
+        state: 'idle',
+        shadowGuard: { errorCount: 0, warnCount: 0, cloneCount: 3, clonePairs: [], issues: [], coChangeAlerts: [] },
+        bugBot: { findingsCount: 0, findings: [] },
+      }, currentState);
+    `, dom.ctx);
+    const clonesOnlyTag = dom.doc.querySelector('#liteSentinelFindings .sentinel-finding-tag')?.textContent || '';
+    const clonesOnlyDesc = dom.doc.querySelector('#liteSentinelFindings .lite-sentinel-finding-desc')?.textContent || '';
+    assert.match(clonesOnlyTag, /Клон|Clone/);
+    assert.match(clonesOnlyDesc, /SimHash.*3|дубликаты кода.*3/i);
+
+    await vm.runInContext(`
+      renderSentinelStatus({
+        enabled: true,
+        state: 'idle',
+        shadowGuard: { errorCount: 1, warnCount: 0, cloneCount: 3, clonePairs: [], issues: [], coChangeAlerts: [] },
+        bugBot: { findingsCount: 0, findings: [] },
+      }, currentState);
+    `, dom.ctx);
+    const mixedTag = dom.doc.querySelector('#liteSentinelFindings .sentinel-finding-tag')?.textContent || '';
+    const mixedDesc = dom.doc.querySelector('#liteSentinelFindings .lite-sentinel-finding-desc')?.textContent || '';
+    assert.match(mixedTag, /Дозор|Sentinel/);
+    assert.match(mixedDesc, /предупреждения или ошибки Дозора|Sentinel warnings or errors/i);
 
     // Dark-theme active EN/RU & Lite/Full pill buttons must not use low-contrast --accent-cyan
     assert.equal(
@@ -2766,6 +2847,123 @@ test('9. Wave 4 UX: startup update check shows top banner, 1-click apply transit
 
     dom.doc.getElementById('pluginUpdateToastCloseBtn').click();
     await waitFor(() => dom.doc.getElementById('pluginUpdateToast').style.display === 'none');
+
+    // 7) Styled Global Tooltip Portal replaces native [title] on hover, cleans up on mouseout & language switch
+    const tipEl = dom.doc.getElementById('agCustomTooltip');
+    const tipBtn = dom.doc.getElementById('openProjectGraphBtn');
+    assert.ok(tipEl, 'Missing #agCustomTooltip element');
+    assert.ok(tipBtn, 'Missing #openProjectGraphBtn');
+    const origBtnTitle = tipBtn.getAttribute('title');
+    assert.ok(origBtnTitle && origBtnTitle.length > 0, 'Target button must have initial title');
+    tipBtn.getBoundingClientRect = () => ({ left: 420, top: 24, right: 490, bottom: 50, width: 70, height: 26 });
+    tipEl.offsetWidth = 200;
+    tipEl.offsetHeight = 32;
+
+    dom.doc.dispatchEvent({ type: 'mouseover', target: tipBtn, clientX: 455 });
+    assert.equal(tipBtn.getAttribute('title'), null, 'Native title must be temporarily hidden on hover');
+    await new Promise((r) => setTimeout(r, 250));
+    assert.equal(tipEl.hidden, true, 'Styled tooltip must wait ~700ms before appearing');
+    await waitFor(() => !tipEl.hidden && tipEl.classList.contains('is-visible'), 2000, 15, 'styled tooltip visible on hover');
+    assert.equal(tipEl.textContent, origBtnTitle);
+    assert.equal(tipEl.getAttribute('aria-hidden'), 'false');
+
+    // Escape key hides tooltip and restores native title
+    dom.doc.dispatchEvent({ type: 'keydown', key: 'Escape' });
+    assert.equal(tipEl.hidden, true);
+    assert.equal(tipEl.getAttribute('aria-hidden'), 'true');
+    assert.equal(tipBtn.getAttribute('title'), origBtnTitle, 'Native title must be restored on Escape');
+
+    // Switching language while tooltip is active hides tooltip and restores title before DOM translation
+    dom.doc.dispatchEvent({ type: 'mouseover', target: tipBtn, clientX: 455 });
+    await waitFor(() => !tipEl.hidden && tipEl.classList.contains('is-visible'), 2000, 15, 'styled tooltip visible before lang switch');
+    dom.doc.querySelector('#uiLanguageGroup button[data-lang="en"]').click();
+    await waitFor(() => tipEl.hidden === true, 1500, 15, 'tooltip hidden on language switch');
+    assert.ok(tipBtn.getAttribute('title'), 'Title must be restored on language switch');
+
+    // Mouseout restores title and hides tooltip
+    dom.doc.dispatchEvent({ type: 'mouseover', target: tipBtn, clientX: 455 });
+    await waitFor(() => !tipEl.hidden && tipEl.classList.contains('is-visible'), 2000, 15, 'tooltip visible before mouseout');
+    dom.doc.dispatchEvent({ type: 'mouseout', target: tipBtn, relatedTarget: dom.doc.body });
+    assert.equal(tipEl.hidden, true);
+    assert.ok(tipBtn.getAttribute('title'), 'Native title must be restored on mouseout');
+
+    // Nested tooltip owners (parent container with title + child button with title):
+    // hovering child must suppress ancestor native title too, and restore both on mouseout
+    const viewGroup = dom.doc.getElementById('panelViewModeGroup');
+    const liteBtn = dom.doc.querySelector('#panelViewModeGroup button[data-view="lite"]');
+    assert.ok(viewGroup && liteBtn, 'Missing #panelViewModeGroup or Lite button');
+    const origGroupTitle = viewGroup.getAttribute('title');
+    const origLiteTitle = liteBtn.getAttribute('title');
+    assert.ok(origGroupTitle && origLiteTitle, 'Both group and Lite button must have titles');
+    liteBtn.getBoundingClientRect = () => ({ left: 200, top: 24, right: 240, bottom: 50, width: 40, height: 26 });
+
+    dom.doc.dispatchEvent({ type: 'mouseover', target: liteBtn, clientX: 220 });
+    assert.equal(liteBtn.getAttribute('title'), null, 'Child native title must be suppressed on hover');
+    assert.equal(viewGroup.getAttribute('title'), null, 'Ancestor native title must also be suppressed on hover');
+    await waitFor(() => !tipEl.hidden && tipEl.classList.contains('is-visible'), 2000, 15, 'nested tooltip visible');
+    assert.equal(tipEl.textContent, origLiteTitle);
+
+    dom.doc.dispatchEvent({ type: 'mouseout', target: liteBtn, relatedTarget: dom.doc.body });
+    assert.equal(tipEl.hidden, true);
+    assert.equal(liteBtn.getAttribute('title'), origLiteTitle, 'Child native title must be restored on mouseout');
+    assert.equal(viewGroup.getAttribute('title'), origGroupTitle, 'Ancestor native title must be restored on mouseout');
+
+    // Polling renderGuardDock while hovering Guard Rail button must NOT re-expose native [title], and pointerdown keeps it stashed until mouseout
+    const shieldBtn = dom.doc.getElementById('gdFullBtn-shield');
+    assert.ok(shieldBtn, 'Missing #gdFullBtn-shield');
+    shieldBtn.getBoundingClientRect = () => ({ left: 80, top: 64, right: 108, bottom: 92, width: 28, height: 28 });
+    dom.doc.dispatchEvent({ type: 'mouseover', target: shieldBtn, clientX: 94 });
+    assert.equal(shieldBtn.getAttribute('title'), null, 'Guard Rail title must be stashed on hover');
+    await waitFor(() => !tipEl.hidden && tipEl.classList.contains('is-visible'), 2000, 15, 'Guard Rail tooltip visible');
+
+    dom.ctx.renderGuardDock({
+      shield: { checked: true, score: 85, grade: 'B', count: 2, criticalHighCount: 1, severity: 'warn', findings: [] },
+    });
+    assert.equal(shieldBtn.getAttribute('title'), null, 'renderGuardDock poll must not restore native title while hovered');
+    assert.ok(tipEl.textContent.includes('85/100'), 'Visible custom tooltip must update live when Guard Rail status updates');
+
+    dom.doc.dispatchEvent({ type: 'pointerdown', target: shieldBtn });
+    assert.equal(tipEl.hidden, true, 'pointerdown must hide custom tooltip');
+    assert.equal(shieldBtn.getAttribute('title'), null, 'pointerdown must keep native title stashed until mouseout');
+
+    dom.doc.dispatchEvent({ type: 'mouseout', target: shieldBtn, relatedTarget: dom.doc.body });
+    const restoredShieldTitle = shieldBtn.getAttribute('title') || '';
+    assert.ok(restoredShieldTitle.includes('85/100'), 'Latest dynamic title must be restored on mouseout');
+
+    dom.doc.querySelector('#uiLanguageGroup button[data-lang="ru"]').click();
+    await waitFor(() => dom.doc.body.getAttribute('data-ui-language') === 'ru');
+    await dom.waitIdle();
+
+    // Regression: open custom select menu (#lgCustomSelectMenu) must suppress both #agCustomTooltip and native [title] on trigger & ancestor card across telemetry polls
+    const btnRamCap = dom.doc.getElementById('btn-ramBudgetMain');
+    const ramCard = dom.doc.getElementById('ramLiveUnitCard');
+    const selectMenu = dom.doc.getElementById('lgCustomSelectMenu');
+    assert.ok(btnRamCap && ramCard && selectMenu, 'Missing #btn-ramBudgetMain, #ramLiveUnitCard or #lgCustomSelectMenu');
+    btnRamCap.getBoundingClientRect = () => ({ left: 160, top: 180, right: 230, bottom: 206, width: 70, height: 26 });
+    ramCard.getBoundingClientRect = () => ({ left: 20, top: 100, right: 240, bottom: 220, width: 220, height: 120 });
+    dom.ctx.setTooltipTitle(btnRamCap, 'Лимит оперативной памяти In-RAM');
+    dom.ctx.setTooltipTitle(ramCard, 'В фоне · Прогрето в ОЗУ: 245 файлов · ждёт запроса');
+    assert.ok(btnRamCap.getAttribute('title'), 'btn-ramBudgetMain must have title before opening select');
+    assert.ok(ramCard.getAttribute('title'), 'ramLiveUnitCard must have title before opening select');
+
+    dom.ctx.openCustomSelectMenu('sel-ramBudgetMain');
+    assert.equal(selectMenu.hidden, false, '#lgCustomSelectMenu must be open');
+    assert.equal(tipEl.hidden, true, '#agCustomTooltip must stay hidden when select menu opens');
+    assert.equal(btnRamCap.getAttribute('title'), null, 'Trigger native title must be stashed while select menu is open');
+    assert.equal(ramCard.getAttribute('title'), null, 'Ancestor card native title must be stashed while select menu is open');
+
+    dom.doc.dispatchEvent({ type: 'mouseout', target: btnRamCap, relatedTarget: ramCard });
+    dom.doc.dispatchEvent({ type: 'mouseover', target: ramCard, clientX: 120 });
+    await new Promise((r) => setTimeout(r, 750));
+    dom.ctx.setTooltipTitle(btnRamCap, 'Лимит оперативной памяти In-RAM (до 32 из 63 ГБ ОЗУ)');
+    dom.ctx.setTooltipTitle(ramCard, 'В фоне · Прогрето в ОЗУ: 245 файлов · ждёт запроса');
+    assert.equal(btnRamCap.getAttribute('title'), null, 'Telemetry update must not restore trigger title while menu is open');
+    assert.equal(ramCard.getAttribute('title'), null, 'Telemetry update must not restore ancestor title while menu is open');
+    assert.equal(tipEl.hidden, true, '#agCustomTooltip must remain hidden while select menu is open');
+
+    dom.ctx.closeCustomSelectMenu(false);
+    assert.ok((btnRamCap.getAttribute('title') || '').includes('32 из 63 ГБ ОЗУ'), 'Trigger title must be restored after closing select menu');
+    assert.ok((ramCard.getAttribute('title') || '').includes('245 файлов'), 'Ancestor card title must be restored after closing select menu');
 
     await dom.waitIdle();
   } finally {

@@ -139,6 +139,15 @@ export function auditUiContent(content = '', filePath = 'ui.html') {
   if (fakeSeqHits.length >= 3) {
     add('antiSlop', 'low', 'decorative-fake-numbering', 1, 'Decorative 01/02/03 numbering on non-sequential elements; reserve step numbers for real sequences or <ol>.', 1);
   }
+  // Taste 2.5 contact hygiene & Emil Kowalski micro-interaction craft
+  const fakeContactHit = text.match(/\b(?:hello|info|contact|support)@(?:acme|company|brand|startup|mycorp)\.(?:com|io|co)\b|\+1\s*\(?555\)?[\s.-]\d{3}[\s.-]\d{4}/i);
+  if (fakeContactHit) {
+    add('antiSlop', 'low', 'invented-contact-data', findLineNumber(text, fakeContactHit.index), 'Invented placeholder email/phone detected; use RFC .example domains and never real-format placeholder phone numbers.', 1);
+  }
+  const scaleZeroHit = text.match(/transform\s*:\s*[^;}\n]*\bscale\(\s*0(?:\.0+)?\s*\)/i);
+  if (scaleZeroHit) {
+    add('antiSlop', 'low', 'motion-scale-zero', findLineNumber(text, scaleZeroHit.index), 'Animating from scale(0) pops unnaturally; start from scale(0.95) with opacity: 0.', 1);
+  }
 
   // 2. Accessibility (A11y)
   const outlineNone = text.match(/outline\s*:\s*(?:none|0)\b/i);
@@ -162,6 +171,10 @@ export function auditUiContent(content = '', filePath = 'ui.html') {
   const transAll = text.match(/transition\s*:\s*all\b/i);
   if (transAll) {
     add('performance', 'medium', 'transition-all', findLineNumber(text, transAll.index), 'transition: all animates layout properties; restrict to transform and opacity.', 1);
+  }
+  const easeInUi = text.match(/transition(?:-timing-function)?\s*:[^;}\n]*\bease-in\b(?!-out)/i);
+  if (easeInUi) {
+    add('performance', 'low', 'motion-ease-in-ui', findLineNumber(text, easeInUi.index), 'ease-in makes UI transitions feel sluggish on start; use strong ease-out (e.g. cubic-bezier(0.23, 1, 0.32, 1)).', 1);
   }
   const layoutAnim = findLayoutKeyframeMatch(text);
   if (layoutAnim) {
@@ -187,7 +200,14 @@ export function auditUiContent(content = '', filePath = 'ui.html') {
   }
 
   // 5. Token & System Hygiene + WCAG Root Contrast + Localized Overflow
-  const rootMatch = /:root\s*\{[\s\S]*?\}/.exec(text);
+  // For HTML/markup files, inspect CSS/inline styles & markup rather than JS canvas palettes or HTML numeric entities (&#039;)
+  const isMarkupFile = /\.(?:html?|jsx|tsx|vue|svelte)$/i.test(filePath);
+  const styleAndMarkupText = isMarkupFile
+    ? text
+        .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+        .replace(/data:image\/[^"'\s)]+/gi, 'data:image/scrubbed')
+    : text;
+  const rootMatch = /:root\s*\{[\s\S]*?\}/.exec(styleAndMarkupText);
   if (rootMatch) {
     const varMap = new Map();
     const varRx = /(--[a-zA-Z0-9_-]+)\s*:\s*(#[0-9a-fA-F]{3,8})\b/g;
@@ -204,21 +224,25 @@ export function auditUiContent(content = '', filePath = 'ui.html') {
       }
     }
   }
-  const nowrapClipMatch = /\{[^}]*white-space\s*:\s*nowrap[^}]*\bwidth\s*:\s*(?:[1-9]\d|1[0-7]\d)px\b[^}]*\}|\{[^}]*\bwidth\s*:\s*(?:[1-9]\d|1[0-7]\d)px\b[^}]*white-space\s*:\s*nowrap[^}]*\}/i.exec(text);
+  const nowrapClipMatch = /\{[^}]*white-space\s*:\s*nowrap[^}]*\bwidth\s*:\s*(?:[1-9]\d|1[0-7]\d)px\b[^}]*\}|\{[^}]*\bwidth\s*:\s*(?:[1-9]\d|1[0-7]\d)px\b[^}]*white-space\s*:\s*nowrap[^}]*\}/i.exec(styleAndMarkupText);
   if (nowrapClipMatch && !/text-overflow\s*:\s*ellipsis|overflow\s*:\s*hidden/i.test(nowrapClipMatch[0])) {
     add('responsive', 'low', 'nowrap-fixed-width-clip', findLineNumber(text, nowrapClipMatch.index), 'Fixed narrow px width with white-space: nowrap risks clipping localized RU/DE labels; use min-width or ellipsis.', 1);
   }
-  const bodyWithoutRoot = (rootMatch ? text.replace(rootMatch[0], '') : text)
+  const bodyWithoutRoot = (rootMatch ? styleAndMarkupText.replace(rootMatch[0], '') : styleAndMarkupText)
     .replace(/--[a-zA-Z0-9_-]+\s*:\s*[^;\n}]+/g, '');
-  const rawHexes = bodyWithoutRoot.match(/#[0-9a-fA-F]{3,8}\b/g) || [];
+  const rawHexes = bodyWithoutRoot.match(/(?<!&)#[0-9a-fA-F]{3,8}\b/g) || [];
   const uniqNonVarHex = new Set(rawHexes.map((h) => h.toLowerCase()));
-  const usesCssVars = /var\(--[a-z0-9-]+/i.test(text);
+  const usesCssVars = /var\(--[a-z0-9-]+/i.test(styleAndMarkupText);
   if (uniqNonVarHex.size >= 10 && !usesCssVars) {
     add('tokens', 'medium', 'untokenized-hardcoded-colors', 1, `${uniqNonVarHex.size} hardcoded hex colors with no CSS custom properties (:root var(--...)).`, 2);
   } else if (uniqNonVarHex.size >= 18) {
     add('tokens', 'low', 'excess-raw-hex-drift', 1, `${uniqNonVarHex.size} un-tokenized raw hex literals outside :root.`, 1);
   }
-  const radii = new Set((text.match(/border-radius\s*:\s*([^;}\n]+)/gi) || []).map((r) => r.toLowerCase().trim()));
+  const radii = new Set(
+    (styleAndMarkupText.match(/border-radius\s*:\s*([^;}\n]+)/gi) || [])
+      .map((r) => r.replace(/\s*!important/gi, '').toLowerCase().trim())
+      .filter((r) => !/border-radius\s*:\s*0(?:px)?$/.test(r))
+  );
   if (radii.size >= 7) {
     add('tokens', 'low', 'border-radius-drift', 1, `${radii.size} distinct border-radius values; consolidate into a coherent token scale.`, 1);
   }

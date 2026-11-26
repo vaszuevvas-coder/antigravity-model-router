@@ -183,8 +183,11 @@ test('1b. Short Russian approvals ("Да", "Да!", "Исправляем") + Pr
   const convo1 = `${baseId}-main`;
   const convo2 = `${baseId}-retry`;
   const convo3 = `${baseId}-worker`;
-  const turnCachePath = path.join(ROOT_DIR, '.cache', 'pre-invocation-turn.json');
-  const swarmRolesPath = path.join(ROOT_DIR, '.cache', 'swarm-roles.json');
+  const prevCacheDir = process.env.TUNNEL_CACHE_DIR;
+  const isoCacheDir = makeTempDir('amr-editgate-cache-');
+  process.env.TUNNEL_CACHE_DIR = isoCacheDir;
+  const turnCachePath = path.join(isoCacheDir, 'pre-invocation-turn.json');
+  const swarmRolesPath = path.join(isoCacheDir, 'swarm-roles.json');
   const tmpWs = makeTempDir('amr-editgate-ws-');
   const appPath = path.join(tmpWs, 'app.mjs');
   fs.writeFileSync(appPath, 'export const x = 1;\n', 'utf8');
@@ -392,6 +395,9 @@ test('1b. Short Russian approvals ("Да", "Да!", "Исправляем") + Pr
     );
     assert.equal(exitPlanAllow.decision, 'allow', 'Orchestrator exit_plan_mode after ask_question must be allowed');
   } finally {
+    if (prevCacheDir === undefined) delete process.env.TUNNEL_CACHE_DIR;
+    else process.env.TUNNEL_CACHE_DIR = prevCacheDir;
+    fs.rmSync(isoCacheDir, { recursive: true, force: true, maxRetries: 6, retryDelay: 50 });
     fs.rmSync(tmpWs, { recursive: true, force: true, maxRetries: 6, retryDelay: 50 });
     try {
       if (fs.existsSync(turnCachePath)) {

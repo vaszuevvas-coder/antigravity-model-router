@@ -149,6 +149,10 @@ const COMPANION_VERSION_RULES = [
     patterns: [[/(String\((?:pluginJson\.version \|\| pkgJson\.version \|\| |version \|\| )')\d+\.\d+(?:\.\d+)?(')/g, (v) => `$1${v}$2`]],
   },
   {
+    rel: 'scripts/run-mega-diagnostic.mjs',
+    patterns: [[/(@description Unified 6-contour 360-degree Mega-Diagnostic CLI for The Tunnel\s+v)\d+\.\d+(?:\.\d+)?(:)/, (v) => `$1${v}$2`]],
+  },
+  {
     rel: 'rules/AGENTS.md',
     patterns: [
       [/^(# The Tunnel\s+v)\d+\.\d+(?:\.\d+)?/m, (v) => `$1${v}`],

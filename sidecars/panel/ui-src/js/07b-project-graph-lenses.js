@@ -2,11 +2,11 @@
     // 07b. PROJECT GRAPH LENSES (BLAST+DIFF, TARJAN CYCLES, PATH A->B, CART)
     // =========================================================================
 
-    function pgGetHopColor(hop, isLight) {
-      if (hop <= 0) return isLight ? '#dc2626' : '#ff375f';
-      if (hop === 1) return isLight ? '#ea580c' : '#ff9f0a';
-      if (hop === 2) return isLight ? '#d97706' : '#ffd60a';
-      return isLight ? '#0284c7' : '#64d2ff';
+    function pgGetHopColor(hop) {
+      if (hop <= 0) return '#ff375f';
+      if (hop === 1) return '#ff9f0a';
+      if (hop === 2) return '#ffd60a';
+      return '#9ca3af';
     }
 
     function pgGetNodeEstTokens(nodeId) {
@@ -241,11 +241,11 @@
       };
     }
 
-    function pgGetHotspotColor(score, isLight) {
+    function pgGetHotspotColor(score) {
       const s = Math.max(0, Math.min(1, Number(score || 0)));
-      if (s >= 0.72) return isLight ? '#dc2626' : '#ff375f';
-      if (s >= 0.42) return isLight ? '#ea580c' : '#ff9f0a';
-      return isLight ? '#d97706' : '#ffd60a';
+      if (s >= 0.72) return '#f04848';
+      if (s >= 0.42) return '#ff9f0a';
+      return '#ffd60a';
     }
 
     function pgComputeHotspotScores() {
@@ -904,7 +904,7 @@
 
         let html =
           '<div class="pg-lens-head-row">' +
-            '<span class="pg-lens-title">🌊 ' + L('Волна Blast & Diff (1–3 хопа)', 'Blast & Diff Wave (1–3 hops)') + '</span>' +
+            '<span class="pg-lens-title">' + L('Волна Blast & Diff (1–3 хопа)', 'Blast & Diff Wave (1–3 hops)') + '</span>' +
             '<button type="button" class="pg-toggle-pill' + (pgState.blastUseGitDiff ? ' active' : '') + '" data-action="pgToggleGitDiffWave"' + (!pgState.gitDiffAvailable && pgState.gitDiffLoaded ? ' disabled' : '') + '>' + escapeHtml(diffBtnLabel) + '</button>' +
           '</div>' +
           '<div class="pg-lens-sub">' +
@@ -965,7 +965,7 @@
         const days = pgState.churnDays === 30 ? 30 : 90;
         let html =
           '<div class="pg-lens-head-row">' +
-            '<span class="pg-lens-title">🔥 ' + L('Горячие точки Git (Hotspots)', 'Git Hotspots (Churn × Coupling)') + '</span>' +
+            '<span class="pg-lens-title">' + L('Горячие точки Git (Hotspots)', 'Git Hotspots (Churn × Coupling)') + '</span>' +
             '<div class="pg-days-switch">' +
               '<button type="button" class="pg-toggle-pill' + (days === 30 ? ' active' : '') + '" data-action="pgChangeChurnDays" data-arg="30">' + L('30д', '30d') + '</button>' +
               '<button type="button" class="pg-toggle-pill' + (days === 90 ? ' active' : '') + '" data-action="pgChangeChurnDays" data-arg="90">' + L('90д', '90d') + '</button>' +
@@ -1068,7 +1068,7 @@
         }).join('');
       }
       if (Array.isArray(pgState.blastAffectedTests) && pgState.blastAffectedTests.length > 0) {
-        html += '<div class="pg-hop-group-hdr"><span>🧪 ' + L('Затронутые тесты', 'Affected tests') + '</span><span>' + pgState.blastAffectedTests.length + '</span></div>';
+        html += '<div class="pg-hop-group-hdr"><span>' + L('Затронутые тесты', 'Affected tests') + '</span><span>' + pgState.blastAffectedTests.length + '</span></div>';
         html += pgState.blastAffectedTests.slice(0, 15).map(function (tid) {
           return '<button type="button" class="pg-dep-row" data-action="pgSelectNodeById" data-arg="' + escapeHtml(tid) + '" title="' + escapeHtml(tid) + '">' +
             '<span class="pg-dep-name">' + escapeHtml(tid) + '</span>' +

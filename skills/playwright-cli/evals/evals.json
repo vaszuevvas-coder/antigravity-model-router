@@ -1,0 +1,12 @@
+{
+  "positive": [
+    "Run playwright-cli to open localhost:5173, take a snapshot, and click the Sign in button",
+    "Mock the /api/orders endpoint with playwright-cli route and record a Playwright E2E test",
+    "Emulate dark mode and prefers-reduced-motion using playwright-cli and capture a 390px screenshot"
+  ],
+  "negative": [
+    "Create an animated product promo MP4 video using HyperFrames HTML and paused GSAP timeline",
+    "Write a C++ OpenFX 1.4 plugin bundle for DaVinci Resolve color grading",
+    "Audit SQLite WAL schema index and CWE taint paths in core/sqlite-knowledge-hub.mjs"
+  ]
+}

@@ -79,7 +79,7 @@
       if (isSwarmActive) {
         dotEl.className = 'swarm-dot active';
         const titlePart = sw.title ? (L('«', '"') + sw.title + L('»', '"')) : L('Активный Рой', 'Active Swarm');
-        headEl.textContent = '🐝 ' + titlePart + L(' · В строю: ', ' · Active: ') + sw.activeWorkers + L(' из ', ' of ') + sw.totalSpawned;
+        headEl.textContent = titlePart + L(' · В строю: ', ' · Active: ') + sw.activeWorkers + L(' из ', ' of ') + sw.totalSpawned;
         badgeEl.className = 'swarm-pill';
         const neonPart = (sw.neonWorkers > 0) ? (' · Neon: ' + sw.neonWorkers) : '';
         badgeEl.textContent = 'Hydrogen: ' + (sw.hydrogenWorkers || 0) + neonPart + L(' · Проверок: ', ' · Verifiers: ') + (sw.verifiers || 0);
@@ -147,19 +147,12 @@
 
     let _lastTelemetrySnapshot = null;
 
-    function syncRamSavedPillFromState(ramCache) {
-      const ramSavedEl = document.getElementById('ramUnitSavedPill');
-      if (!ramSavedEl) return;
-      const telRamSaved = Number((_lastTelemetrySnapshot && _lastTelemetrySnapshot.ramSavedTokens) || 0);
-      const liveRamSaved = Number((ramCache && ramCache.savedTokensEstimate) || 0);
-      const savedRamTok = Math.max(telRamSaved, liveRamSaved);
-      const rc = (_lastTelemetrySnapshot && _lastTelemetrySnapshot.ramCalls) || {};
-      const slicesCnt = Math.max(Number(rc.slices || 0), Number((ramCache && ramCache.slices) || 0));
-      const searchesCnt = Math.max(Number(rc.searches || 0), Number((ramCache && ramCache.searches) || 0));
-      ramSavedEl.textContent = '~' + formatK(savedRamTok) + L(' ток.', ' tok');
-      ramSavedEl.title =
-        L('Экономия памяти In-RAM: ~', 'In-RAM cache savings: ~') + formatExactInt(savedRamTok) + L(' ток. ', ' tok ') +
-        L('(срезов кода: ', '(code slices: ') + formatExactInt(slicesCnt) + L(' · поисков в ОЗУ: ', ' · RAM searches: ') + formatExactInt(searchesCnt) + ')';
+    function setHwTextIfChanged(el, nextText) {
+      if (!el) return;
+      const str = String(nextText ?? '');
+      if (el.textContent !== str) {
+        el.textContent = str;
+      }
     }
 
     function updateHeaderSessionPill(t) {
@@ -254,8 +247,250 @@
         }
       }
 
-      syncRamSavedPillFromState(_lastHwRenderCtx ? _lastHwRenderCtx.ramCache : null);
       renderSwarmTelemetry(t.swarm, currentState);
+    }
+
+    let _roiScale = 'day';
+    let _roiHoverIdx = -1;
+    let _lastRoiTimeline = null;
+    let _lastQuotaPacerSnap = null;
+    let _roiAnimRaf = 0;
+    let _roiAnimCurrentHeights = [];
+
+    function getRoiLayerColors() {
+      return {
+        cache: '#4d8b8c',
+        ram: '#8ec5c6',
+        cpu: '#c87d55',
+        gpu: '#f04848',
+        grid: 'rgba(255, 255, 255, 0.06)',
+        baseline: 'rgba(255, 255, 255, 0.14)',
+        tick: '#9ca3af',
+        tickActive: '#f3f4f6',
+      };
+    }
+
+    function updateRoiHoverReadout(buckets) {
+      const readoutEl = document.getElementById('roiHoverReadout');
+      if (!readoutEl) return;
+      if (!Array.isArray(buckets) || buckets.length === 0) {
+        readoutEl.textContent = L('Нет накопленных данных за выбранный период', 'No saved token data for selected range');
+        return;
+      }
+      if (_roiHoverIdx >= 0 && _roiHoverIdx < buckets.length) {
+        const b = buckets[_roiHoverIdx];
+        const lbl = isRu() ? (b.labelRu || b.labelEn || '') : (b.labelEn || b.labelRu || '');
+        readoutEl.textContent =
+          lbl + ' · ' + L('Всего ~', 'Total ~') + formatK(b.total || 0) +
+          ' (' + L('Кэш ', 'Cache ') + formatK(b.cache || 0) +
+          ' · RAM ' + formatK(b.ram || 0) +
+          ' · CPU ' + formatK(b.cpu || 0) +
+          ' · GPU ' + formatK(b.gpu || 0) + ')';
+        return;
+      }
+      readoutEl.textContent = L('Наведите на столбец для детализации по слоям', 'Hover a bar for per-layer breakdown');
+    }
+
+    function drawRoiCanvasFrame(buckets, animProgress) {
+      const canvas = document.getElementById('roiTimelineCanvas');
+      if (!canvas || typeof canvas.getContext !== 'function') return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      const rect = typeof canvas.getBoundingClientRect === 'function' ? canvas.getBoundingClientRect() : null;
+      const w = Math.max(220, Math.floor((rect && rect.width) || canvas.clientWidth || 320));
+      const h = Math.max(88, Math.floor((rect && rect.height) || Number(canvas.getAttribute('height')) || 104));
+      const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? Math.min(2.5, window.devicePixelRatio) : 1;
+      const targetW = Math.round(w * dpr);
+      const targetH = Math.round(h * dpr);
+      if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+
+      const pal = getRoiLayerColors();
+      const pad = { l: 8, r: 8, t: 8, b: 18 };
+      const cw = Math.max(40, w - pad.l - pad.r);
+      const ch = Math.max(30, h - pad.t - pad.b);
+
+      ctx.strokeStyle = pal.grid;
+      ctx.lineWidth = 1;
+      for (let g = 0; g < 2; g++) {
+        const gy = Math.round(pad.t + (ch / 2) * g) + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(pad.l, gy);
+        ctx.lineTo(w - pad.r, gy);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = pal.baseline;
+      const baseY = Math.round(pad.t + ch) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(pad.l, baseY);
+      ctx.lineTo(w - pad.r, baseY);
+      ctx.stroke();
+
+      if (!Array.isArray(buckets) || buckets.length === 0) return;
+      const maxTotal = Math.max(1, ...buckets.map((b) => Number(b.total || 0))) * 1.12;
+      const step = cw / buckets.length;
+      const barW = Math.min(28, Math.max(10, step * 0.6));
+      const easeP = Math.max(0, Math.min(1, Number(animProgress ?? 1)));
+
+      for (let i = 0; i < buckets.length; i++) {
+        const b = buckets[i];
+        const x = pad.l + step * i + (step - barW) * 0.5;
+        const rawTotal = Number(b.total || 0);
+        const prevH = _roiAnimCurrentHeights[i] || 0;
+        const targetTotalH = (rawTotal / maxTotal) * ch;
+        const totalH = prevH + (targetTotalH - prevH) * easeP;
+        if (easeP >= 1) _roiAnimCurrentHeights[i] = targetTotalH;
+
+        ctx.globalAlpha = (_roiHoverIdx === -1 || _roiHoverIdx === i) ? 1 : 0.4;
+        if (rawTotal > 0 && totalH > 0.5) {
+          const segs = [
+            { val: Number(b.cache || 0), col: pal.cache },
+            { val: Number(b.ram || 0), col: pal.ram },
+            { val: Number(b.cpu || 0), col: pal.cpu },
+            { val: Number(b.gpu || 0), col: pal.gpu },
+          ];
+          let accY = pad.t + ch;
+          for (let sIdx = 0; sIdx < segs.length; sIdx++) {
+            const seg = segs[sIdx];
+            if (seg.val <= 0) continue;
+            const sh = Math.max(1.5, (seg.val / rawTotal) * totalH);
+            accY -= sh;
+            ctx.fillStyle = seg.col;
+            ctx.fillRect(x, accY, barW, Math.max(1, sh - 0.8));
+          }
+        } else {
+          ctx.fillStyle = pal.baseline;
+          ctx.fillRect(x, pad.t + ch - 1.5, barW, 1.5);
+        }
+        ctx.globalAlpha = 1;
+        const lbl = isRu() ? (b.labelRu || b.labelEn || '') : (b.labelEn || b.labelRu || '');
+        ctx.fillStyle = _roiHoverIdx === i ? pal.tickActive : pal.tick;
+        ctx.font = (_roiHoverIdx === i ? '700 ' : '600 ') + '9.5px ui-monospace, SFMono-Regular, Menlo, monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(lbl, x + barW * 0.5, h - 2);
+      }
+    }
+
+    function bindRoiCanvasEventsOnce() {
+      const canvas = document.getElementById('roiTimelineCanvas');
+      if (!canvas || canvas.dataset.roiBound === '1') return;
+      canvas.dataset.roiBound = '1';
+      canvas.addEventListener('mousemove', function (ev) {
+        const scales = _lastRoiTimeline && _lastRoiTimeline.scales ? _lastRoiTimeline.scales : null;
+        const buckets = scales && Array.isArray(scales[_roiScale]) ? scales[_roiScale] : [];
+        if (!buckets.length) return;
+        const rect = canvas.getBoundingClientRect();
+        const relX = ev.clientX - rect.left - 8;
+        const cw = Math.max(40, rect.width - 16);
+        const idx = Math.max(0, Math.min(buckets.length - 1, Math.floor((relX / cw) * buckets.length)));
+        if (idx !== _roiHoverIdx) {
+          _roiHoverIdx = idx;
+          updateRoiHoverReadout(buckets);
+          drawRoiCanvasFrame(buckets, 1);
+        }
+      });
+      canvas.addEventListener('mouseleave', function () {
+        if (_roiHoverIdx !== -1) {
+          _roiHoverIdx = -1;
+          const scales = _lastRoiTimeline && _lastRoiTimeline.scales ? _lastRoiTimeline.scales : null;
+          const buckets = scales && Array.isArray(scales[_roiScale]) ? scales[_roiScale] : [];
+          updateRoiHoverReadout(buckets);
+          drawRoiCanvasFrame(buckets, 1);
+        }
+      });
+    }
+
+    function renderQuotaBulletMeter(roiData, quotaPacer) {
+      const qb = (roiData && roiData.quotaBullet) || {};
+      const qp = quotaPacer || _lastQuotaPacerSnap || {};
+      const pct = Math.max(0, Math.min(100, Math.round(Number(qb.utilizationPct ?? qp.utilizationPct ?? 0))));
+      const proj = Math.max(pct, Math.min(100, Math.round(Number(qb.projectedPct ?? Math.round(pct * 1.25)))));
+      const status = qb.status || qp.status || 'calm';
+      const minsLeft = Number.isFinite(Number(qb.estimatedMinutesLeft ?? qp.estimatedMinutesLeft))
+        ? Number(qb.estimatedMinutesLeft ?? qp.estimatedMinutesLeft)
+        : 240;
+
+      const statusEl = document.getElementById('roiQuotaStatusLabel');
+      const valEl = document.getElementById('roiQuotaValueLabel');
+      const fillEl = document.getElementById('roiQuotaFill');
+      const markEl = document.getElementById('roiQuotaProjMark');
+
+      if (statusEl) {
+        const stLabel = status === 'critical'
+          ? L('Критично', 'Critical')
+          : (status === 'elevated' ? L('Повышен', 'Elevated') : L('Спокойно', 'Calm'));
+        statusEl.textContent = L('Окно квоты (5 ч) · ', 'Quota window (5h) · ') + stLabel;
+      }
+      if (valEl) {
+        const etaH = Math.floor(minsLeft / 60);
+        const etaM = minsLeft % 60;
+        const etaStr = etaH > 0 ? (etaH + L('ч ', 'h ') + etaM + L('м', 'm')) : (etaM + L('м', 'm'));
+        valEl.textContent = pct + '% · ' + L('Прогноз ', 'Est. ') + proj + '% · ~' + etaStr;
+      }
+      if (fillEl) {
+        fillEl.style.width = pct + '%';
+        fillEl.classList.toggle('is-elevated', status === 'elevated');
+        fillEl.classList.toggle('is-critical', status === 'critical');
+      }
+      if (markEl) {
+        markEl.style.left = Math.min(98, proj) + '%';
+      }
+    }
+
+    function renderRoiTimeline(roiData, quotaPacer, animateTransition) {
+      if (roiData) _lastRoiTimeline = roiData;
+      if (quotaPacer) _lastQuotaPacerSnap = quotaPacer;
+      const activeData = _lastRoiTimeline;
+      bindRoiCanvasEventsOnce();
+      renderQuotaBulletMeter(activeData, _lastQuotaPacerSnap);
+
+      document.querySelectorAll('#roiScaleGroup button').forEach(function (btn) {
+        btn.classList.toggle('active', btn.dataset.scale === _roiScale);
+      });
+
+      const scales = activeData && activeData.scales ? activeData.scales : null;
+      const buckets = scales && Array.isArray(scales[_roiScale]) ? scales[_roiScale] : [];
+      updateRoiHoverReadout(buckets);
+
+      if (_roiAnimRaf && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(_roiAnimRaf);
+        _roiAnimRaf = 0;
+      }
+
+      const reducedMotion = typeof window !== 'undefined' && typeof window.matchMedia === 'function' &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (!animateTransition || reducedMotion || typeof requestAnimationFrame !== 'function') {
+        drawRoiCanvasFrame(buckets, 1);
+        return;
+      }
+
+      const t0 = Date.now();
+      const duration = 220;
+      const tick = function () {
+        const raw = Math.min(1, (Date.now() - t0) / duration);
+        const eased = 1 - Math.pow(1 - raw, 3);
+        drawRoiCanvasFrame(buckets, eased);
+        if (raw < 1) {
+          _roiAnimRaf = requestAnimationFrame(tick);
+        } else {
+          _roiAnimRaf = 0;
+        }
+      };
+      _roiAnimRaf = requestAnimationFrame(tick);
+    }
+
+    function setRoiTimelineScale(scale) {
+      const valid = (scale === 'week' || scale === 'month') ? scale : 'day';
+      if (_roiScale === valid) return;
+      _roiScale = valid;
+      _roiHoverIdx = -1;
+      renderRoiTimeline(_lastRoiTimeline, _lastQuotaPacerSnap, true);
     }
 
     let _checkpointsViewMode = 'turns';
@@ -339,7 +574,7 @@
             ? (' · +' + (_activeTurnDiffPreview.totalAdded || 0) + '/-' + (_activeTurnDiffPreview.totalRemoved || 0) + L(' стр.', ' lines'))
             : '';
           const projBadge = (showProjTag && tProj)
-            ? ('<button type="button" class="cp-project-badge" data-action="selectPanelWorkspaceChip" data-ws="' + escapeHtml(tWs) + '" title="' + L('Переключиться на проект ', 'Switch to project ') + escapeHtml(tWs || tProj) + '">📁 ' + escapeHtml(tProj) + '</button>')
+            ? ('<button type="button" class="cp-project-badge" data-action="selectPanelWorkspaceChip" data-ws="' + escapeHtml(tWs) + '" title="' + L('Переключиться на проект ', 'Switch to project ') + escapeHtml(tWs || tProj) + '">' + escapeHtml(tProj) + '</button>')
             : '';
           const btnHtml = t.allRestored
             ? '<span style="font-size: 10px; color: var(--accent-cyan); flex-shrink: 0;">' + L('✓ Восст. хода', '✓ Turn restored') + '</span>'
@@ -378,7 +613,7 @@
         const rawStatus = cp.status === 'сохранён' ? L('сохранён', 'saved') : cp.status;
         const status = isRestored ? L('откачен ✓', 'rolled back ✓') : (rawStatus || L('сохранён', 'saved'));
         const projBadge = (showProjTag && cpProj)
-          ? ('<button type="button" class="cp-project-badge" data-action="selectPanelWorkspaceChip" data-ws="' + escapeHtml(cpWs) + '" title="' + L('Переключиться на проект ', 'Switch to project ') + escapeHtml(cpWs || cpProj) + '">📁 ' + escapeHtml(cpProj) + '</button>')
+          ? ('<button type="button" class="cp-project-badge" data-action="selectPanelWorkspaceChip" data-ws="' + escapeHtml(cpWs) + '" title="' + L('Переключиться на проект ', 'Switch to project ') + escapeHtml(cpWs || cpProj) + '">' + escapeHtml(cpProj) + '</button>')
           : '';
         const btnHtml = isRestored
           ? '<span style="font-size: 10px; color: var(--accent-cyan); flex-shrink: 0;">' + L('✓ Восст.', '✓ Restored') + '</span>'
@@ -538,6 +773,7 @@
 
       label.textContent = L('Эпоха #', 'Epoch #') + epoch + ' · ' + fill + L('% от ', '% of ') + threshK + totalSuffix;
       bar.style.width = fill + '%';
+      bar.style.setProperty('--fill-scale', (fill / 100).toFixed(4));
     }
 
     function syncFooterPluginVersion(pluginVersion) {
@@ -563,7 +799,7 @@
         const text = typeof item === 'string' ? item : (item.rule || item.message || JSON.stringify(item));
         html +=
           '<div class="pitfall-item">' +
-            '<span class="pitfall-bullet">⚠</span>' +
+            '<span class="pitfall-bullet">!</span>' +
             '<span>' + escapeHtml(text) + '</span>' +
           '</div>';
       }
@@ -626,7 +862,7 @@
         } else {
           recBox.innerHTML = rList.slice(0, 8).map(function (r) {
             const label = (r.errorExcerpt ? r.errorExcerpt + ' → ' : '') + (r.fixSummary || '');
-            return '<div class="pitfall-item"><span class="pitfall-bullet">🏆</span><span>' + escapeHtml(label) + '</span></div>';
+            return '<div class="pitfall-item"><span class="pitfall-bullet">✓</span><span>' + escapeHtml(label) + '</span></div>';
           }).join('');
         }
       }
@@ -640,7 +876,7 @@
             const pPath = typeof p === 'string' ? p : (p.path || '');
             const pLbl = typeof p === 'string' ? p : (p.label || pPath);
             return '<span class="composer-chip-btn" style="margin:2px 4px 2px 0; display:inline-flex; align-items:center; gap:4px;">' +
-              '🔗 ' + escapeHtml(pLbl) +
+              escapeHtml(pLbl) +
               ' <button type="button" class="win-btn" style="padding:0 4px;font-size:10px;" data-action="removeFederatedPeer" data-arg="' + escapeHtml(pPath) + '">×</button>' +
               '</span>';
           }).join('');
@@ -950,13 +1186,20 @@
 
     function renderPayload(payload) {
       if (payload && payload.state && (payload.telemetry || payload.gpu || payload.skills || payload.includedSections)) {
-        lastPayloadCache = payload;
+        lastPayloadCache = lastPayloadCache ? Object.assign({}, lastPayloadCache, payload) : payload;
       }
       syncLoadedSectionsFromPayload(payload);
       if (payload && payload.pluginVersion) {
         syncFooterPluginVersion(payload.pluginVersion);
       }
       if (payload && (payload.knownWorkspaces || payload.activeWorkspace || payload.autoWorkspace)) {
+        const prevWsKey = typeof normalizeWsClientKey === 'function' ? normalizeWsClientKey(_activeWorkspaceResolved) : String(_activeWorkspaceResolved || '');
+        const nextWsRaw = (payload && typeof payload.activeWorkspace === 'string' && payload.activeWorkspace) ? payload.activeWorkspace : '';
+        const nextWsKey = nextWsRaw ? (typeof normalizeWsClientKey === 'function' ? normalizeWsClientKey(nextWsRaw) : nextWsRaw) : '';
+        if (prevWsKey && nextWsKey && prevWsKey !== nextWsKey) {
+          if (typeof resetSentinelTransientState === 'function') resetSentinelTransientState();
+          if (typeof resetGuardDockTransientState === 'function') resetGuardDockTransientState();
+        }
         renderWorkspaceSwitcher(payload);
       } else {
         syncWorkspaceSwitcherBadge();
@@ -1014,13 +1257,7 @@
         btn.classList.toggle('active', btn.dataset.val === activeSwarmTier);
       });
 
-      const activeTheme = (wizModalOpen && wizThemePreviewDirty)
-        ? normalizeUiTheme(wizDraft.panelTheme || s.panelTheme)
-        : normalizeUiTheme(s.panelTheme);
-      document.body.setAttribute('data-panel-theme', activeTheme);
-      document.querySelectorAll('#panelThemeGroup button').forEach((btn) => {
-        btn.classList.toggle('active', btn.dataset.theme === activeTheme);
-      });
+      document.body.setAttribute('data-panel-theme', 'glass_teal');
 
       const activeLang = (wizModalOpen && wizLangPreviewDirty)
         ? normalizeUiLanguage(wizDraft.uiLanguage || s.uiLanguage)
@@ -1101,8 +1338,8 @@
       if (grillHintEl) {
         if (activeGrillMode === 'off') {
           grillHintEl.textContent = L(
-            'Режим «Выкл»: детальный опрос не предлагается (можно включить разово кнопкой «🔥 Опрос» в Композере).',
-            '"Off" mode: deep interview is not offered automatically (you can trigger it once via "🔥 Grill-Me" in Composer).'
+            'Режим «Выкл»: детальный опрос не предлагается (можно включить разово кнопкой «Опрос» в Композере).',
+            '"Off" mode: deep interview is not offered automatically (you can trigger it once via "Grill-Me" in Composer).'
           );
         } else if (activeGrillMode === 'always') {
           grillHintEl.textContent = L(
@@ -1168,6 +1405,7 @@
       if (chkMutGuard) chkMutGuard.checked = Boolean(s.mutationGuardEnabled);
       const voiceBtnEl = document.getElementById('btnVoiceComposer');
       if (voiceBtnEl) voiceBtnEl.style.display = s.composerVoiceEnabled ? 'inline-flex' : 'none';
+      if (typeof syncTogglePresetsUi === 'function') syncTogglePresetsUi(s);
 
       if (payload && (payload.wiretapFaults !== undefined || payload.quotaPacer !== undefined)) {
         renderWiretapAndQuota(payload.wiretapFaults, payload.quotaPacer);
@@ -1184,15 +1422,18 @@
       }
 
       if (payload && payload.telemetry) {
+        _lastTelemetrySnapshot = payload.telemetry;
         updateHeaderSessionPill(payload.telemetry);
         syncSwarmHeaderPills(payload.telemetry, s);
         scheduleBlockRender('swarmTelemetryCard', function () {
           renderTelemetry(payload.telemetry);
+          renderRoiTimeline(payload.roiTimeline || _lastRoiTimeline, payload.quotaPacer || _lastQuotaPacerSnap, false);
         });
       } else {
         syncSwarmHeaderPills(null, s);
         scheduleBlockRender('swarmTelemetryCard', function () {
           renderSwarmTelemetry(null, s);
+          if (_lastRoiTimeline) renderRoiTimeline(_lastRoiTimeline, payload ? payload.quotaPacer : _lastQuotaPacerSnap, false);
         });
       }
 
@@ -1246,30 +1487,53 @@
         }
       }
       applyHookProfileOverridesToUi(activeHookProfile, s);
+      const hwSnapCtx = typeof _lastHwRenderCtx !== 'undefined' ? _lastHwRenderCtx : null;
+      const resolvedGpuForRender = (payload && payload.gpu !== undefined)
+        ? payload.gpu
+        : ((lastPayloadCache && lastPayloadCache.gpu !== undefined) ? lastPayloadCache.gpu : (hwSnapCtx ? hwSnapCtx.gpu : null));
+      const resolvedRamForRender = (payload && payload.ramCache !== undefined)
+        ? payload.ramCache
+        : ((lastPayloadCache && lastPayloadCache.ramCache !== undefined) ? lastPayloadCache.ramCache : (hwSnapCtx ? hwSnapCtx.ramCache : null));
+      const resolvedCpuForRender = (payload && payload.cpu !== undefined)
+        ? payload.cpu
+        : ((lastPayloadCache && lastPayloadCache.cpu !== undefined) ? lastPayloadCache.cpu : (hwSnapCtx ? hwSnapCtx.cpu : null));
+
       if (typeof syncHwHeaderSummaryBadge === 'function') {
-        syncHwHeaderSummaryBadge(
-          s,
-          payload ? (payload.gpu || null) : null,
-          payload ? (payload.ramCache || null) : null
-        );
+        syncHwHeaderSummaryBadge(s, resolvedGpuForRender, resolvedRamForRender);
       }
       const isLiteViewHw = document.body && document.body.getAttribute('data-panel-view') === 'lite';
-      if (
+      const hasAnyHwData = Boolean(
         (payload && (payload.gpu !== undefined || payload.ramCache !== undefined || payload.cpu !== undefined)) ||
-        isLiteViewHw ||
-        isBlockRenderable('expertRamGpuFieldset')
+        resolvedGpuForRender ||
+        resolvedRamForRender ||
+        resolvedCpuForRender
+      );
+      if (
+        !(payload && payload._uiLayoutOnly === true) &&
+        hasAnyHwData &&
+        (
+          (payload && (payload.gpu !== undefined || payload.ramCache !== undefined || payload.cpu !== undefined)) ||
+          isLiteViewHw ||
+          isBlockRenderable('expertRamGpuFieldset')
+        )
       ) {
         scheduleHwBlockRender(
-          payload ? (payload.gpu || null) : null,
-          payload ? (payload.ramCache || null) : null,
+          resolvedGpuForRender,
+          resolvedRamForRender,
           s,
-          payload ? (payload.cpu || null) : null
+          resolvedCpuForRender
         );
       }
       if (payload && payload.sentinel !== undefined) {
+        if (typeof syncSentinelNormalizedFindings === 'function') {
+          syncSentinelNormalizedFindings(payload.sentinel);
+        }
         scheduleBlockRender('sentinelSectionCard', function () {
           renderSentinelStatus(payload.sentinel, s);
         });
+      }
+      if (payload && payload.guardPulse !== undefined && typeof renderGuardDock === 'function') {
+        renderGuardDock(payload.guardPulse);
       }
       renderTaskProgressAndHud(payload ? payload.taskProgress : null, payload ? payload.floatingHud : null, s);
 
@@ -1441,6 +1705,13 @@
         data.autoWorkspace || '',
         data.projectDetection ? (data.projectDetection.label || '') : '',
         data.projectDetection ? (data.projectDetection.labelEn || '') : '',
+        data.guardPulse ? (
+          (data.guardPulse.bugs ? data.guardPulse.bugs.count : 0) + ':' +
+          (data.guardPulse.shield ? (data.guardPulse.shield.count + ':' + data.guardPulse.shield.score) : '0') + ':' +
+          (data.guardPulse.instincts ? (data.guardPulse.instincts.readyCount + '/' + data.guardPulse.instincts.total) : '0') + ':' +
+          (data.guardPulse.risks ? data.guardPulse.risks.count : 0) + ':' +
+          (data.guardPulse.env ? data.guardPulse.env.count : 0)
+        ) : '',
         Array.isArray(data.knownWorkspaces) ? data.knownWorkspaces.map(function (w) { return (w.workspaceRoot || '') + ':' + (w.checkpointsCount || 0) + ':' + (w.status || ''); }).join(',') : '',
       ].join('|');
     }
@@ -1520,6 +1791,7 @@
         if (data.gpu !== undefined) lastPayloadCache.gpu = data.gpu;
         if (data.cpu !== undefined) lastPayloadCache.cpu = data.cpu;
         if (data.sentinel !== undefined) lastPayloadCache.sentinel = data.sentinel;
+        if (data.guardPulse !== undefined) lastPayloadCache.guardPulse = data.guardPulse;
         if (data.hardwareCeilings) lastPayloadCache.hardwareCeilings = data.hardwareCeilings;
         if (data.bayesian !== undefined) lastPayloadCache.bayesian = data.bayesian;
         if (data.taskProgress) lastPayloadCache.taskProgress = data.taskProgress;
@@ -1534,6 +1806,7 @@
       if (Array.isArray(data.includedSections) && data.includedSections.indexOf('hw') === -1) {
         _hwHasLiveActivity = Boolean(_gpuPullActiveUi);
       }
+      _lastTelemetrySnapshot = data.telemetry;
       updateHeaderSessionPill(data.telemetry);
       syncSwarmHeaderPills(data.telemetry, currentState);
       scheduleBlockRender('swarmTelemetryCard', function () {
@@ -1563,6 +1836,9 @@
         scheduleBlockRender(isLiteViewNow ? 'liteQuickCard' : 'sentinelSectionCard', function () {
           renderSentinelStatus(data.sentinel, currentState);
         });
+      }
+      if (data.guardPulse !== undefined && typeof renderGuardDock === 'function') {
+        renderGuardDock(data.guardPulse);
       }
       if (data.bayesian !== undefined) {
         scheduleBlockRender('intelligenceBayesianCard', function () {
@@ -1689,9 +1965,13 @@
             }
             // Refresh rollback baseline to confirmed server state for any trailing queued batch.
             _batchRollbackSnap = cloneRollbackSnap(updated.state);
+            const sentKeys = patchToSend && typeof patchToSend === 'object' ? Object.keys(patchToSend) : [];
+            const isLayoutOnlySent = sentKeys.length > 0 && sentKeys.every(function (k) {
+              return k === 'panelCollapsedCards' || k === 'panelOpenSpoilers' || k === 'panelBlockOrder';
+            });
             const payloadForRender = updated.fast === true && lastPayloadCache
-              ? Object.assign({}, lastPayloadCache, updated)
-              : updated;
+              ? Object.assign({}, lastPayloadCache, updated, isLayoutOnlySent ? { _uiLayoutOnly: true } : null)
+              : Object.assign({}, updated, (updated.fast === true && isLayoutOnlySent) ? { _uiLayoutOnly: true } : null);
             if (updated.fast === true && lastPayloadCache) {
               lastPayloadCache = payloadForRender;
             }
@@ -1720,6 +2000,14 @@
       }
     }
 
+    function isUiLayoutOnlyPatch(patch) {
+      if (!patch || typeof patch !== 'object') return false;
+      const keys = Object.keys(patch);
+      return keys.length > 0 && keys.every(function (k) {
+        return k === 'panelCollapsedCards' || k === 'panelOpenSpoilers' || k === 'panelBlockOrder';
+      });
+    }
+
     function updateState(patch, opts) {
       const skipOptimistic = Boolean(opts && opts.skipOptimistic);
       if (!_batchRollbackSnap) {
@@ -1735,7 +2023,11 @@
         optimistic.skillModes = mergedModes;
       }
       if (!skipOptimistic) {
-        renderPayload(Object.assign({}, lastPayloadCache || {}, { state: optimistic }));
+        const optPayload = Object.assign({}, lastPayloadCache || {}, { state: optimistic });
+        if (isUiLayoutOnlyPatch(patch)) {
+          optPayload._uiLayoutOnly = true;
+        }
+        renderPayload(optPayload);
       }
       _pendingUpdatePatch = mergeStatePatches(_pendingUpdatePatch, patch);
       return new Promise((resolve) => {
@@ -1883,6 +2175,9 @@
         void pollTelemetryTick();
       } else if (lastPayloadCache && lastPayloadCache.sentinel !== undefined) {
         renderSentinelStatus(lastPayloadCache.sentinel, currentState);
+      }
+      if (typeof renderGuardDock === 'function') {
+        renderGuardDock(lastPayloadCache ? lastPayloadCache.guardPulse : null);
       }
       flashStatus(valid === 'lite'
         ? L('Включён краткий режим Lite ✓', 'Switched to Lite mode ✓')
@@ -2035,11 +2330,36 @@
       flashStatus(L('RAM + GPU включены ✓', 'RAM + GPU enabled ✓'));
     }
 
+    function applyOptimisticHwToggle(patch, chkId, chkVal) {
+      if (currentState && typeof currentState === 'object') {
+        Object.assign(currentState, patch);
+      }
+      if (chkId) {
+        const chkEl = document.getElementById(chkId);
+        if (chkEl) chkEl.checked = Boolean(chkVal);
+      }
+      if (typeof syncTogglePresetsUi === 'function') {
+        syncTogglePresetsUi(currentState);
+      }
+      if (_lastHwRenderCtx && typeof updateLiveHardwareOpticalUi === 'function') {
+        updateLiveHardwareOpticalUi(
+          _lastHwRenderCtx.gpu,
+          _lastHwRenderCtx.ollResolved,
+          _lastHwRenderCtx.ramCache,
+          currentState,
+          _lastHwRenderCtx.capGb,
+          _lastHwRenderCtx.ramBudgetMb,
+          _lastHwRenderCtx.cpu
+        );
+      }
+      void updateState(patch);
+    }
+
     function toggleLiteRamOnly() {
       const nextRam = currentState.ramCacheEnabled === false;
       const curGpu = Boolean(currentState.gpuEnabled);
       if (nextRam || curGpu) saveLiteHwMask(nextRam, curGpu);
-      void updateState({ ramCacheEnabled: nextRam });
+      applyOptimisticHwToggle({ ramCacheEnabled: nextRam }, 'chk-ramCacheEnabled', nextRam);
       flashStatus(nextRam ? L('RAM-кэш включён ✓', 'RAM cache enabled ✓') : L('RAM-кэш выключен', 'RAM cache disabled'));
     }
 
@@ -2047,24 +2367,23 @@
       const curRam = currentState.ramCacheEnabled !== false;
       const nextGpu = !Boolean(currentState.gpuEnabled);
       if (curRam || nextGpu) saveLiteHwMask(curRam, nextGpu);
-      void updateState({ gpuEnabled: nextGpu });
+      applyOptimisticHwToggle({ gpuEnabled: nextGpu }, 'chk-gpuEnabled', nextGpu);
       flashStatus(nextGpu ? L('Локальный GPU включён ✓', 'Local GPU enabled ✓') : L('Локальный GPU выключен', 'Local GPU disabled'));
     }
 
-    function setPanelTheme(panelTheme) {
-      const valid = normalizeUiTheme(panelTheme);
-      wizDraft.panelTheme = valid;
-      wizThemePreviewDirty = false;
-      document.body.setAttribute('data-panel-theme', valid);
-      if (typeof pgState !== 'undefined' && pgState.open) {
-        if (typeof pgRenderClusterPills === 'function') pgRenderClusterPills();
-        if (typeof pgRenderInspector === 'function') pgRenderInspector();
-        if (typeof pgDrawGraph === 'function') pgDrawGraph();
-      }
-      void updateState({ panelTheme: valid });
+    function toggleLiteCpuOnly() {
+      const nextCpu = currentState.cpuMulticoreEnabled === false;
+      applyOptimisticHwToggle({ cpuMulticoreEnabled: nextCpu }, 'chk-cpuMulticoreEnabled', nextCpu);
+      flashStatus(nextCpu ? L('CPU-пул потоков включён ✓', 'CPU thread pool enabled ✓') : L('CPU-пул потоков выключен', 'CPU thread pool disabled'));
     }
 
     function toggleOption(key, val) {
+      if (currentState && typeof currentState === 'object') {
+        currentState[key] = Boolean(val);
+      }
+      if (typeof syncTogglePresetsUi === 'function') {
+        syncTogglePresetsUi(currentState);
+      }
       const patch = {};
       patch[key] = val;
       void updateState(patch);
@@ -2291,7 +2610,7 @@
         fragileEl.innerHTML = '<span style="color: var(--status-ok); font-weight:600;">' + L('✓ Хрупких файлов с повторными сбоями не зафиксировано', '✓ No fragile files with repeat failures recorded') + '</span>';
       } else {
         fragileEl.innerHTML =
-          '<div style="color: var(--status-warn); font-weight:700; margin-bottom:2px;">' + L('⚠️ Матрица хрупкости (Топ-', '⚠️ Fragility Matrix (Top-') + fragile.length + '):</div>' +
+          '<div style="color: var(--status-warn); font-weight:700; margin-bottom:2px;">' + L('Матрица хрупкости (Топ-', 'Fragility Matrix (Top-') + fragile.length + '):</div>' +
           fragile
             .map((f) => {
               const relColor = f.reliabilityPercent < 60 ? 'var(--status-err)' : 'var(--status-warn)';
@@ -2545,6 +2864,355 @@
           }
         }
       }
+      if (typeof syncTogglePresetsUi === 'function') {
+        syncTogglePresetsUi(st);
+      }
+    }
+
+    const TOGGLE_PRESET_GROUPS = {
+      hw: {
+        groupElId: 'hwPresetGroup',
+        customPillId: 'hwPresetCustomPill',
+        badgeElId: 'hwEnginesCountBadge',
+        keys: [
+          'gpuSemanticSearch', 'gpuAutoDistillLogs', 'gpuPostEditCritic',
+          'cpuTrigramIndex', 'cpuCrossRerank', 'cpuParallelVerify',
+          'cpuSotaEngines', 'ramSotaEngines', 'gpuWarmHostRamCache',
+        ],
+        presets: {
+          eco: {
+            gpuSemanticSearch: false,
+            gpuAutoDistillLogs: true,
+            gpuPostEditCritic: false,
+            cpuTrigramIndex: true,
+            cpuCrossRerank: false,
+            cpuParallelVerify: false,
+            cpuSotaEngines: false,
+            ramSotaEngines: false,
+            gpuWarmHostRamCache: false,
+          },
+          balanced: {
+            gpuSemanticSearch: true,
+            gpuAutoDistillLogs: true,
+            gpuPostEditCritic: true,
+            cpuTrigramIndex: true,
+            cpuCrossRerank: true,
+            cpuParallelVerify: true,
+            cpuSotaEngines: true,
+            ramSotaEngines: false,
+            gpuWarmHostRamCache: false,
+          },
+          max: {
+            gpuSemanticSearch: true,
+            gpuAutoDistillLogs: true,
+            gpuPostEditCritic: true,
+            cpuTrigramIndex: true,
+            cpuCrossRerank: true,
+            cpuParallelVerify: true,
+            cpuSotaEngines: true,
+            ramSotaEngines: true,
+            gpuWarmHostRamCache: true,
+          },
+        },
+        labels: {
+          eco: ['Ускорение: Эконом', 'Acceleration: Eco'],
+          balanced: ['Ускорение: Баланс', 'Acceleration: Balanced'],
+          max: ['Ускорение: Максимум', 'Acceleration: Max'],
+        },
+      },
+      sentinel: {
+        groupElId: 'sentinelPresetGroup',
+        customPillId: 'sentinelPresetCustomPill',
+        badgeElId: 'sentinelEnginesCountBadge',
+        keys: [
+          'sentinelEnabled', 'sentinelShadowGuard', 'sentinelLocalBugBot',
+          'sentinelSymbolCards', 'sentinelSpeculativeWarm', 'sentinelShadowTests',
+          'lspBridgeEnabled', 'runtimeWiretapEnabled',
+        ],
+        presets: {
+          off: { sentinelEnabled: false },
+          quiet: {
+            sentinelEnabled: true,
+            sentinelShadowGuard: true,
+            sentinelLocalBugBot: false,
+            sentinelSymbolCards: false,
+            sentinelSpeculativeWarm: true,
+            sentinelShadowTests: false,
+            lspBridgeEnabled: true,
+            runtimeWiretapEnabled: true,
+          },
+          full: {
+            sentinelEnabled: true,
+            sentinelShadowGuard: true,
+            sentinelLocalBugBot: true,
+            sentinelSymbolCards: true,
+            sentinelSpeculativeWarm: true,
+            sentinelShadowTests: false,
+            lspBridgeEnabled: true,
+            runtimeWiretapEnabled: true,
+          },
+          max: {
+            sentinelEnabled: true,
+            sentinelShadowGuard: true,
+            sentinelLocalBugBot: true,
+            sentinelSymbolCards: true,
+            sentinelSpeculativeWarm: true,
+            sentinelShadowTests: true,
+            lspBridgeEnabled: true,
+            runtimeWiretapEnabled: true,
+          },
+        },
+        labels: {
+          off: ['Дозор: Выкл', 'Sentinel: Off'],
+          quiet: ['Дозор: Тихий', 'Sentinel: Quiet'],
+          full: ['Дозор: Полный', 'Sentinel: Full'],
+          max: ['Дозор: Максимум', 'Sentinel: Max'],
+        },
+      },
+      intel: {
+        groupElId: 'intelPresetGroup',
+        customPillId: 'intelPresetCustomPill',
+        badgeElId: 'intelBudgetCountBadge',
+        keys: [
+          'repoMap', 'pageRankGraph', 'zeroTurnSlices', 'sessionHandoff',
+          'pitfallLedger', 'thinkingLimiter', 'bayesianRouter', 'toolPruning',
+          'readDedup', 'obsMasking', 'historyCompaction', 'quotaPacerEnabled',
+        ],
+        presets: {
+          base: {
+            repoMap: true,
+            pageRankGraph: false,
+            zeroTurnSlices: true,
+            sessionHandoff: true,
+            pitfallLedger: true,
+            thinkingLimiter: true,
+            bayesianRouter: false,
+            toolPruning: true,
+            readDedup: true,
+            obsMasking: true,
+            historyCompaction: true,
+            quotaPacerEnabled: false,
+          },
+          full: {
+            repoMap: true,
+            pageRankGraph: true,
+            zeroTurnSlices: true,
+            sessionHandoff: true,
+            pitfallLedger: true,
+            thinkingLimiter: true,
+            bayesianRouter: true,
+            toolPruning: true,
+            readDedup: true,
+            obsMasking: true,
+            historyCompaction: true,
+            quotaPacerEnabled: true,
+          },
+          raw: {
+            repoMap: true,
+            pageRankGraph: false,
+            zeroTurnSlices: false,
+            sessionHandoff: false,
+            pitfallLedger: false,
+            thinkingLimiter: false,
+            bayesianRouter: false,
+            toolPruning: false,
+            readDedup: false,
+            obsMasking: false,
+            historyCompaction: false,
+            quotaPacerEnabled: false,
+          },
+        },
+        labels: {
+          base: ['Разведка: Базовый', 'Intel: Basic'],
+          full: ['Разведка: Полный', 'Intel: Full'],
+          raw: ['Разведка: Без экономии', 'Intel: Raw'],
+        },
+      },
+      safety: {
+        groupElId: 'safetyPresetGroup',
+        customPillId: 'safetyPresetCustomPill',
+        badgeElId: 'safetyContoursCountBadge',
+        keys: [
+          'diffOnly', 'transactionalPatch', 'shadowCheckpoints', 'shadowWorktreeEnabled',
+          'blastRadius', 'selfVerify', 'cascadeVerify', 'testImpactVerify',
+          'circuitBreaker', 'securityGuard', 'configProtection', 'mutationGuardEnabled',
+        ],
+        presets: {
+          light: {
+            diffOnly: true,
+            transactionalPatch: true,
+            shadowCheckpoints: true,
+            shadowWorktreeEnabled: false,
+            blastRadius: false,
+            selfVerify: true,
+            cascadeVerify: false,
+            testImpactVerify: false,
+            circuitBreaker: true,
+            securityGuard: true,
+            configProtection: false,
+            mutationGuardEnabled: false,
+          },
+          standard: {
+            diffOnly: true,
+            transactionalPatch: true,
+            shadowCheckpoints: true,
+            shadowWorktreeEnabled: true,
+            blastRadius: true,
+            selfVerify: true,
+            cascadeVerify: true,
+            testImpactVerify: true,
+            circuitBreaker: true,
+            securityGuard: true,
+            configProtection: true,
+            mutationGuardEnabled: false,
+          },
+          strict: {
+            diffOnly: true,
+            transactionalPatch: true,
+            shadowCheckpoints: true,
+            shadowWorktreeEnabled: true,
+            blastRadius: true,
+            selfVerify: true,
+            cascadeVerify: true,
+            testImpactVerify: true,
+            circuitBreaker: true,
+            securityGuard: true,
+            configProtection: true,
+            mutationGuardEnabled: true,
+          },
+        },
+        labels: {
+          light: ['Защита правок: Лёгкий', 'Edit Safety: Light'],
+          standard: ['Защита правок: Стандарт', 'Edit Safety: Standard'],
+          strict: ['Защита правок: Параноик', 'Edit Safety: Paranoid'],
+        },
+      },
+    };
+
+    function getEffectiveToggleFlag(key, stateObj) {
+      const chk = document.getElementById('chk-' + key);
+      if (chk) return Boolean(chk.checked);
+      const st = (stateObj && typeof stateObj === 'object') ? stateObj : (currentState || {});
+      return HOOK_PROFILE_DEFAULT_FALSE_KEYS.has(key) ? Boolean(st[key]) : st[key] !== false;
+    }
+
+    function syncTogglePresetsUi(stateObj) {
+      const st = (stateObj && typeof stateObj === 'object') ? stateObj : (currentState || {});
+      const groupKeys = Object.keys(TOGGLE_PRESET_GROUPS);
+      for (let g = 0; g < groupKeys.length; g++) {
+        const gKey = groupKeys[g];
+        const cfg = TOGGLE_PRESET_GROUPS[gKey];
+        if (!cfg) continue;
+
+        const effectiveMap = Object.create(null);
+        let activeCount = 0;
+        for (let i = 0; i < cfg.keys.length; i++) {
+          const k = cfg.keys[i];
+          const val = getEffectiveToggleFlag(k, st);
+          effectiveMap[k] = val;
+          if (val) activeCount++;
+        }
+
+        const badgeEl = document.getElementById(cfg.badgeElId);
+        if (badgeEl) {
+          const shownCount = (gKey === 'sentinel' && !effectiveMap.sentinelEnabled) ? 0 : activeCount;
+          badgeEl.textContent = shownCount + '/' + cfg.keys.length;
+        }
+
+        let matchedPreset = null;
+        if (gKey === 'sentinel' && !effectiveMap.sentinelEnabled) {
+          matchedPreset = 'off';
+        } else {
+          const presetIds = Object.keys(cfg.presets);
+          for (let p = 0; p < presetIds.length; p++) {
+            const pId = presetIds[p];
+            if (gKey === 'sentinel' && pId === 'off') continue;
+            const pMap = cfg.presets[pId];
+            let allMatch = true;
+            for (let i = 0; i < cfg.keys.length; i++) {
+              const k = cfg.keys[i];
+              if (Boolean(effectiveMap[k]) !== Boolean(pMap[k])) {
+                allMatch = false;
+                break;
+              }
+            }
+            if (allMatch) {
+              matchedPreset = pId;
+              break;
+            }
+          }
+        }
+
+        const btnGroup = document.getElementById(cfg.groupElId);
+        if (btnGroup) {
+          btnGroup.querySelectorAll('button').forEach((btn) => {
+            btn.classList.toggle('active', Boolean(matchedPreset) && btn.dataset.val === matchedPreset);
+          });
+        }
+        const customPill = document.getElementById(cfg.customPillId);
+        if (customPill) {
+          customPill.style.display = matchedPreset ? 'none' : 'inline-flex';
+        }
+      }
+    }
+
+    function applyTogglePreset(spec) {
+      const parts = String(spec || '').split(':');
+      const gKey = parts[0] || '';
+      const pId = parts[1] || '';
+      const cfg = TOGGLE_PRESET_GROUPS[gKey];
+      if (!cfg || !cfg.presets[pId]) return;
+
+      const presetMap = cfg.presets[pId];
+      const patch = Object.assign({}, presetMap);
+      const patchKeys = Object.keys(patch);
+
+      const st = (currentState && typeof currentState === 'object') ? currentState : {};
+      const activeHookProf = (st.hookProfile === 'minimal' || st.hookProfile === 'strict') ? st.hookProfile : 'standard';
+      if (activeHookProf !== 'standard' && patchKeys.some((k) => HOOK_PROFILE_OVERRIDE_KEYS.indexOf(k) !== -1)) {
+        patch.hookProfile = 'standard';
+      }
+
+      if (currentState && typeof currentState === 'object') {
+        Object.assign(currentState, patch);
+      }
+
+      for (let i = 0; i < patchKeys.length; i++) {
+        const k = patchKeys[i];
+        if (k === 'hookProfile') continue;
+        const chk = document.getElementById('chk-' + k);
+        if (chk) {
+          chk.checked = Boolean(patch[k]);
+        }
+      }
+
+      if (patch.hookProfile) {
+        document.querySelectorAll('#hookProfileGroup button').forEach((btn) => {
+          btn.classList.toggle('active', btn.dataset.val === 'standard');
+        });
+        const hookProfileHintEl = document.getElementById('hookProfileHint');
+        if (hookProfileHintEl) {
+          hookProfileHintEl.textContent = L(
+            'Профиль «Стандарт»: действуют ваши индивидуальные переключатели контуров.',
+            '"Standard" profile: uses your individual contour toggles below.'
+          );
+        }
+        applyHookProfileOverridesToUi('standard', currentState);
+      } else {
+        applyHookProfileOverridesToUi(activeHookProf, currentState);
+      }
+
+      if (gKey === 'sentinel' && typeof syncSentinelCheckboxes === 'function') {
+        syncSentinelCheckboxes(currentState);
+      } else {
+        syncTogglePresetsUi(currentState);
+      }
+
+      void updateState(patch);
+      const lblPair = cfg.labels && cfg.labels[pId];
+      if (lblPair && typeof flashStatus === 'function') {
+        flashStatus(L(lblPair[0], lblPair[1]) + ' ✓');
+      }
     }
 
     function setHookProfile(profile) {
@@ -2589,7 +3257,7 @@
         } else {
           sumEl.innerHTML = '<div>' + escapeHtml(summaryTxt) + '</div>' +
             findings.slice(0, 6).map(function (f) {
-              return '<div class="pitfall-item"><span class="pitfall-bullet">⚠️</span><span><strong>[' +
+              return '<div class="pitfall-item"><span class="pitfall-bullet">!</span><span><strong>[' +
                 escapeHtml(String(f.severity || '').toUpperCase()) + ']</strong> ' + escapeHtml(pickText(f, 'message', 'messageEn', f.message || '')) +
                 '</span></div>';
             }).join('');
@@ -2633,10 +3301,10 @@
       box.innerHTML = list.slice(0, 12).map(function (it) {
         const pct = Math.round(Number(it.effectiveConfidence || it.confidence || 0) * 100);
         const promoBtn = (!it.promotedSkill && it.readyForPromotion)
-          ? '<button type="button" class="win-btn" style="padding:1px 6px;font-size:10px;" data-action="promoteInstinct" data-arg="' + escapeHtml(it.id) + '">' + L('В навык', 'Promote') + '</button>'
-          : (it.promotedSkill ? '<span style="color:var(--status-ok);">✓ ' + escapeHtml(it.promotedSkill) + '</span>' : '');
-        const delBtn = '<button type="button" class="win-btn" style="padding:1px 5px;font-size:10px;" data-action="deleteInstinct" data-arg="' + escapeHtml(it.id) + '" title="' + L('Удалить инстинкт', 'Delete instinct') + '">✕</button>';
-        return '<div class="pitfall-item" style="justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;">' +
+          ? '<button type="button" class="win-btn" style="padding:1px 6px;font-size:10px;" data-action="promoteInstinct" data-arg="' + escapeHtml(it.id) + '" title="' + L('Что делает: превращает этот накопленный паттерн в постоянный файл навыка SKILL.md.\nЗачем: правило закрепится в проекте навсегда, а не только как наблюдение.', 'What it does: promotes this learned pattern into a permanent SKILL.md skill.\nWhy: locks the habit into the project permanently.') + '">' + L('В навык', 'Promote') + '</button>'
+          : (it.promotedSkill ? '<span style="color:var(--status-ok);" title="' + L('Этот инстинкт уже сохранён как постоянный навык проекта', 'This instinct is already promoted to a permanent project skill') + '">✓ ' + escapeHtml(it.promotedSkill) + '</span>' : '');
+        const delBtn = '<button type="button" class="win-btn" style="padding:1px 5px;font-size:10px;" data-action="deleteInstinct" data-arg="' + escapeHtml(it.id) + '" title="' + L('Удалить этот инстинкт из памяти проекта', 'Remove this instinct from project memory') + '">✕</button>';
+        return '<div class="pitfall-item" style="justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;" title="' + L('Накопленный паттерн работы в проекте: процент — уверенность модели, (xN) — сколько раз правило подтвердилось. При готовности появится кнопка «В навык».', 'Learned workspace pattern: % is confidence, (xN) is observation count. When ready, a Promote button appears.') + '">' +
           '<span style="min-width:0;flex:1 1 160px;word-break:break-word;"><strong>' + pct + '%</strong> (x' + Number(it.evidenceCount || 1) + ') ' + escapeHtml(it.pattern || '') + '</span>' +
           '<span style="display:inline-flex;align-items:center;gap:4px;flex-shrink:0;">' + promoBtn + delBtn + '</span>' +
           '</div>';
@@ -2702,6 +3370,8 @@
     }
 
     let _setupDoctorAutoCloseTimer = 0;
+    let _lastHealthDoctorData = null;
+    let _lastHealthDoctorLog = [];
 
     function closeSetupDoctor() {
       if (_setupDoctorAutoCloseTimer) {
@@ -2718,34 +3388,38 @@
       if (btn) btn.setAttribute('aria-expanded', 'false');
     }
 
-    function renderSetupDoctorReport(rec) {
+    function renderSetupDoctorReport(rec, health, fixLog) {
       const box = document.getElementById('setupDoctorBox');
       if (!box) return;
-      _lastSetupDoctorData = rec;
-      if (!rec || rec.ok === false) {
+      if (rec !== undefined) _lastSetupDoctorData = rec;
+      if (health !== undefined) _lastHealthDoctorData = health;
+      if (Array.isArray(fixLog)) _lastHealthDoctorLog = fixLog;
+      const activeRec = _lastSetupDoctorData;
+      const activeHealth = _lastHealthDoctorData;
+      if (!activeRec || activeRec.ok === false) {
         box.innerHTML =
           '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">' +
             '<span style="color: var(--status-warn);">' + L('Не удалось проанализировать стек проекта: ', 'Failed to analyze project stack: ') +
-              escapeHtml((rec && rec.error) || L('ошибка', 'error')) + '</span>' +
+              escapeHtml((activeRec && activeRec.error) || L('ошибка', 'error')) + '</span>' +
             '<button type="button" class="win-btn" style="padding:1px 6px;font-size:10px;flex-shrink:0;" data-action="closeSetupDoctor" title="' + L('Свернуть диагностику', 'Collapse diagnostics') + '" aria-label="' + L('Свернуть диагностику', 'Collapse diagnostics') + '">✕</button>' +
           '</div>';
         return;
       }
-      const st = rec.stack || {};
+      const st = activeRec.stack || {};
       const langs = Array.isArray(st.languages) && st.languages.length ? st.languages.join(', ') : L('авто', 'auto');
       const fws = Array.isArray(st.frameworks) && st.frameworks.length ? (' · ' + st.frameworks.join(', ')) : '';
-      const hyg = Array.isArray(rec.projectHygieneSuggestions) ? rec.projectHygieneSuggestions : [];
-      const skills = Array.isArray(rec.recommendedLocalSkills) ? rec.recommendedLocalSkills : [];
-      const ext = Array.isArray(rec.externalIntegrations) ? rec.externalIntegrations : [];
-      const recProf = rec.recommendedHookProfile || 'standard';
+      const hyg = Array.isArray(activeRec.projectHygieneSuggestions) ? activeRec.projectHygieneSuggestions : [];
+      const skills = Array.isArray(activeRec.recommendedLocalSkills) ? activeRec.recommendedLocalSkills : [];
+      const ext = Array.isArray(activeRec.externalIntegrations) ? activeRec.externalIntegrations : [];
+      const recProf = activeRec.recommendedHookProfile || 'standard';
       const profLabel = recProf === 'strict' ? L('Строгий', 'Strict') : (recProf === 'minimal' ? L('Лёгкий', 'Minimal') : L('Стандарт', 'Standard'));
-      const profReason = pickText(rec, 'hookProfileReasonRu', 'hookProfileReasonEn', '');
+      const profReason = pickText(activeRec, 'hookProfileReasonRu', 'hookProfileReasonEn', '');
       const applyableKinds = new Set(['hook_profile', 'agentignore', 'design_md', 'gates_md']);
 
       let html =
         '<div data-setup-doctor-body="1">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px;">' +
-          '<strong style="color:var(--accent-cyan);">' + L('🩺 Диагностика стека · ', '🩺 Setup Doctor · ') + escapeHtml(langs + fws) + ' (' + Number(st.totalFiles || 0) + L(' ф.)', ' files)') + '</strong>' +
+          '<strong style="color:var(--accent-cyan);">' + L('Диагностика стека · ', 'Setup Doctor · ') + escapeHtml(langs + fws) + ' (' + Number(st.totalFiles || 0) + L(' ф.)', ' files)') + '</strong>' +
           '<div style="display:inline-flex;align-items:center;gap:4px;flex-shrink:0;">' +
             '<button type="button" class="win-btn" style="padding:1px 6px;font-size:10px;" data-action="loadSetupDoctor">' + L('↻ Пересканировать', '↻ Rescan') + '</button>' +
             '<button type="button" class="win-btn" style="padding:1px 6px;font-size:10px;" data-action="closeSetupDoctor" title="' + L('Свернуть диагностику', 'Collapse diagnostics') + '" aria-label="' + L('Свернуть диагностику', 'Collapse diagnostics') + '">✕</button>' +
@@ -2764,7 +3438,7 @@
             ? '<button type="button" class="win-btn" style="padding:1px 6px;font-size:10px;flex-shrink:0;" data-action="applySetupDoctorItem" data-arg="' + escapeHtml(h.kind) + '">' + L('Применить', 'Apply') + '</button>'
             : '';
           return '<div class="pitfall-item" style="justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;">' +
-            '<span style="min-width:0;flex:1 1 160px;">⚙️ ' + escapeHtml(pickText(h, 'titleRu', 'titleEn', h.kind || '')) + '</span>' +
+            '<span style="min-width:0;flex:1 1 160px;">' + escapeHtml(pickText(h, 'titleRu', 'titleEn', h.kind || '')) + '</span>' +
             btnHtml +
             '</div>';
         }).join('');
@@ -2782,8 +3456,69 @@
           ext.slice(0, 4).map(function (e) { return escapeHtml(pickText(e, 'name', 'nameEn', e.id)); }).join(', ') +
           '</div>';
       }
+
+      if (activeHealth && activeHealth.ok) {
+        const hIssues = Array.isArray(activeHealth.issues) ? activeHealth.issues : [];
+        const hScore = Number(activeHealth.score ?? 100);
+        const hasHigh = hIssues.some(function (i) { return i.severity === 'high'; });
+        const scoreCls = hasHigh ? 'health-doctor-score is-high' : (hIssues.length > 0 ? 'health-doctor-score is-warn' : 'health-doctor-score');
+        html += '<div class="health-doctor-section" id="healthDoctorSection">';
+        html += '<div class="health-doctor-head">' +
+          '<div style="display:inline-flex;align-items:center;gap:6px;">' +
+            '<strong>' + L('Здоровье систем · Auto-Fix', 'Runtime Health · Auto-Fix') + '</strong>' +
+            '<span class="' + scoreCls + '">' + hScore + '/100</span>' +
+          '</div>' +
+          (hIssues.length > 0
+            ? '<button type="button" class="win-btn active" style="padding:1px 7px;font-size:10px;" data-action="runHealthDoctorFix" data-arg="fix_all">' + L('Починить всё (1 клик)', 'Fix all (1-click)') + '</button>'
+            : '<span style="color:var(--status-ok);font-size:10px;">' + L('✓ Все службы в норме', '✓ All systems healthy') + '</span>') +
+          '</div>';
+        if (hIssues.length > 0) {
+          html += hIssues.map(function (it) {
+            const sevCol = it.severity === 'high' ? 'var(--status-err)' : (it.severity === 'warn' ? 'var(--status-warn)' : 'var(--text-sub)');
+            return '<div class="pitfall-item" style="justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;">' +
+              '<span style="min-width:0;flex:1 1 160px;color:' + sevCol + ';" title="' + escapeHtml(pickText(it, 'detailRu', 'detailEn', '')) + '">' +
+                escapeHtml(pickText(it, 'titleRu', 'titleEn', it.id)) +
+              '</span>' +
+              (it.canAutoFix
+                ? '<button type="button" class="win-btn" style="padding:1px 6px;font-size:10px;flex-shrink:0;" data-action="runHealthDoctorFix" data-arg="' + escapeHtml(it.fixAction) + '">' + L('Исправить', 'Fix') + '</button>'
+                : '') +
+              '</div>';
+          }).join('');
+        }
+        if (_lastHealthDoctorLog.length > 0) {
+          html += '<div class="health-doctor-log">' +
+            _lastHealthDoctorLog.map(function (entry) {
+              return '<div>' + (entry.ok ? '✓ ' : '✕ ') + escapeHtml(pickText(entry, 'messageRu', 'messageEn', entry.action || '')) + '</div>';
+            }).join('') +
+            '</div>';
+        }
+        html += '</div>';
+      }
+
       html += '</div>';
       box.innerHTML = html;
+    }
+
+    async function runHealthDoctorFix(fixAction) {
+      if (!fixAction) return;
+      try {
+        flashStatus(L('Запуск авто-исправления Health-Doctor...', 'Running Health-Doctor auto-fix...'));
+        const res = await panelFetch('/api/health-doctor/fix', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fixAction: fixAction }),
+        });
+        const data = await res.json();
+        if (res && res.ok && data && data.ok) {
+          renderSetupDoctorReport(_lastSetupDoctorData, data.health || _lastHealthDoctorData, Array.isArray(data.log) ? data.log : []);
+          flashStatus(L('Health-Doctor: выполнено исправлений ', 'Health-Doctor: fixes applied ') + Number(data.applied || 0) + ' ✓');
+          await refreshAll({ silent: true });
+        } else {
+          flashStatus('Health-Doctor: ' + ((data && data.error) || L('не удалось выполнить', 'failed')));
+        }
+      } catch {
+        flashStatus(L('Ошибка авто-исправления Health-Doctor', 'Health-Doctor auto-fix error'));
+      }
     }
 
     async function loadSetupDoctor() {
@@ -2808,14 +3543,19 @@
         }
       } else {
         box.style.display = 'block';
-        box.innerHTML = '<div class="setup-doctor-loading">' + L('Анализ стека и гигиены проекта...', 'Analyzing project stack & hygiene...') + '</div>';
+        box.innerHTML = '<div class="setup-doctor-loading">' + L('Анализ стека и здоровья систем...', 'Analyzing project stack & runtime health...') + '</div>';
       }
       try {
-        const res = await panelFetch('/api/setup-recommendations', { method: 'GET' });
-        const data = await res.json();
-        renderSetupDoctorReport(data);
+        const [recSettled, healthSettled] = await Promise.allSettled([
+          panelFetch('/api/setup-recommendations', { method: 'GET' }).then((r) => r.json()),
+          panelFetch('/api/health-doctor', { method: 'GET' }).then((r) => r.json()),
+        ]);
+        const data = recSettled.status === 'fulfilled' ? recSettled.value : { ok: false, error: L('Ошибка запроса Setup Doctor', 'Setup Doctor request failed') };
+        const healthData = healthSettled.status === 'fulfilled' ? healthSettled.value : null;
+        _lastHealthDoctorLog = [];
+        renderSetupDoctorReport(data, healthData, []);
       } catch {
-        renderSetupDoctorReport({ ok: false, error: L('Ошибка запроса Setup Doctor', 'Setup Doctor request failed') });
+        renderSetupDoctorReport({ ok: false, error: L('Ошибка запроса Setup Doctor', 'Setup Doctor request failed') }, null, []);
       } finally {
         const releaseLock = function () {
           box.classList.remove('is-rescanning');
@@ -2995,7 +3735,7 @@
       }
       box.innerHTML = list.map(function (ep) {
         const filesStr = Array.isArray(ep.files) && ep.files.length ? (' · ' + ep.files.slice(0, 2).join(', ')) : '';
-        return '<div class="pitfall-item"><span class="pitfall-bullet">🗂</span><span style="min-width:0;word-break:break-word;"><strong>[' +
+        return '<div class="pitfall-item"><span class="pitfall-bullet">•</span><span style="min-width:0;word-break:break-word;"><strong>[' +
           escapeHtml((ep.date || '') + ' · ' + (ep.kind || 'session')) + ']</strong> ' +
           escapeHtml((ep.title || ep.shortId || '') + filesStr) + '</span></div>';
       }).join('');
@@ -3091,10 +3831,10 @@
       _lastGraphDebtKind = 'graph';
       const warmth = data.cacheWarmth || {};
       const warmthLabel = warmth.status === 'warm'
-        ? (L('🔥 Кэш тёплый (', '🔥 Cache warm (') + Number(warmth.remainingSeconds || 0) + L('с)', 's)'))
+        ? (L('Кэш тёплый (', 'Cache warm (') + Number(warmth.remainingSeconds || 0) + L('с)', 's)'))
         : warmth.status === 'cooling'
-          ? (L('⏳ Кэш остывает (', '⏳ Cache cooling (') + Number(warmth.remainingSeconds || 0) + L('с)', 's)'))
-          : L('❄️ Кэш холодный', '❄️ Cache cold');
+          ? (L('Кэш остывает (', 'Cache cooling (') + Number(warmth.remainingSeconds || 0) + L('с)', 's)'))
+          : L('Кэш холодный', 'Cache cold');
       const reuse = data.reuse || {};
       const reuseLabel = reuse.reusePct !== null && reuse.reusePct !== undefined
         ? ('Reuse: ' + Number(reuse.reusePct) + '% (' + Number(reuse.reusedCount || 0) + L(' исп. / ', ' used / ') + Number(reuse.newCount || 0) + L(' нов.)', ' new)'))
@@ -3116,7 +3856,7 @@
         '</div>';
       }).join('');
       const godsHtml = (data.godNodes || []).slice(0, 4).map(function (g) {
-        return '<span class="swarm-pill idle" style="margin:1px 3px 1px 0;">🌟 ' + escapeHtml(g.file) + ' (in:' + Number(g.inDegree || 0) + ')</span>';
+        return '<span class="swarm-pill idle" style="margin:1px 3px 1px 0;">[HUB] ' + escapeHtml(g.file) + ' (in:' + Number(g.inDegree || 0) + ')</span>';
       }).join('');
       const bridgesHtml = (data.bridges || []).slice(0, 4).map(function (b) {
         const confTone = b.confidence === 'AMBIGUOUS' ? 'var(--status-warn)' : 'var(--accent-cyan)';
@@ -3167,15 +3907,15 @@
       }
       if (items.length === 0) {
         drawer.textContent = L(
-          '✅ Осознанный техдолг (shortcut:) не обнаружен. Чистый реестр (' + Number(data.scannedFiles || 0) + ' файлов).',
-          '✅ No deliberate shortcut: debt found. Clean ledger (' + Number(data.scannedFiles || 0) + ' files).'
+          '✓ Осознанный техдолг (shortcut:) не обнаружен. Чистый реестр (' + Number(data.scannedFiles || 0) + ' файлов).',
+          '✓ No deliberate shortcut: debt found. Clean ledger (' + Number(data.scannedFiles || 0) + ' files).'
         );
         return;
       }
       drawer.innerHTML = items.slice(0, 25).map(function (it) {
         const warnTag = it.rotRisk ? ' <strong style="color:var(--status-warn);">[no-trigger]</strong>' : '';
         const upg = it.upgradeTrigger ? (' · <em>' + escapeHtml(it.upgradeTrigger) + '</em>') : '';
-        return '<div class="pitfall-item"><span class="pitfall-bullet">📌</span><span style="min-width:0;word-break:break-word;">' +
+        return '<div class="pitfall-item"><span class="pitfall-bullet">•</span><span style="min-width:0;word-break:break-word;">' +
           '<strong>' + escapeHtml(it.file + ':' + it.line) + '</strong> — ' + escapeHtml(it.ceiling || '') + upg + warnTag +
         '</span></div>';
       }).join('');
@@ -3245,6 +3985,9 @@
       }
       if (p && p.compaction !== undefined && typeof renderCompaction === 'function') {
         try { renderCompaction(p.compaction); } catch {}
+      }
+      if (typeof renderGuardDock === 'function') {
+        try { renderGuardDock(p && p.guardPulse ? p.guardPulse : null); } catch {}
       }
       if (p && p.pitfalls !== undefined && typeof renderPitfalls === 'function') {
         try { renderPitfalls(p.pitfalls); } catch {}

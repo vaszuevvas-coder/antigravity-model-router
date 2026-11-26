@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import vm from 'node:vm';
 import { atomicWriteJsonSync, safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
+import { resolveTunnelCacheDir } from './cache-dir.mjs';
 import { beginCpuLiveWork, endCpuLiveWork, loadCpuConfig, resolveCpuThreadBudget } from './cpu-worker-pool.mjs';
 import { localizeFaultWithV8Sbfl } from './cpu-sbfl-healer.mjs';
 
@@ -24,9 +25,9 @@ const FAST_LINTER_EXTS = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx'])
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
-const CACHE_DIR = join(PLUGIN_ROOT, '.cache');
-const CASCADE_STATE_FILE = join(CACHE_DIR, 'cascade-state.json');
-const SYNTAX_CACHE_FILE = join(CACHE_DIR, 'syntax-verified.json');
+const getCacheDir = () => resolveTunnelCacheDir(PLUGIN_ROOT);
+const getCascadeStateFile = () => join(getCacheDir(), 'cascade-state.json');
+const getSyntaxCacheFile = () => join(getCacheDir(), 'syntax-verified.json');
 const SYNTAX_CACHE_TTL_MS = 5 * 60 * 1000;
 const SYNTAX_CACHE_MAX_ENTRIES = 32;
 
@@ -36,8 +37,9 @@ const memVerifiedHashes = new Map();
  * Обеспечивает существование директории кэша.
  */
 function ensureCacheDir() {
-  if (!existsSync(CACHE_DIR)) {
-    mkdirSync(CACHE_DIR, { recursive: true });
+  const cacheDir = getCacheDir();
+  if (!existsSync(cacheDir)) {
+    mkdirSync(cacheDir, { recursive: true });
   }
 }
 
@@ -57,7 +59,7 @@ function hasVerifiedSyntaxHash(sha1) {
   if (memTs && (now - memTs) < SYNTAX_CACHE_TTL_MS) {
     return true;
   }
-  const disk = safeReadJsonSync(SYNTAX_CACHE_FILE, () => ({ hashes: {} }), { selfHeal: false });
+  const disk = safeReadJsonSync(getSyntaxCacheFile(), () => ({ hashes: {} }), { selfHeal: false });
   const diskTs = disk?.hashes && Object.hasOwn(disk.hashes, sha1) ? Number(disk.hashes[sha1]) : 0;
   if (diskTs > 0 && (now - diskTs) < SYNTAX_CACHE_TTL_MS) {
     memVerifiedHashes.set(sha1, diskTs);
@@ -78,7 +80,7 @@ function recordVerifiedSyntaxHash(sha1) {
   }
   try {
     ensureCacheDir();
-    updateJsonAtomicSync(SYNTAX_CACHE_FILE, () => ({ hashes: {} }), (cur) => {
+    updateJsonAtomicSync(getSyntaxCacheFile(), () => ({ hashes: {} }), (cur) => {
       const hashes = (cur?.hashes && typeof cur.hashes === 'object' && !Array.isArray(cur.hashes))
         ? { ...cur.hashes }
         : {};
@@ -100,7 +102,7 @@ function recordVerifiedSyntaxHash(sha1) {
  */
 function loadCascadeState() {
   ensureCacheDir();
-  const raw = safeReadJsonSync(CASCADE_STATE_FILE, () => ({ activeAlert: null }), { selfHeal: true });
+  const raw = safeReadJsonSync(getCascadeStateFile(), () => ({ activeAlert: null }), { selfHeal: true });
   return (raw && typeof raw === 'object') ? raw : { activeAlert: null };
 }
 
@@ -110,7 +112,7 @@ function loadCascadeState() {
  */
 function saveCascadeState(state) {
   ensureCacheDir();
-  atomicWriteJsonSync(CASCADE_STATE_FILE, state);
+  atomicWriteJsonSync(getCascadeStateFile(), state);
 }
 
 /**
@@ -444,7 +446,7 @@ export function recordVerifyAndCheckCascade({ filePath, conversationId = '', mod
   if (!result.valid) {
     ensureCacheDir();
     // Atomic locked RMW prevents overwriting concurrent cascade updates across subagents
-    updateJsonAtomicSync(CASCADE_STATE_FILE, () => ({ alerts: {} }), (raw) => {
+    updateJsonAtomicSync(getCascadeStateFile(), () => ({ alerts: {} }), (raw) => {
       const state = normalizeCascadeStore(raw);
       const nowIso = new Date().toISOString();
       state.alerts[convKey] = {
@@ -465,7 +467,7 @@ export function recordVerifyAndCheckCascade({ filePath, conversationId = '', mod
     const curAlert = existing.alerts[convKey];
     if (curAlert && norm(curAlert.filePath) === norm(absPath)) {
       ensureCacheDir();
-      updateJsonAtomicSync(CASCADE_STATE_FILE, () => ({ alerts: {} }), (raw) => {
+      updateJsonAtomicSync(getCascadeStateFile(), () => ({ alerts: {} }), (raw) => {
         const state = normalizeCascadeStore(raw);
         if (state.alerts[convKey] && norm(state.alerts[convKey].filePath) === norm(absPath)) {
           delete state.alerts[convKey];
@@ -533,7 +535,7 @@ export function popCascadeAlert(conversationId = '') {
   if (!hasCandidate) return null;
   let popped = null;
   ensureCacheDir();
-  updateJsonAtomicSync(CASCADE_STATE_FILE, () => ({ alerts: {} }), (raw) => {
+  updateJsonAtomicSync(getCascadeStateFile(), () => ({ alerts: {} }), (raw) => {
     const state = normalizeCascadeStore(raw);
     const targetKey = key || (state.alerts.default ? 'default' : Object.keys(state.alerts)[0]);
     if (targetKey && state.alerts[targetKey]) {
@@ -998,7 +1000,7 @@ export async function runImpactedMicroTests({
   if (firstFailure) {
     const targetAbs = filePath ? resolve(rootDir, filePath) : (testFiles[0] || rootDir);
     ensureCacheDir();
-    updateJsonAtomicSync(CASCADE_STATE_FILE, () => ({ activeAlert: null }), (raw) => {
+    updateJsonAtomicSync(getCascadeStateFile(), () => ({ activeAlert: null }), (raw) => {
       const state = raw && typeof raw === 'object' ? { ...raw } : { activeAlert: null };
       const nowIso = new Date().toISOString();
       state.activeAlert = {

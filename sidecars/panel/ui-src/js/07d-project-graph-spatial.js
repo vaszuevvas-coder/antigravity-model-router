@@ -332,7 +332,7 @@
     `;
 
     function pgParseColorRgba01(colorStr, alphaMul) {
-      const key = String(colorStr || '#0a84ff');
+      const key = String(colorStr || '#f04848');
       let base = pgGlState.colorCache.get(key);
       if (!base) {
         if (key[0] === '#' && (key.length === 7 || key.length === 4)) {
@@ -469,7 +469,6 @@
 
       const edges = scene.edges || [];
       const nodes = scene.nodes || [];
-      const isLight = Boolean(scene.isLight);
       const lens = pgState.lens || 'arch';
       const activeId = scene.activeId || '';
 
@@ -488,7 +487,7 @@
           const e = edges[i];
           if (!e.source._inView && !e.target._inView) continue;
           const isAct = Boolean(activeId && (e.source.id === activeId || e.target.id === activeId));
-          let colStr = isLight ? 'rgba(124, 45, 18, 0.19)' : 'rgba(200, 215, 245, 0.18)';
+          let colStr = 'rgba(200, 215, 245, 0.18)';
           let alpha = 1;
           const ek = e.source.id + '->' + e.target.id;
 
@@ -496,21 +495,21 @@
             const sH = pgState.blastWaveMap.get(e.source.id);
             const tH = pgState.blastWaveMap.get(e.target.id);
             if (sH !== undefined && tH !== undefined && sH !== tH) {
-              colStr = typeof pgGetHopColor === 'function' ? pgGetHopColor(Math.max(sH, tH), isLight) : '#ff9f0a';
+              colStr = typeof pgGetHopColor === 'function' ? pgGetHopColor(Math.max(sH, tH)) : '#ff9f0a';
               alpha = 0.92;
             } else {
               alpha = isAct ? 0.30 : 0.10;
             }
           } else if (scene.hasActiveCycleHighlight && scene.activeCycleEdges && scene.activeCycleEdges.has(ek)) {
-            colStr = isLight ? '#dc2626' : '#ff375f';
+            colStr = '#f04848';
             alpha = 0.94;
           } else if (scene.hasPathHighlight && pgState.pathEdgeSet && pgState.pathEdgeSet.has(ek)) {
-            colStr = isLight ? '#ea580c' : '#0a84ff';
+            colStr = '#f04848';
             alpha = 0.94;
           } else if (isAct) {
             colStr = e.target.id === activeId
-              ? (isLight ? 'rgba(234, 88, 12, 0.88)' : 'rgba(100, 210, 255, 0.90)')
-              : (isLight ? 'rgba(22, 163, 74, 0.80)' : 'rgba(48, 209, 88, 0.84)');
+              ? 'rgba(240, 72, 72, 0.90)'
+              : 'rgba(48, 209, 88, 0.84)';
           } else if (activeId) {
             alpha = 0.14;
           }
@@ -585,17 +584,17 @@
           if (scene.hasQueryOrCluster && !matches) alpha *= 0.18;
 
           const fillColStr = (hs >= 0.45 && typeof pgGetHotspotColor === 'function')
-            ? pgGetHotspotColor(hs, isLight)
+            ? pgGetHotspotColor(hs)
             : baseCol;
           const fillRgba = pgParseColorRgba01(fillColStr, alpha);
 
           let ringColorStr = '';
-          if (isSel) ringColorStr = isLight ? '#2c1e16' : '#ffffff';
-          else if (waveHop !== undefined && typeof pgGetHopColor === 'function') ringColorStr = pgGetHopColor(waveHop, isLight);
-          else if (isCycle) ringColorStr = isLight ? '#dc2626' : '#ff375f';
-          else if (ss > 0.12) ringColorStr = isLight ? '#0d9488' : '#10b981';
-          else if (hs > 0.15 && typeof pgGetHotspotColor === 'function') ringColorStr = pgGetHotspotColor(hs, isLight);
-          else if (n.isFragile) ringColorStr = isLight ? '#dc2626' : '#ff453a';
+          if (isSel) ringColorStr = '#ffffff';
+          else if (waveHop !== undefined && typeof pgGetHopColor === 'function') ringColorStr = pgGetHopColor(waveHop);
+          else if (isCycle) ringColorStr = '#f04848';
+          else if (ss > 0.12) ringColorStr = '#10b981';
+          else if (hs > 0.15 && typeof pgGetHotspotColor === 'function') ringColorStr = pgGetHotspotColor(hs);
+          else if (n.isFragile) ringColorStr = '#ff453a';
           const ringRgba = ringColorStr ? pgParseColorRgba01(ringColorStr, Math.min(1, alpha + 0.15)) : [0, 0, 0, 0];
 
           const off = nCount * STRIDE_FLOATS;

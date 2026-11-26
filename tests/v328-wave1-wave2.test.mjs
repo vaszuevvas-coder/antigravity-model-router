@@ -131,10 +131,10 @@ test('2. 3-Layer Episodic Memory (claude-mem + RooFlow): dedup, index/timeline/d
     const epSession2 = hub.recordSessionEpisode({
       workspaceRoot: wsDir,
       conversationId: 'chat-ui-2',
-      title: 'Panel header finalized with editorial light tokens',
+      title: 'Panel header finalized with crimson rail dark tokens',
       kind: 'session',
-      summary: 'Completed editorial light theme and rebuilt ui.html',
-      decisions: ['Chose studio_titanium editorial tokens'],
+      summary: 'Completed crimson rail dark theme and rebuilt ui.html',
+      decisions: ['Chose glass_teal crimson rail tokens'],
       touchedFiles: ['sidecars/panel/ui-src/head-body.html', 'sidecars/panel/ui.html'],
       nowMs: t0 + 20_000,
     });

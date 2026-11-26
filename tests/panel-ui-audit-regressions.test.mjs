@@ -401,7 +401,7 @@ test('1. Stale background tasks TTL auto-cancels hanging non-daemon & expired da
     assert.equal(parsedDaemon.hasRunningBackgroundTask, false);
     assert.equal(parsedDaemon.backgroundTasks[0]?.status, 'cancelled');
   } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 80 }); } catch {}
   }
 });
 
@@ -465,7 +465,7 @@ test('2. POST /api/update fast path returns compact state quickly while preservi
     await app.close();
     if (prevStateEnv === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
     else process.env.TUNNEL_TEST_STATE_PATH = prevStateEnv;
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 80 }); } catch {}
   }
 });
 
@@ -513,7 +513,7 @@ test('3. Real Headless CDP: HUD swarm badge, 4-item bg preview cap, EN statusPil
       while (Date.now() < deadline) {
         const ver = document.getElementById('footerPluginVersion')?.textContent || '';
         const bodyTheme = document.body?.getAttribute('data-panel-theme') || '';
-        if (typeof currentState !== 'undefined' && currentState && ver.includes('3.') && bodyTheme) return true;
+        if (typeof currentState !== 'undefined' && currentState && /\bv\d+\./.test(ver) && bodyTheme) return true;
         await new Promise((r) => setTimeout(r, 40));
       }
       throw new Error('Timed out waiting for hydration');
@@ -630,6 +630,62 @@ test('3. Real Headless CDP: HUD swarm badge, 4-item bg preview cap, EN statusPil
     if (app) await app.close();
     if (prevStateEnv === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
     else process.env.TUNNEL_TEST_STATE_PATH = prevStateEnv;
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 80 }); } catch {}
   }
+});
+
+test('4. Panel UI Craft 20/20, A11y controls, Composer thumb, Wizard orb SVG, and CLI --help/--version', async () => {
+  const { auditUiPath } = await import('../skills/ui-ux-design-system/scripts/audit-ui.mjs');
+  const uiPath = path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html');
+  const craftReport = auditUiPath(uiPath);
+  assert.equal(craftReport.averageScore, 20, `Expected 20/20 UI craft score, got ${craftReport.averageScore}: ${JSON.stringify(craftReport.findings)}`);
+  assert.deepEqual(craftReport.findings, [], 'Expected zero UI craft findings');
+
+  const dogfoodOut = execFileSync(
+    process.execPath,
+    [path.join(ROOT_DIR, 'skills', 'deep-stress-auditor', 'scripts', 'run-webapp-dogfood.mjs'), uiPath, '--json'],
+    { cwd: ROOT_DIR, encoding: 'utf8', timeout: 15000 }
+  );
+  const dogfood = JSON.parse(dogfoodOut);
+  assert.equal(dogfood.ok, true);
+  assert.deepEqual(dogfood.issues || [], [], `Expected zero dogfood A11y issues, got ${JSON.stringify(dogfood.issues)}`);
+
+  const uiHtml = fs.readFileSync(uiPath, 'utf8');
+  assert.match(uiHtml, /<img\s+id="composerImageThumb"\s+src="data:image\/gif;base64,[^"]+"/);
+  assert.match(uiHtml, /id="onboardingWizardModal"[\s\S]{0,300}<span class="lg-brand-orb"[^>]*><svg\b/);
+
+  const cliHelp = execFileSync(process.execPath, [path.join(ROOT_DIR, 'core', 'router-cli.mjs'), '--help'], {
+    cwd: ROOT_DIR,
+    encoding: 'utf8',
+    timeout: 8000,
+  });
+  assert.match(cliHelp, /The Tunnel v\d+\.\d+\.\d+/);
+  assert.match(cliHelp, /audit-ui/);
+
+  const cliVer = execFileSync(process.execPath, [path.join(ROOT_DIR, 'core', 'router-cli.mjs'), '--version'], {
+    cwd: ROOT_DIR,
+    encoding: 'utf8',
+    timeout: 8000,
+  });
+  assert.match(cliVer.trim(), /^v\d+\.\d+\.\d+/);
+});
+
+test('5. Panel UI polish regressions: Grill-Me active/hover CSS, in-place bg task reconciliation, RAM partial-payload preservation', () => {
+  const uiPath = path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html');
+  const uiHtml = fs.readFileSync(uiPath, 'utf8');
+  assert.match(uiHtml, /button\.win-btn:not\(\.win-btn-group > button\.win-btn\):hover:not\(:disabled\)/);
+  assert.match(uiHtml, /button\.win-btn\.active,\s*button\.win-btn\[aria-pressed="true"\]/);
+  assert.equal(/studio_titanium/.test(uiHtml), false, 'ui.html must not contain removed studio_titanium light theme CSS');
+
+  const hudSrc = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui-src', 'js', '05-progress-hud.js'), 'utf8');
+  assert.ok(hudSrc.includes('existingByTaskId'), 'syncBgTasksDrawerForChat must reconcile .ag-bgtask-item in-place by data-task-id');
+
+  const cardsSrc = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui-src', 'js', '02-telemetry-cards.js'), 'utf8');
+  assert.ok(cardsSrc.includes('resolvedRamForRender'), 'renderPayload must preserve last known ramCache on partial/fast updates');
+
+  const skillsSrc = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'lib', 'panel-state-skills.mjs'), 'utf8');
+  assert.match(skillsSrc, /timeout:\s*900\b/);
+
+  const collectorsSrc = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'lib', 'panel-telemetry-collectors.mjs'), 'utf8');
+  assert.ok(collectorsSrc.includes('RAM_STATUS_GRACE_MS'), 'safeGetRamCacheStatus must guard against transient /health timeouts');
 });

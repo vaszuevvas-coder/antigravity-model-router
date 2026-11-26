@@ -210,9 +210,9 @@ test('1. Sidecar Panel: validateRequestOrigin, sanitizeSkillModesPatch, CSP UI H
   assert.equal(Object.hasOwn(sanitizeStatePatch({ uiInspirationMode: 'invalid_mode' }), 'uiInspirationMode'), false);
   assert.equal(Object.hasOwn(sanitizeStatePatch({ uiInspirationMode: 42 }), 'uiInspirationMode'), false);
   assert.equal(sanitizeStatePatch({ panelTheme: 'glass_teal' }).panelTheme, 'glass_teal');
-  assert.equal(sanitizeStatePatch({ panelTheme: 'studio_titanium' }).panelTheme, 'studio_titanium');
+  assert.equal(sanitizeStatePatch({ panelTheme: 'studio_titanium' }).panelTheme, 'glass_teal');
   assert.equal(sanitizeStatePatch({ panelTheme: 'amber_hive' }).panelTheme, 'glass_teal');
-  assert.equal(sanitizeStatePatch({ panelTheme: 'conductor_paper' }).panelTheme, 'studio_titanium');
+  assert.equal(sanitizeStatePatch({ panelTheme: 'conductor_paper' }).panelTheme, 'glass_teal');
   assert.equal(Object.hasOwn(sanitizeStatePatch({ panelTheme: 'unknown_theme' }), 'panelTheme'), false);
   assert.equal(DEFAULT_STATE.panelViewMode, 'full');
   assert.equal(ALLOWED_STATE_KEYS.has('panelViewMode'), true);
@@ -300,12 +300,21 @@ test('1. Sidecar Panel: validateRequestOrigin, sanitizeSkillModesPatch, CSP UI H
   const pkgMeta = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
   const escapedPkgVer = String(pkgMeta.version || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const uiHtml = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
-  assert.equal(/amber_hive|conductor_paper/.test(uiHtml), false);
+  assert.equal(/amber_hive|conductor_paper|studio_titanium/.test(uiHtml), false);
   assert.match(uiHtml, new RegExp(`<title>[^<]*The Tunnel[^<]*v${escapedPkgVer}[^<]*<\\/title>`, 'i'));
   assert.equal(/\bon(?:click|change|input)\s*=/i.test(uiHtml), false);
   assert.equal(/MODEL_ROUTER\.EXE|win95-glass-window|id="workerGroup"|data-action="setWorker"/i.test(uiHtml), false);
   assert.match(uiHtml, /Created by Vasili Zuev/);
-  assert.match(uiHtml, /backdrop-filter/i);
+  assert.equal(/backdrop-filter/i.test(uiHtml), false);
+  assert.equal(/#(?:0a84ff|64d2ff|5e5ce6|bf5af2|a855f7|818cf8|7c3aed|9333ea|ea580c|ffe4d1|2c1e16|fffaf6|fffcf9)\b/i.test(uiHtml), false, 'ui.html must not contain legacy blue/purple/peach CSS or Canvas colors');
+  const uiBodyOnly = uiHtml.replace(/<script\b[\s\S]*?<\/script>/gi, '').replace(/<style\b[\s\S]*?<\/style>/gi, '');
+  const headBodySrc = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui-src', 'head-body.html'), 'utf8');
+  const panelSkillsSrc = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'lib', 'panel-state-skills.mjs'), 'utf8');
+  const uiEmojiRe = /[\u{1F300}-\u{1FAFF}\u26A0\u2699\u2728\u2705\u274C\u274E\u26AA\u26AB\u23F8\u23F9\u23ED\u23EE]/u;
+  assert.equal(uiEmojiRe.test(uiBodyOnly), false, 'Static panel HTML must not contain decorative emojis');
+  assert.equal(uiEmojiRe.test(headBodySrc), false, 'head-body.html must not contain decorative emojis');
+  assert.equal(uiEmojiRe.test(panelSkillsSrc), false, 'panel-state-skills.mjs must not contain decorative emojis');
+  assert.match(uiHtml, /--accent-primary/i);
   assert.match(uiHtml, /window\.sidecar\.fetch/);
   assert.equal(/id="ledBar"|led-bar-wrap|led-segment/.test(uiHtml), false);
   assert.match(uiHtml, /\/api\/telemetry/);
@@ -338,7 +347,7 @@ test('1. Sidecar Panel: validateRequestOrigin, sanitizeSkillModesPatch, CSP UI H
   assert.doesNotThrow(() => new vm.Script(scriptMatch[1]));
   const domActions = [...uiHtml.matchAll(/data-action="([^"]+)"/g)]
     .map((m) => m[1])
-    .filter((a) => a !== 'toggleOption');
+    .filter((a) => a !== 'toggleOption' && !a.includes("'"));
   const handledCases = new Set([...scriptMatch[1].matchAll(/case\s+'([^']+)'\s*:/g)].map((m) => m[1]));
   for (const act of domActions) {
     assert.equal(handledCases.has(act), true, `Missing dispatchPanelAction case for "${act}"`);
@@ -1701,7 +1710,7 @@ test('18. Multi-Chat Cumulative Telemetry, Autonomous Overflow Guard, Clean CPU 
 
     // 2) UI Panel HTML check: clean CPU Cross-Reranker label (no "0 VRAM"), exact step formatting & live GPU/RAM poll
     const uiHtml = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
-    assert.match(uiHtml, /<strong>CPU Cross-Reranker<\/strong>/);
+    assert.match(uiHtml, /<(?:strong|span class="toggle-chip-title")>CPU Cross-Reranker<\/(?:strong|span)>/);
     assert.match(uiHtml, /function formatExactInt\(num\)/);
     assert.match(uiHtml, /if \(data\.gpu \|\| data\.ramCache \|\| data\.cpu\)/);
     assert.doesNotMatch(uiHtml, /точное переранжирование \(0 VRAM\)/);
@@ -2698,13 +2707,13 @@ test('22. Full Audit Hardening: MCP multi-window workspace isolation, nullish fu
   assert.equal(cbErr.tripped, false);
   assert.equal(cbErr.status, 'CLOSED');
 
-  // 3) Sidecar UI contracts: compaction meter DOM IDs, gemma4:12b fallback, theme-aware wizard callouts
+  // 3) Sidecar UI contracts: compaction meter DOM IDs, gemma4:12b fallback, wizard callouts
   const uiHtml = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
   assert.ok(uiHtml.includes('id="compactionLabel"'), 'Missing #compactionLabel in ui.html');
   assert.ok(uiHtml.includes('id="compactionBar"'), 'Missing #compactionBar in ui.html');
   assert.ok(uiHtml.includes("wizDraft.gpuChatModel || 'gemma4:12b'"), 'Wizard must fall back to gemma4:12b');
-  assert.ok(uiHtml.includes('body[data-panel-theme="studio_titanium"] .wiz-callout-info'));
-  assert.ok(uiHtml.includes('body[data-panel-theme="studio_titanium"] .wiz-callout-ready'));
+  assert.ok(uiHtml.includes('.wiz-callout-info'));
+  assert.ok(uiHtml.includes('.wiz-callout-ready'));
 
   // 4) Stale completed chat sweep on ask_question continuation (resumeIfWaiting: true)
   resetTaskProgress();
@@ -2871,7 +2880,6 @@ test('23. Subagent Dropdown Hierarchy: >4KB SessionStart header, parent->subagen
     assert.ok(uiHtml.includes('ag-subagent-toggle-btn'), 'Missing left chevron toggle button class');
     assert.ok(uiHtml.includes('ag-subagents-drawer'), 'Missing collapsible subagent drawer');
     assert.ok(uiHtml.includes('ag-subagent-capsule'), 'Missing miniature subagent capsule');
-    assert.ok(uiHtml.includes('body[data-panel-theme="studio_titanium"] .ag-subagent-capsule'), 'Missing light theme subagent style');
   } finally {
     resetTaskProgress();
     fs.rmSync(tmpBrain, { recursive: true, force: true });
@@ -3402,10 +3410,6 @@ test('26. Multi-project parallel chats: contiguous project grouping & per-projec
     assert.ok(uiHtml.includes('.ag-project-group'), 'ui.html must define .ag-project-group');
     assert.ok(uiHtml.includes('.ag-project-group-head'), 'ui.html must define .ag-project-group-head');
     assert.ok(uiHtml.includes('.ag-project-group-chats'), 'ui.html must define .ag-project-group-chats');
-    assert.ok(
-      uiHtml.includes('body[data-panel-theme="studio_titanium"] .ag-project-group'),
-      'ui.html must define light theme .ag-project-group styles'
-    );
     assert.ok(uiHtml.includes('formatProjectsWordRu'), 'ui.html must format multi-project summary pill');
     assert.ok(uiHtml.includes('createProjectGroupElement'), 'ui.html must create per-project containers');
     assert.equal(
@@ -3822,7 +3826,6 @@ test('29. Dynamic Timeline Steps (max 30), Pre-Edit <=35% Guard, Orange Question
     // 5) UI capsule-transformer & orange question underline CSS/JS contracts
     const uiHtml = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
     assert.ok(uiHtml.includes('.ag-step-chip.question'), 'ui.html must style .ag-step-chip.question');
-    assert.ok(uiHtml.includes('body[data-panel-theme="studio_titanium"] .ag-step-chip.question'), 'ui.html must style question step in studio_titanium');
     assert.ok(uiHtml.includes('.ag-step-num'), 'ui.html must include numbered capsule .ag-step-num');
     assert.ok(uiHtml.includes('.ag-step-label'), 'ui.html must include expandable .ag-step-label');
     assert.ok(uiHtml.includes('.ag-step-chip.is-expanded .ag-step-label'), 'ui.html must expand .ag-step-label on click (.is-expanded)');
@@ -4197,13 +4200,12 @@ test('31. Stage 1-4 Polish Regressions: TAP/Stop/Badge/MCP/GPU/Drift/Pricing/Age
     assert.match(uiHtml, /\.expert-spoiler\s+summary\s*>\s*\.block-move-controls\s*\{[^}]*order:\s*3;/, 'spoiler drag handle must sit right of the collapse chevron');
     assert.equal(/iosBlockJiggleA|iosBlockJiggleB/.test(uiHtml), false, 'jiggle wobble animation must be removed');
 
-    // 10. Floating HUD studio_titanium light theme & compact mini-mode
-    const hudLight = buildWpfFloatingHudScript({ panelTheme: 'studio_titanium' });
-    assert.ok(hudLight.includes('#FAFFF9F3'), 'HUD light theme must apply milky porcelain surface');
-    assert.ok(hudLight.includes('#FB923C'), 'HUD light theme must apply ripe peach accent');
-    assert.ok(hudLight.includes('Toggle-CompactHud'), 'HUD must include Toggle-CompactHud helper');
-    assert.ok(hudLight.includes('$window.Width = 156'), 'HUD mini-mode must toggle down to 156px');
-    assert.ok(hudLight.includes('compact = [bool]$script:isCompact'), 'HUD must persist compact flag');
+    // 10. Floating HUD dark theme (legacy studio_titanium falls back to dark) & compact mini-mode
+    const hudFallback = buildWpfFloatingHudScript({ panelTheme: 'studio_titanium' });
+    assert.ok(hudFallback.includes('#E81E202B'), 'HUD must stay dark even when legacy studio_titanium is passed');
+    assert.ok(hudFallback.includes('Toggle-CompactHud'), 'HUD must include Toggle-CompactHud helper');
+    assert.ok(hudFallback.includes('$window.Width = 156'), 'HUD mini-mode must toggle down to 156px');
+    assert.ok(hudFallback.includes('compact = [bool]$script:isCompact'), 'HUD must persist compact flag');
 
     const hudDark = buildWpfFloatingHudScript({ panelTheme: 'glass_teal' });
     assert.ok(hudDark.includes('#E81E202B'), 'HUD dark theme must preserve dark capsule background');
@@ -4771,7 +4773,6 @@ test('32b. Background Task (task running) keeps progress running across Stop and
     assert.ok(uiHtml.includes("case 'toggleBgTasksShowAll':"), 'Missing toggleBgTasksShowAll dispatcher case');
     assert.ok(uiHtml.includes('ag-bgtask-toggle-btn'), 'Missing cyan background tasks toggle button class');
     assert.ok(uiHtml.includes('ag-bgtasks-drawer'), 'Missing collapsible background tasks drawer');
-    assert.ok(uiHtml.includes('body[data-panel-theme="studio_titanium"] .ag-bgtask-toggle-btn'), 'Missing light theme background tasks style');
 
     // Regression 1: False-positive code slice / ram_slice output must NOT spawn background tasks
     const fpLog = path.join(tmpBrain, 'chat-bg-fp', '.system_generated', 'logs', 'transcript.jsonl');
@@ -5539,9 +5540,7 @@ test('37. Live RAM & GPU Optical Telemetry: standby vs real-time work classifica
     'ramLiveUnitCard',
     'gpuLiveUnitCard',
     'cpuLiveUnitCard',
-    'ramUnitSavedPill',
-    'gpuUnitSavedPill',
-    'cpuUnitSavedPill',
+    'gpuUnitGgufPill',
     'cpuUnitThreadBar',
     'ramUnitAfterglowFill',
     'gpuUnitAfterglowFill',
@@ -5562,25 +5561,48 @@ test('37. Live RAM & GPU Optical Telemetry: standby vs real-time work classifica
     'gpuVramMetric',
     'gpuSavedTokensMetric',
     'cpuStatusSubLine',
+    'ramUnitSavedPill',
+    'gpuUnitSavedPill',
+    'cpuUnitSavedPill',
+    'ramCacheSubLine',
   ]) {
     assert.equal(uiHtml.includes(`id="${removedDupId}"`), false, `ui.html must NOT contain duplicate/removed #${removedDupId}`);
   }
-  const idxVram = uiHtml.indexOf('id="gpuVramCapGroup"');
-  const idxRam = uiHtml.indexOf('id="ramBudgetMainGroup"');
+  const idxRamCard = uiHtml.indexOf('id="ramLiveUnitCard"');
+  const idxGpuCard = uiHtml.indexOf('id="gpuLiveUnitCard"');
+  const idxCpuCard = uiHtml.indexOf('id="cpuLiveUnitCard"');
+  const idxRamLimit = uiHtml.indexOf('id="ramBudgetMainGroup"');
+  const idxGpuSwitch = uiHtml.indexOf('id="chk-gpuEnabled"');
+  const idxGpuGgufPill = uiHtml.indexOf('id="gpuUnitGgufPill"');
+  const idxVramLimit = uiHtml.indexOf('id="gpuVramCapGroup"');
+  const idxCpuSwitch = uiHtml.indexOf('id="chk-cpuMulticoreEnabled"');
   const idxCpuThreads = uiHtml.indexOf('id="cpuThreadsCapGroup"');
-  const idxGpuToggle = uiHtml.indexOf('id="chk-gpuEnabled"');
-  assert.ok(idxVram > 0 && idxRam > idxVram && idxCpuThreads > idxRam && idxGpuToggle > idxCpuThreads, 'cpuThreadsCapGroup must sit directly with VRAM & In-RAM limit controls');
+  assert.ok(
+    idxRamCard > 0 && idxRamLimit > idxRamCard && idxRamLimit < idxGpuCard,
+    'ramBudgetMainGroup must live inside #ramLiveUnitCard'
+  );
+  assert.ok(
+    idxGpuCard > 0 && idxGpuSwitch > idxGpuCard && idxGpuGgufPill > idxGpuCard && idxVramLimit > idxGpuSwitch && idxVramLimit < idxCpuCard && idxGpuGgufPill < idxCpuCard,
+    'chk-gpuEnabled, gpuUnitGgufPill and gpuVramCapGroup must live inside #gpuLiveUnitCard'
+  );
+  assert.ok(
+    idxCpuCard > 0 && idxCpuSwitch > idxCpuCard && idxCpuThreads > idxCpuSwitch,
+    'chk-cpuMulticoreEnabled and cpuThreadsCapGroup must live inside #cpuLiveUnitCard'
+  );
+  assert.equal(uiHtml.includes('class="hw-master-row"'), false, 'Legacy .hw-master-row block must be removed');
   assert.ok(uiHtml.includes('@keyframes hwSpinOpticalRim'), 'ui.html must include optical rim keyframe');
   assert.ok(uiHtml.includes('@keyframes hwCausticFlow'), 'ui.html must include Liquid Silk caustic flow keyframe');
   assert.ok(uiHtml.includes('.hw-optical-unit.cpu-unit .hw-afterglow-fill'), 'ui.html must style unified Liquid Silk reservoir for CPU unit');
   assert.equal(uiHtml.includes('cpu-thread-seg'), false, 'ui.html must NOT render legacy stretched orange CPU segments');
   assert.equal(uiHtml.includes('hw-tank-ticks'), false, 'ui.html must NOT render vertical tick lines inside status bars');
   assert.ok((uiHtml.match(/class="hw-afterglow-track hw-liquid-tank"/g) || []).length >= 2 && uiHtml.includes('class="hw-afterglow-track hw-liquid-tank" id="cpuUnitThreadBar"'), 'RAM, GPU and CPU units must all render unified Liquid Silk reservoirs');
-  assert.ok(uiHtml.includes('body[data-panel-theme="studio_titanium"] .hw-optical-unit'), 'ui.html must style Peach Porcelain theme');
-  assert.ok(uiHtml.includes('body[data-panel-theme="studio_titanium"] .hw-optical-unit.cpu-unit.is-working'), 'ui.html must style CPU unit in Peach Porcelain theme');
-  assert.ok(uiHtml.includes('body[data-panel-theme="studio_titanium"] .hw-unit-saved-pill'), 'ui.html must style savings pills in Peach Porcelain theme');
-  assert.ok(uiHtml.includes('body[data-panel-theme="studio_titanium"] .hw-tank-pct'), 'ui.html must style tank percentage readout in Peach Porcelain theme');
-  assert.ok(uiHtml.includes('scrollToGpuRamCard'), 'Header pills must wire scrollToGpuRamCard action');
+  assert.ok(uiHtml.includes('.hw-optical-unit'), 'ui.html must style hardware optical units');
+  assert.ok(uiHtml.includes('.hw-optical-unit.cpu-unit.is-working'), 'ui.html must style CPU unit working state');
+  assert.equal(uiHtml.includes('hw-unit-saved-pill'), false, 'Saved/counter pills must be removed from hardware tiles');
+  assert.ok(uiHtml.includes('.hw-tank-pct'), 'ui.html must style tank percentage readout');
+  assert.match(uiHtml, /id="topRamLivePill"[^>]*data-action="toggleLiteRamOnly"[^>]*aria-pressed=/, 'Header RAM pill must toggle RAM cache');
+  assert.match(uiHtml, /id="topGpuLivePill"[^>]*data-action="toggleLiteGpuOnly"[^>]*aria-pressed=/, 'Header GPU pill must toggle GPU copilot');
+  assert.match(uiHtml, /id="topCpuLivePill"[^>]*data-action="toggleLiteCpuOnly"[^>]*aria-pressed=/, 'Header CPU pill must toggle CPU thread pool');
 });
 
 test('38. GPU Model Selector & Model Search Prompt: deduplicated standby tile, select dropdowns & direct chat dispatch', async () => {
@@ -6317,7 +6339,6 @@ test('56. Strict GPU VRAM Cap Enforcement (gpuMaxVramMb): model fit check, selec
   assert.ok(uiHtml.includes('sendVramFitModelPrompt'));
   assert.ok(uiHtml.includes('computeClientVramFit'));
   assert.ok(uiHtml.includes('applySuggestedVramModel'));
-  assert.ok(uiHtml.includes('body[data-panel-theme="studio_titanium"] .gpu-vram-fit-alert'));
 
   const serverJs = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'server.mjs'), 'utf8');
   assert.ok(serverJs.includes('enforceVramCapInOllama'));
@@ -7263,7 +7284,7 @@ test('Smart Composer (Ghost Text): two-stage RAM+GPU continuation, overlap sanit
   assert.ok(uiHtml.includes('id="smartComposerInput"'), 'ui.html must render #smartComposerInput');
   assert.ok(uiHtml.includes('id="composerMirrorGhost"'), 'ui.html must render #composerMirrorGhost');
   assert.match(uiHtml, /\.composer-textarea\s*\{[\s\S]*?user-select:\s*text;/);
-  assert.match(uiHtml, /body\[data-panel-theme="studio_titanium"\]\s+\.composer-well/);
+  assert.match(uiHtml, /\.composer-well\s*\{/);
   assert.equal(/\bon(?:click|change|input|keydown|keyup)\s*=/i.test(uiHtml), false, 'ui.html must stay 100% CSP clean');
 
   const serverSrc = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'server.mjs'), 'utf8');
@@ -9102,6 +9123,66 @@ test('50. Wave 3 GPU & Ollama: HF mirror preference, persistent pull errors, cus
     fs.rmSync(customRoot, { recursive: true, force: true });
   }
 });
+
+test('v3.35.0 Regression Suite: dynamic TUNNEL_CACHE_DIR, linear friction prefix, Grill-Me arch question fork', async () => {
+  const { recordCpuTelemetryPatch, readCpuTelemetry } = await import('../core/cpu-worker-pool.mjs');
+  const { pinSwarmRole } = await import('../core/swarm-controller.mjs');
+  const { detectCliFailRecoveryFriction } = await import('../core/friction-observer.mjs');
+
+  const isoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'amr-dyn-cache-'));
+  const prevCache = process.env.TUNNEL_CACHE_DIR;
+  process.env.TUNNEL_CACHE_DIR = isoDir;
+  try {
+    // 1. Dynamic TUNNEL_CACHE_DIR respected after module load
+    recordModelOutcome({ domain: 'dyn_iso_dom', success: true, firstPass: true, retries: 0 });
+    assert.equal(fs.existsSync(path.join(isoDir, 'domain-priors.json')), true, 'bayesian-router must write to dynamic TUNNEL_CACHE_DIR');
+
+    recordCpuTelemetryPatch((cur) => ({ ...cur, workerBatches: (cur.workerBatches || 0) + 1 }));
+    assert.equal(fs.existsSync(path.join(isoDir, 'cpu-telemetry.json')), true, 'cpu-worker-pool must write to dynamic TUNNEL_CACHE_DIR');
+    assert.ok(readCpuTelemetry().workerBatches >= 1);
+
+    pinSwarmRole('iso-conv-1', 'coordinator', '');
+    assert.equal(fs.existsSync(path.join(isoDir, 'swarm-roles.json')), true, 'swarm-controller must write to dynamic TUNNEL_CACHE_DIR');
+
+    // 2. Linear prefix stripping in friction-observer (POSIX + PowerShell $env:) without ReDoS
+    const f1 = detectCliFailRecoveryFriction({
+      conversationId: 'fric-lin-1',
+      commandLine: 'FOO=1 BAR=2 node app.mjs --unknown-flag',
+      exitCode: 1,
+      errorOutput: 'unknown option --unknown-flag',
+      stateFile: path.join(isoDir, 'fric.json'),
+      nowMs: 1000,
+    });
+    assert.equal(f1.detected, false);
+    const f2 = detectCliFailRecoveryFriction({
+      conversationId: 'fric-lin-1',
+      commandLine: '$env:FOO=1; $env:BAR=2; node app.mjs',
+      exitCode: 0,
+      errorOutput: '',
+      stateFile: path.join(isoDir, 'fric.json'),
+      nowMs: 2000,
+    });
+    assert.equal(f2.detected, true);
+    assert.equal(f2.baseCommand, 'node app.mjs');
+
+    // 3. Grill-Me activates on architectural design fork prompt containing '?'
+    const archPrompt = 'Нужно спроектировать новую архитектуру синхронизации кэша между воркерами и панелью: выбрать Redis, SQLite WAL или shared memory ring buffer? Какие компромиссы по отказоустойчивости и обратной совместимости';
+    const sig = detectPromptIntentSignals(archPrompt);
+    assert.equal(sig.isReadOnlyQuestion, false);
+
+    const est = estimateTaskGradeAndThinkingBudget(
+      archPrompt,
+      { grillMode: 'auto', confirmBeforeRun: true, confirmThreshold: 'M', uiLanguage: 'ru' },
+      { wsPath: ROOT_DIR }
+    );
+    assert.match(est.optionsBlueprint?.formattedBlueprint || '', /Grill-Me/);
+  } finally {
+    if (prevCache === undefined) delete process.env.TUNNEL_CACHE_DIR;
+    else process.env.TUNNEL_CACHE_DIR = prevCache;
+    fs.rmSync(isoDir, { recursive: true, force: true });
+  }
+});
+
 
 
 

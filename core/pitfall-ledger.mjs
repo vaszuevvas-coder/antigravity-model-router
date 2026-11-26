@@ -9,14 +9,15 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWriteJsonSync, safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
+import { resolveTunnelCacheDir } from './cache-dir.mjs';
 import { redactSecretsInText } from './security-guard.mjs';
 
 const UNSAFE_WORKSPACE_NAMES = new Set(['__proto__', 'constructor', 'prototype', 'toString', 'valueOf', 'hasOwnProperty']);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
-const CACHE_DIR = join(PLUGIN_ROOT, '.cache');
-const MIRROR_FILE = join(CACHE_DIR, 'pitfalls-ledger.json');
+const getCacheDir = () => resolveTunnelCacheDir(PLUGIN_ROOT);
+const getMirrorFile = () => join(getCacheDir(), 'pitfalls-ledger.json');
 const MAX_PITFALLS = 15;
 const PITFALL_TTL_MS = 14 * 24 * 3600 * 1000; // TTL: 14 дней (авто-очистка устаревших граблей)
 
@@ -24,8 +25,9 @@ const PITFALL_TTL_MS = 14 * 24 * 3600 * 1000; // TTL: 14 дней (авто-оч
  * Обеспечивает существование директории кэша.
  */
 function ensureCacheDir() {
-  if (!existsSync(CACHE_DIR)) {
-    mkdirSync(CACHE_DIR, { recursive: true });
+  const cacheDir = getCacheDir();
+  if (!existsSync(cacheDir)) {
+    mkdirSync(cacheDir, { recursive: true });
   }
 }
 
@@ -56,7 +58,7 @@ function getStoragePath(workspaceRoot = '') {
     }
   }
   ensureCacheDir();
-  return MIRROR_FILE;
+  return getMirrorFile();
 }
 
 /**
@@ -179,8 +181,8 @@ export function recordPitfall({
 
   const updatedList = updateJsonAtomicSync(primaryPath, () => [], (existing) => {
     let list = Array.isArray(existing) ? existing : [];
-    if (list.length === 0 && primaryPath !== MIRROR_FILE) {
-      const mirrorList = loadFromFile(MIRROR_FILE).filter(
+    if (list.length === 0 && primaryPath !== getMirrorFile()) {
+      const mirrorList = loadFromFile(getMirrorFile()).filter(
         (item) => !normWs || (Boolean(item.workspaceRoot) && item.workspaceRoot === normWs)
       );
       if (mirrorList.length > 0) list = mirrorList;
@@ -206,8 +208,8 @@ export function recordPitfall({
     return list;
   });
 
-  if (primaryPath !== MIRROR_FILE) {
-    updateJsonAtomicSync(MIRROR_FILE, () => [], (mirrorExisting) => {
+  if (primaryPath !== getMirrorFile()) {
+    updateJsonAtomicSync(getMirrorFile(), () => [], (mirrorExisting) => {
       const others = Array.isArray(mirrorExisting)
         ? mirrorExisting.filter((item) => item && (!item.workspaceRoot || item.workspaceRoot !== normWs))
         : [];
@@ -234,8 +236,8 @@ export function listPitfalls(limit = 15, workspaceRoot = '') {
   const primaryPath = getStoragePath(workspaceRoot);
   const normWs = workspaceRoot ? workspaceRoot.replace(/\\/g, '/').toLowerCase() : '';
   let list = loadFromFile(primaryPath);
-  if (list.length === 0 && primaryPath !== MIRROR_FILE) {
-    list = loadFromFile(MIRROR_FILE).filter(
+  if (list.length === 0 && primaryPath !== getMirrorFile()) {
+    list = loadFromFile(getMirrorFile()).filter(
       (item) => !normWs || (item.workspaceRoot && item.workspaceRoot === normWs)
     );
   } else if (normWs) {
@@ -259,9 +261,9 @@ export function listPitfalls(limit = 15, workspaceRoot = '') {
 export function clearPitfalls(workspaceRoot = '') {
   const primaryPath = getStoragePath(workspaceRoot);
   saveToFile(primaryPath, []);
-  if (primaryPath !== MIRROR_FILE) {
+  if (primaryPath !== getMirrorFile()) {
     const normWs = workspaceRoot ? workspaceRoot.replace(/\\/g, '/').toLowerCase() : '';
-    updateJsonAtomicSync(MIRROR_FILE, () => [], (existing) => {
+    updateJsonAtomicSync(getMirrorFile(), () => [], (existing) => {
       const list = Array.isArray(existing) ? existing : [];
       return normWs
         ? list.filter((item) => item && (!item.workspaceRoot || item.workspaceRoot !== normWs))
@@ -303,8 +305,8 @@ export function resolvePitfallsForFile(opts = {}) {
   const primaryPreview = loadFromFile(primaryPath);
   const hasPrimaryMatch = primaryPreview.some(matchesResolved);
   let hasMirrorMatch = false;
-  if (primaryPath !== MIRROR_FILE && existsSync(MIRROR_FILE)) {
-    const mirrorPreview = loadFromFile(MIRROR_FILE);
+  if (primaryPath !== getMirrorFile() && existsSync(getMirrorFile())) {
+    const mirrorPreview = loadFromFile(getMirrorFile());
     hasMirrorMatch = mirrorPreview.some(
       (item) => (!normWs || item.workspaceRoot === normWs) && matchesResolved(item)
     );
@@ -328,8 +330,8 @@ export function resolvePitfallsForFile(opts = {}) {
     });
   }
 
-  if (hasMirrorMatch && primaryPath !== MIRROR_FILE) {
-    updateJsonAtomicSync(MIRROR_FILE, () => [], (existing) => {
+  if (hasMirrorMatch && primaryPath !== getMirrorFile()) {
+    updateJsonAtomicSync(getMirrorFile(), () => [], (existing) => {
       const list = Array.isArray(existing) ? existing : [];
       return list.filter((item) => {
         const sameWs = !normWs ? !item?.workspaceRoot : item?.workspaceRoot === normWs;

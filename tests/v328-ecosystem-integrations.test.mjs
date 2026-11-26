@@ -18,6 +18,8 @@ import {
 } from '../core/tool-pruner.mjs';
 import { validateRepoSlug, validateSkillSlug } from '../core/skill-registry-bridge.mjs';
 import { auditUiContent } from '../skills/ui-ux-design-system/scripts/audit-ui.mjs';
+import { queryUxMatrix } from '../skills/ui-ux-design-system/scripts/query-ux-matrix.mjs';
+import { auditSkill } from '../skills/skill-architect/scripts/audit-skill.mjs';
 import {
   buildOpenverseSearchUrl,
   formatCreditsFooterLine,
@@ -294,4 +296,36 @@ test('Wave 4: Dogfood QA @eN refs & delta, Ousterhout shallow detector & Karpath
 
   const normalEdit = assessDiffSurgicalDiscipline(oldLines, `${oldLines}\nconst oneFix = true;`, 'core/feature.mjs');
   assert.equal(normalEdit.ok, true);
+});
+
+test('Wave 5: Emil craft & Taste rules in audit-ui, query-ux-matrix history rotation & playwright-cli 100/100 skill', () => {
+  const craftDirty = `
+    <style>
+      .menu { transition: transform 200ms ease-in; transform: scale(0); }
+    </style>
+    <footer>Contact hello@acme.com or +1 (555) 123-4567</footer>
+  `;
+  const res = auditUiContent(craftDirty, 'craft.html');
+  const ids = new Set(res.findings.map((f) => f.ruleId));
+  assert.equal(ids.has('motion-ease-in-ui'), true);
+  assert.equal(ids.has('motion-scale-zero'), true);
+  assert.equal(ids.has('invented-contact-data'), true);
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ux-hist-'));
+  try {
+    const histFile = path.join(tmpDir, 'history.json');
+    const first = queryUxMatrix({ domain: 'fintech dashboard', mode: 'operate', historyPath: histFile });
+    const second = queryUxMatrix({ domain: 'fintech dashboard', mode: 'operate', historyPath: histFile });
+    assert.equal(fs.existsSync(histFile), true);
+    assert.notEqual(
+      first.palettes[0]?.productType || first.palettes[0]?.primary,
+      second.palettes[0]?.productType || second.palettes[0]?.primary
+    );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+
+  const pwAudit = auditSkill(path.resolve('skills/playwright-cli'));
+  assert.equal(pwAudit.ok, true);
+  assert.equal(pwAudit.score, 100);
 });

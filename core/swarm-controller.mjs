@@ -16,14 +16,16 @@ import { fileURLToPath } from 'node:url';
 import { sanitizeSwarmWorkerTierForSubscription } from './model-profile.mjs';
 import { recordComboProviderCooldown, resolveComboFailoverTarget } from './quota-pacer.mjs';
 import { safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
+import { resolveTunnelCacheDir } from './cache-dir.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SWARM_ROLES_CACHE_FILE = join(__dirname, '..', '.cache', 'swarm-roles.json');
+const PLUGIN_ROOT = join(__dirname, '..');
+const getSwarmRolesCacheFile = () => join(resolveTunnelCacheDir(PLUGIN_ROOT), 'swarm-roles.json');
 const ROLE_TTL_MS = 12 * 60 * 60 * 1000;
 
 function readPinnedSwarmRole(isolationKey) {
   if (!isolationKey || isolationKey === 'default') return null;
-  const data = safeReadJsonSync(SWARM_ROLES_CACHE_FILE, () => ({ roles: {} }), { selfHeal: false });
+  const data = safeReadJsonSync(getSwarmRolesCacheFile(), () => ({ roles: {} }), { selfHeal: false });
   const entry = data?.roles?.[isolationKey];
   if (!entry || Date.now() - (entry.ts || 0) > ROLE_TTL_MS) return null;
   return entry;
@@ -33,7 +35,7 @@ export function pinSwarmRole(isolationKey, role, workerKind = '') {
   if (!isolationKey || isolationKey === 'default') return;
   try {
     updateJsonAtomicSync(
-      SWARM_ROLES_CACHE_FILE,
+      getSwarmRolesCacheFile(),
       () => ({ roles: {} }),
       (cur) => {
         const roles = cur && typeof cur.roles === 'object' ? { ...cur.roles } : {};

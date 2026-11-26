@@ -1652,6 +1652,7 @@ export const MCP_TOOLS = [
         filePath: { type: 'string', description: 'Absolute or workspace-relative file path.' },
         workspaceRoot: { type: 'string', description: 'Workspace root directory (defaults to CWD).' },
         symbol: { type: 'string', description: 'Optional variable/function name for Program Slicer data-flow distillation or AST Knapsack focus.' },
+        section: { type: 'string', description: 'Optional Markdown heading title or slug to slice a single section directly from RAM without reading the whole .md file.' },
         startLine: { type: 'integer', description: 'Start line (1-indexed, default 1).' },
         endLine: { type: 'integer', description: 'End line (inclusive, default 120).' },
         skeleton: { type: 'boolean', description: 'Optional LongCodeZip AST Knapsack mode: folds non-relevant symbols to 1-line skeletons while keeping focus blocks verbatim.' },
@@ -2055,6 +2056,7 @@ export async function executeMcpTool(name, args = {}, opts = {}) {
       registerWs(wsRoot);
       const res = activeEngine.slice(wsRoot, args.filePath || '', {
         symbol: args.symbol || '',
+        section: args.section || '',
         startLine: args.startLine || 1,
         endLine: args.endLine || 120,
         skeleton: Boolean(args.skeleton),
