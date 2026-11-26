@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 setlocal EnableExtensions EnableDelayedExpansion
-title Установка The Tunnel v4.0.4
+title Установка The Tunnel v4.0.5
 cd /d "%~dp0"
 
 set "SILENT_MODE=0"

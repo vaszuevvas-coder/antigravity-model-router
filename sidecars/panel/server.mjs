@@ -18,6 +18,16 @@ import {
   clearPluginUpdateStatus,
   getPluginUpdateStatus,
 } from '../../core/plugin-updater.mjs';
+import { loadPluginChangelog } from '../../core/changelog-parser.mjs';
+import {
+  appendDebugLog,
+  buildDiagnosticBundle,
+  clearDebugLog,
+  formatDiagnosticBundleSummary,
+  getDebugLogStatus,
+  readDebugLogEntries,
+  VALID_DEBUG_LOG_MODES,
+} from '../../core/debug-logger.mjs';
 import {
   buildProjectGraphPayload,
   buildFileSymbolGraphPayload,
@@ -213,7 +223,7 @@ function getPluginVersion() {
     const ver = typeof meta?.version === 'string' ? meta.version.trim() : '';
     if (ver) return ver;
   } catch {}
-  return '4.0.4';
+  return '4.0.5';
 }
 
 const PANEL_SERVER_STARTED_AT = Date.now();
@@ -410,6 +420,7 @@ export async function startSidecarPanel(options = {}) {
       taskProgress: hudPack.progress,
       pluginVersion: getPluginVersion(),
       uiBuildVersion: getUiBuildVersion(),
+      debugLogStatus: getDebugLogStatus({ pluginRoot: resolveUpdaterRoot(), state }),
       includedSections: sec.included,
       deferredSections: sec.deferred,
     };
@@ -1290,7 +1301,8 @@ export async function startSidecarPanel(options = {}) {
           const ram = new RamMemoryEngine();
           try {
             const warmRes = ram.warmWorkspace(targetWs);
-            return { ok: true, filesCached: warmRes?.filesCached || 0 };
+            const count = Number(warmRes?.filesLoaded || warmRes?.filesCached || 0);
+            return { ok: true, filesLoaded: count, filesCached: count };
           } finally {
             try { ram.evict('all'); } catch {}
           }
@@ -3443,6 +3455,8 @@ export async function startSidecarPanel(options = {}) {
       : join(__dirname, '..', '..')
   );
 
+  let lastPluginUpdateCheck = null;
+
   const getUpdateRuntimeCtx = () => ({
     pid: process.pid,
     serverStartedAt: PANEL_SERVER_STARTED_AT,
@@ -3463,6 +3477,9 @@ export async function startSidecarPanel(options = {}) {
         ? updateHandlers.getPluginUpdateStatus
         : getPluginUpdateStatus;
       const checkRes = await checkFn({ pluginRoot, force, lang });
+      if (checkRes && checkRes.ok) {
+        lastPluginUpdateCheck = checkRes;
+      }
       const status = statusFn(pluginRoot, runtimeCtx);
       return { ...checkRes, status };
     } catch (err) {
@@ -3529,6 +3546,134 @@ export async function startSidecarPanel(options = {}) {
       : clearPluginUpdateStatus;
     return { ok: true, status: dismissFn(pluginRoot) };
   }, 'POST');
+
+  app.api('/api/plugin/changelog', async (_data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const pluginRoot = resolveUpdaterRoot();
+    return loadPluginChangelog({
+      pluginRoot,
+      currentVersion: PANEL_LOADED_VERSION,
+      remoteRelease: lastPluginUpdateCheck,
+    });
+  }, 'GET');
+
+  app.api('/api/debug/status', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const pluginRoot = resolveUpdaterRoot();
+    const state = loadState();
+    const rawLimit = Number(data?.limit);
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(300, Math.round(rawLimit))) : 60;
+    const rawLevel = typeof data?.level === 'string' ? data.level.trim().toLowerCase() : 'all';
+    const level = ['all', 'error', 'warn', 'info', 'debug'].includes(rawLevel) ? rawLevel : 'all';
+    const status = getDebugLogStatus({ pluginRoot, state });
+    const logData = readDebugLogEntries({ pluginRoot, limit, level });
+    return {
+      ...status,
+      entries: logData.entries,
+      filteredEntries: logData.filteredEntries,
+    };
+  }, 'GET');
+
+  app.api('/api/debug/mode', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const pluginRoot = resolveUpdaterRoot();
+    const curState = loadState();
+    const lang = normalizeLang(curState?.uiLanguage, 'en');
+    const mode = typeof data?.mode === 'string' ? data.mode.trim().toLowerCase() : '';
+    if (!VALID_DEBUG_LOG_MODES.has(mode)) {
+      return {
+        ok: false,
+        status: 400,
+        error: pickLang(lang, 'Недопустимый режим дебаг-лога', 'Invalid debug log mode'),
+      };
+    }
+    const nextState = saveState({ ...curState, debugLogMode: mode });
+    appendDebugLog({
+      level: 'info',
+      source: 'panel-server',
+      event: 'debug_mode_changed',
+      message: `Debug log mode set to ${mode}`,
+    }, { state: nextState, pluginRoot });
+    return {
+      ok: true,
+      mode,
+      state: nextState,
+      status: getDebugLogStatus({ pluginRoot, state: nextState }),
+    };
+  }, 'POST');
+
+  app.api('/api/debug/client-log', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const pluginRoot = resolveUpdaterRoot();
+    const state = loadState();
+    const rawLvl = typeof data?.level === 'string' ? data.level.trim().toLowerCase() : 'error';
+    const level = ['debug', 'info', 'warn', 'error'].includes(rawLvl) ? rawLvl : 'error';
+    const event = typeof data?.event === 'string' ? data.event.trim().slice(0, 80) : 'client_error';
+    const message = typeof data?.message === 'string' ? data.message.trim().slice(0, 600) : '';
+    if (!message) {
+      return { ok: false, logged: false, error: 'Empty log message' };
+    }
+    const logged = appendDebugLog({
+      level,
+      source: 'panel-ui',
+      event: event || 'client_error',
+      message,
+      meta: data?.meta,
+    }, { state, pluginRoot });
+    return { ok: true, logged };
+  }, 'POST');
+
+  app.api('/api/debug/clear', async (_data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const pluginRoot = resolveUpdaterRoot();
+    clearDebugLog({ pluginRoot });
+    return {
+      ok: true,
+      status: getDebugLogStatus({ pluginRoot, state: loadState() }),
+    };
+  }, 'POST');
+
+  app.api('/api/debug/export', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const pluginRoot = resolveUpdaterRoot();
+    const state = loadState();
+    const lang = normalizeLang(state?.uiLanguage, 'en');
+    const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+    const [gpuStatus, ramStatus, worktrees] = await Promise.all([
+      safeGetGpuStatus(),
+      safeGetRamCacheStatus(state),
+      safeListShadowWorktrees(activeWs),
+    ]);
+    let healthReport = null;
+    try {
+      const { diagnoseRuntimeHealth } = await import('../../core/health-doctor.mjs');
+      healthReport = diagnoseRuntimeHealth({
+        workspaceRoot: activeWs,
+        state,
+        gpuStatus,
+        ramStatus,
+        worktrees,
+      });
+    } catch {}
+    const updateStatus = getPluginUpdateStatus(pluginRoot, getUpdateRuntimeCtx());
+    const bundle = buildDiagnosticBundle({
+      pluginRoot,
+      state,
+      healthReport,
+      updateStatus,
+      ramStatus,
+      gpuStatus,
+      limit: 400,
+    });
+    const markdownSummary = formatDiagnosticBundleSummary(bundle, lang);
+    const isoDate = new Date().toISOString().slice(0, 10);
+    return {
+      ok: true,
+      filename: `the-tunnel-debug-v${PANEL_LOADED_VERSION}-${isoDate}.json`,
+      bundle,
+      markdownSummary,
+    };
+  }, 'GET');
 
   const server = await app.run();
   if (server) {

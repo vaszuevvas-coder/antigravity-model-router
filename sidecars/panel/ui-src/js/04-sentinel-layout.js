@@ -932,6 +932,21 @@
         case 'dismissPluginUpdateBanner': void dismissPluginUpdateBanner(); break;
         case 'closePluginUpdateOverlay': closePluginUpdateOverlay(); break;
         case 'hidePluginUpdateToast': hidePluginUpdateToast(); break;
+        case 'openChangelogModal':
+          if (ev && typeof ev.preventDefault === 'function') ev.preventDefault();
+          void openChangelogModal(arg || '');
+          break;
+        case 'retryLoadChangelog': void openChangelogModal(_changelogSelectedVersion || ''); break;
+        case 'closeChangelogModal': closeChangelogModal(); break;
+        case 'selectChangelogVersion': selectChangelogVersion(arg); break;
+        case 'openDebugLogModal': void openDebugLogModal(); break;
+        case 'closeDebugLogModal': closeDebugLogModal(); break;
+        case 'refreshDebugLogFromPanel': void refreshDebugLogStatus(true); break;
+        case 'setDebugLogMode': void setDebugLogMode(arg); break;
+        case 'setDebugLogFilter': void setDebugLogFilter(arg); break;
+        case 'exportDebugBundleDownload': void exportDebugBundleDownload(); break;
+        case 'copyDebugBundleSummary': void copyDebugBundleSummary(); break;
+        case 'clearDebugLogFromPanel': void clearDebugLogFromPanel(); break;
         default: break;
       }
     }
@@ -1870,11 +1885,11 @@
 
       if (linkEl) {
         const relUrl = info && typeof info.releaseUrl === 'string' ? info.releaseUrl.trim() : '';
-        if (relUrl) {
-          linkEl.href = relUrl;
+        if (relUrl || hasUpdate || isDone) {
+          linkEl.href = relUrl || 'https://github.com/vaszuevvas-coder/antigravity-model-router/releases';
           linkEl.style.display = 'inline-flex';
-          linkEl.textContent = L('Что нового ↗', 'What\'s new ↗');
-          if (info.releaseNotes) linkEl.title = String(info.releaseNotes);
+          linkEl.textContent = L('Что нового', 'What\'s new');
+          if (info && info.releaseNotes) linkEl.title = String(info.releaseNotes);
         } else {
           linkEl.style.display = 'none';
         }
@@ -2520,4 +2535,658 @@
     }
 
     initCustomTooltipController();
+
+    // =========================================================================
+    // In-App Changelog ("What's new") & Diagnostic Debug Logger Modals
+    // =========================================================================
+    let _changelogData = null;
+    let _changelogSelectedVersion = '';
+    let _changelogSearchQuery = '';
+    let _changelogLoading = false;
+    let _changelogError = '';
+    let _debugLogFilter = 'all';
+    let _debugLastStatus = null;
+    let _debugLastEntries = [];
+    let _debugLastError = '';
+    let _clientErrorLogCount = 0;
+    let _clientErrorWindowStart = 0;
+
+    function appendFormattedInlineText(parentEl, rawText) {
+      if (!parentEl) return;
+      const text = String(rawText || '');
+      const tokenRe = /(`[^`]+`|\*\*[^*]+\*\*)/g;
+      let lastIdx = 0;
+      let match;
+      while ((match = tokenRe.exec(text)) !== null) {
+        if (match.index > lastIdx) {
+          parentEl.appendChild(document.createTextNode(text.slice(lastIdx, match.index)));
+        }
+        const tok = match[0];
+        if (tok.startsWith('`') && tok.endsWith('`') && tok.length >= 2) {
+          const codeEl = document.createElement('code');
+          codeEl.textContent = tok.slice(1, -1);
+          parentEl.appendChild(codeEl);
+        } else if (tok.startsWith('**') && tok.endsWith('**') && tok.length >= 4) {
+          const strongEl = document.createElement('strong');
+          strongEl.textContent = tok.slice(2, -2);
+          parentEl.appendChild(strongEl);
+        } else {
+          parentEl.appendChild(document.createTextNode(tok));
+        }
+        lastIdx = tokenRe.lastIndex;
+      }
+      if (lastIdx < text.length) {
+        parentEl.appendChild(document.createTextNode(text.slice(lastIdx)));
+      }
+    }
+
+    function versionMatchesQuery(ver, q) {
+      if (!q) return true;
+      if (String(ver.version || '').toLowerCase().indexOf(q) !== -1) return true;
+      if (String(ver.date || '').toLowerCase().indexOf(q) !== -1) return true;
+      const secs = Array.isArray(ver.sections) ? ver.sections : [];
+      for (let i = 0; i < secs.length; i++) {
+        if (String(secs[i].title || '').toLowerCase().indexOf(q) !== -1) return true;
+        const items = Array.isArray(secs[i].items) ? secs[i].items : [];
+        for (let j = 0; j < items.length; j++) {
+          const hay = (String(items[j].lead || '') + ' ' + String(items[j].text || '') + ' ' + (items[j].subitems || []).join(' ')).toLowerCase();
+          if (hay.indexOf(q) !== -1) return true;
+        }
+      }
+      return false;
+    }
+
+    function buildModalErrorBox(message, retryAction) {
+      const box = document.createElement('div');
+      box.className = 'tunnel-modal-error-box';
+      const msgDiv = document.createElement('div');
+      msgDiv.textContent = String(message || '');
+      box.appendChild(msgDiv);
+      if (retryAction) {
+        const retryBtn = document.createElement('button');
+        retryBtn.type = 'button';
+        retryBtn.className = 'win-btn';
+        retryBtn.setAttribute('data-action', retryAction);
+        retryBtn.textContent = L('↻ Повторить', '↻ Retry');
+        box.appendChild(retryBtn);
+      }
+      return box;
+    }
+
+    function renderChangelogModal() {
+      const listEl = document.getElementById('changelogVersionList');
+      const bodyEl = document.getElementById('changelogVersionBody');
+      const curBadge = document.getElementById('changelogCurrentBadge');
+      const ghLink = document.getElementById('changelogGithubLink');
+      const titleEl = document.getElementById('changelogModalTitle');
+      const searchEl = document.getElementById('changelogSearchInput');
+      if (titleEl) titleEl.textContent = L('История изменений', 'Changelog');
+      if (searchEl) searchEl.placeholder = L('Поиск по версиям и изменениям...', 'Search versions & changes...');
+      if (!listEl || !bodyEl) return;
+
+      const data = _changelogData;
+      listEl.innerHTML = '';
+      bodyEl.innerHTML = '';
+
+      if (_changelogError && !data) {
+        listEl.classList.add('is-empty');
+        bodyEl.appendChild(buildModalErrorBox(_changelogError, 'retryLoadChangelog'));
+        return;
+      }
+      if (!data || _changelogLoading) {
+        listEl.classList.add('is-empty');
+        const loadingMsg = document.createElement('div');
+        loadingMsg.className = 'tunnel-modal-empty';
+        loadingMsg.textContent = L('Загрузка истории изменений…', 'Loading changelog…');
+        bodyEl.appendChild(loadingMsg);
+        return;
+      }
+      if (curBadge && data.currentVersion) {
+        curBadge.textContent = 'v' + String(data.currentVersion);
+      }
+      if (ghLink && data.releaseUrl) {
+        ghLink.href = data.releaseUrl;
+      }
+
+      const allVersions = Array.isArray(data.versions) ? data.versions : [];
+      const q = String(_changelogSearchQuery || '').trim().toLowerCase();
+      const filtered = q ? allVersions.filter(function (v) { return versionMatchesQuery(v, q); }) : allVersions;
+
+      if (filtered.length === 0) {
+        listEl.classList.add('is-empty');
+        const emptyListMsg = document.createElement('div');
+        emptyListMsg.className = 'tunnel-modal-empty';
+        emptyListMsg.textContent = q
+          ? L('Ничего не найдено по запросу.', 'No matching versions or changes.')
+          : L('История изменений пока пуста.', 'Changelog is empty.');
+        bodyEl.appendChild(emptyListMsg);
+        return;
+      }
+      listEl.classList.remove('is-empty');
+
+      let selected = null;
+      for (let i = 0; i < filtered.length; i++) {
+        if (filtered[i].version === _changelogSelectedVersion) {
+          selected = filtered[i];
+          break;
+        }
+      }
+      if (!selected) {
+        selected = filtered[0];
+        _changelogSelectedVersion = selected.version;
+      }
+
+      for (let i = 0; i < filtered.length; i++) {
+        const v = filtered[i];
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'changelog-ver-btn' + (v.version === selected.version ? ' active' : '');
+        btn.setAttribute('data-action', 'selectChangelogVersion');
+        btn.setAttribute('data-arg', String(v.version));
+        btn.setAttribute('role', 'tab');
+        btn.setAttribute('aria-selected', v.version === selected.version ? 'true' : 'false');
+
+        const verSpan = document.createElement('span');
+        verSpan.textContent = 'v' + String(v.version);
+        btn.appendChild(verSpan);
+
+        if (v.isRemotePending) {
+          const tag = document.createElement('span');
+          tag.className = 'changelog-ver-tag is-new';
+          tag.textContent = L('Новая', 'New');
+          btn.appendChild(tag);
+        } else if (v.isCurrent) {
+          const tag = document.createElement('span');
+          tag.className = 'changelog-ver-tag';
+          tag.textContent = L('Текущая', 'Current');
+          btn.appendChild(tag);
+        }
+        listEl.appendChild(btn);
+      }
+
+      const head = document.createElement('div');
+      head.className = 'changelog-ver-head';
+      const headTitle = document.createElement('div');
+      headTitle.className = 'changelog-ver-heading';
+      headTitle.textContent = 'v' + String(selected.version) + (selected.isRemotePending
+        ? L(' · Доступна к установке', ' · Available to install')
+        : (selected.isCurrent ? L(' · Установлена сейчас', ' · Currently installed') : ''));
+      head.appendChild(headTitle);
+      if (selected.date) {
+        const dateEl = document.createElement('span');
+        dateEl.className = 'changelog-ver-date';
+        dateEl.textContent = String(selected.date);
+        head.appendChild(dateEl);
+      }
+      bodyEl.appendChild(head);
+
+      const sections = Array.isArray(selected.sections) ? selected.sections : [];
+      if (sections.length === 0) {
+        const noSec = document.createElement('div');
+        noSec.className = 'tunnel-modal-empty';
+        noSec.textContent = L('Для этой версии нет подробных заметок.', 'No detailed release notes for this version.');
+        bodyEl.appendChild(noSec);
+        return;
+      }
+
+      for (let sIdx = 0; sIdx < sections.length; sIdx++) {
+        const sec = sections[sIdx];
+        const secTitle = document.createElement('h4');
+        secTitle.className = 'changelog-sec-title';
+        appendFormattedInlineText(secTitle, String(sec.title || ''));
+        bodyEl.appendChild(secTitle);
+
+        const ul = document.createElement('ul');
+        ul.className = 'changelog-items-ul';
+        const items = Array.isArray(sec.items) ? sec.items : [];
+        for (let k = 0; k < items.length; k++) {
+          const it = items[k];
+          const li = document.createElement('li');
+          if (it.lead) {
+            const strong = document.createElement('strong');
+            strong.textContent = String(it.lead) + (it.text ? ': ' : '');
+            li.appendChild(strong);
+          }
+          if (it.text) {
+            appendFormattedInlineText(li, it.text);
+          }
+          if (Array.isArray(it.subitems) && it.subitems.length > 0) {
+            const subUl = document.createElement('ul');
+            subUl.className = 'changelog-subitems-ul';
+            for (let m = 0; m < it.subitems.length; m++) {
+              const subLi = document.createElement('li');
+              appendFormattedInlineText(subLi, it.subitems[m]);
+              subUl.appendChild(subLi);
+            }
+            li.appendChild(subUl);
+          }
+          ul.appendChild(li);
+        }
+        bodyEl.appendChild(ul);
+      }
+    }
+
+    async function openChangelogModal(preferredVersion) {
+      const overlay = document.getElementById('changelogModalOverlay');
+      if (!overlay) return;
+      overlay.style.display = 'flex';
+      _changelogSearchQuery = '';
+      _changelogError = '';
+      _changelogLoading = !_changelogData;
+      const searchEl = document.getElementById('changelogSearchInput');
+      if (searchEl) searchEl.value = '';
+      if (preferredVersion && preferredVersion !== 'latest') {
+        _changelogSelectedVersion = String(preferredVersion).replace(/^v/i, '');
+      } else {
+        _changelogSelectedVersion = '';
+      }
+      renderChangelogModal();
+      try {
+        const res = await panelFetch('/api/plugin/changelog', { method: 'GET' });
+        if (!res || !res.ok) {
+          const stCode = res ? res.status : 0;
+          _changelogError = stCode === 404
+            ? L(
+              'Сервер панели работает на старой версии — перезапустите Google Antigravity, чтобы активировать встроенную историю изменений.',
+              'Panel server is running an older version — restart Google Antigravity to activate the built-in changelog.'
+            )
+            : L('Не удалось загрузить историю изменений (HTTP ' + stCode + ').', 'Failed to load changelog (HTTP ' + stCode + ').');
+          return;
+        }
+        const data = await res.json();
+        if (data && data.ok) {
+          _changelogData = data;
+          if (!_changelogSelectedVersion && Array.isArray(data.versions) && data.versions.length > 0) {
+            _changelogSelectedVersion = data.versions[0].version;
+          }
+        } else {
+          _changelogError = L('Некорректный ответ сервера при загрузке истории изменений.', 'Invalid server response loading changelog.');
+        }
+      } catch (err) {
+        _changelogError = (err && err.message) || L('Ошибка связи с сервером панели.', 'Panel server connection error.');
+      } finally {
+        _changelogLoading = false;
+        renderChangelogModal();
+      }
+    }
+
+    function closeChangelogModal() {
+      const overlay = document.getElementById('changelogModalOverlay');
+      if (overlay) overlay.style.display = 'none';
+    }
+
+    function selectChangelogVersion(ver) {
+      _changelogSelectedVersion = String(ver || '').replace(/^v/i, '');
+      renderChangelogModal();
+    }
+
+    function syncDebugLoggerHeaderUi(s, debugStatus) {
+      const mode = (debugStatus && debugStatus.mode) || (s && s.debugLogMode) || 'errors';
+      const isRec = mode === 'verbose';
+      const dot = document.getElementById('headerDebugRecDot');
+      const btn = document.getElementById('openDebugLogBtn');
+      if (dot) dot.style.display = isRec ? 'inline-block' : 'none';
+      if (btn) btn.classList.toggle('is-recording', isRec);
+    }
+
+    function setDebugActionFeedback(msg) {
+      const el = document.getElementById('debugActionFeedback');
+      if (el) el.textContent = String(msg || '');
+    }
+
+    function renderDebugLogModal() {
+      const titleEl = document.getElementById('debugModalTitle');
+      const badgeEl = document.getElementById('debugModalModeBadge');
+      const statsEl = document.getElementById('debugModalStats');
+      const privacyEl = document.getElementById('debugPrivacyNote');
+      const dlBtn = document.getElementById('debugExportDownloadBtn');
+      const copyBtn = document.getElementById('debugCopySummaryBtn');
+      const refreshBtn = document.getElementById('debugRefreshLogBtn');
+      const clearBtn = document.getElementById('debugClearLogBtn');
+      const listEl = document.getElementById('debugLogEntriesList');
+
+      if (titleEl) titleEl.textContent = L('Диагностика и запись лога', 'Diagnostics & Debug Log');
+      if (privacyEl) privacyEl.textContent = L(
+        'Токены, ключи и пути пользователя автоматически скрываются перед сохранением и выгрузкой.',
+        'Tokens, keys, and user paths are automatically redacted before saving and exporting.'
+      );
+      if (dlBtn) dlBtn.textContent = L('⬇ Скачать лог (.json)', '⬇ Download Log (.json)');
+      if (copyBtn) copyBtn.textContent = L('Копировать отчёт', 'Copy Report');
+      if (refreshBtn) refreshBtn.textContent = L('↻ Обновить', '↻ Refresh');
+      if (clearBtn) clearBtn.textContent = L('Очистить', 'Clear');
+
+      const st = _debugLastStatus || {};
+      const mode = st.mode || (currentState && currentState.debugLogMode) || 'errors';
+      syncDebugLoggerHeaderUi(currentState, st);
+
+      document.querySelectorAll('#debugModePills button').forEach(function (btn) {
+        const m = btn.getAttribute('data-debug-mode');
+        btn.classList.toggle('active', m === mode);
+        if (m === 'off') btn.textContent = L('Выкл', 'Off');
+        else if (m === 'errors') btn.textContent = L('Ошибки', 'Errors');
+        else if (m === 'verbose') btn.textContent = L('● Запись дебага', '● Record Debug');
+      });
+
+      document.querySelectorAll('#debugLevelFilterGroup button').forEach(function (btn) {
+        const f = btn.getAttribute('data-debug-filter');
+        btn.classList.toggle('active', f === _debugLogFilter);
+        if (f === 'all') btn.textContent = L('Все события', 'All Events');
+        else if (f === 'error') btn.textContent = L('Только ошибки', 'Errors Only');
+      });
+
+      if (badgeEl) {
+        badgeEl.classList.remove('is-recording', 'is-off');
+        if (mode === 'verbose') {
+          badgeEl.textContent = L('Идёт запись', 'Recording');
+          badgeEl.classList.add('is-recording');
+        } else if (mode === 'off') {
+          badgeEl.textContent = L('Выкл', 'Off');
+          badgeEl.classList.add('is-off');
+        } else {
+          badgeEl.textContent = L('Ошибки', 'Errors');
+        }
+      }
+
+      if (statsEl) {
+        const total = Number(st.totalEntries || 0);
+        const errs = Number(st.errorCount || 0);
+        const kb = (Number(st.fileSizeBytes || 0) / 1024).toFixed(1);
+        statsEl.textContent = L(
+          total + ' зап. · ' + errs + ' ош. · ' + kb + ' КБ',
+          total + ' entries · ' + errs + ' err · ' + kb + ' KB'
+        );
+      }
+
+      if (!listEl) return;
+      listEl.innerHTML = '';
+      if (_debugLastError) {
+        listEl.appendChild(buildModalErrorBox(_debugLastError, 'refreshDebugLogFromPanel'));
+        return;
+      }
+      const entries = Array.isArray(_debugLastEntries) ? _debugLastEntries : [];
+      if (entries.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'tunnel-modal-empty';
+        empty.textContent = mode === 'off'
+          ? L('Запись лога выключена.', 'Debug logging is turned off.')
+          : L('Записей пока нет — включите «● Запись дебага» и воспроизведите проблему.', 'No entries yet — enable "● Record Debug" and reproduce the issue.');
+        listEl.appendChild(empty);
+        return;
+      }
+
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const item = entries[i] || {};
+        const lvl = String(item.level || 'info').toLowerCase();
+        const row = document.createElement('div');
+        row.className = 'debug-entry-row lvl-' + lvl;
+
+        const meta = document.createElement('div');
+        meta.className = 'debug-entry-meta';
+
+        const lvlSpan = document.createElement('span');
+        lvlSpan.className = 'debug-entry-lvl';
+        lvlSpan.textContent = lvl;
+        meta.appendChild(lvlSpan);
+
+        const timeText = item.iso ? String(item.iso).slice(11, 19) : '';
+        const srcText = String(item.source || 'core') + (item.event ? (':' + String(item.event)) : '');
+        const infoSpan = document.createElement('span');
+        infoSpan.textContent = (timeText ? (timeText + ' · ') : '') + srcText + (item.durationMs !== undefined ? (' (' + item.durationMs + 'ms)') : '');
+        meta.appendChild(infoSpan);
+
+        const msg = document.createElement('div');
+        msg.className = 'debug-entry-msg';
+        msg.textContent = String(item.message || '');
+
+        row.appendChild(meta);
+        row.appendChild(msg);
+        listEl.appendChild(row);
+      }
+    }
+
+    function formatPanelApiHttpError(res, fallbackRu, fallbackEn) {
+      const code = res ? res.status : 0;
+      if (code === 404) {
+        return L(
+          'Сервер панели ещё работает на старой версии — перезапустите Google Antigravity.',
+          'Panel server is still running an older version — restart Google Antigravity.'
+        );
+      }
+      return L(fallbackRu, fallbackEn) + (code ? (' (HTTP ' + code + ')') : '');
+    }
+
+    async function refreshDebugLogStatus(manual) {
+      _debugLastError = '';
+      try {
+        const url = '/api/debug/status?limit=80&level=' + encodeURIComponent(_debugLogFilter);
+        const res = await panelFetch(url, { method: 'GET' });
+        if (!res || !res.ok) {
+          _debugLastError = formatPanelApiHttpError(res, 'Ошибка загрузки дебаг-лога', 'Failed to load debug log');
+          setDebugActionFeedback(_debugLastError);
+          renderDebugLogModal();
+          return;
+        }
+        const data = await res.json();
+        if (data && data.ok) {
+          _debugLastStatus = data;
+          _debugLastEntries = Array.isArray(data.entries) ? data.entries : [];
+          if (manual === true) {
+            setDebugActionFeedback(L('Лента обновлена ✓', 'Log refreshed ✓'));
+          }
+          renderDebugLogModal();
+        }
+      } catch (err) {
+        _debugLastError = (err && err.message) || L('Ошибка связи с сервером панели', 'Panel server connection error');
+        setDebugActionFeedback(_debugLastError);
+        renderDebugLogModal();
+      }
+    }
+
+    async function openDebugLogModal() {
+      const overlay = document.getElementById('debugLogModalOverlay');
+      if (!overlay) return;
+      overlay.style.display = 'flex';
+      _debugLastError = '';
+      setDebugActionFeedback('');
+      renderDebugLogModal();
+      await refreshDebugLogStatus(false);
+    }
+
+    function closeDebugLogModal() {
+      const overlay = document.getElementById('debugLogModalOverlay');
+      if (overlay) overlay.style.display = 'none';
+    }
+
+    async function setDebugLogMode(mode) {
+      const cleanMode = String(mode || '').trim().toLowerCase();
+      if (!cleanMode) return;
+      try {
+        const res = await panelFetch('/api/debug/mode', {
+          method: 'POST',
+          body: JSON.stringify({ mode: cleanMode }),
+        });
+        if (!res || !res.ok) {
+          setDebugActionFeedback(formatPanelApiHttpError(res, 'Не удалось переключить режим', 'Failed to switch debug mode'));
+          return;
+        }
+        const data = await res.json();
+        if (data && data.ok) {
+          if (currentState && typeof currentState === 'object') {
+            currentState.debugLogMode = data.mode;
+          }
+          _debugLastStatus = data.status || { mode: data.mode };
+          setDebugActionFeedback(
+            data.mode === 'verbose'
+              ? L('Подробная запись включена ✓', 'Verbose recording enabled ✓')
+              : (data.mode === 'off' ? L('Запись выключена', 'Logging turned off') : L('Режим: только ошибки', 'Mode: errors only'))
+          );
+          await refreshDebugLogStatus(false);
+        }
+      } catch (err) {
+        setDebugActionFeedback((err && err.message) || L('Ошибка переключения режима', 'Mode switch error'));
+      }
+    }
+
+    async function setDebugLogFilter(filterVal) {
+      _debugLogFilter = filterVal === 'error' ? 'error' : 'all';
+      await refreshDebugLogStatus(false);
+    }
+
+    async function copyDiagnosticTextSafe(text) {
+      if (typeof copyTextToClipboardSafe === 'function') {
+        return await copyTextToClipboardSafe(text);
+      }
+      if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(String(text || ''));
+        return true;
+      }
+      return false;
+    }
+
+    async function exportDebugBundleDownload() {
+      try {
+        const res = await panelFetch('/api/debug/export', { method: 'GET' });
+        if (!res || !res.ok) {
+          setDebugActionFeedback(formatPanelApiHttpError(res, 'Не удалось выгрузить лог', 'Failed to export log'));
+          return;
+        }
+        const data = await res.json();
+        if (!data || !data.ok || !data.bundle) {
+          setDebugActionFeedback(L('Некорректный пакет диагностики', 'Invalid diagnostic bundle'));
+          return;
+        }
+        const jsonText = JSON.stringify(data.bundle, null, 2);
+        const fileName = String(data.filename || 'the-tunnel-debug.json');
+        let downloaded = false;
+        if (typeof Blob === 'function' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+          try {
+            const blob = new Blob([jsonText], { type: 'application/json;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            a.style.display = 'none';
+            if (document.body) document.body.appendChild(a);
+            a.click();
+            if (a.parentNode) a.parentNode.removeChild(a);
+            if (typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(url);
+            downloaded = true;
+          } catch {}
+        }
+        if (!downloaded) {
+          await copyDiagnosticTextSafe(jsonText);
+        }
+        setDebugActionFeedback(L('Лог сохранён: ', 'Saved: ') + fileName);
+        flashStatus(L('Диагностический лог выгружен ✓', 'Diagnostic log exported ✓'));
+      } catch (err) {
+        setDebugActionFeedback((err && err.message) || L('Ошибка экспорта лога', 'Export error'));
+      }
+    }
+
+    async function copyDebugBundleSummary() {
+      try {
+        const res = await panelFetch('/api/debug/export', { method: 'GET' });
+        if (!res || !res.ok) {
+          setDebugActionFeedback(formatPanelApiHttpError(res, 'Не удалось получить отчёт', 'Failed to build report'));
+          return;
+        }
+        const data = await res.json();
+        if (!data || !data.ok) {
+          setDebugActionFeedback(L('Ошибка формирования отчёта', 'Report error'));
+          return;
+        }
+        const text = String(data.markdownSummary || JSON.stringify(data.bundle || {}, null, 2));
+        const copied = await copyDiagnosticTextSafe(text);
+        if (copied) {
+          setDebugActionFeedback(L('Отчёт скопирован в буфер ✓', 'Report copied to clipboard ✓'));
+        } else {
+          setDebugActionFeedback(L('Отчёт сформирован (буфер недоступен)', 'Report built (clipboard unavailable)'));
+        }
+      } catch (err) {
+        setDebugActionFeedback((err && err.message) || L('Ошибка копирования отчёта', 'Copy report error'));
+      }
+    }
+
+    async function clearDebugLogFromPanel() {
+      try {
+        const res = await panelFetch('/api/debug/clear', { method: 'POST', body: '{}' });
+        if (!res || !res.ok) {
+          setDebugActionFeedback(formatPanelApiHttpError(res, 'Не удалось очистить лог', 'Failed to clear log'));
+          return;
+        }
+        const data = await res.json();
+        _debugLastError = '';
+        _debugLastStatus = (data && data.status) || { mode: (currentState && currentState.debugLogMode) || 'errors', totalEntries: 0, errorCount: 0, fileSizeBytes: 0 };
+        _debugLastEntries = [];
+        setDebugActionFeedback(L('Лог очищен ✓', 'Log cleared ✓'));
+        renderDebugLogModal();
+      } catch (err) {
+        setDebugActionFeedback((err && err.message) || L('Ошибка очистки лога', 'Clear log error'));
+      }
+    }
+
+    function reportClientDebugError(eventName, errMsg, metaObj) {
+      const now = Date.now();
+      if (now - _clientErrorWindowStart > 60000) {
+        _clientErrorWindowStart = now;
+        _clientErrorLogCount = 0;
+      }
+      if (_clientErrorLogCount >= 10) return;
+      _clientErrorLogCount += 1;
+      try {
+        void panelFetch('/api/debug/client-log', {
+          method: 'POST',
+          body: JSON.stringify({
+            level: 'error',
+            event: eventName || 'ui_error',
+            message: String(errMsg || 'Unknown UI error').slice(0, 600),
+            meta: metaObj || undefined,
+          }),
+        });
+      } catch {}
+    }
+
+    (function initChangelogAndDebugModals() {
+      const searchEl = document.getElementById('changelogSearchInput');
+      if (searchEl && typeof searchEl.addEventListener === 'function') {
+        searchEl.addEventListener('input', function () {
+          _changelogSearchQuery = searchEl.value || '';
+          renderChangelogModal();
+        });
+      }
+      const chOverlay = document.getElementById('changelogModalOverlay');
+      if (chOverlay && typeof chOverlay.addEventListener === 'function') {
+        chOverlay.addEventListener('click', function (ev) {
+          if (ev && ev.target === chOverlay) closeChangelogModal();
+        });
+      }
+      const dbgOverlay = document.getElementById('debugLogModalOverlay');
+      if (dbgOverlay && typeof dbgOverlay.addEventListener === 'function') {
+        dbgOverlay.addEventListener('click', function (ev) {
+          if (ev && ev.target === dbgOverlay) closeDebugLogModal();
+        });
+      }
+      if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+        document.addEventListener('keydown', function (ev) {
+          if (ev && ev.key === 'Escape') {
+            if (chOverlay && chOverlay.style.display === 'flex') closeChangelogModal();
+            if (dbgOverlay && dbgOverlay.style.display === 'flex') closeDebugLogModal();
+          }
+        });
+      }
+      if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('error', function (ev) {
+          const msg = (ev && ev.message) || 'Uncaught window error';
+          reportClientDebugError('window_error', msg, {
+            filename: ev && ev.filename ? String(ev.filename) : '',
+            lineno: ev && ev.lineno ? Number(ev.lineno) : 0,
+          });
+        });
+        window.addEventListener('unhandledrejection', function (ev) {
+          const reason = ev && ev.reason;
+          const msg = reason && reason.message ? reason.message : String(reason || 'Unhandled promise rejection');
+          reportClientDebugError('unhandled_rejection', msg);
+        });
+      }
+    })();
 

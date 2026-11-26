@@ -5,7 +5,7 @@
   <meta name="google" content="notranslate" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='2' width='28' height='28' rx='6' fill='%230a0b0d' stroke='%232a2d35' stroke-width='2'/%3E%3Cpath d='M6 16h6M20 16h6M12 16l4-5 4 5-4 5z' fill='none' stroke='%23f04848' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
-  <title>The Tunnel v4.0.4</title>
+  <title>The Tunnel v4.0.5</title>
   <script src="/preload.js"></script>
   <style>
 /*__PANEL_STYLES__*/
@@ -33,7 +33,7 @@
       <div class="plugin-update-main">
         <span class="plugin-update-badge" id="pluginUpdateBadge">Обновление</span>
         <span class="plugin-update-text" id="pluginUpdateBannerText">Доступна новая версия расширения на GitHub</span>
-        <a class="plugin-update-link" id="pluginUpdateReleaseLink" href="https://github.com/vaszuevvas-coder/antigravity-model-router/releases" target="_blank" rel="noopener noreferrer">Что нового ↗</a>
+        <a class="plugin-update-link" id="pluginUpdateReleaseLink" href="https://github.com/vaszuevvas-coder/antigravity-model-router/releases" target="_blank" rel="noopener noreferrer" data-action="openChangelogModal" data-arg="latest">Что нового</a>
       </div>
       <div class="plugin-update-actions">
         <button type="button" class="win-btn plugin-update-apply-btn" id="pluginUpdateApplyBtn" data-action="applyPluginUpdateFromPanel" title="Скачать и установить обновление с GitHub с сохранением настроек">Да, обновить</button>
@@ -71,6 +71,14 @@
           <span id="openProjectGraphLabel">Карта</span>
         </button>
         <button class="lg-icon-btn" type="button" id="resetBlockOrderBtn" data-action="resetPanelBlockOrder" title="Вернуть исходный порядок всех блоков по умолчанию" style="display: none;">↺ Сброс</button>
+        <button class="lg-icon-btn debug-header-btn" type="button" id="openDebugLogBtn" data-action="openDebugLogModal" title="Запись дебаг-лога и экспорт отчёта диагностики" aria-label="Диагностика и лог">
+          <span class="debug-rec-dot" id="headerDebugRecDot" style="display: none;" aria-hidden="true"></span>
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M5.5 5.5a2.5 2.5 0 0 1 5 0v1h-5v-1zM4 6.5h8v3.2a4 4 0 0 1-8 0V6.5z" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round"/>
+            <path d="M2.2 7.5H4M12 7.5h1.8M2.5 11.2L4.3 10.2M13.5 11.2l-1.8-1M6.2 2.5L5.2 3.8M9.8 2.5l1 1.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+          </svg>
+          <span id="openDebugLogLabel">Лог</span>
+        </button>
         <button class="lg-icon-btn update-header-btn" type="button" id="checkPluginUpdateBtn" data-action="checkPluginUpdateManual" title="Проверить обновления расширения на GitHub" aria-label="Проверить обновления расширения">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M8 2.2v7.6M5 7l3 3 3-3M3 13h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
@@ -80,6 +88,12 @@
         </button>
         <button class="lg-icon-btn round" type="button" data-action="refreshAll" title="Обновить всё (телеметрия обновляется автоматически раз в ~3 сек)">↻</button>
       </div>
+      <button class="lg-icon-btn round changelog-header-btn" type="button" id="openChangelogBtn" data-action="openChangelogModal" title="История изменений (Что нового по версиям)" aria-label="История изменений">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M2.2 3.4c1.9-.5 4-.2 5.8.9 1.8-1.1 3.9-1.4 5.8-.9v8.9c-1.9-.5-4-.2-5.8.9-1.8-1.1-3.9-1.4-5.8-.9V3.4z" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round"/>
+          <path d="M8 4.3v8.9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+        </svg>
+      </button>
     </header>
 
     <div class="plugin-update-toast" id="pluginUpdateToast" role="status" aria-live="polite" style="display: none;">
@@ -1863,7 +1877,7 @@
 
     <div class="status-bar">
       <div id="statusPill" class="status-pane">Готово · Синхронизировано</div>
-      <div class="status-pane" id="footerPluginVersion">The Tunnel v4.0.4</div>
+      <div class="status-pane" id="footerPluginVersion">The Tunnel v4.0.5</div>
     </div>
     <div style="text-align:center;font-size:10.5px;color:var(--text-sub);opacity:0.7;padding:4px 0 2px;letter-spacing:0.02em;">Created by Vasili Zuev</div>
   </div>
@@ -1874,7 +1888,7 @@
       <div class="wiz-head">
         <div class="lg-brand">
           <span class="lg-brand-orb" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 8h3.5M10.5 8H14M5.5 8L8 4.5 10.5 8 8 11.5z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v4.0.4</span>
+          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v4.0.5</span>
           <span class="lg-session-pill" id="wizLaunchBadge">Первый запуск</span>
         </div>
         <button class="lg-icon-btn round" type="button" data-action="closeOnboardingWizard" title="Отложить или закрыть окно настройки (Esc)">×</button>
@@ -2110,6 +2124,76 @@
       <div class="plugin-update-modal-actions" id="pluginUpdateOverlayActions" style="display: none;">
         <button type="button" class="win-btn plugin-update-apply-btn" id="pluginUpdateOverlayRetryBtn" data-action="applyPluginUpdateFromPanel" style="display: none;">↻ Повторить</button>
         <button type="button" class="win-btn" id="pluginUpdateOverlayCloseBtn" data-action="closePluginUpdateOverlay">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Встроенное окно истории изменений (Changelog по версиям) -->
+  <div class="tunnel-modal-overlay" id="changelogModalOverlay" role="dialog" aria-modal="true" aria-labelledby="changelogModalTitle" style="display: none;">
+    <div class="tunnel-modal-card changelog-modal-card">
+      <div class="tunnel-modal-head">
+        <div class="tunnel-modal-title-group">
+          <h3 class="tunnel-modal-title" id="changelogModalTitle">История изменений</h3>
+          <span class="tunnel-modal-pill" id="changelogCurrentBadge">v4.0.4</span>
+        </div>
+        <div class="tunnel-modal-head-actions">
+          <a class="tunnel-modal-ext-link" id="changelogGithubLink" href="https://github.com/vaszuevvas-coder/antigravity-model-router/releases" target="_blank" rel="noopener noreferrer" title="Открыть страницу релизов на GitHub">GitHub ↗</a>
+          <button type="button" class="win-btn tunnel-modal-close" id="changelogCloseBtn" data-action="closeChangelogModal" title="Закрыть" aria-label="Закрыть">✕</button>
+        </div>
+      </div>
+      <div class="tunnel-modal-toolbar">
+        <input type="search" class="tunnel-modal-search" id="changelogSearchInput" placeholder="Поиск по версиям и изменениям..." aria-label="Поиск по истории изменений" />
+      </div>
+      <div class="changelog-layout">
+        <div class="changelog-version-list" id="changelogVersionList" role="tablist" aria-label="Версии релиза"></div>
+        <div class="changelog-version-body" id="changelogVersionBody" role="tabpanel">
+          <div class="tunnel-modal-empty">Загрузка истории изменений…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Окно записи дебаг-лога и экспорта диагностики -->
+  <div class="tunnel-modal-overlay" id="debugLogModalOverlay" role="dialog" aria-modal="true" aria-labelledby="debugModalTitle" style="display: none;">
+    <div class="tunnel-modal-card debug-modal-card">
+      <div class="tunnel-modal-head">
+        <div class="tunnel-modal-title-group">
+          <h3 class="tunnel-modal-title" id="debugModalTitle">Диагностика и запись лога</h3>
+          <span class="tunnel-modal-pill" id="debugModalModeBadge">Ошибки</span>
+        </div>
+        <div class="tunnel-modal-head-actions">
+          <button type="button" class="win-btn tunnel-modal-close" id="debugModalCloseBtn" data-action="closeDebugLogModal" title="Закрыть" aria-label="Закрыть">✕</button>
+        </div>
+      </div>
+
+      <div class="debug-mode-bar">
+        <div class="lang-pills debug-mode-pills" id="debugModePills" role="group" aria-label="Режим записи лога">
+          <button type="button" class="lang-pill-btn" data-debug-mode="off" data-action="setDebugLogMode" data-arg="off" title="Полностью отключить запись диагностического лога">Выкл</button>
+          <button type="button" class="lang-pill-btn active" data-debug-mode="errors" data-action="setDebugLogMode" data-arg="errors" title="Записывать только ошибки и предупреждения без потери скорости">Ошибки</button>
+          <button type="button" class="lang-pill-btn" data-debug-mode="verbose" data-action="setDebugLogMode" data-arg="verbose" title="Подробная запись событий хуков, обновлений и UI для отчёта о проблеме">● Запись дебага</button>
+        </div>
+        <div class="debug-modal-stats" id="debugModalStats">0 записей · 0 ошибок</div>
+      </div>
+
+      <div class="debug-privacy-note" id="debugPrivacyNote">Токены, ключи и пути пользователя автоматически скрываются перед сохранением и выгрузкой.</div>
+
+      <div class="debug-actions-row">
+        <button type="button" class="win-btn debug-export-btn" id="debugExportDownloadBtn" data-action="exportDebugBundleDownload" title="Скачать обезличенный JSON-пакет с логом, настройками и диагностикой среды">⬇ Скачать лог (.json)</button>
+        <button type="button" class="win-btn" id="debugCopySummaryBtn" data-action="copyDebugBundleSummary" title="Скопировать краткую Markdown-сводку для отправки разработчику или в GitHub Issue">Копировать отчёт</button>
+        <button type="button" class="win-btn" id="debugRefreshLogBtn" data-action="refreshDebugLogFromPanel" title="Обновить список событий дебаг-лога">↻ Обновить</button>
+        <button type="button" class="win-btn" id="debugClearLogBtn" data-action="clearDebugLogFromPanel" title="Удалить накопленные записи локального дебаг-лога">Очистить</button>
+      </div>
+
+      <div class="debug-filter-bar">
+        <div class="lang-pills" id="debugLevelFilterGroup">
+          <button type="button" class="lang-pill-btn active" data-debug-filter="all" data-action="setDebugLogFilter" data-arg="all">Все события</button>
+          <button type="button" class="lang-pill-btn" data-debug-filter="error" data-action="setDebugLogFilter" data-arg="error">Только ошибки</button>
+        </div>
+        <span class="debug-action-feedback" id="debugActionFeedback" aria-live="polite"></span>
+      </div>
+
+      <div class="debug-entries-list" id="debugLogEntriesList">
+        <div class="tunnel-modal-empty">Загрузка записей…</div>
       </div>
     </div>
   </div>

@@ -1593,6 +1593,9 @@
 
         updateAutopilotLiveText(s, payload ? payload.circuitBreaker : null);
       }
+      if (typeof syncDebugLoggerHeaderUi === 'function') {
+        syncDebugLoggerHeaderUi(s, payload ? payload.debugLogStatus : null);
+      }
     }
 
     function updateAutopilotLiveText(s, circuitBreaker) {

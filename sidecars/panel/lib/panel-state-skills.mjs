@@ -387,6 +387,7 @@ export const DEFAULT_STATE = {
   mutationGuardEnabled: false,
   federatedWorkspaces: [],
   floatingHudEnabled: false,
+  debugLogMode: 'errors',
   updatedAt: new Date().toISOString(),
 };
 
@@ -453,6 +454,8 @@ const VALID_LEAN_MODES = new Set(['off', 'lite', 'full', 'ultra']);
 const VALID_TERSE_MODES = new Set(['off', 'caveman', 'ultracave']);
 
 const VALID_HOOK_PROFILES = new Set(['minimal', 'standard', 'strict']);
+
+const VALID_DEBUG_LOG_MODES = new Set(['off', 'errors', 'verbose']);
 
 export function clampSafeInt(val, min, max, fallback) {
   const n = Number(val);
@@ -550,6 +553,9 @@ export function sanitizeStatePatch(patch = {}, options = {}) {
         break;
       case 'hookProfile':
         if (VALID_HOOK_PROFILES.has(String(val))) out[key] = String(val);
+        break;
+      case 'debugLogMode':
+        if (VALID_DEBUG_LOG_MODES.has(String(val))) out[key] = String(val);
         break;
       case 'compactionTokenThreshold':
         out[key] = clampSafeInt(val, 16000, 500000, DEFAULT_STATE.compactionTokenThreshold);

@@ -14,6 +14,7 @@ import { basename, dirname, extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
 import { pruneObjectMapByTimestamp, resolveTunnelCacheDir } from './cache-dir.mjs';
+import { appendDebugLog } from './debug-logger.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
@@ -45,8 +46,8 @@ function buildStaticSessionStartHeader(state = {}) {
   const isEn = resolveUserLanguage(state) === 'en';
   const lines = [
     isEn
-      ? '# The Tunnel v4.0.4 (EN-Internal / EN-Chat)'
-      : '# The Tunnel v4.0.4 (EN-Internal / RU-Chat)',
+      ? '# The Tunnel v4.0.5 (EN-Internal / EN-Chat)'
+      : '# The Tunnel v4.0.5 (EN-Internal / RU-Chat)',
     isEn
       ? '- User replies/UI/Role/toolSummary: 100% English.'
       : '- User replies/UI/Role/toolSummary: 100% Russian.',
@@ -690,12 +691,12 @@ export function buildZeroTokenUserBadgeStep(rawOpts = {}) {
         ? `Pro Architect${subSuffix}`
         : strat === 'flash_dispatcher' || strat === 'economy'
           ? `Flash Dispatcher${subSuffix}`
-          : `Autopilot v4.0.4${subSuffix}`)
+          : `Autopilot v4.0.5${subSuffix}`)
     : (strat === 'pro_architect' || strat === 'performance'
         ? `Pro-Архитектор${subSuffix}`
         : strat === 'flash_dispatcher' || strat === 'economy'
           ? `Flash-Диспетчер${subSuffix}`
-          : `Автопилот v4.0.4${subSuffix}`);
+          : `Автопилот v4.0.5${subSuffix}`);
   const executor = isEn
     ? (modelProfile?.displayEn || modelProfile?.shortLabel || modelProfile?.displayRu || modelProfile?.displayNameRu || 'Current executor')
     : (modelProfile?.displayRu || modelProfile?.displayNameRu || modelProfile?.shortLabel || 'Текущий исполнитель');
@@ -1238,7 +1239,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
       }
     }
 
-    // 2. Когнитивный ИИ-Автопилот v4.0.4 (3D-матрица Breadth × Depth × Risk + безлимитное EN-мышление на Gemini 4)
+    // 2. Когнитивный ИИ-Автопилот v4.0.5 (3D-матрица Breadth × Depth × Risk + безлимитное EN-мышление на Gemini 4)
     if (baseState.thinkingLimiter !== false && toolPruner && typeof toolPruner.estimateTaskGradeAndThinkingBudget === 'function') {
       try {
         const budgetRes = toolPruner.estimateTaskGradeAndThinkingBudget(userInput, effectiveState, {
@@ -3923,6 +3924,7 @@ const isMain =
 
 if (isMain) {
   const eventName = process.argv[2] || '';
+  const hookStartMs = Date.now();
   try {
     const payload = await readStdin();
     const state = loadRouterState();
@@ -3950,6 +3952,18 @@ if (isMain) {
         break;
     }
 
+    appendDebugLog({
+      level: 'info',
+      source: 'hook-runner',
+      event: eventName || 'unknown',
+      message: 'Hook completed',
+      durationMs: Date.now() - hookStartMs,
+      meta: {
+        resultKeys: Object.keys(result || {}),
+        decision: result?.decision || '',
+      },
+    }, { state, pluginRoot: PLUGIN_ROOT });
+
     const flushAndExit = (jsonPayload) => {
       const safetyTimer = setTimeout(() => process.exit(0), 250);
       if (typeof safetyTimer.unref === 'function') safetyTimer.unref();
@@ -3961,6 +3975,17 @@ if (isMain) {
 
     flushAndExit(JSON.stringify(result || {}));
   } catch (err) {
+    appendDebugLog({
+      level: 'error',
+      source: 'hook-runner',
+      event: eventName || 'unknown',
+      message: err?.message || String(err),
+      durationMs: Date.now() - hookStartMs,
+      meta: {
+        name: err?.name || 'Error',
+        stack: String(err?.stack || '').slice(0, 1200),
+      },
+    }, { pluginRoot: PLUGIN_ROOT });
     console.error('[hook] Critical error in hook-runner:', err);
     const fallbackOut = eventName === 'PreToolUse'
       ? JSON.stringify({ decision: 'allow' })

@@ -609,7 +609,23 @@
       'GPU-подсказки': 'GPU Hints',
       'до старта задачи': 'before task start',
       'Выгружать VRAM': 'Unload VRAM',
-      'при закрытии IDE': 'on IDE close'
+      'при закрытии IDE': 'on IDE close',
+      'Что нового': 'What\'s new',
+      'Лог': 'Debug',
+      'История изменений': 'Changelog',
+      'Диагностика и запись лога': 'Diagnostics & Debug Log',
+      'Токены, ключи и пути пользователя автоматически скрываются перед сохранением и выгрузкой.': 'Tokens, keys, and user paths are automatically redacted before saving and exporting.',
+      '⬇ Скачать лог (.json)': '⬇ Download Log (.json)',
+      'Копировать отчёт': 'Copy Report',
+      'Все события': 'All Events',
+      'Только ошибки': 'Errors Only',
+      '● Запись дебага': '● Record Debug',
+      'Выкл': 'Off',
+      'Ошибки': 'Errors',
+      'Загрузка истории изменений…': 'Loading changelog…',
+      '0 записей · 0 ошибок': '0 entries · 0 errors',
+      'Загрузка записей…': 'Loading entries…',
+      '↻ Обновить': '↻ Refresh'
     };
 
     const UI_RU_TO_EN_ATTR = {
@@ -1070,7 +1086,24 @@
       'Видеомодель GPU (Ollama): локальное сжатие логов, поиск по смыслу и ревью диффов без расхода облачной квоты.': 'Local GPU Model (Ollama): local log distillation, semantic search, and diff review with zero cloud quota.',
       'Потоки CPU: пул фоновых воркеров для индекса триграмм BM25F, ранжирования поиска и микро-тестов.': 'CPU Threads: background worker pool for BM25F trigram indexing, search reranking, and micro-tests.',
       'Включить или выключить локального GPU-помощника (Ollama)': 'Enable or disable local GPU copilot (Ollama)',
-      'Включить или выключить многопоточный пул CPU (разбор AST, чанки, поиск)': 'Enable or disable multi-core CPU worker pool (AST parsing, chunks, search)'
+      'Включить или выключить многопоточный пул CPU (разбор AST, чанки, поиск)': 'Enable or disable multi-core CPU worker pool (AST parsing, chunks, search)',
+      'История изменений (Что нового по версиям)': 'Changelog (What\'s new by version)',
+      'История изменений': 'Changelog',
+      'Запись дебаг-лога и экспорт отчёта диагностики': 'Record debug log and export diagnostic report',
+      'Диагностика и лог': 'Diagnostics & Debug Log',
+      'Поиск по версиям и изменениям...': 'Search versions & changes...',
+      'Поиск по истории изменений': 'Search changelog',
+      'Открыть страницу релизов на GitHub': 'Open GitHub Releases page',
+      'Полностью отключить запись диагностического лога': 'Disable diagnostic logging completely',
+      'Записывать только ошибки и предупреждения без потери скорости': 'Record only errors and warnings with zero overhead',
+      'Подробная запись событий хуков, обновлений и UI для отчёта о проблеме': 'Record detailed hook, updater, and UI events to diagnose issues',
+      'Скачать обезличенный JSON-пакет с логом, настройками и диагностикой среды': 'Download redacted JSON bundle with logs, settings, and environment info',
+      'Скопировать краткую Markdown-сводку для отправки разработчику или в GitHub Issue': 'Copy concise Markdown summary for support or GitHub Issue',
+      'Удалить накопленные записи локального дебаг-лога': 'Clear local debug log entries',
+      'Закрыть': 'Close',
+      'Версии релиза': 'Release versions',
+      'Режим записи лога': 'Debug log mode',
+      'Обновить список событий дебаг-лога': 'Refresh debug log entries'
     };
 
     function translateUiString(raw, dict) {
@@ -1243,6 +1276,14 @@
       }
       if (typeof renderPluginUpdateBanner === 'function') {
         renderPluginUpdateBanner();
+      }
+      const chModal = document.getElementById('changelogModalOverlay');
+      if (chModal && chModal.style.display === 'flex' && typeof renderChangelogModal === 'function') {
+        renderChangelogModal();
+      }
+      const dbgModal = document.getElementById('debugLogModalOverlay');
+      if (dbgModal && dbgModal.style.display === 'flex' && typeof renderDebugLogModal === 'function') {
+        renderDebugLogModal();
       }
       const wizModal = document.getElementById('onboardingWizardModal');
       if (wizModal && wizModal.classList.contains('visible') && typeof renderWizardStep === 'function') {

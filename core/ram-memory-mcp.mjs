@@ -777,6 +777,31 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
     return { status: 200, body: { ok: true, warm: false, warming: true } };
   }
 
+  if (method === 'POST' && url === '/warm') {
+    const wsPath = resolveDefaultWorkspace(body?.wsPath);
+    if (!st.enabled || !wsPath) {
+      return { status: 200, body: { ok: false, error: !st.enabled ? 'RAM cache disabled' : 'Invalid workspace' } };
+    }
+    registerDaemonWorkspace(wsPath);
+    refreshBudgetFromState();
+    const warmRes = await targetEngine.warmWorkspaceAsync(wsPath);
+    if (!warmRes?.ok) {
+      return { status: 200, body: { ok: false, error: 'Failed to warm workspace', filesLoaded: 0, filesCached: 0 } };
+    }
+    scheduleBackgroundGpuWarm(wsPath, 400);
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        workspace: warmRes.workspace || wsPath,
+        filesLoaded: Number(warmRes.filesLoaded || 0),
+        filesCached: Number(warmRes.filesLoaded || 0),
+        symbolsCount: Number(warmRes.symbolsCount || 0),
+        usedMb: Number(warmRes.usedMb || 0),
+      },
+    };
+  }
+
   if (method === 'POST' && url === '/hook/memo-check') {
     if (!st.enabled || st.ramSotaEngines === false) {
       return { status: 200, body: { ok: true, hit: false, retryBypass: false, disabled: true } };

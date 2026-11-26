@@ -5,7 +5,7 @@
   <meta name="google" content="notranslate" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='2' width='28' height='28' rx='6' fill='%230a0b0d' stroke='%232a2d35' stroke-width='2'/%3E%3Cpath d='M6 16h6M20 16h6M12 16l4-5 4 5-4 5z' fill='none' stroke='%23f04848' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
-  <title>The Tunnel v4.0.4</title>
+  <title>The Tunnel v4.0.5</title>
   <script src="/preload.js"></script>
   <style>
     :root {
@@ -226,14 +226,21 @@
 
     /* Industrial Hardware Header */
     .lg-header {
+      position: relative;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 6px 8px;
-      padding: 0 2px 10px 2px;
+      padding: 0 32px 10px 2px;
       margin-bottom: 10px;
       border-bottom: 1px solid var(--border-hairline);
       flex-wrap: wrap;
+    }
+
+    .changelog-header-btn {
+      position: absolute;
+      top: 0;
+      right: 2px;
     }
 
     .lg-brand {
@@ -8657,6 +8664,440 @@
         --shell-max-w: 980px;
       }
     }
+
+    /* =========================================================================
+       In-App Changelog & Diagnostic Debug Logger Modals
+       ========================================================================= */
+    .debug-header-btn.is-recording {
+      border-color: rgba(240, 72, 72, 0.55);
+      color: var(--text-main);
+    }
+
+    .debug-rec-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--c-crimson);
+      box-shadow: 0 0 6px rgba(240, 72, 72, 0.8);
+      flex-shrink: 0;
+      animation: agLivePulse 1.4s ease-in-out infinite;
+    }
+
+    .tunnel-modal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1520;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+      background: rgba(8, 10, 14, 0.76);
+      animation: agFadeIn var(--motion-ui) var(--ease-enter) both;
+    }
+
+    .tunnel-modal-card {
+      width: 100%;
+      max-width: 720px;
+      max-height: calc(100vh - 24px);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 14px;
+      border-radius: var(--r-md);
+      background: var(--c-surface-alt);
+      border: 1px solid var(--border-strong);
+      box-shadow: 0 22px 54px rgba(0, 0, 0, 0.65);
+      color: var(--text-main);
+      animation: wizPopIn var(--motion-drawer) var(--ease-spring) both;
+      overflow: hidden;
+    }
+
+    .tunnel-modal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .tunnel-modal-title-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .tunnel-modal-title {
+      margin: 0;
+      font-size: 13.5px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .tunnel-modal-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 7px;
+      border-radius: var(--r-sm);
+      font-size: 10px;
+      font-weight: 700;
+      background: rgba(77, 139, 140, 0.18);
+      border: 1px solid rgba(77, 139, 140, 0.42);
+      color: var(--c-teal-soft);
+      white-space: nowrap;
+    }
+
+    .tunnel-modal-pill.is-recording {
+      background: rgba(240, 72, 72, 0.18);
+      border-color: rgba(240, 72, 72, 0.48);
+      color: var(--c-crimson-soft);
+    }
+
+    .tunnel-modal-pill.is-off {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: var(--border-subtle);
+      color: var(--text-sub);
+    }
+
+    .tunnel-modal-head-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .tunnel-modal-ext-link {
+      font-size: 10.5px;
+      font-weight: 600;
+      color: var(--accent-cyan);
+      text-decoration: none;
+    }
+
+    .tunnel-modal-ext-link:hover {
+      text-decoration: underline;
+    }
+
+    .tunnel-modal-close {
+      padding: 3px 8px !important;
+      font-size: 11px !important;
+    }
+
+    .tunnel-modal-toolbar {
+      display: flex;
+      gap: 8px;
+    }
+
+    .tunnel-modal-search {
+      width: 100%;
+      min-width: 0;
+      padding: 6px 10px;
+      border-radius: var(--r-sm);
+      border: 1px solid var(--border-subtle);
+      background: var(--glass-inset);
+      color: var(--text-main);
+      font-family: inherit;
+      font-size: 11.5px;
+      outline: none;
+    }
+
+    .tunnel-modal-search:focus {
+      border-color: rgba(77, 139, 140, 0.65);
+    }
+
+    .tunnel-modal-empty {
+      padding: 20px 10px;
+      text-align: center;
+      font-size: 11.5px;
+      color: var(--text-sub);
+    }
+
+    .tunnel-modal-error-box {
+      padding: 12px 14px;
+      border-radius: var(--r-sm);
+      border: 1px solid rgba(245, 158, 11, 0.42);
+      background: rgba(245, 158, 11, 0.08);
+      color: var(--text-main);
+      font-size: 11.5px;
+      line-height: 1.45;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .changelog-version-list.is-empty {
+      display: none;
+    }
+
+    .changelog-layout {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 0;
+      flex: 1 1 auto;
+      overflow: hidden;
+    }
+
+    .changelog-version-list {
+      display: flex;
+      flex-direction: row;
+      gap: 5px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding-bottom: 4px;
+      flex-shrink: 0;
+    }
+
+    .changelog-ver-btn {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      padding: 5px 9px;
+      border-radius: var(--r-sm);
+      border: 1px solid var(--border-subtle);
+      background: var(--glass-inset);
+      color: var(--text-sub);
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+      text-align: left;
+      transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+    }
+
+    .changelog-ver-btn:hover {
+      border-color: var(--border-strong);
+      color: var(--text-main);
+    }
+
+    .changelog-ver-btn.active {
+      background: rgba(240, 72, 72, 0.16);
+      border-color: rgba(240, 72, 72, 0.5);
+      color: var(--text-main);
+    }
+
+    .changelog-ver-tag {
+      font-size: 9px;
+      font-weight: 700;
+      padding: 1px 5px;
+      border-radius: var(--r-sm);
+      background: rgba(77, 139, 140, 0.22);
+      color: var(--c-teal-soft);
+    }
+
+    .changelog-ver-tag.is-new {
+      background: rgba(240, 72, 72, 0.22);
+      color: var(--c-crimson-soft);
+    }
+
+    .changelog-version-body {
+      flex: 1 1 auto;
+      min-height: 180px;
+      overflow-y: auto;
+      padding: 10px 12px;
+      border-radius: var(--r-sm);
+      background: var(--glass-inset);
+      border: 1px solid var(--border-hairline);
+      font-size: 11.5px;
+      line-height: 1.5;
+    }
+
+    @media (min-width: 600px) {
+      .changelog-layout {
+        flex-direction: row;
+        min-height: 320px;
+      }
+      .changelog-version-list {
+        flex-direction: column;
+        width: 176px;
+        overflow-x: hidden;
+        overflow-y: auto;
+        padding-bottom: 0;
+        padding-right: 4px;
+      }
+      .changelog-ver-btn {
+        width: 100%;
+      }
+    }
+
+    .changelog-ver-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding-bottom: 8px;
+      margin-bottom: 8px;
+      border-bottom: 1px solid var(--border-hairline);
+    }
+
+    .changelog-ver-heading {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .changelog-ver-date {
+      font-size: 10.5px;
+      color: var(--text-sub);
+    }
+
+    .changelog-sec-title {
+      margin: 10px 0 5px;
+      font-size: 11.5px;
+      font-weight: 700;
+      color: var(--c-teal-soft);
+    }
+
+    .changelog-items-ul {
+      margin: 0;
+      padding-left: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .changelog-subitems-ul {
+      margin: 4px 0 0;
+      padding-left: 14px;
+      color: var(--text-sub);
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .changelog-version-body code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 10.5px;
+      padding: 1px 4px;
+      border-radius: var(--r-xs);
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-main);
+    }
+
+    .debug-mode-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .debug-modal-stats {
+      font-size: 11px;
+      color: var(--text-sub);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .debug-privacy-note {
+      font-size: 10.5px;
+      color: var(--text-sub);
+      padding: 6px 9px;
+      border-radius: var(--r-sm);
+      background: rgba(77, 139, 140, 0.09);
+      border: 1px solid rgba(77, 139, 140, 0.25);
+    }
+
+    .debug-actions-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .debug-export-btn {
+      font-weight: 600 !important;
+      border-color: rgba(77, 139, 140, 0.55) !important;
+      background: rgba(77, 139, 140, 0.16) !important;
+      color: var(--text-main) !important;
+    }
+
+    .debug-export-btn:hover {
+      border-color: rgba(77, 139, 140, 0.85) !important;
+      background: rgba(77, 139, 140, 0.26) !important;
+    }
+
+    .debug-filter-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .debug-action-feedback {
+      font-size: 10.5px;
+      color: var(--c-teal-soft);
+    }
+
+    .debug-entries-list {
+      flex: 1 1 auto;
+      min-height: 180px;
+      max-height: 320px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      padding: 8px;
+      border-radius: var(--r-sm);
+      background: var(--glass-inset);
+      border: 1px solid var(--border-hairline);
+    }
+
+    .debug-entry-row {
+      padding: 6px 8px;
+      border-radius: var(--r-sm);
+      border-left: 2.5px solid var(--border-strong);
+      background: rgba(255, 255, 255, 0.025);
+      font-size: 11px;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+
+    .debug-entry-row.lvl-error {
+      border-left-color: var(--c-crimson);
+      background: rgba(240, 72, 72, 0.08);
+    }
+
+    .debug-entry-row.lvl-warn {
+      border-left-color: var(--accent-amber, #f59e0b);
+      background: rgba(245, 158, 11, 0.07);
+    }
+
+    .debug-entry-row.lvl-info,
+    .debug-entry-row.lvl-debug {
+      border-left-color: var(--c-teal);
+    }
+
+    .debug-entry-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 10px;
+      color: var(--text-sub);
+      margin-bottom: 2px;
+    }
+
+    .debug-entry-lvl {
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .debug-entry-row.lvl-error .debug-entry-lvl {
+      color: var(--c-crimson-soft);
+    }
+
+    .debug-entry-row.lvl-warn .debug-entry-lvl {
+      color: #fbbf24;
+    }
+
+    .debug-entry-msg {
+      color: var(--text-main);
+    }
   </style>
 </head>
 <body data-subscription-tier="pro">
@@ -8681,7 +9122,7 @@
       <div class="plugin-update-main">
         <span class="plugin-update-badge" id="pluginUpdateBadge">Обновление</span>
         <span class="plugin-update-text" id="pluginUpdateBannerText">Доступна новая версия расширения на GitHub</span>
-        <a class="plugin-update-link" id="pluginUpdateReleaseLink" href="https://github.com/vaszuevvas-coder/antigravity-model-router/releases" target="_blank" rel="noopener noreferrer">Что нового ↗</a>
+        <a class="plugin-update-link" id="pluginUpdateReleaseLink" href="https://github.com/vaszuevvas-coder/antigravity-model-router/releases" target="_blank" rel="noopener noreferrer" data-action="openChangelogModal" data-arg="latest">Что нового</a>
       </div>
       <div class="plugin-update-actions">
         <button type="button" class="win-btn plugin-update-apply-btn" id="pluginUpdateApplyBtn" data-action="applyPluginUpdateFromPanel" title="Скачать и установить обновление с GitHub с сохранением настроек">Да, обновить</button>
@@ -8719,6 +9160,14 @@
           <span id="openProjectGraphLabel">Карта</span>
         </button>
         <button class="lg-icon-btn" type="button" id="resetBlockOrderBtn" data-action="resetPanelBlockOrder" title="Вернуть исходный порядок всех блоков по умолчанию" style="display: none;">↺ Сброс</button>
+        <button class="lg-icon-btn debug-header-btn" type="button" id="openDebugLogBtn" data-action="openDebugLogModal" title="Запись дебаг-лога и экспорт отчёта диагностики" aria-label="Диагностика и лог">
+          <span class="debug-rec-dot" id="headerDebugRecDot" style="display: none;" aria-hidden="true"></span>
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M5.5 5.5a2.5 2.5 0 0 1 5 0v1h-5v-1zM4 6.5h8v3.2a4 4 0 0 1-8 0V6.5z" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round"/>
+            <path d="M2.2 7.5H4M12 7.5h1.8M2.5 11.2L4.3 10.2M13.5 11.2l-1.8-1M6.2 2.5L5.2 3.8M9.8 2.5l1 1.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+          </svg>
+          <span id="openDebugLogLabel">Лог</span>
+        </button>
         <button class="lg-icon-btn update-header-btn" type="button" id="checkPluginUpdateBtn" data-action="checkPluginUpdateManual" title="Проверить обновления расширения на GitHub" aria-label="Проверить обновления расширения">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M8 2.2v7.6M5 7l3 3 3-3M3 13h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
@@ -8728,6 +9177,12 @@
         </button>
         <button class="lg-icon-btn round" type="button" data-action="refreshAll" title="Обновить всё (телеметрия обновляется автоматически раз в ~3 сек)">↻</button>
       </div>
+      <button class="lg-icon-btn round changelog-header-btn" type="button" id="openChangelogBtn" data-action="openChangelogModal" title="История изменений (Что нового по версиям)" aria-label="История изменений">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M2.2 3.4c1.9-.5 4-.2 5.8.9 1.8-1.1 3.9-1.4 5.8-.9v8.9c-1.9-.5-4-.2-5.8.9-1.8-1.1-3.9-1.4-5.8-.9V3.4z" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round"/>
+          <path d="M8 4.3v8.9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+        </svg>
+      </button>
     </header>
 
     <div class="plugin-update-toast" id="pluginUpdateToast" role="status" aria-live="polite" style="display: none;">
@@ -10511,7 +10966,7 @@
 
     <div class="status-bar">
       <div id="statusPill" class="status-pane">Готово · Синхронизировано</div>
-      <div class="status-pane" id="footerPluginVersion">The Tunnel v4.0.4</div>
+      <div class="status-pane" id="footerPluginVersion">The Tunnel v4.0.5</div>
     </div>
     <div style="text-align:center;font-size:10.5px;color:var(--text-sub);opacity:0.7;padding:4px 0 2px;letter-spacing:0.02em;">Created by Vasili Zuev</div>
   </div>
@@ -10522,7 +10977,7 @@
       <div class="wiz-head">
         <div class="lg-brand">
           <span class="lg-brand-orb" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 8h3.5M10.5 8H14M5.5 8L8 4.5 10.5 8 8 11.5z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v4.0.4</span>
+          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v4.0.5</span>
           <span class="lg-session-pill" id="wizLaunchBadge">Первый запуск</span>
         </div>
         <button class="lg-icon-btn round" type="button" data-action="closeOnboardingWizard" title="Отложить или закрыть окно настройки (Esc)">×</button>
@@ -10758,6 +11213,76 @@
       <div class="plugin-update-modal-actions" id="pluginUpdateOverlayActions" style="display: none;">
         <button type="button" class="win-btn plugin-update-apply-btn" id="pluginUpdateOverlayRetryBtn" data-action="applyPluginUpdateFromPanel" style="display: none;">↻ Повторить</button>
         <button type="button" class="win-btn" id="pluginUpdateOverlayCloseBtn" data-action="closePluginUpdateOverlay">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Встроенное окно истории изменений (Changelog по версиям) -->
+  <div class="tunnel-modal-overlay" id="changelogModalOverlay" role="dialog" aria-modal="true" aria-labelledby="changelogModalTitle" style="display: none;">
+    <div class="tunnel-modal-card changelog-modal-card">
+      <div class="tunnel-modal-head">
+        <div class="tunnel-modal-title-group">
+          <h3 class="tunnel-modal-title" id="changelogModalTitle">История изменений</h3>
+          <span class="tunnel-modal-pill" id="changelogCurrentBadge">v4.0.4</span>
+        </div>
+        <div class="tunnel-modal-head-actions">
+          <a class="tunnel-modal-ext-link" id="changelogGithubLink" href="https://github.com/vaszuevvas-coder/antigravity-model-router/releases" target="_blank" rel="noopener noreferrer" title="Открыть страницу релизов на GitHub">GitHub ↗</a>
+          <button type="button" class="win-btn tunnel-modal-close" id="changelogCloseBtn" data-action="closeChangelogModal" title="Закрыть" aria-label="Закрыть">✕</button>
+        </div>
+      </div>
+      <div class="tunnel-modal-toolbar">
+        <input type="search" class="tunnel-modal-search" id="changelogSearchInput" placeholder="Поиск по версиям и изменениям..." aria-label="Поиск по истории изменений" />
+      </div>
+      <div class="changelog-layout">
+        <div class="changelog-version-list" id="changelogVersionList" role="tablist" aria-label="Версии релиза"></div>
+        <div class="changelog-version-body" id="changelogVersionBody" role="tabpanel">
+          <div class="tunnel-modal-empty">Загрузка истории изменений…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Окно записи дебаг-лога и экспорта диагностики -->
+  <div class="tunnel-modal-overlay" id="debugLogModalOverlay" role="dialog" aria-modal="true" aria-labelledby="debugModalTitle" style="display: none;">
+    <div class="tunnel-modal-card debug-modal-card">
+      <div class="tunnel-modal-head">
+        <div class="tunnel-modal-title-group">
+          <h3 class="tunnel-modal-title" id="debugModalTitle">Диагностика и запись лога</h3>
+          <span class="tunnel-modal-pill" id="debugModalModeBadge">Ошибки</span>
+        </div>
+        <div class="tunnel-modal-head-actions">
+          <button type="button" class="win-btn tunnel-modal-close" id="debugModalCloseBtn" data-action="closeDebugLogModal" title="Закрыть" aria-label="Закрыть">✕</button>
+        </div>
+      </div>
+
+      <div class="debug-mode-bar">
+        <div class="lang-pills debug-mode-pills" id="debugModePills" role="group" aria-label="Режим записи лога">
+          <button type="button" class="lang-pill-btn" data-debug-mode="off" data-action="setDebugLogMode" data-arg="off" title="Полностью отключить запись диагностического лога">Выкл</button>
+          <button type="button" class="lang-pill-btn active" data-debug-mode="errors" data-action="setDebugLogMode" data-arg="errors" title="Записывать только ошибки и предупреждения без потери скорости">Ошибки</button>
+          <button type="button" class="lang-pill-btn" data-debug-mode="verbose" data-action="setDebugLogMode" data-arg="verbose" title="Подробная запись событий хуков, обновлений и UI для отчёта о проблеме">● Запись дебага</button>
+        </div>
+        <div class="debug-modal-stats" id="debugModalStats">0 записей · 0 ошибок</div>
+      </div>
+
+      <div class="debug-privacy-note" id="debugPrivacyNote">Токены, ключи и пути пользователя автоматически скрываются перед сохранением и выгрузкой.</div>
+
+      <div class="debug-actions-row">
+        <button type="button" class="win-btn debug-export-btn" id="debugExportDownloadBtn" data-action="exportDebugBundleDownload" title="Скачать обезличенный JSON-пакет с логом, настройками и диагностикой среды">⬇ Скачать лог (.json)</button>
+        <button type="button" class="win-btn" id="debugCopySummaryBtn" data-action="copyDebugBundleSummary" title="Скопировать краткую Markdown-сводку для отправки разработчику или в GitHub Issue">Копировать отчёт</button>
+        <button type="button" class="win-btn" id="debugRefreshLogBtn" data-action="refreshDebugLogFromPanel" title="Обновить список событий дебаг-лога">↻ Обновить</button>
+        <button type="button" class="win-btn" id="debugClearLogBtn" data-action="clearDebugLogFromPanel" title="Удалить накопленные записи локального дебаг-лога">Очистить</button>
+      </div>
+
+      <div class="debug-filter-bar">
+        <div class="lang-pills" id="debugLevelFilterGroup">
+          <button type="button" class="lang-pill-btn active" data-debug-filter="all" data-action="setDebugLogFilter" data-arg="all">Все события</button>
+          <button type="button" class="lang-pill-btn" data-debug-filter="error" data-action="setDebugLogFilter" data-arg="error">Только ошибки</button>
+        </div>
+        <span class="debug-action-feedback" id="debugActionFeedback" aria-live="polite"></span>
+      </div>
+
+      <div class="debug-entries-list" id="debugLogEntriesList">
+        <div class="tunnel-modal-empty">Загрузка записей…</div>
       </div>
     </div>
   </div>
@@ -11377,7 +11902,23 @@
       'GPU-подсказки': 'GPU Hints',
       'до старта задачи': 'before task start',
       'Выгружать VRAM': 'Unload VRAM',
-      'при закрытии IDE': 'on IDE close'
+      'при закрытии IDE': 'on IDE close',
+      'Что нового': 'What\'s new',
+      'Лог': 'Debug',
+      'История изменений': 'Changelog',
+      'Диагностика и запись лога': 'Diagnostics & Debug Log',
+      'Токены, ключи и пути пользователя автоматически скрываются перед сохранением и выгрузкой.': 'Tokens, keys, and user paths are automatically redacted before saving and exporting.',
+      '⬇ Скачать лог (.json)': '⬇ Download Log (.json)',
+      'Копировать отчёт': 'Copy Report',
+      'Все события': 'All Events',
+      'Только ошибки': 'Errors Only',
+      '● Запись дебага': '● Record Debug',
+      'Выкл': 'Off',
+      'Ошибки': 'Errors',
+      'Загрузка истории изменений…': 'Loading changelog…',
+      '0 записей · 0 ошибок': '0 entries · 0 errors',
+      'Загрузка записей…': 'Loading entries…',
+      '↻ Обновить': '↻ Refresh'
     };
 
     const UI_RU_TO_EN_ATTR = {
@@ -11838,7 +12379,24 @@
       'Видеомодель GPU (Ollama): локальное сжатие логов, поиск по смыслу и ревью диффов без расхода облачной квоты.': 'Local GPU Model (Ollama): local log distillation, semantic search, and diff review with zero cloud quota.',
       'Потоки CPU: пул фоновых воркеров для индекса триграмм BM25F, ранжирования поиска и микро-тестов.': 'CPU Threads: background worker pool for BM25F trigram indexing, search reranking, and micro-tests.',
       'Включить или выключить локального GPU-помощника (Ollama)': 'Enable or disable local GPU copilot (Ollama)',
-      'Включить или выключить многопоточный пул CPU (разбор AST, чанки, поиск)': 'Enable or disable multi-core CPU worker pool (AST parsing, chunks, search)'
+      'Включить или выключить многопоточный пул CPU (разбор AST, чанки, поиск)': 'Enable or disable multi-core CPU worker pool (AST parsing, chunks, search)',
+      'История изменений (Что нового по версиям)': 'Changelog (What\'s new by version)',
+      'История изменений': 'Changelog',
+      'Запись дебаг-лога и экспорт отчёта диагностики': 'Record debug log and export diagnostic report',
+      'Диагностика и лог': 'Diagnostics & Debug Log',
+      'Поиск по версиям и изменениям...': 'Search versions & changes...',
+      'Поиск по истории изменений': 'Search changelog',
+      'Открыть страницу релизов на GitHub': 'Open GitHub Releases page',
+      'Полностью отключить запись диагностического лога': 'Disable diagnostic logging completely',
+      'Записывать только ошибки и предупреждения без потери скорости': 'Record only errors and warnings with zero overhead',
+      'Подробная запись событий хуков, обновлений и UI для отчёта о проблеме': 'Record detailed hook, updater, and UI events to diagnose issues',
+      'Скачать обезличенный JSON-пакет с логом, настройками и диагностикой среды': 'Download redacted JSON bundle with logs, settings, and environment info',
+      'Скопировать краткую Markdown-сводку для отправки разработчику или в GitHub Issue': 'Copy concise Markdown summary for support or GitHub Issue',
+      'Удалить накопленные записи локального дебаг-лога': 'Clear local debug log entries',
+      'Закрыть': 'Close',
+      'Версии релиза': 'Release versions',
+      'Режим записи лога': 'Debug log mode',
+      'Обновить список событий дебаг-лога': 'Refresh debug log entries'
     };
 
     function translateUiString(raw, dict) {
@@ -12011,6 +12569,14 @@
       }
       if (typeof renderPluginUpdateBanner === 'function') {
         renderPluginUpdateBanner();
+      }
+      const chModal = document.getElementById('changelogModalOverlay');
+      if (chModal && chModal.style.display === 'flex' && typeof renderChangelogModal === 'function') {
+        renderChangelogModal();
+      }
+      const dbgModal = document.getElementById('debugLogModalOverlay');
+      if (dbgModal && dbgModal.style.display === 'flex' && typeof renderDebugLogModal === 'function') {
+        renderDebugLogModal();
       }
       const wizModal = document.getElementById('onboardingWizardModal');
       if (wizModal && wizModal.classList.contains('visible') && typeof renderWizardStep === 'function') {
@@ -14780,6 +15346,9 @@
         }
 
         updateAutopilotLiveText(s, payload ? payload.circuitBreaker : null);
+      }
+      if (typeof syncDebugLoggerHeaderUi === 'function') {
+        syncDebugLoggerHeaderUi(s, payload ? payload.debugLogStatus : null);
       }
     }
 
@@ -20831,6 +21400,21 @@
         case 'dismissPluginUpdateBanner': void dismissPluginUpdateBanner(); break;
         case 'closePluginUpdateOverlay': closePluginUpdateOverlay(); break;
         case 'hidePluginUpdateToast': hidePluginUpdateToast(); break;
+        case 'openChangelogModal':
+          if (ev && typeof ev.preventDefault === 'function') ev.preventDefault();
+          void openChangelogModal(arg || '');
+          break;
+        case 'retryLoadChangelog': void openChangelogModal(_changelogSelectedVersion || ''); break;
+        case 'closeChangelogModal': closeChangelogModal(); break;
+        case 'selectChangelogVersion': selectChangelogVersion(arg); break;
+        case 'openDebugLogModal': void openDebugLogModal(); break;
+        case 'closeDebugLogModal': closeDebugLogModal(); break;
+        case 'refreshDebugLogFromPanel': void refreshDebugLogStatus(true); break;
+        case 'setDebugLogMode': void setDebugLogMode(arg); break;
+        case 'setDebugLogFilter': void setDebugLogFilter(arg); break;
+        case 'exportDebugBundleDownload': void exportDebugBundleDownload(); break;
+        case 'copyDebugBundleSummary': void copyDebugBundleSummary(); break;
+        case 'clearDebugLogFromPanel': void clearDebugLogFromPanel(); break;
         default: break;
       }
     }
@@ -21769,11 +22353,11 @@
 
       if (linkEl) {
         const relUrl = info && typeof info.releaseUrl === 'string' ? info.releaseUrl.trim() : '';
-        if (relUrl) {
-          linkEl.href = relUrl;
+        if (relUrl || hasUpdate || isDone) {
+          linkEl.href = relUrl || 'https://github.com/vaszuevvas-coder/antigravity-model-router/releases';
           linkEl.style.display = 'inline-flex';
-          linkEl.textContent = L('Что нового ↗', 'What\'s new ↗');
-          if (info.releaseNotes) linkEl.title = String(info.releaseNotes);
+          linkEl.textContent = L('Что нового', 'What\'s new');
+          if (info && info.releaseNotes) linkEl.title = String(info.releaseNotes);
         } else {
           linkEl.style.display = 'none';
         }
@@ -22419,6 +23003,660 @@
     }
 
     initCustomTooltipController();
+
+    // =========================================================================
+    // In-App Changelog ("What's new") & Diagnostic Debug Logger Modals
+    // =========================================================================
+    let _changelogData = null;
+    let _changelogSelectedVersion = '';
+    let _changelogSearchQuery = '';
+    let _changelogLoading = false;
+    let _changelogError = '';
+    let _debugLogFilter = 'all';
+    let _debugLastStatus = null;
+    let _debugLastEntries = [];
+    let _debugLastError = '';
+    let _clientErrorLogCount = 0;
+    let _clientErrorWindowStart = 0;
+
+    function appendFormattedInlineText(parentEl, rawText) {
+      if (!parentEl) return;
+      const text = String(rawText || '');
+      const tokenRe = /(`[^`]+`|\*\*[^*]+\*\*)/g;
+      let lastIdx = 0;
+      let match;
+      while ((match = tokenRe.exec(text)) !== null) {
+        if (match.index > lastIdx) {
+          parentEl.appendChild(document.createTextNode(text.slice(lastIdx, match.index)));
+        }
+        const tok = match[0];
+        if (tok.startsWith('`') && tok.endsWith('`') && tok.length >= 2) {
+          const codeEl = document.createElement('code');
+          codeEl.textContent = tok.slice(1, -1);
+          parentEl.appendChild(codeEl);
+        } else if (tok.startsWith('**') && tok.endsWith('**') && tok.length >= 4) {
+          const strongEl = document.createElement('strong');
+          strongEl.textContent = tok.slice(2, -2);
+          parentEl.appendChild(strongEl);
+        } else {
+          parentEl.appendChild(document.createTextNode(tok));
+        }
+        lastIdx = tokenRe.lastIndex;
+      }
+      if (lastIdx < text.length) {
+        parentEl.appendChild(document.createTextNode(text.slice(lastIdx)));
+      }
+    }
+
+    function versionMatchesQuery(ver, q) {
+      if (!q) return true;
+      if (String(ver.version || '').toLowerCase().indexOf(q) !== -1) return true;
+      if (String(ver.date || '').toLowerCase().indexOf(q) !== -1) return true;
+      const secs = Array.isArray(ver.sections) ? ver.sections : [];
+      for (let i = 0; i < secs.length; i++) {
+        if (String(secs[i].title || '').toLowerCase().indexOf(q) !== -1) return true;
+        const items = Array.isArray(secs[i].items) ? secs[i].items : [];
+        for (let j = 0; j < items.length; j++) {
+          const hay = (String(items[j].lead || '') + ' ' + String(items[j].text || '') + ' ' + (items[j].subitems || []).join(' ')).toLowerCase();
+          if (hay.indexOf(q) !== -1) return true;
+        }
+      }
+      return false;
+    }
+
+    function buildModalErrorBox(message, retryAction) {
+      const box = document.createElement('div');
+      box.className = 'tunnel-modal-error-box';
+      const msgDiv = document.createElement('div');
+      msgDiv.textContent = String(message || '');
+      box.appendChild(msgDiv);
+      if (retryAction) {
+        const retryBtn = document.createElement('button');
+        retryBtn.type = 'button';
+        retryBtn.className = 'win-btn';
+        retryBtn.setAttribute('data-action', retryAction);
+        retryBtn.textContent = L('↻ Повторить', '↻ Retry');
+        box.appendChild(retryBtn);
+      }
+      return box;
+    }
+
+    function renderChangelogModal() {
+      const listEl = document.getElementById('changelogVersionList');
+      const bodyEl = document.getElementById('changelogVersionBody');
+      const curBadge = document.getElementById('changelogCurrentBadge');
+      const ghLink = document.getElementById('changelogGithubLink');
+      const titleEl = document.getElementById('changelogModalTitle');
+      const searchEl = document.getElementById('changelogSearchInput');
+      if (titleEl) titleEl.textContent = L('История изменений', 'Changelog');
+      if (searchEl) searchEl.placeholder = L('Поиск по версиям и изменениям...', 'Search versions & changes...');
+      if (!listEl || !bodyEl) return;
+
+      const data = _changelogData;
+      listEl.innerHTML = '';
+      bodyEl.innerHTML = '';
+
+      if (_changelogError && !data) {
+        listEl.classList.add('is-empty');
+        bodyEl.appendChild(buildModalErrorBox(_changelogError, 'retryLoadChangelog'));
+        return;
+      }
+      if (!data || _changelogLoading) {
+        listEl.classList.add('is-empty');
+        const loadingMsg = document.createElement('div');
+        loadingMsg.className = 'tunnel-modal-empty';
+        loadingMsg.textContent = L('Загрузка истории изменений…', 'Loading changelog…');
+        bodyEl.appendChild(loadingMsg);
+        return;
+      }
+      if (curBadge && data.currentVersion) {
+        curBadge.textContent = 'v' + String(data.currentVersion);
+      }
+      if (ghLink && data.releaseUrl) {
+        ghLink.href = data.releaseUrl;
+      }
+
+      const allVersions = Array.isArray(data.versions) ? data.versions : [];
+      const q = String(_changelogSearchQuery || '').trim().toLowerCase();
+      const filtered = q ? allVersions.filter(function (v) { return versionMatchesQuery(v, q); }) : allVersions;
+
+      if (filtered.length === 0) {
+        listEl.classList.add('is-empty');
+        const emptyListMsg = document.createElement('div');
+        emptyListMsg.className = 'tunnel-modal-empty';
+        emptyListMsg.textContent = q
+          ? L('Ничего не найдено по запросу.', 'No matching versions or changes.')
+          : L('История изменений пока пуста.', 'Changelog is empty.');
+        bodyEl.appendChild(emptyListMsg);
+        return;
+      }
+      listEl.classList.remove('is-empty');
+
+      let selected = null;
+      for (let i = 0; i < filtered.length; i++) {
+        if (filtered[i].version === _changelogSelectedVersion) {
+          selected = filtered[i];
+          break;
+        }
+      }
+      if (!selected) {
+        selected = filtered[0];
+        _changelogSelectedVersion = selected.version;
+      }
+
+      for (let i = 0; i < filtered.length; i++) {
+        const v = filtered[i];
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'changelog-ver-btn' + (v.version === selected.version ? ' active' : '');
+        btn.setAttribute('data-action', 'selectChangelogVersion');
+        btn.setAttribute('data-arg', String(v.version));
+        btn.setAttribute('role', 'tab');
+        btn.setAttribute('aria-selected', v.version === selected.version ? 'true' : 'false');
+
+        const verSpan = document.createElement('span');
+        verSpan.textContent = 'v' + String(v.version);
+        btn.appendChild(verSpan);
+
+        if (v.isRemotePending) {
+          const tag = document.createElement('span');
+          tag.className = 'changelog-ver-tag is-new';
+          tag.textContent = L('Новая', 'New');
+          btn.appendChild(tag);
+        } else if (v.isCurrent) {
+          const tag = document.createElement('span');
+          tag.className = 'changelog-ver-tag';
+          tag.textContent = L('Текущая', 'Current');
+          btn.appendChild(tag);
+        }
+        listEl.appendChild(btn);
+      }
+
+      const head = document.createElement('div');
+      head.className = 'changelog-ver-head';
+      const headTitle = document.createElement('div');
+      headTitle.className = 'changelog-ver-heading';
+      headTitle.textContent = 'v' + String(selected.version) + (selected.isRemotePending
+        ? L(' · Доступна к установке', ' · Available to install')
+        : (selected.isCurrent ? L(' · Установлена сейчас', ' · Currently installed') : ''));
+      head.appendChild(headTitle);
+      if (selected.date) {
+        const dateEl = document.createElement('span');
+        dateEl.className = 'changelog-ver-date';
+        dateEl.textContent = String(selected.date);
+        head.appendChild(dateEl);
+      }
+      bodyEl.appendChild(head);
+
+      const sections = Array.isArray(selected.sections) ? selected.sections : [];
+      if (sections.length === 0) {
+        const noSec = document.createElement('div');
+        noSec.className = 'tunnel-modal-empty';
+        noSec.textContent = L('Для этой версии нет подробных заметок.', 'No detailed release notes for this version.');
+        bodyEl.appendChild(noSec);
+        return;
+      }
+
+      for (let sIdx = 0; sIdx < sections.length; sIdx++) {
+        const sec = sections[sIdx];
+        const secTitle = document.createElement('h4');
+        secTitle.className = 'changelog-sec-title';
+        appendFormattedInlineText(secTitle, String(sec.title || ''));
+        bodyEl.appendChild(secTitle);
+
+        const ul = document.createElement('ul');
+        ul.className = 'changelog-items-ul';
+        const items = Array.isArray(sec.items) ? sec.items : [];
+        for (let k = 0; k < items.length; k++) {
+          const it = items[k];
+          const li = document.createElement('li');
+          if (it.lead) {
+            const strong = document.createElement('strong');
+            strong.textContent = String(it.lead) + (it.text ? ': ' : '');
+            li.appendChild(strong);
+          }
+          if (it.text) {
+            appendFormattedInlineText(li, it.text);
+          }
+          if (Array.isArray(it.subitems) && it.subitems.length > 0) {
+            const subUl = document.createElement('ul');
+            subUl.className = 'changelog-subitems-ul';
+            for (let m = 0; m < it.subitems.length; m++) {
+              const subLi = document.createElement('li');
+              appendFormattedInlineText(subLi, it.subitems[m]);
+              subUl.appendChild(subLi);
+            }
+            li.appendChild(subUl);
+          }
+          ul.appendChild(li);
+        }
+        bodyEl.appendChild(ul);
+      }
+    }
+
+    async function openChangelogModal(preferredVersion) {
+      const overlay = document.getElementById('changelogModalOverlay');
+      if (!overlay) return;
+      overlay.style.display = 'flex';
+      _changelogSearchQuery = '';
+      _changelogError = '';
+      _changelogLoading = !_changelogData;
+      const searchEl = document.getElementById('changelogSearchInput');
+      if (searchEl) searchEl.value = '';
+      if (preferredVersion && preferredVersion !== 'latest') {
+        _changelogSelectedVersion = String(preferredVersion).replace(/^v/i, '');
+      } else {
+        _changelogSelectedVersion = '';
+      }
+      renderChangelogModal();
+      try {
+        const res = await panelFetch('/api/plugin/changelog', { method: 'GET' });
+        if (!res || !res.ok) {
+          const stCode = res ? res.status : 0;
+          _changelogError = stCode === 404
+            ? L(
+              'Сервер панели работает на старой версии — перезапустите Google Antigravity, чтобы активировать встроенную историю изменений.',
+              'Panel server is running an older version — restart Google Antigravity to activate the built-in changelog.'
+            )
+            : L('Не удалось загрузить историю изменений (HTTP ' + stCode + ').', 'Failed to load changelog (HTTP ' + stCode + ').');
+          return;
+        }
+        const data = await res.json();
+        if (data && data.ok) {
+          _changelogData = data;
+          if (!_changelogSelectedVersion && Array.isArray(data.versions) && data.versions.length > 0) {
+            _changelogSelectedVersion = data.versions[0].version;
+          }
+        } else {
+          _changelogError = L('Некорректный ответ сервера при загрузке истории изменений.', 'Invalid server response loading changelog.');
+        }
+      } catch (err) {
+        _changelogError = (err && err.message) || L('Ошибка связи с сервером панели.', 'Panel server connection error.');
+      } finally {
+        _changelogLoading = false;
+        renderChangelogModal();
+      }
+    }
+
+    function closeChangelogModal() {
+      const overlay = document.getElementById('changelogModalOverlay');
+      if (overlay) overlay.style.display = 'none';
+    }
+
+    function selectChangelogVersion(ver) {
+      _changelogSelectedVersion = String(ver || '').replace(/^v/i, '');
+      renderChangelogModal();
+    }
+
+    function syncDebugLoggerHeaderUi(s, debugStatus) {
+      const mode = (debugStatus && debugStatus.mode) || (s && s.debugLogMode) || 'errors';
+      const isRec = mode === 'verbose';
+      const dot = document.getElementById('headerDebugRecDot');
+      const btn = document.getElementById('openDebugLogBtn');
+      if (dot) dot.style.display = isRec ? 'inline-block' : 'none';
+      if (btn) btn.classList.toggle('is-recording', isRec);
+    }
+
+    function setDebugActionFeedback(msg) {
+      const el = document.getElementById('debugActionFeedback');
+      if (el) el.textContent = String(msg || '');
+    }
+
+    function renderDebugLogModal() {
+      const titleEl = document.getElementById('debugModalTitle');
+      const badgeEl = document.getElementById('debugModalModeBadge');
+      const statsEl = document.getElementById('debugModalStats');
+      const privacyEl = document.getElementById('debugPrivacyNote');
+      const dlBtn = document.getElementById('debugExportDownloadBtn');
+      const copyBtn = document.getElementById('debugCopySummaryBtn');
+      const refreshBtn = document.getElementById('debugRefreshLogBtn');
+      const clearBtn = document.getElementById('debugClearLogBtn');
+      const listEl = document.getElementById('debugLogEntriesList');
+
+      if (titleEl) titleEl.textContent = L('Диагностика и запись лога', 'Diagnostics & Debug Log');
+      if (privacyEl) privacyEl.textContent = L(
+        'Токены, ключи и пути пользователя автоматически скрываются перед сохранением и выгрузкой.',
+        'Tokens, keys, and user paths are automatically redacted before saving and exporting.'
+      );
+      if (dlBtn) dlBtn.textContent = L('⬇ Скачать лог (.json)', '⬇ Download Log (.json)');
+      if (copyBtn) copyBtn.textContent = L('Копировать отчёт', 'Copy Report');
+      if (refreshBtn) refreshBtn.textContent = L('↻ Обновить', '↻ Refresh');
+      if (clearBtn) clearBtn.textContent = L('Очистить', 'Clear');
+
+      const st = _debugLastStatus || {};
+      const mode = st.mode || (currentState && currentState.debugLogMode) || 'errors';
+      syncDebugLoggerHeaderUi(currentState, st);
+
+      document.querySelectorAll('#debugModePills button').forEach(function (btn) {
+        const m = btn.getAttribute('data-debug-mode');
+        btn.classList.toggle('active', m === mode);
+        if (m === 'off') btn.textContent = L('Выкл', 'Off');
+        else if (m === 'errors') btn.textContent = L('Ошибки', 'Errors');
+        else if (m === 'verbose') btn.textContent = L('● Запись дебага', '● Record Debug');
+      });
+
+      document.querySelectorAll('#debugLevelFilterGroup button').forEach(function (btn) {
+        const f = btn.getAttribute('data-debug-filter');
+        btn.classList.toggle('active', f === _debugLogFilter);
+        if (f === 'all') btn.textContent = L('Все события', 'All Events');
+        else if (f === 'error') btn.textContent = L('Только ошибки', 'Errors Only');
+      });
+
+      if (badgeEl) {
+        badgeEl.classList.remove('is-recording', 'is-off');
+        if (mode === 'verbose') {
+          badgeEl.textContent = L('Идёт запись', 'Recording');
+          badgeEl.classList.add('is-recording');
+        } else if (mode === 'off') {
+          badgeEl.textContent = L('Выкл', 'Off');
+          badgeEl.classList.add('is-off');
+        } else {
+          badgeEl.textContent = L('Ошибки', 'Errors');
+        }
+      }
+
+      if (statsEl) {
+        const total = Number(st.totalEntries || 0);
+        const errs = Number(st.errorCount || 0);
+        const kb = (Number(st.fileSizeBytes || 0) / 1024).toFixed(1);
+        statsEl.textContent = L(
+          total + ' зап. · ' + errs + ' ош. · ' + kb + ' КБ',
+          total + ' entries · ' + errs + ' err · ' + kb + ' KB'
+        );
+      }
+
+      if (!listEl) return;
+      listEl.innerHTML = '';
+      if (_debugLastError) {
+        listEl.appendChild(buildModalErrorBox(_debugLastError, 'refreshDebugLogFromPanel'));
+        return;
+      }
+      const entries = Array.isArray(_debugLastEntries) ? _debugLastEntries : [];
+      if (entries.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'tunnel-modal-empty';
+        empty.textContent = mode === 'off'
+          ? L('Запись лога выключена.', 'Debug logging is turned off.')
+          : L('Записей пока нет — включите «● Запись дебага» и воспроизведите проблему.', 'No entries yet — enable "● Record Debug" and reproduce the issue.');
+        listEl.appendChild(empty);
+        return;
+      }
+
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const item = entries[i] || {};
+        const lvl = String(item.level || 'info').toLowerCase();
+        const row = document.createElement('div');
+        row.className = 'debug-entry-row lvl-' + lvl;
+
+        const meta = document.createElement('div');
+        meta.className = 'debug-entry-meta';
+
+        const lvlSpan = document.createElement('span');
+        lvlSpan.className = 'debug-entry-lvl';
+        lvlSpan.textContent = lvl;
+        meta.appendChild(lvlSpan);
+
+        const timeText = item.iso ? String(item.iso).slice(11, 19) : '';
+        const srcText = String(item.source || 'core') + (item.event ? (':' + String(item.event)) : '');
+        const infoSpan = document.createElement('span');
+        infoSpan.textContent = (timeText ? (timeText + ' · ') : '') + srcText + (item.durationMs !== undefined ? (' (' + item.durationMs + 'ms)') : '');
+        meta.appendChild(infoSpan);
+
+        const msg = document.createElement('div');
+        msg.className = 'debug-entry-msg';
+        msg.textContent = String(item.message || '');
+
+        row.appendChild(meta);
+        row.appendChild(msg);
+        listEl.appendChild(row);
+      }
+    }
+
+    function formatPanelApiHttpError(res, fallbackRu, fallbackEn) {
+      const code = res ? res.status : 0;
+      if (code === 404) {
+        return L(
+          'Сервер панели ещё работает на старой версии — перезапустите Google Antigravity.',
+          'Panel server is still running an older version — restart Google Antigravity.'
+        );
+      }
+      return L(fallbackRu, fallbackEn) + (code ? (' (HTTP ' + code + ')') : '');
+    }
+
+    async function refreshDebugLogStatus(manual) {
+      _debugLastError = '';
+      try {
+        const url = '/api/debug/status?limit=80&level=' + encodeURIComponent(_debugLogFilter);
+        const res = await panelFetch(url, { method: 'GET' });
+        if (!res || !res.ok) {
+          _debugLastError = formatPanelApiHttpError(res, 'Ошибка загрузки дебаг-лога', 'Failed to load debug log');
+          setDebugActionFeedback(_debugLastError);
+          renderDebugLogModal();
+          return;
+        }
+        const data = await res.json();
+        if (data && data.ok) {
+          _debugLastStatus = data;
+          _debugLastEntries = Array.isArray(data.entries) ? data.entries : [];
+          if (manual === true) {
+            setDebugActionFeedback(L('Лента обновлена ✓', 'Log refreshed ✓'));
+          }
+          renderDebugLogModal();
+        }
+      } catch (err) {
+        _debugLastError = (err && err.message) || L('Ошибка связи с сервером панели', 'Panel server connection error');
+        setDebugActionFeedback(_debugLastError);
+        renderDebugLogModal();
+      }
+    }
+
+    async function openDebugLogModal() {
+      const overlay = document.getElementById('debugLogModalOverlay');
+      if (!overlay) return;
+      overlay.style.display = 'flex';
+      _debugLastError = '';
+      setDebugActionFeedback('');
+      renderDebugLogModal();
+      await refreshDebugLogStatus(false);
+    }
+
+    function closeDebugLogModal() {
+      const overlay = document.getElementById('debugLogModalOverlay');
+      if (overlay) overlay.style.display = 'none';
+    }
+
+    async function setDebugLogMode(mode) {
+      const cleanMode = String(mode || '').trim().toLowerCase();
+      if (!cleanMode) return;
+      try {
+        const res = await panelFetch('/api/debug/mode', {
+          method: 'POST',
+          body: JSON.stringify({ mode: cleanMode }),
+        });
+        if (!res || !res.ok) {
+          setDebugActionFeedback(formatPanelApiHttpError(res, 'Не удалось переключить режим', 'Failed to switch debug mode'));
+          return;
+        }
+        const data = await res.json();
+        if (data && data.ok) {
+          if (currentState && typeof currentState === 'object') {
+            currentState.debugLogMode = data.mode;
+          }
+          _debugLastStatus = data.status || { mode: data.mode };
+          setDebugActionFeedback(
+            data.mode === 'verbose'
+              ? L('Подробная запись включена ✓', 'Verbose recording enabled ✓')
+              : (data.mode === 'off' ? L('Запись выключена', 'Logging turned off') : L('Режим: только ошибки', 'Mode: errors only'))
+          );
+          await refreshDebugLogStatus(false);
+        }
+      } catch (err) {
+        setDebugActionFeedback((err && err.message) || L('Ошибка переключения режима', 'Mode switch error'));
+      }
+    }
+
+    async function setDebugLogFilter(filterVal) {
+      _debugLogFilter = filterVal === 'error' ? 'error' : 'all';
+      await refreshDebugLogStatus(false);
+    }
+
+    async function copyDiagnosticTextSafe(text) {
+      if (typeof copyTextToClipboardSafe === 'function') {
+        return await copyTextToClipboardSafe(text);
+      }
+      if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(String(text || ''));
+        return true;
+      }
+      return false;
+    }
+
+    async function exportDebugBundleDownload() {
+      try {
+        const res = await panelFetch('/api/debug/export', { method: 'GET' });
+        if (!res || !res.ok) {
+          setDebugActionFeedback(formatPanelApiHttpError(res, 'Не удалось выгрузить лог', 'Failed to export log'));
+          return;
+        }
+        const data = await res.json();
+        if (!data || !data.ok || !data.bundle) {
+          setDebugActionFeedback(L('Некорректный пакет диагностики', 'Invalid diagnostic bundle'));
+          return;
+        }
+        const jsonText = JSON.stringify(data.bundle, null, 2);
+        const fileName = String(data.filename || 'the-tunnel-debug.json');
+        let downloaded = false;
+        if (typeof Blob === 'function' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+          try {
+            const blob = new Blob([jsonText], { type: 'application/json;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            a.style.display = 'none';
+            if (document.body) document.body.appendChild(a);
+            a.click();
+            if (a.parentNode) a.parentNode.removeChild(a);
+            if (typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(url);
+            downloaded = true;
+          } catch {}
+        }
+        if (!downloaded) {
+          await copyDiagnosticTextSafe(jsonText);
+        }
+        setDebugActionFeedback(L('Лог сохранён: ', 'Saved: ') + fileName);
+        flashStatus(L('Диагностический лог выгружен ✓', 'Diagnostic log exported ✓'));
+      } catch (err) {
+        setDebugActionFeedback((err && err.message) || L('Ошибка экспорта лога', 'Export error'));
+      }
+    }
+
+    async function copyDebugBundleSummary() {
+      try {
+        const res = await panelFetch('/api/debug/export', { method: 'GET' });
+        if (!res || !res.ok) {
+          setDebugActionFeedback(formatPanelApiHttpError(res, 'Не удалось получить отчёт', 'Failed to build report'));
+          return;
+        }
+        const data = await res.json();
+        if (!data || !data.ok) {
+          setDebugActionFeedback(L('Ошибка формирования отчёта', 'Report error'));
+          return;
+        }
+        const text = String(data.markdownSummary || JSON.stringify(data.bundle || {}, null, 2));
+        const copied = await copyDiagnosticTextSafe(text);
+        if (copied) {
+          setDebugActionFeedback(L('Отчёт скопирован в буфер ✓', 'Report copied to clipboard ✓'));
+        } else {
+          setDebugActionFeedback(L('Отчёт сформирован (буфер недоступен)', 'Report built (clipboard unavailable)'));
+        }
+      } catch (err) {
+        setDebugActionFeedback((err && err.message) || L('Ошибка копирования отчёта', 'Copy report error'));
+      }
+    }
+
+    async function clearDebugLogFromPanel() {
+      try {
+        const res = await panelFetch('/api/debug/clear', { method: 'POST', body: '{}' });
+        if (!res || !res.ok) {
+          setDebugActionFeedback(formatPanelApiHttpError(res, 'Не удалось очистить лог', 'Failed to clear log'));
+          return;
+        }
+        const data = await res.json();
+        _debugLastError = '';
+        _debugLastStatus = (data && data.status) || { mode: (currentState && currentState.debugLogMode) || 'errors', totalEntries: 0, errorCount: 0, fileSizeBytes: 0 };
+        _debugLastEntries = [];
+        setDebugActionFeedback(L('Лог очищен ✓', 'Log cleared ✓'));
+        renderDebugLogModal();
+      } catch (err) {
+        setDebugActionFeedback((err && err.message) || L('Ошибка очистки лога', 'Clear log error'));
+      }
+    }
+
+    function reportClientDebugError(eventName, errMsg, metaObj) {
+      const now = Date.now();
+      if (now - _clientErrorWindowStart > 60000) {
+        _clientErrorWindowStart = now;
+        _clientErrorLogCount = 0;
+      }
+      if (_clientErrorLogCount >= 10) return;
+      _clientErrorLogCount += 1;
+      try {
+        void panelFetch('/api/debug/client-log', {
+          method: 'POST',
+          body: JSON.stringify({
+            level: 'error',
+            event: eventName || 'ui_error',
+            message: String(errMsg || 'Unknown UI error').slice(0, 600),
+            meta: metaObj || undefined,
+          }),
+        });
+      } catch {}
+    }
+
+    (function initChangelogAndDebugModals() {
+      const searchEl = document.getElementById('changelogSearchInput');
+      if (searchEl && typeof searchEl.addEventListener === 'function') {
+        searchEl.addEventListener('input', function () {
+          _changelogSearchQuery = searchEl.value || '';
+          renderChangelogModal();
+        });
+      }
+      const chOverlay = document.getElementById('changelogModalOverlay');
+      if (chOverlay && typeof chOverlay.addEventListener === 'function') {
+        chOverlay.addEventListener('click', function (ev) {
+          if (ev && ev.target === chOverlay) closeChangelogModal();
+        });
+      }
+      const dbgOverlay = document.getElementById('debugLogModalOverlay');
+      if (dbgOverlay && typeof dbgOverlay.addEventListener === 'function') {
+        dbgOverlay.addEventListener('click', function (ev) {
+          if (ev && ev.target === dbgOverlay) closeDebugLogModal();
+        });
+      }
+      if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+        document.addEventListener('keydown', function (ev) {
+          if (ev && ev.key === 'Escape') {
+            if (chOverlay && chOverlay.style.display === 'flex') closeChangelogModal();
+            if (dbgOverlay && dbgOverlay.style.display === 'flex') closeDebugLogModal();
+          }
+        });
+      }
+      if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('error', function (ev) {
+          const msg = (ev && ev.message) || 'Uncaught window error';
+          reportClientDebugError('window_error', msg, {
+            filename: ev && ev.filename ? String(ev.filename) : '',
+            lineno: ev && ev.lineno ? Number(ev.lineno) : 0,
+          });
+        });
+        window.addEventListener('unhandledrejection', function (ev) {
+          const reason = ev && ev.reason;
+          const msg = reason && reason.message ? reason.message : String(reason || 'Unhandled promise rejection');
+          reportClientDebugError('unhandled_rejection', msg);
+        });
+      }
+    })();
 
     // =========================================================================
     // Hybrid Guard Dock (Variant B tiles in Lite + Variant C 36px rail in Full)

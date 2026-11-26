@@ -2,7 +2,22 @@
 
 Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
 
-> Хронология с `v3.8.0` по `v4.0.4` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`57` основных / `65` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `47` наборов автотестов).
+> Хронология с `v3.8.0` по `v4.0.5` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`59` основных / `67` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `48` наборов автотестов).
+
+---
+
+## [4.0.5] — 2026-11-26
+
+### Добавлено и исправлено (Просмотрщик «Что нового», NDJSON Debug Logger и фикс RAM в Health-Doctor)
+- **Встроенный просмотрщик «Что нового» ([core/changelog-parser.mjs](core/changelog-parser.mjs), [sidecars/panel/server.mjs](sidecars/panel/server.mjs), [sidecars/panel/ui-src/head-body.html](sidecars/panel/ui-src/head-body.html), [sidecars/panel/ui-src/js/04-sentinel-layout.js](sidecars/panel/ui-src/js/04-sentinel-layout.js), [sidecars/panel/ui-src/js/00-i18n.js](sidecars/panel/ui-src/js/00-i18n.js))**:
+  - Добавлен парсер `CHANGELOG.md` без внешних зависимостей и маршрут `/api/changelog` для отображения истории релизов внутри панели.
+  - В правом верхнем углу панели размещена компактная иконка книжки для открытия модального окна «Что нового» с полной RU/EN-локализацией.
+- **Ротируемый NDJSON-логгер и диагностический пакет ([core/debug-logger.mjs](core/debug-logger.mjs), [core/hook-runner.mjs](core/hook-runner.mjs), [core/plugin-updater.mjs](core/plugin-updater.mjs), [sidecars/panel/lib/panel-state-skills.mjs](sidecars/panel/lib/panel-state-skills.mjs), [sidecars/panel/server.mjs](sidecars/panel/server.mjs))**:
+  - Внедрён `debugLogMode` (`off | errors | verbose`) с автоматической ротацией файлов и маскировкой секретов/домашних путей при записи логов и сборке диагностического пакета (`buildDiagnosticBundle`).
+  - Подключена телеметрия в `hook-runner.mjs`, `plugin-updater.mjs`, `server.mjs` и UI панели.
+- **Исправление вечной ошибки RAM в Health-Doctor и сборка ([core/health-doctor.mjs](core/health-doctor.mjs), [core/ram-memory-mcp.mjs](core/ram-memory-mcp.mjs), [install.js](install.js), [sidecars/panel/ui-src/styles.css](sidecars/panel/ui-src/styles.css), [tests/changelog-debug-panel.test.mjs](tests/changelog-debug-panel.test.mjs), [tests/v335-stage2-features.test.mjs](tests/v335-stage2-features.test.mjs))**:
+  - Исправлен расчёт состояния RAM-кэша в `diagnoseRuntimeHealth` (учёт `active` и суммарного числа файлов по воркспейсам) и добавлен IPC-маршрут `POST /warm` в `core/ram-memory-mcp.mjs` для мгновенного прогрева.
+  - В `install.js` добавлено исключение `.github` при копировании файлов плагина, а в `styles.css` устранены `backdrop-filter` и дрейф `border-radius`.
 
 ---
 

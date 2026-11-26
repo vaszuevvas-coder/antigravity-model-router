@@ -161,7 +161,16 @@ export function diagnoseRuntimeHealth(opts = {}) {
   }
 
   const ramEnabled = state?.ramCacheEnabled !== false;
-  const ramCold = Boolean(ramEnabled && ramStatus && (!ramStatus.running || Number(ramStatus.cachedFiles || 0) === 0));
+  const ramRunning = Boolean(ramStatus?.running ?? ramStatus?.active);
+  const wsFilesCount = Array.isArray(ramStatus?.workspaces)
+    ? ramStatus.workspaces.reduce((sum, w) => sum + Math.max(0, Number(w?.files || w?.filesLoaded || w?.cachedFiles || 0)), 0)
+    : 0;
+  const ramCachedFiles = Math.max(
+    0,
+    Number(ramStatus?.cachedFiles || ramStatus?.filesCached || ramStatus?.filesLoaded || 0),
+    wsFilesCount
+  );
+  const ramCold = Boolean(ramEnabled && ramStatus && (!ramRunning || ramCachedFiles === 0));
   if (ramCold) {
     issues.push({
       id: 'ram_daemon_cold',
@@ -297,7 +306,7 @@ export async function applyHealthDoctorFix(opts = {}) {
         try {
           const r = await safeOpts.warmRamFn(workspaceRoot);
           ok = Boolean(r?.ok ?? r);
-          filesCount = Number(r?.filesCached || r?.cachedFiles || 0);
+          filesCount = Number(r?.filesLoaded || r?.filesCached || r?.cachedFiles || 0);
         } catch {}
       }
       if (ok) applied += 1;

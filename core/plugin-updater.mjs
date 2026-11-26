@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { normalizeLang } from './i18n.mjs';
 import { atomicWriteJsonSync, safeReadJsonSync } from './safe-json.mjs';
+import { appendDebugLog } from './debug-logger.mjs';
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -215,8 +216,8 @@ export function readPluginMeta(pluginRoot = '') {
 
   const rawVer = (typeof pluginManifest?.version === 'string' && pluginManifest.version.trim())
     || (typeof pkgManifest?.version === 'string' && pkgManifest.version.trim())
-    || '4.0.4';
-  const version = parseSemver(rawVer)?.version || '4.0.4';
+    || '4.0.5';
+  const version = parseSemver(rawVer)?.version || '4.0.5';
 
   const rawRepo =
     pluginManifest?.repository?.url
@@ -812,8 +813,21 @@ export async function checkForPluginUpdate(options = {}) {
     try {
       atomicWriteJsonSync(cachePath, payload);
     } catch {}
+    appendDebugLog({
+      level: 'info',
+      source: 'plugin-updater',
+      event: 'update_check_ok',
+      message: `Checked GitHub (${source}): current=${meta.version}, latest=${latestVersion}, updateAvailable=${updateAvailable}`,
+    }, { pluginRoot: meta.pluginRoot });
     return payload;
   } catch (err) {
+    appendDebugLog({
+      level: 'error',
+      source: 'plugin-updater',
+      event: 'update_check_error',
+      message: err?.message || String(err),
+      meta: { repo: meta.repo, currentVersion: meta.version },
+    }, { pluginRoot: meta.pluginRoot });
     return {
       ok: false,
       skipped: false,
@@ -1287,6 +1301,13 @@ export async function applyPluginUpdate(options = {}) {
       }
 
       const doneVer = effectiveVersion || extractedMeta.version || meta.version;
+      appendDebugLog({
+        level: 'info',
+        source: 'plugin-updater',
+        event: 'update_apply_done',
+        message: `Updated plugin to v${doneVer}`,
+        meta: { targetVersion: doneVer },
+      }, { pluginRoot: root });
       setStatus({
         ok: true,
         active: false,
@@ -1307,6 +1328,13 @@ export async function applyPluginUpdate(options = {}) {
       return { ...job.status };
     } catch (err) {
       const msg = compactUpdateError(err);
+      appendDebugLog({
+        level: 'error',
+        source: 'plugin-updater',
+        event: 'update_apply_error',
+        message: msg,
+        meta: { targetVersion: effectiveVersion || meta.version, name: err?.name || 'Error' },
+      }, { pluginRoot: root });
       const ruErr = formatUpdateError(err, 'ru');
       const enErr = formatUpdateError(err, 'en');
       setStatus({

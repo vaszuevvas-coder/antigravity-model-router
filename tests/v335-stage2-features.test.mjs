@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 process.env.TUNNEL_TEST_ISOLATE_INSTALLED = '1';
 
 import { diagnoseRuntimeHealth, applyHealthDoctorFix } from '../core/health-doctor.mjs';
+import { RamMemoryEngine } from '../core/ram-memory-engine.mjs';
+import { dispatchIpcRoute } from '../core/ram-memory-mcp.mjs';
 import { collectRoiTimeline } from '../sidecars/panel/lib/panel-telemetry-collectors.mjs';
 import { startSidecarPanel, DEFAULT_STATE } from '../sidecars/panel/server.mjs';
 import { buildPanelUi } from '../core/panel-ui-builder.mjs';
@@ -246,6 +248,57 @@ test('4. Health-Doctor cleans stale .tmp files & build-showroom strips UTF-8 BOM
     assert.equal(parsed.ok, true);
     assert.equal(fs.existsSync(outPath), true);
   } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 4, retryDelay: 60 });
+  }
+});
+
+test('5. Health-Doctor recognizes active RAM workspaces shape and IPC POST /warm warms daemon', async () => {
+  const tmpDir = makeTmpDir('amr-s2-ram-warm-');
+  const ram = new RamMemoryEngine({ budgetMb: 512 });
+  try {
+    fs.writeFileSync(path.join(tmpDir, 'sample.mjs'), 'export const hello = (x) => x + 1;\n', 'utf8');
+
+    const warmDiag = diagnoseRuntimeHealth({
+      workspaceRoot: tmpDir,
+      cacheDir: tmpDir,
+      state: { ramCacheEnabled: true, gpuEnabled: false },
+      ramStatus: { enabled: true, active: true, workspaces: [{ workspace: tmpDir, files: 120 }] },
+    });
+    assert.equal(warmDiag.checks.ramWarmOk, true);
+    assert.equal(warmDiag.issues.some((i) => i.id === 'ram_daemon_cold'), false);
+
+    const coldDiag = diagnoseRuntimeHealth({
+      workspaceRoot: tmpDir,
+      cacheDir: tmpDir,
+      state: { ramCacheEnabled: true, gpuEnabled: false },
+      ramStatus: { enabled: true, active: true, workspaces: [] },
+    });
+    assert.equal(coldDiag.checks.ramWarmOk, false);
+    assert.equal(coldDiag.issues.some((i) => i.id === 'ram_daemon_cold'), true);
+
+    const fixRes = await applyHealthDoctorFix({
+      fixAction: 'warm_ram_cache',
+      workspaceRoot: tmpDir,
+      cacheDir: tmpDir,
+      state: { ramCacheEnabled: true, gpuEnabled: false },
+      warmRamFn: async () => ({ ok: true, filesLoaded: 42 }),
+    });
+    assert.equal(fixRes.ok, true);
+    assert.equal(fixRes.applied, 1);
+    assert.ok(fixRes.log.some((entry) => entry.ok && /42/.test(entry.messageEn)));
+
+    const ipcRes = await dispatchIpcRoute(
+      'POST',
+      '/warm',
+      { wsPath: tmpDir },
+      { engine: ram, settings: { enabled: true, autoWarm: true, ramSotaEngines: true }, sentinel: null }
+    );
+    assert.equal(ipcRes.status, 200);
+    assert.equal(ipcRes.body.ok, true);
+    assert.ok(ipcRes.body.filesLoaded >= 1);
+    assert.ok(ipcRes.body.filesCached >= 1);
+  } finally {
+    try { ram.close(); } catch {}
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 4, retryDelay: 60 });
   }
 });
