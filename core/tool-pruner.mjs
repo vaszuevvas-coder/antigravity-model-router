@@ -1,6 +1,6 @@
 /**
  * @file tool-pruner.mjs
- * @description Когнитивный 3D-маршрутизатор The Tunnel (3D Cognitive Router v4.0.1):
+ * @description Когнитивный 3D-маршрутизатор The Tunnel (3D Cognitive Router v4.0.2):
  * Оценивает реальный охват графа кода (Scope-Scout + PageRank), строит 3D-тензор
  * Ширина × Глубина × Неопределённость/Риск, генерирует адаптивные варианты плана и проверяет селектор модели Gemini 4.
  */

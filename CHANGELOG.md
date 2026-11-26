@@ -2,7 +2,16 @@
 
 Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
 
-> Хронология с `v3.8.0` по `v4.0.1` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`57` основных / `65` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `46` наборов автотестов).
+> Хронология с `v3.8.0` по `v4.0.2` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`57` основных / `65` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `46` наборов автотестов).
+
+---
+
+## [4.0.2] — 2026-11-26
+
+### Исправлено (Точечный переход из «Риски · Хрупких» в Карту проекта)
+- **Фокус на конкретном файле при клике на «Карта» ([sidecars/panel/ui-src/js/04b-guard-dock.js](sidecars/panel/ui-src/js/04b-guard-dock.js), [sidecars/panel/ui-src/js/07-project-graph.js](sidecars/panel/ui-src/js/07-project-graph.js), [sidecars/panel/server.mjs](sidecars/panel/server.mjs), [sidecars/panel/ui.html](sidecars/panel/ui.html), [tests/project-graph-panel.test.mjs](tests/project-graph-panel.test.mjs))**:
+  - `openFragileInGraph(filePath)` передаёт целевой файл напрямую в `openProjectGraphModal({ focusFile })`, а `/api/project-graph/open-window` валидирует и пробрасывает query-параметр `focus` в URL standalone-окна Карты проекта.
+  - При открытии с `focusFile` (как в standalone-окне, так и в inline-модалке) Карта автоматически включает фильтр «Тесты» для тестовых файлов, переходит в локальный файловый режим (`mode: 'local'`, `viewLevel: 'files'`), выделяет узел файла, центрирует камеру на нём и открывает карточку файла в инспекторе.
 
 ---
 

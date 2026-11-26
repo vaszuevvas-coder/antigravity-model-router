@@ -213,7 +213,7 @@ function getPluginVersion() {
     const ver = typeof meta?.version === 'string' ? meta.version.trim() : '';
     if (ver) return ver;
   } catch {}
-  return '4.0.1';
+  return '4.0.2';
 }
 
 function getUiBuildVersion() {
