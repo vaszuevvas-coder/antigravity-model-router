@@ -213,8 +213,11 @@ function getPluginVersion() {
     const ver = typeof meta?.version === 'string' ? meta.version.trim() : '';
     if (ver) return ver;
   } catch {}
-  return '4.0.2';
+  return '4.0.3';
 }
+
+const PANEL_SERVER_STARTED_AT = Date.now();
+const PANEL_LOADED_VERSION = getPluginVersion();
 
 function getUiBuildVersion() {
   try {
@@ -3440,11 +3443,18 @@ export async function startSidecarPanel(options = {}) {
       : join(__dirname, '..', '..')
   );
 
+  const getUpdateRuntimeCtx = () => ({
+    pid: process.pid,
+    serverStartedAt: PANEL_SERVER_STARTED_AT,
+    runningVersion: PANEL_LOADED_VERSION,
+  });
+
   app.api('/api/plugin/update-check', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const pluginRoot = resolveUpdaterRoot();
     const force = data?.force === true || data?.force === '1' || data?.force === 'true';
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    const runtimeCtx = getUpdateRuntimeCtx();
     try {
       const checkFn = typeof updateHandlers?.checkForPluginUpdate === 'function'
         ? updateHandlers.checkForPluginUpdate
@@ -3453,14 +3463,14 @@ export async function startSidecarPanel(options = {}) {
         ? updateHandlers.getPluginUpdateStatus
         : getPluginUpdateStatus;
       const checkRes = await checkFn({ pluginRoot, force, lang });
-      const status = statusFn(pluginRoot);
+      const status = statusFn(pluginRoot, runtimeCtx);
       return { ...checkRes, status };
     } catch (err) {
       return {
         ok: false,
         updateAvailable: false,
         error: err?.message || 'Update check failed',
-        status: getPluginUpdateStatus(pluginRoot),
+        status: getPluginUpdateStatus(pluginRoot, runtimeCtx),
       };
     }
   }, 'GET');
@@ -3471,7 +3481,7 @@ export async function startSidecarPanel(options = {}) {
     const statusFn = typeof updateHandlers?.getPluginUpdateStatus === 'function'
       ? updateHandlers.getPluginUpdateStatus
       : getPluginUpdateStatus;
-    return { ok: true, status: statusFn(pluginRoot) };
+    return { ok: true, status: statusFn(pluginRoot, getUpdateRuntimeCtx()) };
   }, 'GET');
 
   app.api('/api/plugin/update-apply', async (data, req) => {
@@ -3493,6 +3503,7 @@ export async function startSidecarPanel(options = {}) {
         forceApply,
         lang,
         awaitCompletion: false,
+        appliedByPid: process.pid,
       });
       return {
         ok: status?.ok !== false && status?.phase !== 'error',
@@ -3505,7 +3516,7 @@ export async function startSidecarPanel(options = {}) {
         ok: false,
         started: false,
         error: err?.message || pickLang(lang, 'Ошибка запуска обновления', 'Failed to start plugin update'),
-        status: getPluginUpdateStatus(pluginRoot),
+        status: getPluginUpdateStatus(pluginRoot, getUpdateRuntimeCtx()),
       };
     }
   }, 'POST');

@@ -1,4 +1,4 @@
-# The Tunnel v4.0.2 (3D AI-Autopilot) — EN-Inside / Dynamic User Language (EN|RU)
+# The Tunnel v4.0.3 (3D AI-Autopilot) — EN-Inside / Dynamic User Language (EN|RU)
 
 State: `~/.gemini/config/plugins/antigravity-model-router/router-state.json`
 
@@ -24,7 +24,7 @@ State: `~/.gemini/config/plugins/antigravity-model-router/router-state.json`
 - **USER LANGUAGE (`uiLanguage` in `router-state.json` / SessionStart banner `EN-Chat` vs `RU-Chat`)**: Follow the configured user language (`en` -> 100% English; `ru` -> 100% Russian) for all replies, `ask_question` headers/options (EN: `"Autopilot Plan: [summary]. Scope: [S/M/L/XL]. Recommended power: [Optimal]. Proceed?"` + `"💡 Mode tip: currently on <current> — consider switching to <optimal>."`; RU: `"План автопилота: ... Объём: ... Рекомендуемая мощность: ... Запускаем?"` + `"💡 Совет по режиму: ..."`), `toolSummary`, `Role`, artifacts, and UI.
 - **INTERNAL=COMPACT EN**: Unthrottled thinking; `Prompt`(`FILES/SPEC/VERIFY`); subagent reply`<=6L`(`DONE:<files>|exports:<list>|verify:0 err`); 1-line EN comments.
 
-## 3. Cache Hygiene & Guardrails (v4.0.2)
+## 3. Cache Hygiene & Guardrails (v4.0.3)
 1. **Implicit Cache (`>=4096`/`>=2050`) & RAM-First**: Batch independent reads/turn; prefer `ram_search`/`ram_slice`/`ram_context_pack` & `[Zero-Turn Gold Context]` over full reads `>150L`.
 2. **Diff-Only & Masked CLI**: Never overwrite `>50L` (`edit_file`/`core/diff-patcher.mjs`). Quiet CLI (`-q`/`--silent`, pipe noisy output via `| node core/obs-masker.mjs --stdin`).
 3. **Self-Healing & Dedup**: Obey `[Blast Radius]`, `[Test-Impact]`, `[Pitfall Ledger]`, `[Read-Once Guard]`, `Auto-Handoff`, `CIRCUIT BREAKER TRIPPED`.

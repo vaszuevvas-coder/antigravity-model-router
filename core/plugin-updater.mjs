@@ -82,6 +82,7 @@ function createIdleStatus(pluginRoot = '') {
     installedTarget: '',
     targetVersion: '',
     needsRestart: false,
+    appliedByPid: 0,
     startedAt: 0,
     updatedAt: 0,
     finishedAt: 0,
@@ -214,8 +215,8 @@ export function readPluginMeta(pluginRoot = '') {
 
   const rawVer = (typeof pluginManifest?.version === 'string' && pluginManifest.version.trim())
     || (typeof pkgManifest?.version === 'string' && pkgManifest.version.trim())
-    || '4.0.2';
-  const version = parseSemver(rawVer)?.version || '4.0.2';
+    || '4.0.3';
+  const version = parseSemver(rawVer)?.version || '4.0.3';
 
   const rawRepo =
     pluginManifest?.repository?.url
@@ -491,11 +492,45 @@ async function defaultFallbackDownloadFile(
   return size;
 }
 
+function isRestartAlreadyCompleted(status, runtimeCtx = {}) {
+  if (!status || status.phase !== 'done' || !status.needsRestart || status.dismissed) {
+    return false;
+  }
+  const ctx = runtimeCtx && typeof runtimeCtx === 'object' ? runtimeCtx : {};
+  const curPid = Number.isInteger(ctx.pid) && ctx.pid > 0 ? ctx.pid : 0;
+  const appliedPid = Number.isInteger(status.appliedByPid) && status.appliedByPid > 0 ? status.appliedByPid : 0;
+  const serverStartedAt = Number.isFinite(Number(ctx.serverStartedAt)) && Number(ctx.serverStartedAt) > 0
+    ? Number(ctx.serverStartedAt)
+    : 0;
+  const finishedAt = Number.isFinite(Number(status.finishedAt)) && Number(status.finishedAt) > 0
+    ? Number(status.finishedAt)
+    : 0;
+  const runningVer = typeof ctx.runningVersion === 'string' ? ctx.runningVersion.trim() : '';
+  const targetVer = typeof status.targetVersion === 'string' ? status.targetVersion.trim() : '';
+
+  const isNewProcess = Boolean(
+    (curPid && appliedPid && curPid !== appliedPid) ||
+    (serverStartedAt > 0 && finishedAt > 0 && serverStartedAt > finishedAt)
+  );
+  if (!isNewProcess) return false;
+
+  if (targetVer && parseSemver(targetVer)) {
+    if (runningVer && parseSemver(runningVer)) {
+      return compareSemver(runningVer, targetVer) >= 0;
+    }
+    return false;
+  }
+  return true;
+}
+
 /**
  * Returns the persisted or active update installer status for a plugin root.
+ * Automatically clears stale `needsRestart` banners once a restarted process is
+ * already running the installed version.
  * @param {string} [pluginRoot]
+ * @param {{ pid?: number, serverStartedAt?: number, runningVersion?: string }} [runtimeCtx={}]
  */
-export function getPluginUpdateStatus(pluginRoot = '') {
+export function getPluginUpdateStatus(pluginRoot = '', runtimeCtx = {}) {
   const root = resolvePluginRoot(pluginRoot);
   const mem = activeJobs.get(root);
   if (mem?.status) {
@@ -511,6 +546,9 @@ export function getPluginUpdateStatus(pluginRoot = '') {
       if (merged.phase && merged.phase !== 'done' && merged.phase !== 'error' && merged.phase !== 'idle') {
         merged.phase = 'idle';
       }
+    }
+    if (isRestartAlreadyCompleted(merged, runtimeCtx)) {
+      return clearPluginUpdateStatus(root);
     }
     return merged;
   }
@@ -1037,7 +1075,10 @@ export async function applyPluginUpdate(options = {}) {
     lang = 'ru',
     timeoutMs = 45000,
     awaitCompletion = true,
+    appliedByPid = process.pid,
   } = options && typeof options === 'object' ? options : {};
+
+  const effectiveAppliedByPid = Number.isInteger(appliedByPid) && appliedByPid > 0 ? appliedByPid : process.pid;
 
   const root = resolvePluginRoot(pluginRoot);
   const existingJob = activeJobs.get(root);
@@ -1064,6 +1105,7 @@ export async function applyPluginUpdate(options = {}) {
       percent: 10,
       installedTarget: installTarget,
       targetVersion: effectiveVersion || meta.version,
+      appliedByPid: effectiveAppliedByPid,
       startedAt: now,
       updatedAt: now,
       statusText: isEn ? 'Checking and downloading update...' : 'Проверка и загрузка обновления...',
@@ -1254,6 +1296,7 @@ export async function applyPluginUpdate(options = {}) {
         targetVersion: doneVer,
         installedTarget: installTarget,
         needsRestart: true,
+        appliedByPid: effectiveAppliedByPid,
         error: '',
         statusText: isEn
           ? `Updated to v${doneVer} ✓ Restart Google Antigravity to apply.`

@@ -481,3 +481,95 @@ test('7. Transport fallback hooks (fallbackHttpFn & fallbackDownloadFn) recover 
     fs.rmSync(installedRoot, { recursive: true, force: true });
   }
 });
+
+test('8. getPluginUpdateStatus auto-clears stale needsRestart after Antigravity restart (PID + boot time + version)', () => {
+  const installedRoot = makeTmpDir('tunnel-upd-restart-');
+  const cacheDir = path.join(installedRoot, '.cache');
+  const statusPath = path.join(cacheDir, 'plugin-update-status.json');
+  fs.mkdirSync(cacheDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(installedRoot, 'plugin.json'),
+    JSON.stringify({ name: 'antigravity-model-router', version: '4.0.3' }, null, 2),
+    'utf8'
+  );
+
+  try {
+    const finishedAt = 1_700_000_000_000;
+
+    // Scenario A: Same process before restart -> must keep phase='done', needsRestart=true
+    fs.writeFileSync(
+      statusPath,
+      JSON.stringify({
+        ok: true,
+        active: false,
+        phase: 'done',
+        percent: 100,
+        targetVersion: '4.0.3',
+        needsRestart: true,
+        appliedByPid: 4242,
+        finishedAt,
+        dismissed: false,
+      }),
+      'utf8'
+    );
+    const beforeRestart = getPluginUpdateStatus(installedRoot, {
+      pid: 4242,
+      serverStartedAt: finishedAt - 60_000,
+      runningVersion: '4.0.2',
+    });
+    assert.equal(beforeRestart.phase, 'done');
+    assert.equal(beforeRestart.needsRestart, true);
+    assert.equal(beforeRestart.dismissed, false);
+
+    // Scenario B: Restarted process (new PID + newer boot + runningVersion >= targetVersion) -> auto-clear & persist
+    const afterRestart = getPluginUpdateStatus(installedRoot, {
+      pid: 9999,
+      serverStartedAt: finishedAt + 5_000,
+      runningVersion: '4.0.3',
+    });
+    assert.equal(afterRestart.phase, 'idle');
+    assert.equal(afterRestart.needsRestart, false);
+    assert.equal(afterRestart.dismissed, true);
+    const persisted = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+    assert.equal(persisted.phase, 'idle');
+    assert.equal(persisted.needsRestart, false);
+    assert.equal(persisted.dismissed, true);
+
+    // Scenario C: Legacy status file without appliedByPid
+    fs.writeFileSync(
+      statusPath,
+      JSON.stringify({
+        ok: true,
+        active: false,
+        phase: 'done',
+        percent: 100,
+        targetVersion: '4.0.3',
+        needsRestart: true,
+        finishedAt,
+        dismissed: false,
+      }),
+      'utf8'
+    );
+    // If runningVersion is still older than targetVersion, do NOT clear yet
+    const legacyStillOld = getPluginUpdateStatus(installedRoot, {
+      pid: 9999,
+      serverStartedAt: finishedAt + 5_000,
+      runningVersion: '4.0.2',
+    });
+    assert.equal(legacyStillOld.phase, 'done');
+    assert.equal(legacyStillOld.needsRestart, true);
+
+    // Once runningVersion matches targetVersion after boot > finishedAt -> auto-clear
+    const legacyCleared = getPluginUpdateStatus(installedRoot, {
+      pid: 9999,
+      serverStartedAt: finishedAt + 5_000,
+      runningVersion: '4.0.3',
+    });
+    assert.equal(legacyCleared.phase, 'idle');
+    assert.equal(legacyCleared.needsRestart, false);
+    assert.equal(legacyCleared.dismissed, true);
+  } finally {
+    fs.rmSync(installedRoot, { recursive: true, force: true });
+  }
+});
+

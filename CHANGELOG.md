@@ -2,7 +2,16 @@
 
 Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
 
-> Хронология с `v3.8.0` по `v4.0.2` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`57` основных / `65` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `46` наборов автотестов).
+> Хронология с `v3.8.0` по `v4.0.3` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`57` основных / `65` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `46` наборов автотестов).
+
+---
+
+## [4.0.3] — 2026-11-26
+
+### Исправлено (Авто-сброс модалки перезагрузки после перезапуска Google Antigravity)
+- **Устранение повторного окна «Требуется перезагрузка» ([core/plugin-updater.mjs](core/plugin-updater.mjs), [sidecars/panel/server.mjs](sidecars/panel/server.mjs), [tests/plugin-updater.test.mjs](tests/plugin-updater.test.mjs))**:
+  - При старте `sidecars/panel/server.mjs` в памяти фиксируются `PANEL_SERVER_STARTED_AT` и `PANEL_LOADED_VERSION`, а в `plugin-update-status.json` при установке обновления сохраняется `appliedByPid`.
+  - `getPluginUpdateStatus(pluginRoot, runtimeCtx)` автоматически очищает устаревший статус `needsRestart: true` на диске, как только после перезапуска Google Antigravity стартует новый процесс панели с уже загруженной новой версией (`pid !== appliedByPid` или `serverStartedAt > finishedAt`, и `runningVersion >= targetVersion`), сохраняя полную обратную совместимость со старыми файлами статуса без `appliedByPid`.
 
 ---
 

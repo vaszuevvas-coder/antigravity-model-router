@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="The Tunnel v4.0.2 — 3D AI Autopilot & Coprocessor for Google Antigravity" width="100%" />
+  <img src="assets/banner.svg" alt="The Tunnel v4.0.3 — 3D AI Autopilot & Coprocessor for Google Antigravity" width="100%" />
 </p>
 
-# The Tunnel `v4.0.2` — 3D AI Autopilot & Model Router
+# The Tunnel `v4.0.3` — 3D AI Autopilot & Model Router
 
 > Intelligent 3D model routing, multi-core CPU coprocessing, adaptive In-RAM project memory (`4–32 GB`), optional local Ollama Int8 GPU acceleration, and 59 safety & verification guardrails for **Google Antigravity** — built with zero external runtime dependencies on **Node.js `>=22` ESM**.
 
@@ -60,7 +60,7 @@
 
 ```text
 antigravity-model-router/
-├── plugin.json                # Plugin manifest (The Tunnel v4.0.2)
+├── plugin.json                # Plugin manifest (The Tunnel v4.0.3)
 ├── package.json               # ESM scripts (test, audit, lint:skills, pack, version:check)
 ├── router-state.json          # Sanitized default router & guardrail template
 ├── hooks.json                 # SessionStart / PreInvocation / PreToolUse / PostToolUse / Stop hooks
@@ -90,7 +90,7 @@ node install.js
 Then restart **Google Antigravity** (or reload the sidecar panel) to activate hooks, In-RAM MCP, and **The Tunnel** HUD.
 
 ### Option 2 — Windows 1-Click Installer (`Setup.exe`) & Portable `.zip`
-- Download `The-Tunnel-v4.0.2-Setup.exe` or `The-Tunnel-v4.0.2.zip` from [GitHub Releases](https://github.com/vaszuevvas-coder/antigravity-model-router/releases/latest).
+- Download `The-Tunnel-v4.0.3-Setup.exe` or `The-Tunnel-v4.0.3.zip` from [GitHub Releases](https://github.com/vaszuevvas-coder/antigravity-model-router/releases/latest).
 - `Setup.exe`, `install.js`, and `install.sh` auto-detect your OS locale (`en` / `ru`, overridable via `--lang=en|ru` or `TUNNEL_LANG`), and `Setup.exe` supports both GUI and silent CLI flags (`--silent` / `/S`, `--uninstall`) while keeping a backup of `router-state.json`.
 - In the portable `.zip`, run `install.bat` / `uninstall.bat` (or `Установить плагин.bat` / `Удалить плагин.bat`) on Windows, or `./install.sh` on macOS / Linux. Direct extraction or `git clone` into `~/.gemini/config/plugins/antigravity-model-router` is also supported — `The Tunnel` auto-calibrates hardware limits and MCP paths on first launch.
 
