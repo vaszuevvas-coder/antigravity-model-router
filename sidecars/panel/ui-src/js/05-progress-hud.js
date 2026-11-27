@@ -1875,15 +1875,6 @@
         }
       }
 
-      if (ev.key === 'Escape') {
-        const wizModal = document.getElementById('onboardingWizardModal');
-        if (wizModal && wizModal.classList.contains('visible')) {
-          if (typeof ev.preventDefault === 'function') ev.preventDefault();
-          closeOnboardingWizard();
-          return;
-        }
-      }
-
       const selectTrigger = ev.target && ev.target.closest ? ev.target.closest('.lg-select-trigger') : null;
       if (selectTrigger && (ev.key === 'ArrowDown' || ev.key === 'ArrowUp')) {
         ev.preventDefault();

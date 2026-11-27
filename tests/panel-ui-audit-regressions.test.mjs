@@ -655,7 +655,7 @@ test('4. Panel UI Craft 20/20, A11y controls, Composer thumb, Wizard orb SVG, an
 
   const uiHtml = fs.readFileSync(uiPath, 'utf8');
   assert.match(uiHtml, /<img\s+id="composerImageThumb"\s+src="data:image\/gif;base64,[^"]+"/);
-  assert.match(uiHtml, /id="onboardingWizardModal"[\s\S]{0,300}<span class="lg-brand-orb"[^>]*><svg\b/);
+  assert.equal(uiHtml.includes('id="onboardingWizardModal"'), false, '#onboardingWizardModal must be removed from ui.html');
 
   const cliHelp = execFileSync(process.execPath, [path.join(ROOT_DIR, 'core', 'router-cli.mjs'), '--help'], {
     cwd: ROOT_DIR,

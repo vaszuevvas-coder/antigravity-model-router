@@ -2570,7 +2570,7 @@
           body: JSON.stringify({
             action: 'vram_fit_prompt',
             force: true,
-            subscriptionTier: wizDraft.subscriptionTier || currentState.subscriptionTier || 'pro'
+            subscriptionTier: currentState.subscriptionTier || 'pro'
           }),
         });
         const data = await res.json();
@@ -2618,7 +2618,7 @@
           body: JSON.stringify({
             action: 'model_search_prompt',
             force: true,
-            subscriptionTier: wizDraft.subscriptionTier || currentState.subscriptionTier || 'pro'
+            subscriptionTier: currentState.subscriptionTier || 'pro'
           }),
         });
         const data = await res.json();
@@ -2648,7 +2648,7 @@
           body: JSON.stringify({
             action: 'prompt',
             force: true,
-            subscriptionTier: wizDraft.subscriptionTier || currentState.subscriptionTier || 'pro'
+            subscriptionTier: currentState.subscriptionTier || 'pro'
           }),
         });
         const data = await res.json();
@@ -2659,13 +2659,9 @@
         if (data.hardwareProfile) {
           currentHardwareProfile = data.hardwareProfile;
         }
-        const modal = document.getElementById('onboardingWizardModal');
-        const insideWizard = Boolean(modal && modal.classList.contains('visible'));
         await dispatchPromptToChatOrClipboard(
           data.promptText,
-          insideWizard
-            ? L('Паспорт ПК отправлен в чат ✓ — можно продолжить настройку', 'PC hardware passport sent to chat ✓ — continue setup below')
-            : L('Паспорт ПК отправлен в активный чат для ИИ-оптимизации ✓', 'PC hardware passport sent to active chat ✓'),
+          L('Паспорт ПК отправлен в активный чат для ИИ-оптимизации ✓', 'PC hardware passport sent to active chat ✓'),
           L('Промпт скопирован в буфер! Откройте новый чат и нажмите Вставить ✓', 'Prompt copied to clipboard! Open a new chat and paste ✓')
         );
       } catch (err) {

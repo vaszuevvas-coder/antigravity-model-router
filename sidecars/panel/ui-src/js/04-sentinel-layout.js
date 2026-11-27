@@ -1140,18 +1140,6 @@
         return;
       }
       switch (action) {
-        case 'openOnboardingWizard': openOnboardingWizard(Number(arg || 1)); break;
-        case 'closeOnboardingWizard': closeOnboardingWizard(); break;
-        case 'wizGoStep': wizGoStep(Number(arg || 1)); break;
-        case 'wizPrevStep': wizPrevStep(); break;
-        case 'wizNextStep': wizNextStep(); break;
-        case 'wizFinishNow': void finishOnboardingWizard(); break;
-        case 'wizSelectMode': wizSelectMode(arg); break;
-        case 'wizSetDesignGate': wizSetDesignGate(arg === 'true'); break;
-        case 'wizSetInspirationMode': wizSetInspirationMode(arg); break;
-        case 'wizSetSubTier': wizSetSubTier(arg); break;
-        case 'wizSetLanguage': wizSetLanguage(arg); break;
-        case 'wizSetViewMode': wizSetViewMode(arg); break;
         case 'setUiLanguage': void setUiLanguage(arg); break;
         case 'setPanelViewMode': setPanelViewMode(arg); break;
         case 'cyclePanelUiScale': cyclePanelUiScale(); break;
@@ -1160,10 +1148,6 @@
         case 'toggleLiteRamOnly': toggleLiteRamOnly(); break;
         case 'toggleLiteGpuOnly': toggleLiteGpuOnly(); break;
         case 'toggleLiteCpuOnly': toggleLiteCpuOnly(); break;
-        case 'wizRescanHw': wizRescanHw(); break;
-        case 'wizToggleFlag': wizToggleFlag(arg); break;
-        case 'wizSetGpuPullMode': wizSetGpuPullMode(arg); break;
-        case 'wizPickGpuInstallDir': void wizPickGpuInstallDir(); break;
         case 'autoCalibrateHardware': autoCalibrateHardware(); break;
         case 'sendHardwareTunePrompt': sendHardwareTunePrompt(); break;
         case 'prepareModelSearchPrompt': prepareModelSearchPrompt(); break;

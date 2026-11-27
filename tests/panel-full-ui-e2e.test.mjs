@@ -1043,67 +1043,15 @@ test('1. Full Panel E2E: UI DOM click-through for themes, wizard, workspace, com
     await vm.runInContext('resetPanelBlockOrder()', dom.ctx);
     await waitFor(() => loadState().panelBlockOrder[0] === DEFAULT_PANEL_BLOCK_ORDER[0]);
 
-    // 3. Onboarding Wizard (First-Run Auto-Open, Single Button Hygiene, Theme Preview Revert & Steps 1-4)
-    const wizardOpenBtns = dom.doc.querySelectorAll('[data-action="openOnboardingWizard"]');
-    assert.equal(wizardOpenBtns.length, 1, 'Single header wizard button must remain');
-    assert.ok(dom.doc.querySelector('.lg-header [data-action="openOnboardingWizard"]'));
+    // 3. Onboarding Wizard Removal Hygiene (no duplicate modal or header Setup button; auto-calibration runs silently)
+    assert.equal(dom.doc.querySelectorAll('[data-action="openOnboardingWizard"]').length, 0, 'Header wizard button must be removed');
+    assert.equal(dom.doc.getElementById('smartBannerSetupBtn'), null, '#smartBannerSetupBtn must be removed');
+    assert.equal(dom.doc.getElementById('onboardingWizardModal'), null, '#onboardingWizardModal must be removed');
     assert.equal(dom.doc.getElementById('smartProjectBanner'), null, 'Removed #smartProjectBanner must not exist');
-
-    // Cold first-run auto-launch simulation (`onboardingCompleted: false`, default English on fresh installs)
-    await vm.runInContext('wizAutoOpenedOnce = false; updateState({ onboardingCompleted: false, panelViewMode: "full", uiLanguage: "en" })', dom.ctx);
-    await waitFor(() => dom.doc.getElementById('onboardingWizardModal').classList.contains('visible') === true);
-    assert.equal(dom.doc.body.getAttribute('data-ui-language'), 'en');
-    assert.equal(dom.doc.getElementById('wizLaunchBadge').textContent, 'First Run');
-    assert.ok(dom.doc.getElementById('wizPill1'));
-    assert.ok(dom.doc.getElementById('wizPill2'));
-    assert.equal(dom.doc.getElementById('wizPill3'), null);
-    assert.equal(dom.doc.getElementById('wizPill4'), null);
-    assert.equal(dom.doc.getElementById('wizQuickSaveBtn').style.display, 'none');
-
-    // Live-preview Russian on Step 1, then press Escape -> must revert to en and stay in full mode
-    dom.doc.querySelector('[data-action="wizSetLanguage"][data-arg="ru"]').click();
-    assert.equal(dom.doc.body.getAttribute('data-ui-language'), 'ru');
-    assert.equal(dom.doc.getElementById('wizLaunchBadge').textContent, 'Первый запуск');
-    assert.equal(dom.doc.querySelector('[data-action="wizSetViewMode"][data-arg="lite"]'), null);
-    dom.doc.dispatchEvent({ type: 'keydown', key: 'Escape', bubbles: true });
-    await waitFor(() => !dom.doc.getElementById('onboardingWizardModal').classList.contains('visible') && loadState().onboardingCompleted === true);
+    await vm.runInContext('updateState({ onboardingCompleted: false, panelViewMode: "full", uiLanguage: "ru" })', dom.ctx);
+    await waitFor(() => dom.doc.body.getAttribute('data-ui-language') === 'ru');
     assert.equal(dom.doc.body.getAttribute('data-panel-theme'), 'glass_teal');
     assert.equal(dom.doc.body.getAttribute('data-panel-view'), 'full');
-    assert.equal(dom.doc.body.getAttribute('data-ui-language'), 'en');
-
-    // Reopen manually via the single Setup button & verify advisor_all preservation + Steps 1-2 save (switching to RU)
-    await vm.runInContext('updateState({ confirmBeforeRun: true, confirmThreshold: "ALL", orchestratorSmartSynergy: false })', dom.ctx);
-    await waitFor(() => loadState().confirmThreshold === 'ALL');
-    dom.doc.querySelector('[data-action="openOnboardingWizard"]').click();
-    assert.equal(dom.doc.getElementById('onboardingWizardModal').classList.contains('visible'), true);
-    assert.equal(dom.doc.getElementById('wizLaunchBadge').textContent, 'Quick Setup');
-    assert.equal(dom.doc.getElementById('wizQuickSaveBtn').style.display, 'inline-flex');
-    assert.equal(await vm.runInContext('wizDraft.modePreset', dom.ctx), 'advisor_all');
-
-    dom.doc.querySelector('[data-action="wizSetLanguage"][data-arg="ru"]').click();
-    assert.equal(dom.doc.getElementById('wizLaunchBadge').textContent, 'Быстрая настройка');
-    dom.doc.querySelector('[data-action="wizSetSubTier"][data-arg="ultra"]').click();
-    dom.doc.querySelector('[data-action="wizToggleFlag"][data-arg="useGpu"]').click();
-    dom.doc.querySelector('[data-action="wizGoStep"][data-arg="2"]').click();
-    assert.equal(dom.doc.getElementById('wizQuickSaveBtn').style.display, 'none');
-    dom.doc.querySelector('[data-action="wizSelectMode"][data-arg="autopilot_balance"]').click();
-    dom.doc.querySelector('[data-action="wizSetDesignGate"][data-arg="true"]').click();
-    dom.doc.querySelector('[data-action="wizSetInspirationMode"][data-arg="showroom"]').click();
-    dom.doc.querySelector('[data-action="wizSetDesignGate"][data-arg="false"]').click();
-    dom.doc.querySelector('[data-action="wizToggleFlag"][data-arg="safetyBundle"]').click();
-    dom.doc.querySelector('[data-action="wizToggleFlag"][data-arg="safetyBundle"]').click();
-    dom.doc.querySelector('[data-action="wizToggleFlag"][data-arg="sentinelBundle"]').click();
-    dom.doc.querySelector('[data-action="wizToggleFlag"][data-arg="sentinelBundle"]').click();
-    // Close without downloading models (set gpuPullMode = 'skip' first)
-    await vm.runInContext('wizSetGpuPullMode("skip")', dom.ctx);
-    dom.doc.getElementById('wizNextBtn').click();
-    await waitFor(() =>
-      !dom.doc.getElementById('onboardingWizardModal').classList.contains('visible')
-      && loadState().subscriptionTier === 'ultra'
-      && loadState().swarmWorkerTier === 'neon_auto'
-      && loadState().uiInspirationMode === 'showroom'
-      && loadState().uiDesignPreviewGate === false
-    );
 
     // 4. Agent Mode Card + Real Model Profile / Tool Pruner Behavior Checks
     await clickAndWaitState('[data-action="setSubscriptionTier"][data-arg="pro"]', (s) => s.subscriptionTier === 'pro', 'sub pro');
@@ -2461,54 +2409,22 @@ test('8. Wave 3 UX: persistent pull errors, HF mirror toggle, onboarding folder 
     assert.equal(dom.doc.getElementById('gpuOllamaInstallBox').style.display, 'flex');
     assert.ok(dom.doc.getElementById('gpuOllamaInstallDirHint').textContent.includes(customInstallDir));
 
-    // 5) Onboarding Step 1 shows directory input, auto-install toggle & HF mirror checkbox and saves them
-    await vm.runInContext(`(() => {
-      currentHardwareProfile = {
-        system: { cpuModel: 'Test CPU', logicalCores: 8, totalRamMb: 16384, totalRamGb: 16 },
-        gpu: { available: true, name: 'RTX 4060', totalMb: 8192 },
-        ollama: { installed: false, running: false },
-        recommendation: {
-          recommendedPatch: { gpuEnabled: true, gpuMaxVramMb: 8192, gpuChatModel: 'qwen3:4b', gpuEmbedModel: 'qwen3-embedding:4b' },
-          gpuEnabledPreset: { gpuMaxVramMb: 8192, gpuChatModel: 'qwen3:4b', gpuEmbedModel: 'qwen3-embedding:4b' },
-          cascadeBundle: { models: [{ name: 'qwen3:4b', alreadyDownloaded: false }], approxMissingDiskGb: 2.5 },
-        },
-      };
-      openOnboardingWizard(1);
-      wizDraft.useGpu = true;
-      wizDraft.autoInstallOllama = true;
-      wizDraft.gpuPreferHfMirror = true;
-      wizSetGpuInstallDir(${JSON.stringify(customInstallDir)});
-      renderWizardStep();
-    })()`, dom.ctx);
-
-    const wizDirInp = dom.doc.getElementById('wizGpuInstallDir');
-    assert.ok(wizDirInp && wizDirInp.value === customInstallDir, 'Onboarding Step 1 must render #wizGpuInstallDir');
-    assert.ok(dom.doc.getElementById('wizBtnPickGpuDir'), 'Onboarding Step 1 must render folder picker button');
-    assert.ok(dom.doc.getElementById('inp-gpuOllamaDir'), 'Expert settings must include #inp-gpuOllamaDir');
-
-    // Save wizard cleanly (prevent live install_ollama network spawn by stubbing fetch for /api/gpu)
-    const wizardActions = await vm.runInContext(`(async () => {
-      const gpuInstallCalls = [];
-      const origStartOllama = startOllamaInstall;
-      startOllamaInstall = async (opts) => {
-        gpuInstallCalls.push(opts);
-      };
-      try {
-        await finishOnboardingWizard();
-      } finally {
-        startOllamaInstall = origStartOllama;
-      }
-      return gpuInstallCalls;
-    })()`, dom.ctx);
-
-    await dom.waitIdle();
+    // 5) Expert GPU settings directory inputs & HF mirror checkbox persist cleanly (wizard removed)
+    assert.equal(dom.doc.getElementById('onboardingWizardModal'), null, 'Wizard modal must be removed');
+    const ollamaDirInp = dom.doc.getElementById('inp-gpuOllamaDir');
+    const modelsDirInp = dom.doc.getElementById('inp-gpuModelsDir');
+    assert.ok(ollamaDirInp, 'Expert settings must include #inp-gpuOllamaDir');
+    assert.ok(modelsDirInp, 'Expert settings must include #inp-gpuModelsDir');
+    ollamaDirInp.value = customInstallDir;
+    modelsDirInp.value = path.join(customInstallDir, 'models');
+    await vm.runInContext('saveExpertGpuConfig()', dom.ctx);
+    await waitFor(() => loadState().gpuOllamaDir === customInstallDir && loadState().gpuModelsDir === path.join(customInstallDir, 'models'));
+    await vm.runInContext('updateState({ gpuPreferHfMirror: true })', dom.ctx);
+    await waitFor(() => loadState().gpuPreferHfMirror === true);
     const st = loadState();
     assert.equal(st.gpuOllamaDir, customInstallDir);
     assert.equal(st.gpuModelsDir, path.join(customInstallDir, 'models'));
     assert.equal(st.gpuPreferHfMirror, true);
-    assert.equal(wizardActions.length, 1, 'Wizard finish must auto-trigger Ollama installer when GPU=on & Ollama missing');
-    assert.equal(wizardActions[0].installDir, customInstallDir);
-    assert.equal(wizardActions[0].mirrorMode, 'huggingface');
   } finally {
     if (dom) dom.destroy();
     await app.close();

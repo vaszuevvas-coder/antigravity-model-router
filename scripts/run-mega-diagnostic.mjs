@@ -577,25 +577,11 @@ async function runContour6LiveCdp(screenshotsDir = '') {
     });
     await savePng('cdp-panel-lite-ru.png');
 
-    // Restore Full + test Onboarding Wizard 4 steps
+    // Restore Full view before opening Project Graph modal
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 900, height: 720, deviceScaleFactor: 1, mobile: false });
-    const wizRes = await cdp.evaluate(async () => {
+    await cdp.evaluate(async () => {
       document.querySelector('[data-action="setPanelViewMode"][data-arg="full"]')?.click();
       await new Promise((r) => setTimeout(r, 150));
-      if (typeof openOnboardingWizard === 'function') openOnboardingWizard(1);
-      await new Promise((r) => setTimeout(r, 150));
-      for (const step of [2, 3, 4]) {
-        if (typeof wizGoStep === 'function') wizGoStep(step);
-        await new Promise((r) => setTimeout(r, 80));
-      }
-      const modalOpen = getComputedStyle(document.getElementById('onboardingWizardModal')).display !== 'none';
-      return { modalOpen, hint: document.getElementById('wizStepHint')?.textContent?.trim() || '' };
-    });
-    await savePng('cdp-onboarding-wizard.png');
-
-    await cdp.evaluate(async () => {
-      if (typeof closeOnboardingWizard === 'function') closeOnboardingWizard();
-      await new Promise((r) => setTimeout(r, 120));
     });
 
     // Open Project Graph modal at 1280x860 & exercise levels + lenses + inspector + context cart
@@ -634,7 +620,6 @@ async function runContour6LiveCdp(screenshotsDir = '') {
       cdp.runtimeErrors.length === 0 &&
       cdp.httpErrors.length === 0 &&
       overflowFailures.length === 0 &&
-      wizRes.modalOpen === true &&
       graphRes.nodeCount > 0;
 
     return {
@@ -644,7 +629,6 @@ async function runContour6LiveCdp(screenshotsDir = '') {
       httpErrors: cdp.httpErrors,
       overflowFailures,
       enTitle: layoutMetrics.enTitle,
-      wizHint: wizRes.hint,
       graph: graphRes,
       screenshots: capturedScreenshots,
     };

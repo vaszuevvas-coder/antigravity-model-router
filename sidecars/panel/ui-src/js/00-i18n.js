@@ -1521,16 +1521,6 @@
       if (dbgModal && dbgModal.style.display === 'flex' && typeof renderDebugLogModal === 'function') {
         renderDebugLogModal();
       }
-      const wizModal = document.getElementById('onboardingWizardModal');
-      if (wizModal && wizModal.classList.contains('visible') && typeof renderWizardStep === 'function') {
-        wizDraft.uiLanguage = valid;
-        const launchBadge = document.getElementById('wizLaunchBadge');
-        if (launchBadge) {
-          const isFresh = currentState.onboardingCompleted === false;
-          launchBadge.textContent = isFresh ? L('Первый запуск', 'First Run') : L('Быстрая настройка', 'Quick Setup');
-        }
-        renderWizardStep();
-      }
       if (typeof pgState === 'object' && pgState && pgState.open) {
         if (typeof pgRenderWorkspaceSelect === 'function') pgRenderWorkspaceSelect();
         if (typeof pgRenderToolbarAndStats === 'function') pgRenderToolbarAndStats();

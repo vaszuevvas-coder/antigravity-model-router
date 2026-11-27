@@ -691,66 +691,13 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
       `#fullGuardDrawer overflowed viewport: drawerRight=${guardDockOverflowAudit.drawerRight} > clientWidth+2 (${guardDockOverflowAudit.clientWidth + 2})`,
     );
 
-    const wizardLayoutAudit = await cdp.evaluate(async () => {
-      const setupBtn = document.getElementById('smartBannerSetupBtn');
-      if (!setupBtn) throw new Error('smartBannerSetupBtn not found');
-      setupBtn.click();
-      const modal = document.getElementById('onboardingWizardModal');
-      const deadline = Date.now() + 2000;
-      while (Date.now() < deadline) {
-        if (modal && modal.classList.contains('visible') && getComputedStyle(modal).display !== 'none') break;
-        await new Promise((r) => setTimeout(r, 20));
-      }
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      const modalRect = modal.getBoundingClientRect();
-      const footerEl = modal.querySelector('.wiz-footer');
-      const nextBtn = document.getElementById('wizNextBtn');
-      const footerRect = footerEl ? footerEl.getBoundingClientRect() : null;
-      const nextRect = nextBtn ? nextBtn.getBoundingClientRect() : null;
-      const result = {
-        visible: modal.classList.contains('visible'),
-        parentTag: modal.parentElement ? modal.parentElement.tagName : null,
-        innerHeight: window.innerHeight,
-        modalHeight: modalRect.height,
-        modalBottom: modalRect.bottom,
-        footerTop: footerRect ? footerRect.top : null,
-        footerBottom: footerRect ? footerRect.bottom : null,
-        nextBottom: nextRect ? nextRect.bottom : null,
-      };
-      const closeBtn = modal.querySelector('[data-action="closeOnboardingWizard"]');
-      if (closeBtn) closeBtn.click();
-      else if (typeof closeOnboardingWizard === 'function') closeOnboardingWizard();
-      const closeDeadline = Date.now() + 2000;
-      while (Date.now() < closeDeadline) {
-        if (!modal.classList.contains('visible') && getComputedStyle(modal).display === 'none') break;
-        await new Promise((r) => setTimeout(r, 20));
-      }
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      return result;
-    });
-
-    assert.equal(wizardLayoutAudit.visible, true, 'Onboarding wizard modal must open');
-    assert.equal(wizardLayoutAudit.parentTag, 'BODY', '#onboardingWizardModal must be a direct child of <body>, outside .lg-shell');
-    assert.ok(
-      wizardLayoutAudit.modalHeight <= wizardLayoutAudit.innerHeight + 1,
-      `Wizard modal stretched past viewport height: height=${wizardLayoutAudit.modalHeight} > innerHeight (${wizardLayoutAudit.innerHeight})`,
-    );
-    assert.ok(
-      wizardLayoutAudit.modalBottom <= wizardLayoutAudit.innerHeight + 1,
-      `Wizard modal bottom overflows viewport: bottom=${wizardLayoutAudit.modalBottom} > innerHeight (${wizardLayoutAudit.innerHeight})`,
-    );
-    assert.ok(
-      wizardLayoutAudit.footerTop !== null && wizardLayoutAudit.footerTop >= 0,
-      `Wizard footer top out of viewport: top=${wizardLayoutAudit.footerTop}`,
-    );
-    assert.ok(
-      wizardLayoutAudit.footerBottom !== null && wizardLayoutAudit.footerBottom <= wizardLayoutAudit.innerHeight + 1,
-      `Wizard footer pushed below viewport fold: bottom=${wizardLayoutAudit.footerBottom} > innerHeight (${wizardLayoutAudit.innerHeight})`,
-    );
-    assert.ok(
-      wizardLayoutAudit.nextBottom !== null && wizardLayoutAudit.nextBottom <= wizardLayoutAudit.innerHeight + 1,
-      `Wizard Next button pushed below viewport fold: bottom=${wizardLayoutAudit.nextBottom} > innerHeight (${wizardLayoutAudit.innerHeight})`,
-    );
+    // Verify removed onboarding wizard modal & Setup header button are absent
+    const wizardRemovedAudit = await cdp.evaluate(() => ({
+      hasModal: Boolean(document.getElementById('onboardingWizardModal')),
+      hasSetupBtn: Boolean(document.getElementById('smartBannerSetupBtn')),
+    }));
+    assert.equal(wizardRemovedAudit.hasModal, false, '#onboardingWizardModal must be removed');
+    assert.equal(wizardRemovedAudit.hasSetupBtn, false, '#smartBannerSetupBtn must be removed');
 
     // -----------------------------------------------------------------------
     // 3. Zero Orphaned Elements Across Category Tab Isolation

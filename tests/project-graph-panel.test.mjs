@@ -92,11 +92,11 @@ test('1. Panel UI build check, CSP cleanliness, and #projectGraphModal DOM place
     assert.ok(uiHtml.includes(marker), `ui.html missing ${marker}`);
   }
 
-  // Verify #projectGraphModal sits outside .lg-shell (after #onboardingWizardModal, direct child of <body>)
-  const wizIdx = uiHtml.indexOf('id="onboardingWizardModal"');
+  // Verify #projectGraphModal sits outside .lg-shell (direct child of <body>, before inline panel script)
+  const shellIdx = uiHtml.indexOf('class="lg-shell"');
   const pgIdx = uiHtml.indexOf('id="projectGraphModal"');
   const scriptIdx = uiHtml.indexOf('<script>\n    // =========================================================================');
-  assert.ok(wizIdx > 0 && pgIdx > wizIdx, '#projectGraphModal must appear after #onboardingWizardModal (outside .lg-shell)');
+  assert.ok(shellIdx > 0 && pgIdx > shellIdx, '#projectGraphModal must appear after .lg-shell');
   assert.ok(scriptIdx > pgIdx, '#projectGraphModal must appear before inline panel script');
 });
 

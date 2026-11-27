@@ -1313,10 +1313,7 @@
       }
       const s = payload && payload.state ? payload.state : (payload || {});
       currentState = s;
-      const wizModalOpenEarly = document.getElementById('onboardingWizardModal')?.classList.contains('visible');
-      const activeLangEarly = (wizModalOpenEarly && wizLangPreviewDirty)
-        ? normalizeUiLanguage(wizDraft.uiLanguage || s.uiLanguage)
-        : normalizeUiLanguage(s.uiLanguage);
+      const activeLangEarly = normalizeUiLanguage(s.uiLanguage);
       if (typeof applyUiLanguageDom === 'function') {
         applyUiLanguageDom(activeLangEarly);
       }
@@ -1333,10 +1330,7 @@
         btn.classList.toggle('active', btn.dataset.val === confirmThr);
       });
 
-      const wizModalOpen = document.getElementById('onboardingWizardModal')?.classList.contains('visible');
-      const activeSubTier = (wizModalOpen && wizSubTierPreviewDirty)
-        ? (wizDraft.subscriptionTier === 'ultra' ? 'ultra' : 'pro')
-        : (s.subscriptionTier === 'ultra' ? 'ultra' : 'pro');
+      const activeSubTier = s.subscriptionTier === 'ultra' ? 'ultra' : 'pro';
       applySubscriptionTierDom(activeSubTier);
 
       document.querySelectorAll('#strategyGroup button').forEach((btn) => {
@@ -1362,17 +1356,13 @@
 
       document.body.setAttribute('data-panel-theme', 'glass_teal');
 
-      const activeLang = (wizModalOpen && wizLangPreviewDirty)
-        ? normalizeUiLanguage(wizDraft.uiLanguage || s.uiLanguage)
-        : normalizeUiLanguage(s.uiLanguage);
+      const activeLang = normalizeUiLanguage(s.uiLanguage);
       if (typeof applyUiLanguageDom === 'function') {
         applyUiLanguageDom(activeLang);
       }
 
-      const activeViewMode = (wizModalOpen && wizViewModePreviewDirty)
-        ? normalizePanelViewMode(wizDraft.panelViewMode || s.panelViewMode)
-        : normalizePanelViewMode(s.panelViewMode);
-      applyPanelViewModeDom(activeViewMode, !(wizModalOpen && wizViewModePreviewDirty));
+      const activeViewMode = normalizePanelViewMode(s.panelViewMode);
+      applyPanelViewModeDom(activeViewMode, true);
 
       if (_panelFullTabUserSelected && _panelFullTabActiveLocal) {
         if (currentState && typeof currentState === 'object') {
@@ -1717,15 +1707,11 @@
       }
       renderTaskProgressAndHud(payload ? payload.taskProgress : null, payload ? payload.floatingHud : null, s);
 
-      // Смарт-баннер разговорного ИИ-пилота, профиль воркспейса и авто-запуск Мастера
+      // Смарт-баннер разговорного ИИ-пилота и профиль воркспейса
       if (payload && payload.projectDetection) {
         detectedProjectInfo = payload.projectDetection;
       }
       renderSmartPilotBanner(detectedProjectInfo);
-      if (s.onboardingCompleted === false && !wizAutoOpenedOnce) {
-        wizAutoOpenedOnce = true;
-        openOnboardingWizard(1);
-      }
 
       // Сводная карточка размышлений ИИ-пилота и авто-защиты
       const healthTitleEl = document.getElementById('autopilotHealthTitle');
@@ -2520,8 +2506,6 @@
 
     function setSubscriptionTier(tier) {
       const cleanTier = tier === 'ultra' ? 'ultra' : 'pro';
-      wizDraft.subscriptionTier = cleanTier;
-      wizSubTierPreviewDirty = false;
       const patch = { subscriptionTier: cleanTier };
       if (cleanTier === 'pro') {
         if (currentState.swarmWorkerTier === 'carbon_auto') {
@@ -2575,8 +2559,6 @@
 
     function setPanelViewMode() {
       const valid = applyPanelViewModeDom('full', true);
-      wizDraft.panelViewMode = valid;
-      wizViewModePreviewDirty = false;
       void updateState({ panelViewMode: valid });
       flushVisibleBlockRenders();
       for (let i = 0; i < DEFAULT_PANEL_BLOCK_ORDER.length; i++) {

@@ -1162,8 +1162,6 @@
         handleSmartComposerInput();
       } else if (inputAction === 'onProjectGraphSearch') {
         onProjectGraphSearch(target.value);
-      } else if (inputAction === 'wizSetGpuInstallDir' && typeof wizSetGpuInstallDir === 'function') {
-        wizSetGpuInstallDir(target.value);
       }
     });
 

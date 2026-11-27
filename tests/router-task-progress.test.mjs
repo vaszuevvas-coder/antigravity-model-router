@@ -73,9 +73,7 @@ test('22. Full Audit Hardening: MCP multi-window workspace isolation, nullish fu
   const uiHtml = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
   assert.ok(uiHtml.includes('id="compactionLabel"'), 'Missing #compactionLabel in ui.html');
   assert.ok(uiHtml.includes('id="compactionBar"'), 'Missing #compactionBar in ui.html');
-  assert.ok(uiHtml.includes("wizDraft.gpuChatModel || 'gemma4:12b'"), 'Wizard must fall back to gemma4:12b');
-  assert.ok(uiHtml.includes('.wiz-summary-strip'));
-  assert.ok(uiHtml.includes('.wiz-compact-card'));
+  assert.equal(uiHtml.includes('id="onboardingWizardModal"'), false, 'Wizard modal must be removed from ui.html');
 
   // 4) Stale completed chat sweep on ask_question continuation (resumeIfWaiting: true)
   resetTaskProgress();

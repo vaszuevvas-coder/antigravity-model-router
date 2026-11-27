@@ -71,11 +71,6 @@
             </svg>
             <span id="openDebugLogLabel">Лог</span>
           </button>
-          <button type="button" class="lg-icon-btn setup-header-btn" id="smartBannerSetupBtn" data-action="openOnboardingWizard" data-arg="1" title="Что делает: запускает пошаговый мастер настройки железа, тарифа, стиля общения ИИ и контуров защиты.
-Зачем: помогает за минуту откалибровать плагин под ваш ПК и привычки.">
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.35"/><path d="M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.15 1.15M11.25 11.25l1.15 1.15M12.4 3.6l-1.15 1.15M4.75 11.25L3.6 12.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-            <span>Настройка</span>
-          </button>
         </div>
       </div>
 
@@ -1867,35 +1862,6 @@
             <path d="M8 4.3v8.9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
           </svg>
         </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- МАСТЕР ПЕРВОЙ И БЫСТРОЙ НАСТРОЙКИ -->
-  <div class="wiz-overlay" id="onboardingWizardModal" role="dialog" aria-modal="true" aria-labelledby="wizModalBrandTitle">
-    <div>
-      <div class="wiz-head">
-        <div class="lg-brand">
-          <span class="lg-brand-orb" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 8h3.5M10.5 8H14M5.5 8L8 4.5 10.5 8 8 11.5z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v4.0.7</span>
-          <span class="lg-session-pill" id="wizLaunchBadge">Первый запуск</span>
-        </div>
-        <button class="lg-icon-btn round" type="button" data-action="closeOnboardingWizard" title="Отложить или закрыть окно настройки (Esc)">×</button>
-      </div>
-      <div class="wiz-steps-grid">
-        <button type="button" class="wiz-step-pill active" id="wizPill1" data-action="wizGoStep" data-arg="1" title="Язык интерфейса, тариф Pro / Ultra и локальные ресурсы ПК (RAM, CPU, GPU)">1. Железо и Тариф</button>
-        <button type="button" class="wiz-step-pill" id="wizPill2" data-action="wizGoStep" data-arg="2" title="Режим контроля ИИ, превью дизайна UI, теневые бэкапы и Фоновый Дозор">2. Поведение и Защита</button>
-      </div>
-    </div>
-
-    <div class="wiz-body-well" id="wizBodyContent"></div>
-
-    <div class="wiz-footer">
-      <span id="wizStepHint" class="wiz-step-hint">Шаг 1 из 2 · Калибровка ПК</span>
-      <div class="wiz-footer-actions">
-        <button type="button" class="win-btn" id="wizBackBtn" data-action="wizPrevStep">← Назад</button>
-        <button type="button" class="win-btn" id="wizQuickSaveBtn" data-action="wizFinishNow" style="display: none;" title="Сразу применить текущие изменения без перехода на вторую вкладку">✓ Сохранить</button>
-        <button type="button" class="win-btn active" id="wizNextBtn" data-action="wizNextStep">Далее →</button>
       </div>
     </div>
   </div>
