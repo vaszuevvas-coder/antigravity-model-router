@@ -1840,7 +1840,7 @@
           </div>
           <div class="bento-tile bento-control-tile">
             <span class="bento-tile-title" title="Экспорт и восстановление файла router-state.json со всеми вашими настройками и лимитами">Резервная копия</span>
-            <div class="win-btn-group">
+            <div class="bento-action-group">
               <button type="button" class="win-btn" data-action="backupProfile" title="Сохранить копию текущих настроек роутера (router-state.json)">Сохранить</button>
               <button type="button" class="win-btn" data-action="restoreProfile" title="Восстановить ранее сохранённый профиль настроек роутера">Восстановить</button>
             </div>
@@ -2046,7 +2046,21 @@
             <span class="pg-cart-summary" id="pgCartSummary" title="Что делает: показывает число собранных в пакет файлов и их примерный бюджет в токенах. Зачем: позволяет контролировать размер контекста перед отправкой в чат.">Пакет: 0 ф. · ~0 ток.</span>
             <button type="button" class="pg-mini-btn pg-cart-clear-btn" id="pgCartClearBtn" data-action="pgClearContextCart" title="Что делает: очищает текущий пакет выбранных файлов. Зачем: позволяет быстро собрать новый набор модулей для следующей задачи.">×</button>
           </div>
-          <button type="button" class="win-btn active pg-btn-full" id="pgCartSendBtn" data-action="pgSendCartToComposer" title="Что делает: передаёт весь собранный список @file в Умный Композер. Зачем: экономит время и не даёт агенту забыть важные связанные файлы.">Пакет в Композер</button>
+          <div class="pg-cart-chips" id="pgCartChips"></div>
+          <div class="pg-cart-actions-row">
+            <div class="pg-ai-menu-wrap pg-cart-audit-wrap">
+              <button type="button" class="win-btn active pg-btn-full" id="pgCartAuditBtn" data-action="pgToggleCartAuditMenu" aria-haspopup="menu" aria-expanded="false" title="Что делает: открывает меню комплексного аудита всех выделенных через Ctrl+клик файлов (баги, риски, связка модулей, тесты). Зачем: позволяет проверить сразу несколько модулей одного этапа в одном чате.">Аудит пакета ▾</button>
+              <div class="pg-ai-menu pg-cart-audit-menu" id="pgCartAuditMenu" role="menu" hidden>
+                <button type="button" class="pg-ai-menu-item" role="menuitem" data-action="pgRunCartAudit" data-arg="chat:bugs">Найти баги и проблемы (чат)</button>
+                <button type="button" class="pg-ai-menu-item" role="menuitem" data-action="pgRunCartAudit" data-arg="chat:risks">Связи и риски группы (чат)</button>
+                <button type="button" class="pg-ai-menu-item" role="menuitem" data-action="pgRunCartAudit" data-arg="chat:explain">Объяснить связку модулей (чат)</button>
+                <button type="button" class="pg-ai-menu-item" role="menuitem" data-action="pgRunCartAudit" data-arg="chat:tests">План тестов для группы (чат)</button>
+                <div class="pg-ai-menu-sep"></div>
+                <button type="button" class="pg-ai-menu-item is-composer" role="menuitem" data-action="pgRunCartAudit" data-arg="composer:bugs">Аудит багов в Композер</button>
+              </div>
+            </div>
+            <button type="button" class="win-btn pg-cart-composer-btn" id="pgCartSendBtn" data-action="pgSendCartToComposer" title="Что делает: передаёт весь собранный список @file в Умный Композер. Зачем: экономит время и не даёт агенту забыть важные связанные файлы.">В Композер</button>
+          </div>
         </div>
 
         <div class="pg-ai-chat-box" id="pgAiChatBox" style="display: none;">

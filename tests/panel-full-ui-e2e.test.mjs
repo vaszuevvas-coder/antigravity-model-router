@@ -3420,8 +3420,8 @@ test('12. Phase 2 Variant C: Left mini-rail, embedded Sticky Progress, native Un
           b.offsetLeft = 2 + idx * 66;
           b.offsetTop = 2;
         });
-        const backupBtn = document.querySelector('[data-action="backupProfile"]');
-        const actionGroup = backupBtn ? backupBtn.parentElement : null;
+        const compactActionBtn = document.querySelector('[data-action="compactDigest"]');
+        const actionGroup = compactActionBtn ? compactActionBtn.parentElement : null;
         if (actionGroup) {
           actionGroup.querySelectorAll('button.win-btn').forEach(function (b, idx) {
             b.offsetWidth = 70;
@@ -3430,6 +3430,10 @@ test('12. Phase 2 Variant C: Left mini-rail, embedded Sticky Progress, native Un
             b.offsetTop = 2;
           });
         }
+        const backupBtn = document.querySelector('[data-action="backupProfile"]');
+        const backupIsStandaloneActionGroup = Boolean(
+          backupBtn && backupBtn.parentElement && backupBtn.parentElement.classList.contains('bento-action-group')
+        );
         syncAllSlidingPillsNow();
         const railPill = nav ? nav.querySelector('.rail-active-pill') : null;
         const segPill = swarmGroup ? swarmGroup.querySelector('.seg-active-pill') : null;
@@ -3445,6 +3449,7 @@ test('12. Phase 2 Variant C: Left mini-rail, embedded Sticky Progress, native Un
           segTransform: segPill ? segPill.style.transform : '',
           actionHasClass: Boolean(actionGroup && actionGroup.classList.contains('has-sliding-pill')),
           actionOpacity: actionPill ? actionPill.style.opacity : '',
+          backupIsStandaloneActionGroup,
         };
       })()
     `, dom.ctx);
@@ -3454,6 +3459,7 @@ test('12. Phase 2 Variant C: Left mini-rail, embedded Sticky Progress, native Un
     assert.match(pillCheck.segTransform, /translate3d\(/);
     assert.equal(pillCheck.actionHasClass, false, 'action-only button group without active item must not activate sliding pill');
     assert.equal(pillCheck.actionOpacity, '0');
+    assert.equal(pillCheck.backupIsStandaloneActionGroup, true, 'backup/restore buttons must use .bento-action-group instead of segmented track');
 
     // Verify segmented compaction threshold control (#compactionThresholdGroup) and smooth collapse/spoiler helpers
     const compactionUi = await vm.runInContext(`

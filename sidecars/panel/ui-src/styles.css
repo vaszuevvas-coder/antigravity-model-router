@@ -7387,6 +7387,91 @@
       justify-content: center;
     }
 
+    .pg-cart-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      max-height: 76px;
+      overflow-y: auto;
+      padding-right: 2px;
+    }
+
+    .pg-cart-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      max-width: 100%;
+      padding: 1px 4px 1px 6px;
+      border-radius: 4px;
+      background: rgba(77, 139, 140, 0.16);
+      border: 1px solid rgba(77, 139, 140, 0.36);
+      font-size: 9.5px;
+      line-height: 1.35;
+      color: var(--text-primary);
+    }
+
+    .pg-cart-chip-name {
+      background: none;
+      border: none;
+      padding: 0;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+      max-width: 138px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-align: left;
+    }
+
+    .pg-cart-chip-name:hover {
+      color: var(--c-emerald-soft);
+    }
+
+    .pg-cart-chip-rm {
+      background: none;
+      border: none;
+      padding: 0 2px;
+      color: var(--text-secondary);
+      font-size: 11px;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .pg-cart-chip-rm:hover {
+      color: var(--c-crimson-soft);
+    }
+
+    .pg-cart-chip-more {
+      font-size: 9.5px;
+      font-weight: 700;
+      color: var(--c-emerald-soft);
+      padding: 1px 4px;
+    }
+
+    .pg-cart-actions-row {
+      display: flex;
+      align-items: stretch;
+      gap: 5px;
+    }
+
+    .pg-cart-audit-wrap {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .pg-cart-audit-menu {
+      bottom: calc(100% + 4px);
+      top: auto;
+    }
+
+    .pg-cart-composer-btn {
+      flex: 0 0 auto;
+      padding-left: 8px;
+      padding-right: 8px;
+      white-space: nowrap;
+    }
+
     .pg-badge-pill.is-cycle {
       background: rgba(240, 72, 72, 0.18);
       border-color: rgba(240, 72, 72, 0.45);
