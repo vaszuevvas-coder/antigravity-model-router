@@ -7,7 +7,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, rea
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { atomicWriteJsonSync, safeReadJsonSync } from '../../../core/safe-json.mjs';
+import { safeReadJsonSync, updateJsonAtomicSync } from '../../../core/safe-json.mjs';
 import { isPidAlive, resolveTunnelCacheDir } from '../../../core/cache-dir.mjs';
 import { pickLang } from '../../../core/i18n.mjs';
 import { getCpuStatusSnapshot, readCpuTelemetry } from '../../../core/cpu-worker-pool.mjs';
@@ -40,6 +40,36 @@ import {
 } from './panel-state-skills.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const MAX_SAFE_DATE_MS = 8_640_000_000_000_000;
+
+function toFiniteNonNeg(val, fallback = 0) {
+  const n = Number(val);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+function toValidMsOrZero(val) {
+  if (val === null || val === undefined || val === '' || typeof val === 'boolean') return 0;
+  if (typeof val === 'number') {
+    return Number.isFinite(val) && val > 0 && val <= MAX_SAFE_DATE_MS ? val : 0;
+  }
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (!trimmed) return 0;
+    const asNum = Number(trimmed);
+    if (Number.isFinite(asNum)) {
+      return asNum > 0 && asNum <= MAX_SAFE_DATE_MS ? asNum : 0;
+    }
+    const parsed = Date.parse(trimmed);
+    return Number.isFinite(parsed) && parsed > 0 && parsed <= MAX_SAFE_DATE_MS ? parsed : 0;
+  }
+  return 0;
+}
+
+function toValidIsoOrEmpty(val) {
+  const ms = toValidMsOrZero(val);
+  return ms > 0 ? new Date(ms).toISOString() : '';
+}
 
 export async function safeGetHudAndProgressStatus(state = {}, activeWs = '') {
   try {
@@ -81,8 +111,8 @@ export async function safeGetHudAndProgressStatus(state = {}, activeWs = '') {
               commandPreview: String(t?.commandPreview || '').slice(0, 120),
               status: String(t?.status || 'done'),
               isDaemon: Boolean(t?.isDaemon),
-              startedAt: Number(t?.startedAt || 0),
-              updatedAt: Number(t?.updatedAt || 0),
+              startedAt: toValidMsOrZero(t?.startedAt),
+              updatedAt: toValidMsOrZero(t?.updatedAt),
               progressPct,
               progressMode,
               etaSec,
@@ -94,7 +124,7 @@ export async function safeGetHudAndProgressStatus(state = {}, activeWs = '') {
         }
         chat.backgroundTasksTotalCount = Math.max(
           chat.backgroundTasks.length,
-          Math.round(Number(chat.backgroundTasksTotalCount || 0))
+          Math.round(toFiniteNonNeg(chat.backgroundTasksTotalCount, 0))
         );
       }
     }
@@ -105,8 +135,12 @@ export async function safeGetHudAndProgressStatus(state = {}, activeWs = '') {
 }
 
 const GPU_PANEL_CACHE_TTL_MS = 2500;
+const GPU_PANEL_ERROR_GRACE_MS = 10_000;
 
 export const gpuStatusPanelCache = { ts: 0, value: null };
+let gpuStatusInFlight = null;
+let gpuStatusSeq = 0;
+let gpuStatusAppliedSeq = 0;
 
 export async function safeGetGpuStatus(rawOpts = {}) {
   const { force = false } = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
@@ -130,12 +164,33 @@ export async function safeGetGpuStatus(rawOpts = {}) {
       };
     }
     if (mod?.getGpuStatusSnapshot) {
-      const snap = await mod.getGpuStatusSnapshot({ force });
-      if (snap) Object.assign(gpuStatusPanelCache, { ts: Date.now(), value: snap });
-      return snap;
+      if (!force && gpuStatusInFlight) {
+        return await gpuStatusInFlight;
+      }
+      const reqSeq = ++gpuStatusSeq;
+      const runFetch = (async () => {
+        const snap = await mod.getGpuStatusSnapshot({ force });
+        if (snap && reqSeq >= gpuStatusAppliedSeq) {
+          gpuStatusAppliedSeq = reqSeq;
+          Object.assign(gpuStatusPanelCache, { ts: Date.now(), value: snap });
+        }
+        return snap;
+      })();
+      if (!force) {
+        gpuStatusInFlight = runFetch;
+      }
+      try {
+        return await runFetch;
+      } finally {
+        if (!force && gpuStatusInFlight === runFetch) {
+          gpuStatusInFlight = null;
+        }
+      }
     }
   } catch {}
-  return gpuStatusPanelCache.value || null;
+  return (!force && gpuStatusPanelCache.value && Date.now() - gpuStatusPanelCache.ts <= GPU_PANEL_ERROR_GRACE_MS)
+    ? gpuStatusPanelCache.value
+    : null;
 }
 
 export async function safeGetHardwareProfile(state = {}, force = false) {
@@ -180,37 +235,37 @@ export async function safeResetCircuitBreaker(workspaceRoot = '') {
       const st = (mod.getCircuitState && typeof mod.getCircuitState === 'function')
         ? await mod.getCircuitState(scope || undefined)
         : { status: 'CLOSED', reason: 'Автомат сброшен оператором', reasonEn: 'Reset by operator', repeatCount: 0 };
-      return { ok: true, circuitBreaker: st, ...res };
+      return { ok: true, circuitBreaker: st, ...(res && typeof res === 'object' ? res : {}) };
     }
+    return { ok: false, error: 'Circuit breaker module unavailable' };
   } catch (err) {
-    console.warn('Ошибка resetCircuitBreaker:', err.message);
+    console.warn('Ошибка resetCircuitBreaker:', err?.message || err);
+    return { ok: false, error: err?.message || 'Failed to reset circuit breaker' };
   }
-  return {
-    ok: true,
-    circuitBreaker: { status: 'CLOSED', reason: 'Сброшен (режим ожидания)', reasonEn: 'Reset (standby mode)', repeatCount: 0 },
-  };
 }
 
 export async function safeCheckCompaction(thresholdTokens = 120000, telemetry = {}) {
+  const safeTel = telemetry && typeof telemetry === 'object' ? telemetry : {};
+  const rawThresh = Number(thresholdTokens);
+  const thresh = Number.isFinite(rawThresh) && rawThresh > 0 ? rawThresh : 120000;
   try {
     const mod = await getHistoryCompactorMod();
     if (mod && typeof mod.checkHistoryCompaction === 'function') {
       const res = await mod.checkHistoryCompaction({
-        conversationId: telemetry?.activeChat?.convoId || '',
-        transcriptPath: telemetry?.activeChat?.transcriptPath || '',
-        thresholdTokens,
+        conversationId: safeTel.activeChat?.convoId || '',
+        transcriptPath: safeTel.activeChat?.transcriptPath || '',
+        thresholdTokens: thresh,
         readOnly: true,
       });
       if (res) return res;
     }
   } catch (err) {
-    console.warn('Ошибка checkHistoryCompaction:', err.message);
+    console.warn('Ошибка checkHistoryCompaction:', err?.message || err);
   }
-  const promptTokens = Number(
-    telemetry?.activeChat?.lastContextTokens ??
-      ((telemetry.inputTokens || 0) + (telemetry.cacheReadTokens || 0))
-  );
-  const thresh = Number(thresholdTokens || 120000);
+  const hasLastCtx = safeTel.activeChat?.lastContextTokens !== undefined && safeTel.activeChat?.lastContextTokens !== null;
+  const promptTokens = hasLastCtx
+    ? toFiniteNonNeg(safeTel.activeChat.lastContextTokens, 0)
+    : (toFiniteNonNeg(safeTel.inputTokens, 0) + toFiniteNonNeg(safeTel.cacheReadTokens, 0));
   const epoch = thresh > 0 ? Math.floor(promptTokens / thresh) : 0;
   const inEpoch = thresh > 0 ? promptTokens % thresh : 0;
   const fill = thresh > 0 ? Math.min(100, Math.round((inEpoch / thresh) * 100)) : 0;
@@ -229,17 +284,11 @@ export async function safeTriggerManualCompactionDigest(opts = {}) {
       const cid = typeof opts === 'string' ? opts : (opts?.conversationId || '');
       return await mod.triggerManualCompactionDigest(cid);
     }
+    return { ok: false, error: 'History compactor module unavailable' };
   } catch (err) {
-    console.warn('Ошибка triggerManualCompactionDigest:', err.message);
-    return { ok: false, error: err.message };
+    console.warn('Ошибка triggerManualCompactionDigest:', err?.message || err);
+    return { ok: false, error: err?.message || 'Failed to generate compaction digest' };
   }
-  return {
-    ok: true,
-    epoch: 1,
-    savedTokens: 0,
-    message: 'Дайджест контекста сформирован',
-    messageEn: 'Context digest generated',
-  };
 }
 
 export async function safeListPitfalls(limit = 10, workspaceRoot = '') {
@@ -259,12 +308,14 @@ export async function safeClearPitfalls(workspaceRoot = '') {
   try {
     const mod = await getPitfallLedgerMod();
     if (mod && typeof mod.clearPitfalls === 'function') {
-      return await mod.clearPitfalls(workspaceRoot);
+      const res = await mod.clearPitfalls(workspaceRoot);
+      return res && typeof res === 'object' ? { ok: true, cleared: true, ...res } : { ok: true, cleared: true };
     }
+    return { ok: false, error: 'Pitfall ledger module unavailable' };
   } catch (err) {
-    console.warn('Ошибка clearPitfalls:', err.message);
+    console.warn('Ошибка clearPitfalls:', err?.message || err);
+    return { ok: false, error: err?.message || 'Failed to clear pitfalls' };
   }
-  return { ok: true, cleared: true };
 }
 
 export async function safeGetKnowledgeSnapshot(workspaceRoot = '', state = {}) {
@@ -323,33 +374,37 @@ export async function safeResetBayesianPriors(workspaceRoot = '', onlyFragility 
     if (mod && typeof mod.resetBayesianPriors === 'function') {
       return await mod.resetBayesianPriors({ workspaceRoot: cleanWs, onlyFragility: Boolean(onlyFragility) });
     }
+    return { ok: false, error: 'Bayesian router module unavailable' };
   } catch (err) {
-    console.warn('Ошибка resetBayesianPriors:', err.message);
+    console.warn('Ошибка resetBayesianPriors:', err?.message || err);
+    return { ok: false, error: err?.message || 'Failed to reset Bayesian priors' };
   }
-  return {
-    ok: true,
-    summary: await safeGetBayesianSummary(cleanWs),
-    message: 'Веса Байесовского доверия сброшены к начальным априорным распределениям Beta(α, β)',
-    messageEn: 'Bayesian confidence weights reset to Beta(α, β) priors',
-  };
 }
 
 export async function safeListCheckpoints(limit = 8, workspaceRoot = '') {
+  const safeLimit = clampSafeInt(limit, 0, 500, 8);
+  if (safeLimit === 0) return [];
   try {
     const mod = await getShadowGuard();
     if (mod && typeof mod.listCheckpoints === 'function') {
-      return await mod.listCheckpoints(limit, workspaceRoot);
+      return await mod.listCheckpoints(safeLimit, workspaceRoot);
     }
   } catch (err) {
-    console.warn('Ошибка listCheckpoints:', err.message);
+    console.warn('Ошибка listCheckpoints:', err?.message || err);
   }
 
   // Встроенный fallback: чтение файлов чекпоинтов
   try {
     const cpDir = join(homedir(), '.gemini', 'checkpoints');
     if (existsSync(cpDir)) {
-      const cleanCpWs = (workspaceRoot && workspaceRoot !== '__all__') ? workspaceRoot : '';
-      const normWs = cleanCpWs ? resolve(cleanCpWs).replace(/\\/g, '/').toLowerCase() : '';
+      const cleanCpWs = (typeof workspaceRoot === 'string' && workspaceRoot.trim() && workspaceRoot.trim() !== '__all__')
+        ? parseWorkspaceUriToPath(workspaceRoot)
+        : '';
+      const normPathForMatch = (p) => {
+        const s = resolve(p).replace(/\\/g, '/').replace(/\/+$/, '');
+        return process.platform === 'win32' ? s.toLowerCase() : s;
+      };
+      const normWs = cleanCpWs ? normPathForMatch(cleanCpWs) : '';
       let entries = readdirSync(cpDir, { withFileTypes: true })
         .filter((d) => d.isFile() && d.name.endsWith('.json'))
         .map((d) => {
@@ -358,15 +413,18 @@ export async function safeListCheckpoints(limit = 8, workspaceRoot = '') {
           } catch { return null; }
         })
         .filter(Boolean)
-        .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+        .sort((a, b) => toValidMsOrZero(b.timestamp) - toValidMsOrZero(a.timestamp));
       if (normWs) {
-        const scoped = entries.filter((e) => {
-          const target = String(e.workspaceRoot || e.filePath || '').replace(/\\/g, '/').toLowerCase();
-          return target.startsWith(normWs);
+        const normWsPrefix = normWs.endsWith('/') ? normWs : `${normWs}/`;
+        entries = entries.filter((e) => {
+          const rawTarget = String(e?.workspaceRoot || e?.filePath || '').trim();
+          if (!rawTarget) return false;
+          let target = rawTarget.replace(/\\/g, '/').replace(/\/+$/, '');
+          if (process.platform === 'win32') target = target.toLowerCase();
+          return target === normWs || target.startsWith(normWsPrefix);
         });
-        if (scoped.length > 0) entries = scoped;
       }
-      entries = entries.slice(0, limit);
+      entries = entries.slice(0, safeLimit);
       if (entries.length) return entries;
     }
   } catch {}
@@ -487,6 +545,8 @@ let brainScanCache = { ts: 0, key: '', value: null };
 function parseSingleChatDelta(filePath, st) {
   const prev = perChatTelemetryCache.get(filePath);
   if (prev && prev.mtimeMs === st.mtimeMs && prev.size === st.size) {
+    perChatTelemetryCache.delete(filePath);
+    perChatTelemetryCache.set(filePath, prev);
     return prev.accum;
   }
 
@@ -528,16 +588,18 @@ function parseSingleChatDelta(filePath, st) {
         const foundWs = (cwdMatch?.[1] || wsMatch?.[1] || '').trim();
         if (foundWs) accum.workspaceRoot = foundWs;
       }
-      if (obj.input_tokens || obj.output_tokens || obj.cache_read_tokens) {
-        accum.steps += 1;
-        const inTok = Number(obj.input_tokens || 0);
-        const outTok = Number(obj.output_tokens || 0);
-        const cacheTok = Number(obj.cache_read_tokens || 0);
-        accum.inputTokens += inTok;
-        accum.outputTokens += outTok;
-        accum.cacheReadTokens += cacheTok;
-        if (inTok > 0 || cacheTok > 0) {
-          accum.lastContextTokens = inTok + cacheTok;
+      if (obj.input_tokens !== undefined || obj.output_tokens !== undefined || obj.cache_read_tokens !== undefined) {
+        const inTok = toFiniteNonNeg(obj.input_tokens, 0);
+        const outTok = toFiniteNonNeg(obj.output_tokens, 0);
+        const cacheTok = toFiniteNonNeg(obj.cache_read_tokens, 0);
+        if (inTok > 0 || outTok > 0 || cacheTok > 0) {
+          accum.steps += 1;
+          accum.inputTokens += inTok;
+          accum.outputTokens += outTok;
+          accum.cacheReadTokens += cacheTok;
+          if (inTok > 0 || cacheTok > 0) {
+            accum.lastContextTokens = inTok + cacheTok;
+          }
         }
       }
       if (Array.isArray(obj.tool_calls)) {
@@ -628,7 +690,9 @@ function parseSingleChatDelta(filePath, st) {
     }
   }
 
-  if (perChatTelemetryCache.size >= MAX_TRACKED_CHATS && !perChatTelemetryCache.has(filePath)) {
+  if (perChatTelemetryCache.has(filePath)) {
+    perChatTelemetryCache.delete(filePath);
+  } else if (perChatTelemetryCache.size >= MAX_TRACKED_CHATS) {
     const oldestKey = perChatTelemetryCache.keys().next().value;
     if (oldestKey) perChatTelemetryCache.delete(oldestKey);
   }
@@ -646,7 +710,10 @@ export function collectTelemetry(configuredThreshold = 120000, options = {}) {
   const customBrainDirs = Array.isArray(options?.brainDirs) ? options.brainDirs : null;
   const rawWs = typeof options?.workspaceRoot === 'string' ? options.workspaceRoot.trim() : '';
   const normWs = rawWs && rawWs !== '__all__' ? normalizeWorkspaceUriKey(rawWs) : '';
-  const cacheKey = `${configuredThreshold}::${normWs}`;
+  const rawThresh = Number(configuredThreshold);
+  const numericThreshold = Number.isFinite(rawThresh) && rawThresh > 0 ? rawThresh : 120000;
+  const skipGlobalGpu = options?.skipGlobalGpuTelemetry ? '1' : '0';
+  const cacheKey = `${numericThreshold}::${normWs}::${skipGlobalGpu}`;
   const now = Date.now();
   if (
     !customBrainDirs &&
@@ -658,7 +725,7 @@ export function collectTelemetry(configuredThreshold = 120000, options = {}) {
       ? mergeRamSavingsIntoTelemetry(brainScanCache.value, options.ramStats)
       : brainScanCache.value;
   }
-  const baseValue = collectTelemetryUncached(configuredThreshold, options?.ramStats ? { ...options, ramStats: null } : options);
+  const baseValue = collectTelemetryUncached(numericThreshold, options?.ramStats ? { ...options, ramStats: null } : options);
   if (!customBrainDirs) {
     brainScanCache = { ts: now, key: cacheKey, value: baseValue };
   }
@@ -691,7 +758,8 @@ function collectTelemetryUncached(configuredThreshold = 120000, options = {}) {
     : ['antigravity', 'antigravity-ide', 'antigravity-cli']
         .map((dir) => join(geminiRoot, dir, 'brain'))
         .filter((p) => existsSync(p));
-  const numericThreshold = Number(configuredThreshold || 120000);
+  const rawThresh = Number(configuredThreshold);
+  const numericThreshold = Number.isFinite(rawThresh) && rawThresh > 0 ? rawThresh : 120000;
 
   let gpuSavedTokens = 0;
   if (!options?.skipGlobalGpuTelemetry) {
@@ -699,7 +767,7 @@ function collectTelemetryUncached(configuredThreshold = 120000, options = {}) {
       const gpuTelFile = join(__dirname, '..', '..', '..', '.cache', 'gpu-telemetry.json');
       if (existsSync(gpuTelFile)) {
         const gpuTel = safeReadJsonSync(gpuTelFile, () => null, { selfHeal: false });
-        gpuSavedTokens = Math.max(0, Number(gpuTel?.savedTokensEstimate || 0));
+        gpuSavedTokens = toFiniteNonNeg(gpuTel?.savedTokensEstimate, 0);
       }
     } catch {}
   }
@@ -782,7 +850,7 @@ function collectTelemetryUncached(configuredThreshold = 120000, options = {}) {
         if (!existsSync(tPath)) continue;
         try {
           const st = statSync(tPath);
-          if (st.size > 0 && !isSubagentTranscriptFile(tPath)) {
+          if (st.isFile() && st.size > 0 && !isSubagentTranscriptFile(tPath)) {
             mainFiles.push({ path: tPath, st });
           }
         } catch {}
@@ -818,7 +886,12 @@ function collectTelemetryUncached(configuredThreshold = 120000, options = {}) {
     let freshestSwarm = null;
     for (let idx = 0; idx < tracked.length; idx++) {
       const item = tracked[idx];
-      const chatAccum = parseSingleChatDelta(item.path, item.st);
+      let chatAccum;
+      try {
+        chatAccum = parseSingleChatDelta(item.path, item.st);
+      } catch {
+        continue;
+      }
       stats.steps += chatAccum.steps;
       stats.inputTokens += chatAccum.inputTokens;
       stats.outputTokens += chatAccum.outputTokens;
@@ -915,7 +988,7 @@ function collectTelemetryUncached(configuredThreshold = 120000, options = {}) {
     if (!options?.skipGlobalGpuTelemetry) {
       try {
         const cpuTel = readCpuTelemetry();
-        cpuSavedTokens = Math.max(0, Number(cpuTel?.cpuSavedTokensEstimate ?? cpuTel?.totalSavedTokens ?? 0));
+        cpuSavedTokens = toFiniteNonNeg(cpuTel?.cpuSavedTokensEstimate ?? cpuTel?.totalSavedTokens, 0);
       } catch {}
     }
     stats.cpuSavedTokens = cpuSavedTokens;
@@ -942,7 +1015,7 @@ function normPanelConversationId(rawCid = '') {
 }
 
 export async function resolveActiveWorkspaceForPanel(requestedRoot = '', options = {}) {
-  const cleanReq = typeof requestedRoot === 'string' ? requestedRoot.trim() : '';
+  const cleanReq = parseWorkspaceUriToPath(requestedRoot);
   if (cleanReq && cleanReq !== '__all__' && cleanReq !== '__auto__' && isValidWorkspaceDir(cleanReq)) {
     return resolve(cleanReq);
   }
@@ -1040,10 +1113,10 @@ export async function resolveActiveWorkspaceForPanel(requestedRoot = '', options
       const cand = evaluateCandidate(effectiveWs);
       if (!cand) continue;
       const ts = Math.max(
-        Number(chat.updatedAt || 0),
-        Number(chat.lastPreToolAt || 0),
-        Number(chat.lastPostToolAt || 0),
-        Number(chat.completedAt || 0)
+        toValidMsOrZero(chat.updatedAt),
+        toValidMsOrZero(chat.lastPreToolAt),
+        toValidMsOrZero(chat.lastPostToolAt),
+        toValidMsOrZero(chat.completedAt)
       );
       const normCid = normPanelConversationId(chat.conversationId || rawCidKey);
       if (normCid) {
@@ -1126,7 +1199,7 @@ export async function resolveActiveWorkspaceForPanel(requestedRoot = '', options
         for (const c of hEntries) {
           const cand = evaluateCandidate(c?.workspaceRoot);
           if (!cand) continue;
-          const ts = Date.parse(c?.updatedAt || '') || 0;
+          const ts = toValidMsOrZero(c?.updatedAt);
           recentCandidates.push({ ...cand, ts, priority: 1 });
         }
       }
@@ -1136,7 +1209,7 @@ export async function resolveActiveWorkspaceForPanel(requestedRoot = '', options
   for (const cpWs of cpWorkspaces) {
     const cand = evaluateCandidate(cpWs?.workspaceRoot);
     if (!cand) continue;
-    const ts = Date.parse(cpWs?.lastTimestamp || '') || 0;
+    const ts = toValidMsOrZero(cpWs?.lastTimestamp);
     recentCandidates.push({ ...cand, ts, priority: 0 });
   }
 
@@ -1156,8 +1229,9 @@ export async function resolveActiveWorkspaceForPanel(requestedRoot = '', options
     }
   } catch {}
   if (fallbackUmbrellaWs) return fallbackUmbrellaWs;
-  if (cpWorkspaces[0]?.workspaceRoot && isValidWorkspaceDir(cpWorkspaces[0].workspaceRoot)) {
-    return resolve(cpWorkspaces[0].workspaceRoot);
+  const fallbackCp = evaluateCandidate(cpWorkspaces[0]?.workspaceRoot);
+  if (fallbackCp) {
+    return fallbackCp.abs;
   }
   return process.cwd();
 }
@@ -1285,24 +1359,24 @@ export async function collectKnownWorkspacesForPanel({
     if (patch.isOpenInIde) {
       rec.isOpenInIde = true;
     }
-    if (typeof patch.checkpointsCount === 'number') {
+    if (typeof patch.checkpointsCount === 'number' && Number.isFinite(patch.checkpointsCount)) {
       rec.checkpointsCount = Math.max(rec.checkpointsCount, patch.checkpointsCount);
     }
-    if (typeof patch.activeCheckpointsCount === 'number') {
+    if (typeof patch.activeCheckpointsCount === 'number' && Number.isFinite(patch.activeCheckpointsCount)) {
       rec.activeCheckpointsCount = Math.max(rec.activeCheckpointsCount, patch.activeCheckpointsCount);
     }
     if (patch.lastTimestamp) {
-      const nextTs = new Date(patch.lastTimestamp).getTime() || 0;
-      const prevTs = rec.lastTimestamp ? (new Date(rec.lastTimestamp).getTime() || 0) : 0;
+      const nextTs = toValidMsOrZero(patch.lastTimestamp);
+      const prevTs = rec.lastTimestamp ? toValidMsOrZero(rec.lastTimestamp) : 0;
       if (nextTs > prevTs) rec.lastTimestamp = new Date(nextTs).toISOString();
     }
     if (patch.status && (patch.status === 'running' || patch.status === 'waiting_user' || rec.status === 'idle')) {
       rec.status = patch.status;
     }
-    if (typeof patch.activeChatsCount === 'number' && patch.activeChatsCount > rec.activeChatsCount) {
+    if (typeof patch.activeChatsCount === 'number' && Number.isFinite(patch.activeChatsCount) && patch.activeChatsCount > rec.activeChatsCount) {
       rec.activeChatsCount = patch.activeChatsCount;
     }
-    if (typeof patch.percent === 'number' && patch.percent > rec.percent) {
+    if (typeof patch.percent === 'number' && Number.isFinite(patch.percent) && patch.percent > rec.percent) {
       rec.percent = patch.percent;
     }
   };
@@ -1346,9 +1420,9 @@ export async function collectKnownWorkspacesForPanel({
     if (tp?.workspaceRoot) {
       upsert(tp.workspaceRoot, {
         status: tp.status || 'idle',
-        activeChatsCount: Number(tp.activeChatsCount || 0),
-        percent: Number(tp.percent || 0),
-        lastTimestamp: tp.updatedAt ? new Date(Number(tp.updatedAt)).toISOString() : '',
+        activeChatsCount: toFiniteNonNeg(tp.activeChatsCount, 0),
+        percent: toFiniteNonNeg(tp.percent, 0),
+        lastTimestamp: toValidIsoOrEmpty(tp.updatedAt),
       });
     }
   }
@@ -1358,8 +1432,8 @@ export async function collectKnownWorkspacesForPanel({
         upsert(c.workspaceRoot, {
           status: c.status || 'idle',
           activeChatsCount: 1,
-          percent: Number(c.percent || 0),
-          lastTimestamp: c.updatedAt ? new Date(Number(c.updatedAt)).toISOString() : '',
+          percent: toFiniteNonNeg(c.percent, 0),
+          lastTimestamp: toValidIsoOrEmpty(c.updatedAt),
         });
       }
     }
@@ -1473,15 +1547,22 @@ export async function discoverUserProjectsForGraph({
   ramCache = null,
   allowActiveEphemeral = false,
 } = {}) {
+  const cleanActiveWs = parseWorkspaceUriToPath(activeWs);
+  const cleanAutoWs = parseWorkspaceUriToPath(autoWs);
   const [known, hMod, khMod] = await Promise.all([
-    collectKnownWorkspacesForPanel({ activeWs, autoWs, openWorkspaces, taskProgress, ramCache }),
+    collectKnownWorkspacesForPanel({ activeWs: cleanActiveWs, autoWs: cleanAutoWs, openWorkspaces, taskProgress, ramCache }),
     getSessionHandoffMod().catch(() => null),
     getKnowledgeHubMod().catch(() => null),
   ]);
 
   const byKey = new Map();
-  const activeKey = activeWs ? normalizeWorkspaceUriKey(activeWs) : '';
-  const activeParentKey = activeWs ? normalizeWorkspaceUriKey(dirname(resolve(activeWs))) : '';
+  const activeKey = cleanActiveWs ? normalizeWorkspaceUriKey(cleanActiveWs) : '';
+  let activeParentKey = '';
+  if (cleanActiveWs) {
+    try {
+      activeParentKey = normalizeWorkspaceUriKey(dirname(resolve(cleanActiveWs)));
+    } catch {}
+  }
 
   const upsertProject = (rawPath, { source = 'discovered', seed = null, allowEphemeral = false, isOpenInIde = false } = {}) => {
     const parsedPath = parseWorkspaceUriToPath(rawPath);
@@ -1499,12 +1580,12 @@ export async function discoverUserProjectsForGraph({
         workspaceRoot: abs,
         projectName: seed?.projectName || basename(abs) || abs,
         parentHint: seed?.parentHint || basename(dirname(abs)) || '',
-        checkpointsCount: Number(seed?.checkpointsCount || 0),
-        activeCheckpointsCount: Number(seed?.activeCheckpointsCount || 0),
+        checkpointsCount: toFiniteNonNeg(seed?.checkpointsCount, 0),
+        activeCheckpointsCount: toFiniteNonNeg(seed?.activeCheckpointsCount, 0),
         lastTimestamp: seed?.lastTimestamp || '',
         status: seed?.status || 'idle',
-        activeChatsCount: Number(seed?.activeChatsCount || 0),
-        percent: Number(seed?.percent || 0),
+        activeChatsCount: toFiniteNonNeg(seed?.activeChatsCount, 0),
+        percent: toFiniteNonNeg(seed?.percent, 0),
         source: (isOpenInIde || seed?.isOpenInIde) ? 'open_ide' : (seed?.source || source),
         isOpenInIde: Boolean(isOpenInIde || seed?.isOpenInIde),
       });
@@ -1524,11 +1605,11 @@ export async function discoverUserProjectsForGraph({
     }
   }
 
-  if (activeWs) {
-    upsertProject(activeWs, { source: 'known', allowEphemeral: allowActiveEphemeral });
+  if (cleanActiveWs) {
+    upsertProject(cleanActiveWs, { source: 'known', allowEphemeral: allowActiveEphemeral });
   }
-  if (autoWs) {
-    upsertProject(autoWs, { source: 'known', allowEphemeral: false });
+  if (cleanAutoWs) {
+    upsertProject(cleanAutoWs, { source: 'known', allowEphemeral: false });
   }
 
   if (Array.isArray(openWorkspaces)) {
@@ -1545,8 +1626,8 @@ export async function discoverUserProjectsForGraph({
 
   try {
     const hub = khMod?.knowledgeHub;
-    if (activeWs && typeof hub?.getFederatedWorkspaces === 'function') {
-      const peers = hub.getFederatedWorkspaces(activeWs);
+    if (cleanActiveWs && typeof hub?.getFederatedWorkspaces === 'function') {
+      const peers = hub.getFederatedWorkspaces(cleanActiveWs);
       if (Array.isArray(peers)) {
         for (const p of peers) {
           if (p?.path) upsertProject(p.path, { source: 'federated' });
@@ -1583,8 +1664,8 @@ export async function discoverUserProjectsForGraph({
   } catch {}
 
   const parentSeeds = [];
-  if (activeWs) parentSeeds.push(dirname(resolve(activeWs)));
-  if (autoWs) parentSeeds.push(dirname(resolve(autoWs)));
+  if (cleanActiveWs) parentSeeds.push(dirname(resolve(cleanActiveWs)));
+  if (cleanAutoWs) parentSeeds.push(dirname(resolve(cleanAutoWs)));
   for (const item of known.slice(0, 3)) {
     if (item?.workspaceRoot) parentSeeds.push(dirname(resolve(item.workspaceRoot)));
   }
@@ -1634,251 +1715,292 @@ export async function discoverUserProjectsForGraph({
 }
 
 const ramDeltaTrackerByPid = new Map();
+const MAX_TRACKED_RAM_PIDS = 32;
 const RAM_STATUS_GRACE_MS = 12000;
 let lastActiveRamCacheSnap = { ts: 0, pids: [], data: null };
+let ramCacheInFlight = null;
 
 export async function safeGetRamCacheStatus(state = {}) {
-  const ceilings = getRuntimeHardwareCeilings();
+  let ceilings = { maxRamBudgetMb: 4096, totalRamMb: 16384 };
+  try {
+    ceilings = getRuntimeHardwareCeilings() || ceilings;
+  } catch {}
   const budgetMb = clampSafeInt(state?.ramMaxBudgetMb, 256, ceilings.maxRamBudgetMb, Math.min(4096, ceilings.maxRamBudgetMb));
   const totalRamMb = ceilings.totalRamMb;
   const enabled = state?.ramCacheEnabled !== false;
   const daemonFile = join(__dirname, '..', '..', '..', '.cache', 'ram-daemon.json');
-  try {
-    if (!enabled || !existsSync(daemonFile)) {
-      lastActiveRamCacheSnap = { ts: 0, pids: [], data: null };
-      return { enabled, active: false, budgetMb, totalRamMb, cacheUsedMb: 0, workspaces: [], instancesCount: 0 };
-    }
-    const info = safeReadJsonSync(daemonFile, null, { selfHeal: true });
-    if (!info || typeof info !== 'object') {
-      lastActiveRamCacheSnap = { ts: 0, pids: [], data: null };
-      return { enabled, active: false, budgetMb, totalRamMb, cacheUsedMb: 0, workspaces: [], instancesCount: 0 };
-    }
+  if (!enabled) {
+    return { enabled: false, active: false, budgetMb, totalRamMb, cacheUsedMb: 0, workspaces: [], instancesCount: 0 };
+  }
+  if (ramCacheInFlight) {
+    const shared = await ramCacheInFlight;
+    return { ...shared, enabled, budgetMb, totalRamMb };
+  }
 
-    const candidates = [];
-    const seen = new Set();
-    const pushCand = (c) => {
-      if (!c || !c.port || !c.token) return;
-      const key = `${c.port}:${c.pid ?? ''}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      candidates.push(c);
-    };
-
-    if (Array.isArray(info.instances)) {
-      for (const inst of info.instances) pushCand(inst);
-    } else if (info.instances && typeof info.instances === 'object') {
-      for (const inst of Object.values(info.instances)) pushCand(inst);
-    }
-    pushCand({ pid: info.pid, port: info.port, token: info.token });
-
-    const liveResponses = (await Promise.all(candidates.map((c) => querySingleRamDaemon(c)))).filter(
-      (res) => res?.ok && res?.stats
-    );
-    if (liveResponses.length > 0) {
-      const now = Date.now();
-      const primary = liveResponses[0];
-      const mergedWorkspaces = [];
-      const wsSeen = new Set();
-      let fallbackUsedMb = 0;
-      let sumHits = 0;
-      let sumMisses = 0;
-      let sumSearches = 0;
-      let sumSlices = 0;
-      let sumActiveOps = 0;
-      let sumOpSeq = 0;
-      let sumBurstCount = 0;
-      let sumSotaSavedTokens = 0;
-      let sumSotaNonSliceSavedTokens = 0;
-      let hasExplicitNonSlice = false;
-      let sumSotaMemoHits = 0;
-      let sumSotaRepairRecalls = 0;
-      let sumSotaSpecPrefetches = 0;
-      let sumSotaArenaBytes = 0;
-      let sumSotaCsrBytes = 0;
-      let freshestLive = null;
-
-      for (const res of liveResponses) {
-        const st = res.stats || {};
-        const sota = st.sota && typeof st.sota === 'object' ? st.sota : null;
-        sumSotaSavedTokens += Math.max(0, Number(st.savedTokensEstimate || sota?.savedTokensEstimate || 0));
-        if (st.sotaNonSliceSavedTokens !== undefined || sota?.nonSliceSavedTokens !== undefined) {
-          hasExplicitNonSlice = true;
-          sumSotaNonSliceSavedTokens += Math.max(
-            0,
-            Number(st.sotaNonSliceSavedTokens ?? sota?.nonSliceSavedTokens ?? 0)
-          );
-        }
-        if (sota) {
-          sumSotaMemoHits += Math.max(0, Number(sota.memoHits || 0));
-          sumSotaRepairRecalls += Math.max(0, Number(sota.repairRecalls || 0));
-          sumSotaSpecPrefetches += Math.max(0, Number(sota.speculativePrefetches || 0));
-          sumSotaArenaBytes += Math.max(0, Number(sota.arenaBytes || 0));
-          sumSotaCsrBytes += Math.max(0, Number(sota.csrBytes || 0));
-        }
-        const pidKey = String(res.pid || '0');
-        const hits = Number(st.hits || 0);
-        const slices = Number(st.slices || 0);
-        const searches = Number(st.searches || 0);
-        sumHits += hits;
-        sumMisses += Number(st.misses || 0);
-        sumSearches += searches;
-        sumSlices += slices;
-
-        const prevSnap = ramDeltaTrackerByPid.get(pidKey);
-        let syntheticLive = null;
-        if (prevSnap) {
-          const dSlices = Math.max(0, slices - prevSnap.slices);
-          const dSearches = Math.max(0, searches - prevSnap.searches);
-          const dHits = Math.max(0, hits - prevSnap.hits);
-          const deltaOps = dSlices + dSearches || dHits;
-          if (deltaOps > 0) {
-            const inferredOp = dSlices > 0 ? 'ram_slice' : (dSearches > 0 ? 'ram_search' : 'ram_hit');
-            const prevBurst = (now - prevSnap.lastDeltaAt <= 4000) ? prevSnap.burstCount : 0;
-            prevSnap.lastDeltaAt = now;
-            prevSnap.lastOp = inferredOp;
-            prevSnap.burstCount = prevBurst + deltaOps;
-            prevSnap.seq += 1;
-          }
-          prevSnap.hits = hits;
-          prevSnap.slices = slices;
-          prevSnap.searches = searches;
-          if (prevSnap.lastDeltaAt > 0) {
-            const msAgo = Math.max(0, now - prevSnap.lastDeltaAt);
-            const inGlow = msAgo <= 3200;
-            syntheticLive = {
-              activeOps: 0,
-              opSeq: prevSnap.seq,
-              lastActiveAt: prevSnap.lastDeltaAt,
-              msSinceLast: msAgo,
-              lastOp: prevSnap.lastOp,
-              lastTarget: '',
-              lastLatencyMs: 0.7,
-              burstCount: msAgo <= 4500 ? prevSnap.burstCount : 0,
-              isWorking: inGlow,
-              afterglowRatio: inGlow ? Number(Math.max(0, 1 - msAgo / 3200).toFixed(3)) : 0,
-            };
-          }
-        } else {
-          ramDeltaTrackerByPid.set(pidKey, {
-            hits,
-            slices,
-            searches,
-            lastDeltaAt: 0,
-            lastOp: '',
-            burstCount: 0,
-            seq: 0,
-          });
-        }
-
-        const daemonLive = st.liveActivity && typeof st.liveActivity === 'object' ? st.liveActivity : null;
-        const chosenLive = (daemonLive && (daemonLive.lastActiveAt || 0) >= (syntheticLive?.lastActiveAt || 0))
-          ? daemonLive
-          : (syntheticLive || daemonLive);
-        if (chosenLive) {
-          sumActiveOps += Number(chosenLive.activeOps || 0);
-          sumOpSeq += Number(chosenLive.opSeq || 0);
-          sumBurstCount += Number(chosenLive.burstCount || 0);
-          if (!freshestLive || Number(chosenLive.lastActiveAt || 0) > Number(freshestLive.lastActiveAt || 0)) {
-            freshestLive = chosenLive;
-          }
-        }
-
-        const wsArr = Array.isArray(st.workspaces) ? st.workspaces : [];
-        if (wsArr.length === 0) {
-          fallbackUsedMb += Number(st.cacheUsedMb) || 0;
-        }
-        for (const ws of wsArr) {
-          const rawRoot = ws?.workspace || ws?.absRoot || ws?.root || ws?.name || '';
-          const normRoot = rawRoot
-            ? (process.platform === 'win32' ? resolve(String(rawRoot)).toLowerCase() : resolve(String(rawRoot)))
-            : JSON.stringify(ws);
-          if (!wsSeen.has(normRoot)) {
-            wsSeen.add(normRoot);
-            mergedWorkspaces.push(ws);
-          }
-        }
+  const runProbe = (async () => {
+    try {
+      if (!existsSync(daemonFile)) {
+        lastActiveRamCacheSnap = { ts: 0, pids: [], data: null };
+        return { enabled, active: false, budgetMb, totalRamMb, cacheUsedMb: 0, workspaces: [], instancesCount: 0 };
       }
-      const summedWsMb = mergedWorkspaces.reduce((sum, w) => sum + (Number(w?.cacheMb) || 0), 0);
-      const totalUsedMb = summedWsMb > 0 ? summedWsMb + fallbackUsedMb : Number(primary.stats.cacheUsedMb) || 0;
-      const mergedLiveActivity = freshestLive
-        ? {
-            ...freshestLive,
-            activeOps: sumActiveOps,
-            opSeq: sumOpSeq,
-            burstCount: sumBurstCount || freshestLive.burstCount || 0,
-            isWorking: sumActiveOps > 0 || Boolean(freshestLive.isWorking),
+      const info = safeReadJsonSync(daemonFile, null, { selfHeal: true });
+      if (!info || typeof info !== 'object') {
+        lastActiveRamCacheSnap = { ts: 0, pids: [], data: null };
+        return { enabled, active: false, budgetMb, totalRamMb, cacheUsedMb: 0, workspaces: [], instancesCount: 0 };
+      }
+
+      const candidates = [];
+      const seen = new Set();
+      const pushCand = (c) => {
+        if (!c || !c.port || !c.token) return;
+        const key = `${c.port}:${c.pid ?? ''}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        candidates.push(c);
+      };
+
+      if (Array.isArray(info.instances)) {
+        for (const inst of info.instances) pushCand(inst);
+      } else if (info.instances && typeof info.instances === 'object') {
+        for (const inst of Object.values(info.instances)) pushCand(inst);
+      }
+      pushCand({ pid: info.pid, port: info.port, token: info.token });
+
+      const liveResponses = (await Promise.all(candidates.map((c) => querySingleRamDaemon(c)))).filter(
+        (res) => res?.ok && res?.stats
+      );
+      if (liveResponses.length > 0) {
+        const now = Date.now();
+        const primary = liveResponses[0];
+        const mergedWorkspaces = [];
+        const wsSeen = new Set();
+        const seenLiveTrackerKeys = new Set();
+        let fallbackUsedMb = 0;
+        let sumHits = 0;
+        let sumMisses = 0;
+        let sumSearches = 0;
+        let sumSlices = 0;
+        let sumActiveOps = 0;
+        let sumOpSeq = 0;
+        let sumBurstCount = 0;
+        let sumSotaSavedTokens = 0;
+        let sumSotaNonSliceSavedTokens = 0;
+        let hasExplicitNonSlice = false;
+        let sumSotaMemoHits = 0;
+        let sumSotaRepairRecalls = 0;
+        let sumSotaSpecPrefetches = 0;
+        let sumSotaArenaBytes = 0;
+        let sumSotaCsrBytes = 0;
+        let freshestLive = null;
+
+        for (const res of liveResponses) {
+          const st = res.stats || {};
+          const sota = st.sota && typeof st.sota === 'object' ? st.sota : null;
+          sumSotaSavedTokens += toFiniteNonNeg(st.savedTokensEstimate ?? sota?.savedTokensEstimate, 0);
+          if (st.sotaNonSliceSavedTokens !== undefined || sota?.nonSliceSavedTokens !== undefined) {
+            hasExplicitNonSlice = true;
+            sumSotaNonSliceSavedTokens += toFiniteNonNeg(
+              st.sotaNonSliceSavedTokens ?? sota?.nonSliceSavedTokens,
+              0
+            );
           }
-        : {
-            activeOps: 0,
-            opSeq: 0,
-            lastActiveAt: null,
-            msSinceLast: null,
-            lastOp: '',
-            lastTarget: '',
-            lastLatencyMs: 0,
-            burstCount: 0,
-            isWorking: false,
-            afterglowRatio: 0,
-          };
-      const baseSavedTokens =
-        sumSlices * 900 +
-        sumSearches * 650 +
-        Math.max(0, sumHits - sumSlices - sumSearches) * 250;
-      const savedTokensEstimate = baseSavedTokens + sumSotaSavedTokens;
-      const mergedSota = (primary.stats?.sota || sumSotaSavedTokens > 0 || sumSotaMemoHits > 0 || sumSotaRepairRecalls > 0)
-        ? {
-            ...(primary.stats?.sota || {}),
-            arenaBytes: sumSotaArenaBytes || primary.stats?.sota?.arenaBytes || 0,
-            csrBytes: sumSotaCsrBytes || primary.stats?.sota?.csrBytes || 0,
-            memoHits: sumSotaMemoHits,
-            repairRecalls: sumSotaRepairRecalls,
-            speculativePrefetches: sumSotaSpecPrefetches,
-            ...(hasExplicitNonSlice ? { nonSliceSavedTokens: sumSotaNonSliceSavedTokens } : {}),
-            savedTokensEstimate: sumSotaSavedTokens,
+          if (sota) {
+            sumSotaMemoHits += toFiniteNonNeg(sota.memoHits, 0);
+            sumSotaRepairRecalls += toFiniteNonNeg(sota.repairRecalls, 0);
+            sumSotaSpecPrefetches += toFiniteNonNeg(sota.speculativePrefetches, 0);
+            sumSotaArenaBytes += toFiniteNonNeg(sota.arenaBytes, 0);
+            sumSotaCsrBytes += toFiniteNonNeg(sota.csrBytes, 0);
           }
-        : undefined;
-      const resultPayload = {
-        enabled,
-        active: true,
-        pid: primary.pid,
-        ...primary.stats,
-        budgetMb,
-        totalRamMb,
-        ...(mergedSota ? { sota: mergedSota } : {}),
-        hits: sumHits,
-        misses: sumMisses,
-        searches: sumSearches,
-        slices: sumSlices,
-        ...(hasExplicitNonSlice ? { sotaNonSliceSavedTokens: sumSotaNonSliceSavedTokens } : {}),
-        sotaSavedTokens: sumSotaSavedTokens,
-        savedTokensEstimate,
-        cacheUsedMb: Number(totalUsedMb.toFixed(1)),
-        liveActivity: mergedLiveActivity,
-        workspaces: mergedWorkspaces,
-        instancesCount: liveResponses.length,
-      };
-      lastActiveRamCacheSnap = {
-        ts: now,
-        pids: liveResponses.map((r) => Number(r.pid || 0)).filter((p) => p > 0),
-        data: resultPayload,
-      };
-      return resultPayload;
+          const numPid = Number(res.pid);
+          const pidKey = Number.isFinite(numPid) && numPid > 0 ? String(numPid) : `port:${res.port || 0}`;
+          seenLiveTrackerKeys.add(pidKey);
+          const hits = toFiniteNonNeg(st.hits, 0);
+          const slices = toFiniteNonNeg(st.slices, 0);
+          const searches = toFiniteNonNeg(st.searches, 0);
+          sumHits += hits;
+          sumMisses += toFiniteNonNeg(st.misses, 0);
+          sumSearches += searches;
+          sumSlices += slices;
+
+          const prevSnap = ramDeltaTrackerByPid.get(pidKey);
+          let syntheticLive = null;
+          if (prevSnap) {
+            ramDeltaTrackerByPid.delete(pidKey);
+            ramDeltaTrackerByPid.set(pidKey, prevSnap);
+            const dSlices = Math.max(0, slices - prevSnap.slices);
+            const dSearches = Math.max(0, searches - prevSnap.searches);
+            const dHits = Math.max(0, hits - prevSnap.hits);
+            const deltaOps = dSlices + dSearches || dHits;
+            if (deltaOps > 0) {
+              const inferredOp = dSlices > 0 ? 'ram_slice' : (dSearches > 0 ? 'ram_search' : 'ram_hit');
+              const prevBurst = (now - prevSnap.lastDeltaAt <= 4000) ? prevSnap.burstCount : 0;
+              prevSnap.lastDeltaAt = now;
+              prevSnap.lastOp = inferredOp;
+              prevSnap.burstCount = prevBurst + deltaOps;
+              prevSnap.seq += 1;
+            }
+            prevSnap.hits = hits;
+            prevSnap.slices = slices;
+            prevSnap.searches = searches;
+            if (prevSnap.lastDeltaAt > 0) {
+              const msAgo = Math.max(0, now - prevSnap.lastDeltaAt);
+              const inGlow = msAgo <= 3200;
+              syntheticLive = {
+                activeOps: 0,
+                opSeq: prevSnap.seq,
+                lastActiveAt: prevSnap.lastDeltaAt,
+                msSinceLast: msAgo,
+                lastOp: prevSnap.lastOp,
+                lastTarget: '',
+                lastLatencyMs: 0.7,
+                burstCount: msAgo <= 4500 ? prevSnap.burstCount : 0,
+                isWorking: inGlow,
+                afterglowRatio: inGlow ? Number(Math.max(0, 1 - msAgo / 3200).toFixed(3)) : 0,
+              };
+            }
+          } else {
+            if (ramDeltaTrackerByPid.size >= MAX_TRACKED_RAM_PIDS) {
+              const oldestPidKey = ramDeltaTrackerByPid.keys().next().value;
+              if (oldestPidKey) ramDeltaTrackerByPid.delete(oldestPidKey);
+            }
+            ramDeltaTrackerByPid.set(pidKey, {
+              hits,
+              slices,
+              searches,
+              lastDeltaAt: 0,
+              lastOp: '',
+              burstCount: 0,
+              seq: 0,
+            });
+          }
+
+          const daemonLive = st.liveActivity && typeof st.liveActivity === 'object' ? st.liveActivity : null;
+          const chosenLive = (daemonLive && (daemonLive.lastActiveAt || 0) >= (syntheticLive?.lastActiveAt || 0))
+            ? daemonLive
+            : (syntheticLive || daemonLive);
+          if (chosenLive) {
+            sumActiveOps += toFiniteNonNeg(chosenLive.activeOps, 0);
+            sumOpSeq += toFiniteNonNeg(chosenLive.opSeq, 0);
+            sumBurstCount += toFiniteNonNeg(chosenLive.burstCount, 0);
+            if (!freshestLive || toFiniteNonNeg(chosenLive.lastActiveAt, 0) > toFiniteNonNeg(freshestLive.lastActiveAt, 0)) {
+              freshestLive = chosenLive;
+            }
+          }
+
+          const wsArr = Array.isArray(st.workspaces) ? st.workspaces : [];
+          if (wsArr.length === 0) {
+            fallbackUsedMb += toFiniteNonNeg(st.cacheUsedMb, 0);
+          }
+          for (const ws of wsArr) {
+            const rawRoot = ws?.workspace || ws?.absRoot || ws?.root || ws?.name || '';
+            const normRoot = rawRoot
+              ? (process.platform === 'win32' ? resolve(String(rawRoot)).toLowerCase() : resolve(String(rawRoot)))
+              : JSON.stringify(ws);
+            if (!wsSeen.has(normRoot)) {
+              wsSeen.add(normRoot);
+              mergedWorkspaces.push(ws);
+            }
+          }
+        }
+        for (const trackedKey of Array.from(ramDeltaTrackerByPid.keys())) {
+          if (!seenLiveTrackerKeys.has(trackedKey)) {
+            const trackedPid = Number(trackedKey);
+            if (!Number.isFinite(trackedPid) || trackedPid <= 0 || !isPidAlive(trackedPid)) {
+              ramDeltaTrackerByPid.delete(trackedKey);
+            }
+          }
+        }
+        const summedWsMb = mergedWorkspaces.reduce((sum, w) => sum + toFiniteNonNeg(w?.cacheMb, 0), 0);
+        const totalUsedMb = summedWsMb > 0 ? summedWsMb + fallbackUsedMb : toFiniteNonNeg(primary.stats.cacheUsedMb, 0);
+        const mergedLiveActivity = freshestLive
+          ? {
+              ...freshestLive,
+              activeOps: sumActiveOps,
+              opSeq: sumOpSeq,
+              burstCount: sumBurstCount || freshestLive.burstCount || 0,
+              isWorking: sumActiveOps > 0 || Boolean(freshestLive.isWorking),
+            }
+          : {
+              activeOps: 0,
+              opSeq: 0,
+              lastActiveAt: null,
+              msSinceLast: null,
+              lastOp: '',
+              lastTarget: '',
+              lastLatencyMs: 0,
+              burstCount: 0,
+              isWorking: false,
+              afterglowRatio: 0,
+            };
+        const baseSavedTokens =
+          sumSlices * 900 +
+          sumSearches * 650 +
+          Math.max(0, sumHits - sumSlices - sumSearches) * 250;
+        const savedTokensEstimate = baseSavedTokens + sumSotaSavedTokens;
+        const mergedSota = (primary.stats?.sota || sumSotaSavedTokens > 0 || sumSotaMemoHits > 0 || sumSotaRepairRecalls > 0)
+          ? {
+              ...(primary.stats?.sota || {}),
+              arenaBytes: sumSotaArenaBytes || primary.stats?.sota?.arenaBytes || 0,
+              csrBytes: sumSotaCsrBytes || primary.stats?.sota?.csrBytes || 0,
+              memoHits: sumSotaMemoHits,
+              repairRecalls: sumSotaRepairRecalls,
+              speculativePrefetches: sumSotaSpecPrefetches,
+              ...(hasExplicitNonSlice ? { nonSliceSavedTokens: sumSotaNonSliceSavedTokens } : {}),
+              savedTokensEstimate: sumSotaSavedTokens,
+            }
+          : undefined;
+        const resultPayload = {
+          enabled,
+          active: true,
+          pid: primary.pid,
+          ...primary.stats,
+          budgetMb,
+          totalRamMb,
+          ...(mergedSota ? { sota: mergedSota } : {}),
+          hits: sumHits,
+          misses: sumMisses,
+          searches: sumSearches,
+          slices: sumSlices,
+          ...(hasExplicitNonSlice ? { sotaNonSliceSavedTokens: sumSotaNonSliceSavedTokens } : {}),
+          sotaSavedTokens: sumSotaSavedTokens,
+          savedTokensEstimate,
+          cacheUsedMb: Number(totalUsedMb.toFixed(1)),
+          liveActivity: mergedLiveActivity,
+          workspaces: mergedWorkspaces,
+          instancesCount: liveResponses.length,
+        };
+        lastActiveRamCacheSnap = {
+          ts: now,
+          pids: liveResponses.map((r) => Number(r.pid || 0)).filter((p) => p > 0),
+          data: resultPayload,
+        };
+        return resultPayload;
+      }
+      // Keep active RAM status across transient /health timeouts while daemon PID is still alive
+      if (
+        lastActiveRamCacheSnap.data &&
+        Date.now() - lastActiveRamCacheSnap.ts <= RAM_STATUS_GRACE_MS &&
+        (lastActiveRamCacheSnap.pids.some((p) => isPidAlive(p)) || candidates.some((c) => c?.pid != null && isPidAlive(c.pid)))
+      ) {
+        return {
+          ...lastActiveRamCacheSnap.data,
+          enabled,
+          budgetMb,
+          totalRamMb,
+        };
+      }
+    } catch {}
+    return { enabled, active: false, budgetMb, totalRamMb, cacheUsedMb: 0, savedTokensEstimate: 0, workspaces: [], instancesCount: 0 };
+  })();
+
+  ramCacheInFlight = runProbe;
+  try {
+    return await runProbe;
+  } finally {
+    if (ramCacheInFlight === runProbe) {
+      ramCacheInFlight = null;
     }
-    // Keep active RAM status across transient /health timeouts while daemon PID is still alive
-    if (
-      lastActiveRamCacheSnap.data &&
-      Date.now() - lastActiveRamCacheSnap.ts <= RAM_STATUS_GRACE_MS &&
-      candidates.some((c) => c?.pid != null && isPidAlive(c.pid))
-    ) {
-      return {
-        ...lastActiveRamCacheSnap.data,
-        enabled,
-        budgetMb,
-        totalRamMb,
-      };
-    }
-  } catch {}
-  return { enabled, active: false, budgetMb, totalRamMb, cacheUsedMb: 0, savedTokensEstimate: 0, workspaces: [], instancesCount: 0 };
+  }
 }
 
 function extractExtraRamSotaTokens(ramStats) {
@@ -1934,7 +2056,7 @@ export function safeGetCpuStatus(state = {}, ramCache = null) {
   }
 }
 
-let lastRoiTimelineSaveTs = 0;
+const roiTimelineSaveTsByFile = new Map();
 
 function formatHourBucketKey(tsMs) {
   const d = new Date(tsMs);
@@ -1995,12 +2117,15 @@ const ROI_TIMELINE_SCHEMA_VERSION = 3;
  */
 export function collectRoiTimeline(options = {}) {
   const safeOpts = options && typeof options === 'object' ? options : {};
-  const nowMs = Number.isFinite(Number(safeOpts.nowMs)) ? Number(safeOpts.nowMs) : Date.now();
+  const rawNow = (typeof safeOpts.nowMs === 'number' || (typeof safeOpts.nowMs === 'string' && safeOpts.nowMs.trim() !== ''))
+    ? Number(safeOpts.nowMs)
+    : NaN;
+  const nowMs = Number.isFinite(rawNow) && rawNow > 0 && rawNow <= MAX_SAFE_DATE_MS ? rawNow : Date.now();
   const curTel = safeOpts.currentTelemetry && typeof safeOpts.currentTelemetry === 'object' ? safeOpts.currentTelemetry : {};
   const bk = curTel.savingsBreakdown && typeof curTel.savingsBreakdown === 'object' ? curTel.savingsBreakdown : {};
-  const curRam = Math.max(0, Math.round(Number(bk.ram ?? curTel.ramSavedTokens ?? 0)));
-  const curCpu = Math.max(0, Math.round(Number(bk.cpu ?? curTel.cpuSavedTokens ?? 0)));
-  const curGpu = Math.max(0, Math.round(Number(bk.gpu ?? curTel.gpuSavedTokens ?? 0)));
+  const curRam = Math.round(toFiniteNonNeg(bk.ram ?? curTel.ramSavedTokens, 0));
+  const curCpu = Math.round(toFiniteNonNeg(bk.cpu ?? curTel.cpuSavedTokens, 0));
+  const curGpu = Math.round(toFiniteNonNeg(bk.gpu ?? curTel.gpuSavedTokens, 0));
 
   const cacheDir = typeof safeOpts.cacheDir === 'string' && safeOpts.cacheDir.trim()
     ? resolve(safeOpts.cacheDir.trim())
@@ -2055,7 +2180,7 @@ export function collectRoiTimeline(options = {}) {
         if (!existsSync(tp) || isSubagentTranscriptFile(tp)) continue;
         try {
           const st = statSync(tp);
-          if (st.size > 0 && nowMs - st.mtimeMs <= maxAgeMs) {
+          if (st.isFile() && st.size > 0 && nowMs - st.mtimeMs <= maxAgeMs) {
             const chatAccum = parseSingleChatDelta(tp, st);
             const rc = chatAccum.ramCalls || { slices: 0, searches: 0, contextPacks: 0, total: 0 };
             if ((rc.total || 0) > 0) {
@@ -2101,9 +2226,9 @@ export function collectRoiTimeline(options = {}) {
   }
 
   // High-water-mark deltas with self-healing against poisoned legacy baselines (>100k above live totals)
-  const rawPrevRam = Math.max(0, Number(prevTotals.ram || 0));
-  const rawPrevCpu = Math.max(0, Number(prevTotals.cpu || 0));
-  const rawPrevGpu = Math.max(0, Number(prevTotals.gpu || 0));
+  const rawPrevRam = toFiniteNonNeg(prevTotals.ram, 0);
+  const rawPrevCpu = toFiniteNonNeg(prevTotals.cpu, 0);
+  const rawPrevGpu = toFiniteNonNeg(prevTotals.gpu, 0);
   const prevRam = rawPrevRam > curRam * 1.5 + 100_000 ? curRam : rawPrevRam;
   const prevCpu = rawPrevCpu > curCpu * 1.5 + 100_000 ? curCpu : rawPrevCpu;
   const prevGpu = rawPrevGpu > curGpu * 1.5 + 100_000 ? curGpu : rawPrevGpu;
@@ -2133,16 +2258,78 @@ export function collectRoiTimeline(options = {}) {
   slotMap.set(curHourKey, activeSlot);
 
   const sortedSlots = Array.from(slotMap.values()).sort((a, b) => a.ts - b.ts).slice(-720);
-  if (safeOpts.persist !== false && (needsMigration || nowMs - lastRoiTimelineSaveTs >= 60_000 || !existsSync(timelineFile))) {
-    lastRoiTimelineSaveTs = nowMs;
+  const prevSaveTs = roiTimelineSaveTsByFile.get(timelineFile) ?? -Infinity;
+  if (safeOpts.persist !== false && (needsMigration || !existsSync(timelineFile) || Math.abs(nowMs - prevSaveTs) >= 60_000)) {
     try {
       if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
-      atomicWriteJsonSync(timelineFile, {
-        schemaVersion: ROI_TIMELINE_SCHEMA_VERSION,
-        updatedAt: new Date(nowMs).toISOString(),
-        lastTotals: nextTotals,
-        slots: sortedSlots,
-      });
+      updateJsonAtomicSync(
+        timelineFile,
+        () => ({
+          schemaVersion: ROI_TIMELINE_SCHEMA_VERSION,
+          lastTotals: { ram: 0, cpu: 0, gpu: 0 },
+          slots: [],
+        }),
+        (diskDoc) => {
+          if (needsMigration || diskDoc?.schemaVersion !== ROI_TIMELINE_SCHEMA_VERSION) {
+            return {
+              schemaVersion: ROI_TIMELINE_SCHEMA_VERSION,
+              updatedAt: new Date(nowMs).toISOString(),
+              lastTotals: nextTotals,
+              slots: sortedSlots,
+            };
+          }
+          const mergedMap = new Map();
+          const diskSlots = Array.isArray(diskDoc?.slots) ? diskDoc.slots : [];
+          for (const ds of diskSlots) {
+            if (!ds || typeof ds !== 'object' || !ds.hourKey) continue;
+            const dts = Number(ds.ts || 0);
+            if (!Number.isFinite(dts) || nowMs - dts > maxAgeMs) continue;
+            mergedMap.set(String(ds.hourKey), {
+              hourKey: String(ds.hourKey),
+              ts: dts,
+              ram: Math.round(toFiniteNonNeg(ds.ram, 0)),
+              cpu: Math.round(toFiniteNonNeg(ds.cpu, 0)),
+              gpu: Math.round(toFiniteNonNeg(ds.gpu, 0)),
+            });
+          }
+          for (const ms of sortedSlots) {
+            const prev = mergedMap.get(ms.hourKey);
+            if (!prev) {
+              mergedMap.set(ms.hourKey, { ...ms });
+            } else {
+              mergedMap.set(ms.hourKey, {
+                hourKey: ms.hourKey,
+                ts: Math.max(prev.ts, ms.ts),
+                ram: Math.max(prev.ram, ms.ram),
+                cpu: Math.max(prev.cpu, ms.cpu),
+                gpu: Math.max(prev.gpu, ms.gpu),
+              });
+            }
+          }
+          const diskTotals = diskDoc?.lastTotals && typeof diskDoc.lastTotals === 'object' ? diskDoc.lastTotals : {};
+          const dPrevRam = toFiniteNonNeg(diskTotals.ram, 0);
+          const dPrevCpu = toFiniteNonNeg(diskTotals.cpu, 0);
+          const dPrevGpu = toFiniteNonNeg(diskTotals.gpu, 0);
+          const safeDiskRam = dPrevRam > curRam * 1.5 + 100_000 ? curRam : dPrevRam;
+          const safeDiskCpu = dPrevCpu > curCpu * 1.5 + 100_000 ? curCpu : dPrevCpu;
+          const safeDiskGpu = dPrevGpu > curGpu * 1.5 + 100_000 ? curGpu : dPrevGpu;
+          return {
+            schemaVersion: ROI_TIMELINE_SCHEMA_VERSION,
+            updatedAt: new Date(nowMs).toISOString(),
+            lastTotals: {
+              ram: Math.max(safeDiskRam, nextTotals.ram),
+              cpu: Math.max(safeDiskCpu, nextTotals.cpu),
+              gpu: Math.max(safeDiskGpu, nextTotals.gpu),
+            },
+            slots: Array.from(mergedMap.values()).sort((a, b) => a.ts - b.ts).slice(-720),
+          };
+        }
+      );
+      if (roiTimelineSaveTsByFile.size >= 32 && !roiTimelineSaveTsByFile.has(timelineFile)) {
+        const oldest = roiTimelineSaveTsByFile.keys().next().value;
+        if (oldest) roiTimelineSaveTsByFile.delete(oldest);
+      }
+      roiTimelineSaveTsByFile.set(timelineFile, nowMs);
     } catch {}
   }
 
@@ -2220,10 +2407,12 @@ export function collectRoiTimeline(options = {}) {
   });
 
   const qp = safeOpts.quotaPacer && typeof safeOpts.quotaPacer === 'object' ? safeOpts.quotaPacer : {};
-  const utilizationPct = Math.max(0, Math.min(100, Math.round(Number(qp.utilizationPct || 0))));
-  const hasExplicitProj = Number.isFinite(Number(qp.projectedPct));
-  const projectedPct = hasExplicitProj
-    ? Math.max(utilizationPct, Math.min(100, Math.round(Number(qp.projectedPct))))
+  const utilizationPct = Math.min(100, Math.round(toFiniteNonNeg(qp.utilizationPct, 0)));
+  const rawProj = qp.projectedPct !== null && qp.projectedPct !== undefined && qp.projectedPct !== ''
+    ? Number(qp.projectedPct)
+    : NaN;
+  const projectedPct = Number.isFinite(rawProj)
+    ? Math.max(utilizationPct, Math.min(100, Math.round(rawProj)))
     : utilizationPct;
 
   return {
@@ -2246,11 +2435,11 @@ export function collectRoiTimeline(options = {}) {
       utilizationPct,
       projectedPct,
       status: qp.status || 'calm',
-      estimatedMinutesLeft: Number.isFinite(Number(qp.estimatedMinutesLeft)) ? Number(qp.estimatedMinutesLeft) : 300,
-      turnsLast60m: Number(qp.turnsLast60m || 0),
-      turnsLast5h: Number(qp.turnsLast5h ?? qp.turnsLast60m ?? 0),
-      windowHours: Number(qp.windowHours || 5),
-      window5hCeiling: Number(qp.window5hCeiling || 0),
+      estimatedMinutesLeft: (qp.estimatedMinutesLeft !== null && qp.estimatedMinutesLeft !== undefined && qp.estimatedMinutesLeft !== '' && Number.isFinite(Number(qp.estimatedMinutesLeft))) ? Number(qp.estimatedMinutesLeft) : 300,
+      turnsLast60m: toFiniteNonNeg(qp.turnsLast60m, 0),
+      turnsLast5h: toFiniteNonNeg(qp.turnsLast5h ?? qp.turnsLast60m, 0),
+      windowHours: toFiniteNonNeg(qp.windowHours, 5) || 5,
+      window5hCeiling: toFiniteNonNeg(qp.window5hCeiling, 0),
       subscriptionTier: qp.subscriptionTier || '',
     },
   };
@@ -2260,6 +2449,17 @@ const GUARD_PULSE_FAST_TTL_MS = 6000;
 const GUARD_PULSE_SHIELD_TTL_MS = 60000;
 const GUARD_PULSE_ENV_TTL_MS = 45000;
 const _guardPulseCache = new Map();
+const _guardPulseEpochs = new Map();
+const _guardPulseGlobalEpochs = { fast: 0, shield: 0, env: 0 };
+
+function getGuardEpochsForKey(key) {
+  const local = _guardPulseEpochs.get(key);
+  return {
+    fast: _guardPulseGlobalEpochs.fast + (local?.fast || 0),
+    shield: _guardPulseGlobalEpochs.shield + (local?.shield || 0),
+    env: _guardPulseGlobalEpochs.env + (local?.env || 0),
+  };
+}
 
 function normGuardWsKey(wsRoot = '') {
   const clean = String(wsRoot || '').trim();
@@ -2268,7 +2468,13 @@ function normGuardWsKey(wsRoot = '') {
 }
 
 export function invalidateGuardPulseCache(wsRoot = '', buckets = null) {
+  const targetBuckets = Array.isArray(buckets) && buckets.length > 0 ? buckets : ['fast', 'shield', 'env'];
   if (!wsRoot) {
+    for (const b of targetBuckets) {
+      if (b === 'fast' || b === 'shield' || b === 'env') {
+        _guardPulseGlobalEpochs[b] += 1;
+      }
+    }
     if (!Array.isArray(buckets) || buckets.length === 0) {
       _guardPulseCache.clear();
       return;
@@ -2283,6 +2489,22 @@ export function invalidateGuardPulseCache(wsRoot = '', buckets = null) {
     return;
   }
   const key = normGuardWsKey(wsRoot);
+  if (_guardPulseEpochs.has(key)) {
+    const existingEpoch = _guardPulseEpochs.get(key);
+    _guardPulseEpochs.delete(key);
+    _guardPulseEpochs.set(key, existingEpoch);
+  } else if (_guardPulseEpochs.size >= 32) {
+    const oldestKey = _guardPulseEpochs.keys().next().value;
+    if (oldestKey) _guardPulseEpochs.delete(oldestKey);
+  }
+  const epochRec = _guardPulseEpochs.get(key) || { fast: 0, shield: 0, env: 0 };
+  for (const b of targetBuckets) {
+    if (b === 'fast' || b === 'shield' || b === 'env') {
+      epochRec[b] += 1;
+    }
+  }
+  _guardPulseEpochs.set(key, epochRec);
+
   const entry = _guardPulseCache.get(key);
   if (!entry) return;
   if (!Array.isArray(buckets) || buckets.length === 0) {
@@ -2302,6 +2524,7 @@ export function primeGuardPulseShieldCache(wsRoot = '', shieldReport = null) {
   const entry = _guardPulseCache.get(key) || { shieldTs: 0, shield: null, envTs: 0, env: null, fastTs: 0, fast: null };
   entry.shield = shieldReport;
   entry.shieldTs = Date.now();
+  _guardPulseCache.delete(key);
   _guardPulseCache.set(key, entry);
 }
 
@@ -2311,7 +2534,8 @@ export function primeGuardPulseShieldCache(wsRoot = '', shieldReport = null) {
  */
 export async function safeGetGuardPulse(workspaceRoot = '', state = {}, options = {}) {
   const opts = options && typeof options === 'object' ? options : {};
-  const activeWs = typeof workspaceRoot === 'string' && workspaceRoot.trim() ? resolve(workspaceRoot.trim()) : process.cwd();
+  const parsedWs = parseWorkspaceUriToPath(workspaceRoot);
+  const activeWs = parsedWs && isValidWorkspaceDir(parsedWs) ? resolve(parsedWs) : process.cwd();
   const key = normGuardWsKey(activeWs);
   const now = Date.now();
   const lang = state?.uiLanguage === 'en' ? 'en' : 'ru';
@@ -2319,20 +2543,24 @@ export async function safeGetGuardPulse(workspaceRoot = '', state = {}, options 
   const forceShield = forceAll || Boolean(opts.forceShield);
   const forceEnv = forceAll || Boolean(opts.forceEnv);
   const forceFast = forceAll || Boolean(opts.forceFast);
+  const startEpochs = getGuardEpochsForKey(key);
 
   if (_guardPulseCache.size > 12 && !_guardPulseCache.has(key)) {
     const oldestKey = _guardPulseCache.keys().next().value;
     if (oldestKey) _guardPulseCache.delete(oldestKey);
   }
-  const entry = _guardPulseCache.get(key) || { shieldTs: 0, shield: null, envTs: 0, env: null, fastTs: 0, fast: null };
+  const existingEntry = _guardPulseCache.get(key);
+  const entry = existingEntry
+    ? { ...existingEntry }
+    : { shieldTs: 0, shield: null, envTs: 0, env: null, fastTs: 0, fast: null };
 
   // 1. Bugs (Sentinel + Wiretap — always computed live from already-fetched snapshots, 0ms)
   const sen = opts.sentinel && typeof opts.sentinel === 'object' ? opts.sentinel : {};
   const sg = sen.shadowGuard && typeof sen.shadowGuard === 'object' ? sen.shadowGuard : {};
   const bb = sen.bugBot && typeof sen.bugBot === 'object' ? sen.bugBot : {};
-  const sgErrs = Math.max(0, Number(sg.errorCount || 0));
-  const sgWarns = Math.max(0, Number(sg.warnCount || 0), Number(sg.cloneCount || 0));
-  const bbCount = Math.max(0, Number(bb.findingsCount || 0), Array.isArray(bb.findings) ? bb.findings.length : 0);
+  const sgErrs = toFiniteNonNeg(sg.errorCount, 0);
+  const sgWarns = Math.max(toFiniteNonNeg(sg.warnCount, 0), toFiniteNonNeg(sg.cloneCount, 0));
+  const bbCount = Math.max(toFiniteNonNeg(bb.findingsCount, 0), Array.isArray(bb.findings) ? bb.findings.length : 0);
   const wiretapArr = Array.isArray(opts.wiretapFaults) ? opts.wiretapFaults : [];
   const wiretapCount = wiretapArr.length;
   const bugsTotal = sgErrs + sgWarns + bbCount + wiretapCount;
@@ -2342,6 +2570,7 @@ export async function safeGetGuardPulse(workspaceRoot = '', state = {}, options 
 
   // 2. Fast local state (Instincts + Circuit Breaker + Pitfalls + Fragile files)
   let fastData = entry.fast;
+  let fastUpdated = false;
   const hasExplicitFastPreload = opts.circuitBreaker !== undefined || opts.pitfalls !== undefined || opts.bayesian !== undefined;
   if (!fastData || forceFast || hasExplicitFastPreload || (now - entry.fastTs > GUARD_PULSE_FAST_TTL_MS)) {
     const [cbRaw, pitfallsRaw, bayesianRaw, instinctsRaw] = await Promise.all([
@@ -2366,7 +2595,7 @@ export async function safeGetGuardPulse(workspaceRoot = '', state = {}, options 
     const cbStatus = String(cb.status || 'CLOSED').toUpperCase();
     const pitfalls = Array.isArray(pitfallsRaw) ? pitfallsRaw : [];
     const fragileAll = Array.isArray(bayesianRaw?.fragileFiles) ? bayesianRaw.fragileFiles : [];
-    const fragile = fragileAll.filter((f) => f && Number(f.reliabilityPercent ?? 100) < 80);
+    const fragile = fragileAll.filter((f) => f && toFiniteNonNeg(f.reliabilityPercent, 100) < 80);
     const instincts = Array.isArray(instinctsRaw) ? instinctsRaw : [];
     const readyInstincts = instincts.filter((it) => it && !it.promotedSkill && it.readyForPromotion);
 
@@ -2379,14 +2608,14 @@ export async function safeGetGuardPulse(workspaceRoot = '', state = {}, options 
         items: instincts.slice(0, 8).map((it) => ({
           id: String(it.id || ''),
           pattern: String(it.pattern || ''),
-          confidencePct: Math.round(Number(it.effectiveConfidence ?? it.confidence ?? 0) * 100),
-          evidenceCount: Number(it.evidenceCount || 1),
+          confidencePct: Math.round(toFiniteNonNeg(it.effectiveConfidence ?? it.confidence, 0) * 100),
+          evidenceCount: toFiniteNonNeg(it.evidenceCount, 1) || 1,
           readyForPromotion: Boolean(it.readyForPromotion && !it.promotedSkill),
         })),
       },
       risks: {
         cbStatus,
-        cbRepeats: Number(cb.repeatCount || 0),
+        cbRepeats: toFiniteNonNeg(cb.repeatCount, 0),
         cbReason: String(cb.reason || ''),
         pitfallsCount: pitfalls.length,
         fragileCount: fragile.length,
@@ -2400,38 +2629,53 @@ export async function safeGetGuardPulse(workspaceRoot = '', state = {}, options 
         })),
         fragileFiles: fragile.slice(0, 5).map((f) => ({
           file: String(f.file || f.path || ''),
-          reliabilityPercent: Number(f.reliabilityPercent ?? 100),
-          failures: Number(f.failures || 0),
-          runs: Number(f.runs || 0),
+          reliabilityPercent: toFiniteNonNeg(f.reliabilityPercent, 100),
+          failures: toFiniteNonNeg(f.failures, 0),
+          runs: toFiniteNonNeg(f.runs, 0),
         })),
       },
     };
-    entry.fast = fastData;
-    entry.fastTs = now;
+    if (!hasExplicitFastPreload && getGuardEpochsForKey(key).fast === startEpochs.fast) {
+      entry.fast = fastData;
+      entry.fastTs = now;
+      fastUpdated = true;
+    }
   }
 
   // 3. AgentShield (offline config/secret/prompt-injection audit, cached 60s)
   let shieldRaw = entry.shield;
+  let shieldUpdated = false;
   if (!shieldRaw || forceShield || (now - entry.shieldTs > GUARD_PULSE_SHIELD_TTL_MS)) {
     try {
       const { auditAgentEnvironment } = await import('../../../core/agent-shield.mjs');
       const includeGlobal = process.env.TUNNEL_TEST_ISOLATE_INSTALLED !== '1';
       shieldRaw = auditAgentEnvironment({ workspaceRoot: activeWs, includeGlobal, lang });
-      entry.shield = shieldRaw;
-      entry.shieldTs = now;
-    } catch {
-      shieldRaw = { ok: false, score: 100, grade: 'A', findings: [] };
+      if (getGuardEpochsForKey(key).shield === startEpochs.shield) {
+        entry.shield = shieldRaw;
+        entry.shieldTs = now;
+        shieldUpdated = true;
+      }
+    } catch (err) {
+      shieldRaw = entry.shield || {
+        ok: false,
+        error: err?.message || 'AgentShield audit failed',
+        score: 0,
+        grade: '?',
+        findings: [],
+      };
     }
   }
   const shieldFindings = Array.isArray(shieldRaw?.findings) ? shieldRaw.findings : [];
   const shieldCritHigh = shieldFindings.filter((f) => f && (f.severity === 'critical' || f.severity === 'high')).length;
+  const shieldChecked = Boolean(shieldRaw && shieldRaw.ok !== false);
   const shieldBucket = {
-    checked: Boolean(shieldRaw && shieldRaw.ok !== false),
-    score: Number.isFinite(Number(shieldRaw?.score)) ? Number(shieldRaw.score) : 100,
-    grade: String(shieldRaw?.grade || 'A'),
+    checked: shieldChecked,
+    score: shieldChecked && Number.isFinite(Number(shieldRaw?.score)) ? Number(shieldRaw.score) : 0,
+    grade: shieldChecked ? String(shieldRaw?.grade || 'A') : String(shieldRaw?.grade || '?'),
     count: shieldFindings.length,
     criticalHighCount: shieldCritHigh,
-    severity: shieldCritHigh > 0 ? 'err' : (shieldFindings.length > 0 ? 'warn' : 'ok'),
+    severity: !shieldChecked ? 'warn' : (shieldCritHigh > 0 ? 'err' : (shieldFindings.length > 0 ? 'warn' : 'ok')),
+    ...(shieldRaw?.error ? { error: String(shieldRaw.error) } : {}),
     findings: shieldFindings.slice(0, 8).map((f) => ({
       file: String(f.file || ''),
       severity: String(f.severity || 'low'),
@@ -2454,6 +2698,7 @@ export async function safeGetGuardPulse(workspaceRoot = '', state = {}, options 
   const gatesChanged = entry.envGatesSig !== undefined && entry.envGatesSig !== gatesSig;
 
   let envBucket = entry.env;
+  let envUpdated = false;
   if (!envBucket || forceEnv || gatesChanged || (now - entry.envTs > GUARD_PULSE_ENV_TTL_MS)) {
     try {
       const [{ diagnoseRuntimeHealth }, { parseAcceptanceGatesMarkdown }, { scanShortcutDebt }, resolvedRuntime] = await Promise.all([
@@ -2486,7 +2731,7 @@ export async function safeGetGuardPulse(workspaceRoot = '', state = {}, options 
         gatesExists = true;
         try {
           const parsed = parseAcceptanceGatesMarkdown(readFileSync(gatesPath, 'utf8'));
-          gatesTotal = Number(parsed?.total || 0);
+          gatesTotal = toFiniteNonNeg(parsed?.total, 0);
           gatesUnmetCount = Array.isArray(parsed?.unmet) ? parsed.unmet.length : 0;
           gatesItems = (Array.isArray(parsed?.unmet) ? parsed.unmet : []).slice(0, 5).map((g) => ({
             text: String(g?.text || g?.title || g || ''),
@@ -2499,14 +2744,14 @@ export async function safeGetGuardPulse(workspaceRoot = '', state = {}, options 
       let debtItems = [];
       try {
         const debtRes = scanShortcutDebt(activeWs, { maxFiles: 120, lang });
-        debtTotal = Number(debtRes?.totalMarkers || 0);
-        debtNoTriggerCount = Number(debtRes?.noTriggerCount || 0);
+        debtTotal = toFiniteNonNeg(debtRes?.totalMarkers, 0);
+        debtNoTriggerCount = toFiniteNonNeg(debtRes?.noTriggerCount, 0);
         const rawMarkers = Array.isArray(debtRes?.items)
           ? debtRes.items
           : (Array.isArray(debtRes?.markers) ? debtRes.markers : []);
         debtItems = rawMarkers.slice(0, 5).map((m) => ({
           file: String(m.file || ''),
-          line: Number(m.line || 0),
+          line: toFiniteNonNeg(m.line, 0),
           ceiling: String(m.ceiling || m.raw || ''),
           rotRisk: Boolean(m.rotRisk),
         }));
@@ -2518,7 +2763,7 @@ export async function safeGetGuardPulse(workspaceRoot = '', state = {}, options 
         count: envTotal,
         severity: hasHighDoc ? 'err' : (envTotal > 0 ? 'warn' : 'ok'),
         doctorCount: docIssues.length,
-        doctorScore: Number(docRes?.score ?? 100),
+        doctorScore: Number.isFinite(Number(docRes?.score)) ? Number(docRes.score) : 100,
         doctorIssues: docIssues.slice(0, 6).map((i) => ({
           id: String(i.id || ''),
           severity: String(i.severity || 'warn'),
@@ -2537,15 +2782,20 @@ export async function safeGetGuardPulse(workspaceRoot = '', state = {}, options 
         debtNoTriggerCount,
         debtItems,
       };
-      entry.env = envBucket;
-      entry.envTs = now;
-      entry.envGatesSig = gatesSig;
-    } catch {
-      envBucket = {
+      if (getGuardEpochsForKey(key).env === startEpochs.env) {
+        entry.env = envBucket;
+        entry.envTs = now;
+        entry.envGatesSig = gatesSig;
+        envUpdated = true;
+      }
+    } catch (err) {
+      envBucket = entry.env || {
         count: 0,
-        severity: 'ok',
+        severity: 'warn',
         doctorCount: 0,
-        doctorScore: 100,
+        doctorScore: 0,
+        doctorError: true,
+        error: String(err?.message || 'Health check failed'),
         doctorIssues: [],
         gatesExists: false,
         gatesTotal: 0,
@@ -2558,7 +2808,21 @@ export async function safeGetGuardPulse(workspaceRoot = '', state = {}, options 
     }
   }
 
-  _guardPulseCache.set(key, entry);
+  const latestCached = _guardPulseCache.get(key);
+  const currentEpochs = getGuardEpochsForKey(key);
+  const mergedEntry = {
+    fast: (fastUpdated && currentEpochs.fast === startEpochs.fast) ? entry.fast : (latestCached?.fast ?? null),
+    fastTs: (fastUpdated && currentEpochs.fast === startEpochs.fast) ? entry.fastTs : (latestCached?.fastTs ?? 0),
+    shield: (shieldUpdated && currentEpochs.shield === startEpochs.shield) ? entry.shield : (latestCached?.shield ?? null),
+    shieldTs: (shieldUpdated && currentEpochs.shield === startEpochs.shield) ? entry.shieldTs : (latestCached?.shieldTs ?? 0),
+    env: (envUpdated && currentEpochs.env === startEpochs.env) ? entry.env : (latestCached?.env ?? null),
+    envTs: (envUpdated && currentEpochs.env === startEpochs.env) ? entry.envTs : (latestCached?.envTs ?? 0),
+    envGatesSig: (envUpdated && currentEpochs.env === startEpochs.env) ? entry.envGatesSig : latestCached?.envGatesSig,
+  };
+  if (mergedEntry.fast || mergedEntry.shield || mergedEntry.env) {
+    _guardPulseCache.delete(key);
+    _guardPulseCache.set(key, mergedEntry);
+  }
 
   return {
     ok: true,

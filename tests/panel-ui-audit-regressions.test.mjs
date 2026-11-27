@@ -785,3 +785,227 @@ test('6. Regression: __auto__ filters foreign-project tasks before openWorkspace
   assert.deepEqual(secondAttempt, ['file:///C:/Work/proj-a'], 'Subsequent non-forced call must immediately query once window.sidecar is ready');
   assert.ok(ipcCtx._lastOpenWorkspacesPollAt > 0, 'Successful IPC response must stamp _lastOpenWorkspacesPollAt');
 });
+
+test('7. Regression: panel-telemetry-collectors hardening (error honesty, ISO dates, checkpoint scope, guard-pulse epoch race, NaN & ROI lock)', async () => {
+  const {
+    collectKnownWorkspacesForPanel,
+    collectRoiTimeline,
+    collectTelemetry,
+    discoverUserProjectsForGraph,
+    invalidateGuardPulseCache,
+    safeCheckCompaction,
+    safeClearPitfalls,
+    safeGetGuardPulse,
+    safeListCheckpoints,
+    safeResetBayesianPriors,
+    safeResetCircuitBreaker,
+    safeTriggerManualCompactionDigest,
+  } = await import('../sidecars/panel/lib/panel-telemetry-collectors.mjs');
+  const { panelRuntime } = await import('../sidecars/panel/lib/panel-state-skills.mjs');
+
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'amr-ptc-reg-'));
+  const prevCircuit = panelRuntime.coreCircuit;
+  const prevPitfalls = panelRuntime.corePitfalls;
+  const prevBayesian = panelRuntime.coreBayesian;
+  const prevCompactor = panelRuntime.coreCompactor;
+  const prevShadowGuard = panelRuntime.coreShadowGuard;
+  const prevUserProfile = process.env.USERPROFILE;
+  const prevHome = process.env.HOME;
+
+  try {
+    // 1. Mutating safe* wrappers must propagate { ok: false, error } instead of faking ok: true
+    panelRuntime.coreCircuit = {
+      getCircuitState: () => ({ status: 'TRIPPED', repeatCount: 3 }),
+      resetCircuitBreaker: () => { throw new Error('cb lock timeout'); },
+    };
+    panelRuntime.corePitfalls = {
+      listPitfalls: () => [],
+      clearPitfalls: () => { throw new Error('pitfalls write denied'); },
+    };
+    panelRuntime.coreBayesian = {
+      getBayesianSummary: () => ({ totalRuns: 0, fragileFiles: [], domains: [] }),
+      resetBayesianPriors: () => { throw new Error('bayesian write failed'); },
+    };
+    panelRuntime.coreCompactor = {
+      checkHistoryCompaction: () => null,
+      triggerManualCompactionDigest: () => { throw new Error('compactor disk error'); },
+    };
+
+    const cbErr = await safeResetCircuitBreaker(tmpRoot);
+    assert.equal(cbErr.ok, false);
+    assert.match(cbErr.error || '', /cb lock timeout/);
+
+    const pitErr = await safeClearPitfalls(tmpRoot);
+    assert.equal(pitErr.ok, false);
+    assert.match(pitErr.error || '', /pitfalls write denied/);
+
+    const bayErr = await safeResetBayesianPriors(tmpRoot);
+    assert.equal(bayErr.ok, false);
+    assert.match(bayErr.error || '', /bayesian write failed/);
+
+    const compErr = await safeTriggerManualCompactionDigest({ conversationId: 'c1' });
+    assert.equal(compErr.ok, false);
+    assert.match(compErr.error || '', /compactor disk error/);
+
+    // Missing triggerManualCompactionDigest must also report ok: false
+    panelRuntime.coreCompactor = { checkHistoryCompaction: () => null };
+    const compMissing = await safeTriggerManualCompactionDigest({ conversationId: 'c1' });
+    assert.equal(compMissing.ok, false);
+
+    // 2. ISO & invalid updatedAt in collectKnownWorkspacesForPanel & __all__ in discoverUserProjectsForGraph
+    const realWsA = path.join(ROOT_DIR, 'sidecars');
+    const realWsB = path.join(ROOT_DIR, 'core');
+    const projA = path.join(tmpRoot, 'proj-a');
+    const projOther = path.join(tmpRoot, 'proj-a-other');
+    fs.mkdirSync(projA, { recursive: true });
+    fs.mkdirSync(projOther, { recursive: true });
+
+    const known = await collectKnownWorkspacesForPanel({
+      activeWs: realWsA,
+      taskProgress: {
+        activeProjects: [
+          { workspaceRoot: realWsA, status: 'running', updatedAt: '2026-11-27T10:00:00.000Z', percent: 'not-a-num' },
+        ],
+        activeChats: [
+          { workspaceRoot: realWsB, status: 'idle', updatedAt: 'not-a-date' },
+        ],
+      },
+    });
+    const foundA = known.find((w) => path.resolve(w.workspaceRoot) === path.resolve(realWsA));
+    assert.ok(foundA, 'realWsA must be present with ISO updatedAt');
+    assert.equal(foundA.lastTimestamp, '2026-11-27T10:00:00.000Z');
+    assert.equal(foundA.percent, 0);
+
+    const graphAll = await discoverUserProjectsForGraph({ activeWs: '__all__', autoWs: '__auto__' });
+    assert.ok(Array.isArray(graphAll));
+
+    // 3. safeCheckCompaction handles telemetry === null and invalid thresholdTokens without throwing or NaN
+    const compRes = await safeCheckCompaction('invalid', null);
+    assert.equal(compRes.thresholdTokens, 120000);
+    assert.equal(compRes.lastPromptTokens, 0);
+    assert.equal(compRes.fillPercent, 0);
+    assert.equal(Number.isFinite(compRes.epoch), true);
+
+    // 4. safeListCheckpoints fallback isolates workspaces, respects segment boundary & limit === 0
+    const fakeHome = path.join(tmpRoot, 'home');
+    const cpDir = path.join(fakeHome, '.gemini', 'checkpoints');
+    fs.mkdirSync(cpDir, { recursive: true });
+    fs.writeFileSync(path.join(cpDir, 'cp-other.json'), JSON.stringify({
+      id: 'cp-other',
+      workspaceRoot: projOther,
+      timestamp: '2026-11-27T12:00:00.000Z',
+    }));
+    process.env.USERPROFILE = fakeHome;
+    process.env.HOME = fakeHome;
+    panelRuntime.coreShadowGuard = {};
+
+    const scopedZero = await safeListCheckpoints(8, projA);
+    assert.deepEqual(scopedZero, [], 'Fallback must not leak proj-a-other or foreign checkpoints when proj-a has 0 checkpoints');
+    const limitZero = await safeListCheckpoints(0, projOther);
+    assert.deepEqual(limitZero, [], 'limit=0 must return empty array');
+
+    // 5. Mid-flight invalidateGuardPulseCache epoch protects against stale TRIPPED cache write & preload poisoning
+    invalidateGuardPulseCache();
+    let releaseSlowCb;
+    const slowCbGate = new Promise((res) => { releaseSlowCb = res; });
+    let cbStatusNow = { status: 'TRIPPED', repeatCount: 3, reason: 'stale loop' };
+    let cbCalls = 0;
+    panelRuntime.coreCircuit = {
+      getCircuitState: async () => {
+        cbCalls += 1;
+        if (cbCalls === 1) {
+          await slowCbGate;
+          return { status: 'TRIPPED', repeatCount: 3, reason: 'stale loop' };
+        }
+        return cbStatusNow;
+      },
+    };
+    panelRuntime.corePitfalls = { listPitfalls: () => [] };
+    panelRuntime.coreBayesian = { getBayesianSummary: () => ({ totalRuns: 0, fragileFiles: [], domains: [] }) };
+
+    const slowPulsePromise = safeGetGuardPulse(projA, { sqliteKnowledgeEnabled: false }, {
+      gpu: {},
+      ramCache: {},
+      shadowWorktrees: [],
+    });
+    // Wait a tick so first call enters await Promise.all, then invalidate mid-flight and reset CB state
+    await new Promise((r) => setTimeout(r, 20));
+    cbStatusNow = { status: 'CLOSED', repeatCount: 0, reason: '' };
+    invalidateGuardPulseCache(projA, ['fast']);
+    releaseSlowCb();
+    await slowPulsePromise;
+
+    const freshAfterReset = await safeGetGuardPulse(projA, { sqliteKnowledgeEnabled: false }, {
+      gpu: {},
+      ramCache: {},
+      shadowWorktrees: [],
+    });
+    assert.equal(freshAfterReset.risks.cbStatus, 'CLOSED', 'In-flight pre-reset snapshot must not overwrite post-invalidation GuardPulse cache');
+
+    // Partial explicit preload must not poison shared cache
+    const preloaded = await safeGetGuardPulse(projA, { sqliteKnowledgeEnabled: false }, {
+      circuitBreaker: { status: 'TRIPPED', repeatCount: 5 },
+      gpu: {},
+      ramCache: {},
+      shadowWorktrees: [],
+    });
+    assert.equal(preloaded.risks.cbStatus, 'TRIPPED');
+    const afterPreload = await safeGetGuardPulse(projA, { sqliteKnowledgeEnabled: false }, {
+      gpu: {},
+      ramCache: {},
+      shadowWorktrees: [],
+    });
+    assert.equal(afterPreload.risks.cbStatus, 'CLOSED', 'Explicit preload opts must not poison shared GuardPulse cache');
+
+    // 6. collectRoiTimeline handles nowMs: null, corrupt NaN inputs, and per-file persistence throttling
+    const roiDirA = path.join(tmpRoot, 'roi-a');
+    const roiDirB = path.join(tmpRoot, 'roi-b');
+    const roiA = collectRoiTimeline({
+      cacheDir: roiDirA,
+      nowMs: null,
+      seedFromTranscripts: false,
+      currentTelemetry: { ramSavedTokens: 'bad', cpuSavedTokens: 500, gpuSavedTokens: undefined },
+    });
+    const roiB = collectRoiTimeline({
+      cacheDir: roiDirB,
+      seedFromTranscripts: false,
+      currentTelemetry: { ramSavedTokens: 1000, cpuSavedTokens: 0, gpuSavedTokens: 0 },
+    });
+    assert.ok(new Date(roiA.generatedAt).getUTCFullYear() >= 2025, 'nowMs: null must not shift timeline to 1970');
+    assert.equal(roiA.totals.ram, 0);
+    assert.equal(roiA.totals.cpu, 500);
+    assert.equal(roiB.totals.ram, 1000);
+    assert.equal(fs.existsSync(path.join(roiDirA, 'roi-timeline.json')), true);
+    assert.equal(fs.existsSync(path.join(roiDirB, 'roi-timeline.json')), true);
+
+    // 7. collectTelemetry isolates bad threshold, NaN tokens, and unreadable transcript entries
+    const brainDir = path.join(tmpRoot, 'brain');
+    const chatLogsDir = path.join(brainDir, 'chat-1', '.system_generated', 'logs');
+    fs.mkdirSync(chatLogsDir, { recursive: true });
+    fs.writeFileSync(path.join(chatLogsDir, 'transcript.jsonl'), [
+      JSON.stringify({ input_tokens: 'corrupt', output_tokens: 150, cache_read_tokens: 50 }),
+      JSON.stringify({ input_tokens: 200, output_tokens: 50, cache_read_tokens: 100 }),
+    ].join('\n') + '\n');
+    const badChatDir = path.join(brainDir, 'chat-dir-trap', '.system_generated', 'logs', 'transcript.jsonl');
+    fs.mkdirSync(badChatDir, { recursive: true });
+
+    const tel = collectTelemetry('bad-thresh', { brainDirs: [brainDir], skipGlobalGpuTelemetry: true });
+    assert.equal(tel.compactionThresholdTokens, 120000);
+    assert.equal(tel.inputTokens, 200);
+    assert.equal(tel.outputTokens, 200);
+    assert.equal(tel.cacheReadTokens, 150);
+    assert.equal(Number.isFinite(tel.cacheHitRate), true);
+  } finally {
+    panelRuntime.coreCircuit = prevCircuit;
+    panelRuntime.corePitfalls = prevPitfalls;
+    panelRuntime.coreBayesian = prevBayesian;
+    panelRuntime.coreCompactor = prevCompactor;
+    panelRuntime.coreShadowGuard = prevShadowGuard;
+    if (prevUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = prevUserProfile;
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    invalidateGuardPulseCache();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
