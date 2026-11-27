@@ -4,6 +4,7 @@
  */
 
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { setDefaultResultOrder } from 'node:dns';
 import {
   copyFileSync,
@@ -92,6 +93,7 @@ function createIdleStatus(pluginRoot = '') {
     statusTextEn: '',
     error: '',
     dismissed: false,
+    checksumVerified: false,
   };
 }
 
@@ -180,6 +182,85 @@ export function isAllowedGitHubUrl(rawUrl = '') {
   } catch {
     return false;
   }
+}
+
+/**
+ * Validates that a plugin download or checksum URL points strictly to the pinned GitHub repository.
+ * Prevents arbitrary third-party GitHub repo downloads while allowing CDN redirects inside downloadUpdateArchive.
+ * @param {string} rawUrl
+ * @param {string} [expectedRepo]
+ * @returns {boolean}
+ */
+export function isAllowedPluginDownloadUrl(rawUrl = '', expectedRepo = DEFAULT_GITHUB_REPO) {
+  if (!isAllowedGitHubUrl(rawUrl)) return false;
+  const repo = parseGitHubRepoSlug(expectedRepo) || DEFAULT_GITHUB_REPO;
+  const repoLower = repo.toLowerCase();
+  try {
+    const u = new URL(rawUrl.trim());
+    const host = String(u.hostname || '').toLowerCase();
+    let decodedPath = '';
+    try {
+      decodedPath = decodeURIComponent(u.pathname || '');
+    } catch {
+      return false;
+    }
+    if (!decodedPath || decodedPath.includes('..') || decodedPath.includes('\\') || decodedPath.includes('\0')) {
+      return false;
+    }
+    const pathLower = decodedPath.toLowerCase();
+    if (host === 'github.com') {
+      return pathLower.startsWith(`/${repoLower}/releases/download/`) || pathLower.startsWith(`/${repoLower}/archive/`);
+    }
+    if (host === 'codeload.github.com') {
+      return pathLower.startsWith(`/${repoLower}/zip/`);
+    }
+    if (host === 'api.github.com') {
+      return pathLower.startsWith(`/repos/${repoLower}/zipball`);
+    }
+    if (host === 'raw.githubusercontent.com') {
+      return pathLower.startsWith(`/${repoLower}/`);
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Parses a lowercase 64-char SHA-256 hex digest from raw digest or checksum text.
+ * @param {string} raw
+ * @returns {string}
+ */
+export function parseSha256Hex(raw = '') {
+  if (typeof raw !== 'string') return '';
+  const cleaned = raw.trim().replace(/^sha256:/i, '').trim();
+  const direct = /^([0-9a-f]{64})$/i.exec(cleaned);
+  if (direct) return direct[1].toLowerCase();
+  const lineMatch = /^([0-9a-f]{64})\s+\S+/i.exec(cleaned);
+  return lineMatch ? lineMatch[1].toLowerCase() : '';
+}
+
+function extractChecksumFromManifestText(rawText = '', archiveName = '') {
+  if (typeof rawText !== 'string' || !rawText.trim()) return '';
+  const lines = rawText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const targetBase = String(archiveName || '').trim().toLowerCase();
+  let firstHex = '';
+  for (const line of lines) {
+    const m = /^(?:sha256:)?([0-9a-f]{64})(?:\s+\*?(.+))?$/i.exec(line);
+    if (!m) continue;
+    const hex = m[1].toLowerCase();
+    if (!firstHex) firstHex = hex;
+    const fileCol = String(m[2] || '').trim().toLowerCase();
+    if (targetBase && fileCol && (fileCol === targetBase || fileCol.endsWith(`/${targetBase}`) || fileCol.endsWith(`\\${targetBase}`))) {
+      return hex;
+    }
+  }
+  return lines.length <= 2 ? firstHex : '';
+}
+
+function computeFileSha256Hex(filePath) {
+  const buf = readFileSync(filePath);
+  return createHash('sha256').update(buf).digest('hex').toLowerCase();
 }
 
 /**
@@ -748,12 +829,19 @@ export async function checkForPluginUpdate(options = {}) {
       const zipAsset = assets.find((a) => (
         typeof a?.browser_download_url === 'string' &&
         /\.zip(?:$|\?)/i.test(a.browser_download_url) &&
-        isAllowedGitHubUrl(a.browser_download_url)
+        isAllowedPluginDownloadUrl(a.browser_download_url, meta.repo)
+      ));
+      const checksumAsset = assets.find((a) => (
+        typeof a?.browser_download_url === 'string' &&
+        /(?:\.sha256|sha256sums(?:\.txt)?|checksums(?:\.txt)?)(?:$|\?)/i.test(a.browser_download_url) &&
+        isAllowedPluginDownloadUrl(a.browser_download_url, meta.repo)
       ));
       const tagForUrl = rawTag || `v${latestVersion}`;
       downloadUrl = zipAsset
         ? zipAsset.browser_download_url.trim()
         : `https://codeload.github.com/${meta.repo}/zip/refs/tags/${encodeURIComponent(tagForUrl)}`;
+      var releaseExpectedSha256 = parseSha256Hex(String(zipAsset?.digest || ''));
+      var releaseChecksumUrl = checksumAsset ? checksumAsset.browser_download_url.trim() : '';
       releaseNotes = String(rel?.body || '').trim().slice(0, 600);
       publishedAt = typeof rel?.published_at === 'string' ? rel.published_at.trim() : '';
       source = 'release';
@@ -790,7 +878,7 @@ export async function checkForPluginUpdate(options = {}) {
       }
     }
 
-    if (!isAllowedGitHubUrl(downloadUrl)) {
+    if (!isAllowedPluginDownloadUrl(downloadUrl, meta.repo)) {
       throw new Error('Untrusted download URL returned by GitHub');
     }
 
@@ -804,6 +892,8 @@ export async function checkForPluginUpdate(options = {}) {
       updateAvailable,
       releaseUrl,
       downloadUrl,
+      expectedSha256: typeof releaseExpectedSha256 === 'string' ? releaseExpectedSha256 : '',
+      checksumUrl: typeof releaseChecksumUrl === 'string' ? releaseChecksumUrl : '',
       releaseNotes,
       publishedAt,
       source,
@@ -1080,6 +1170,8 @@ export async function applyPluginUpdate(options = {}) {
     targetDir = '',
     downloadUrl = '',
     targetVersion = '',
+    expectedSha256 = '',
+    checksumUrl = '',
     forceApply = false,
     fetchFn = null,
     fallbackHttpFn = null,
@@ -1107,6 +1199,8 @@ export async function applyPluginUpdate(options = {}) {
 
   let effectiveDownloadUrl = typeof downloadUrl === 'string' ? downloadUrl.trim() : '';
   let effectiveVersion = typeof targetVersion === 'string' ? (parseSemver(targetVersion)?.version || targetVersion.trim()) : '';
+  let effectiveExpectedSha256 = parseSha256Hex(typeof expectedSha256 === 'string' ? expectedSha256 : '');
+  let effectiveChecksumUrl = typeof checksumUrl === 'string' ? checksumUrl.trim() : '';
 
   const now = Date.now();
   const job = {
@@ -1170,10 +1264,16 @@ export async function applyPluginUpdate(options = {}) {
         }
         effectiveDownloadUrl = checkRes.downloadUrl;
         effectiveVersion = checkRes.latestVersion || effectiveVersion;
+        if (!effectiveExpectedSha256 && checkRes.expectedSha256) {
+          effectiveExpectedSha256 = parseSha256Hex(checkRes.expectedSha256);
+        }
+        if (!effectiveChecksumUrl && checkRes.checksumUrl) {
+          effectiveChecksumUrl = checkRes.checksumUrl;
+        }
       }
 
-      if (!isAllowedGitHubUrl(effectiveDownloadUrl)) {
-        throw new Error(isEn ? 'Blocked non-GitHub update download URL' : 'Отклонён недоверенный URL загрузки обновления');
+      if (!isAllowedPluginDownloadUrl(effectiveDownloadUrl, meta.repo)) {
+        throw new Error(isEn ? 'Blocked non-repository update download URL' : 'Отклонён недоверенный URL загрузки обновления');
       }
 
       const verLabel = effectiveVersion ? `v${effectiveVersion}` : (isEn ? 'update' : 'обновление');
@@ -1223,9 +1323,58 @@ export async function applyPluginUpdate(options = {}) {
         },
       });
 
+      let checksumVerified = false;
+      if (!effectiveExpectedSha256 && effectiveChecksumUrl && isAllowedPluginDownloadUrl(effectiveChecksumUrl, meta.repo)) {
+        try {
+          const csFetchImpl = typeof fetchFn === 'function' ? fetchFn : globalThis.fetch;
+          let csRes = null;
+          if (typeof csFetchImpl === 'function') {
+            try {
+              csRes = await csFetchImpl(effectiveChecksumUrl, {
+                headers: { 'User-Agent': `antigravity-model-router/${meta.version}` },
+                redirect: 'follow',
+                signal: AbortSignal.timeout(12000),
+              });
+            } catch (csErr) {
+              if (isRetryableNetworkError(csErr)) {
+                if (typeof fallbackHttpFn === 'function') {
+                  csRes = await fallbackHttpFn(effectiveChecksumUrl, { headers: { 'User-Agent': `antigravity-model-router/${meta.version}` }, timeoutMs: 12000, followRedirects: true });
+                } else if (typeof fetchFn !== 'function') {
+                  csRes = await defaultFallbackHttpGet(effectiveChecksumUrl, { headers: { 'User-Agent': `antigravity-model-router/${meta.version}` }, timeoutMs: 12000, followRedirects: true });
+                }
+              }
+            }
+          }
+          if (csRes && csRes.ok && typeof csRes.text === 'function') {
+            const archiveName = (() => {
+              try {
+                return decodeURIComponent(new URL(effectiveDownloadUrl).pathname.split('/').pop() || '');
+              } catch {
+                return '';
+              }
+            })();
+            effectiveExpectedSha256 = extractChecksumFromManifestText(await csRes.text(), archiveName);
+          }
+        } catch {}
+      }
+
+      if (effectiveExpectedSha256) {
+        const actualSha256 = computeFileSha256Hex(zipPath);
+        if (actualSha256 !== effectiveExpectedSha256) {
+          try { if (existsSync(zipPath)) unlinkSync(zipPath); } catch {}
+          throw new Error(
+            isEn
+              ? `Update archive SHA-256 mismatch (expected ${effectiveExpectedSha256.slice(0, 12)}…, got ${actualSha256.slice(0, 12)}…)`
+              : `Контрольная сумма SHA-256 архива обновления не совпала (${actualSha256.slice(0, 12)}… ≠ ${effectiveExpectedSha256.slice(0, 12)}…)`
+          );
+        }
+        checksumVerified = true;
+      }
+
       setStatus({
         phase: 'extracting',
         percent: 65,
+        checksumVerified,
         statusText: isEn ? 'Verifying and extracting update archive...' : 'Проверка и распаковка архива обновления...',
         statusTextRu: 'Проверка и распаковка архива обновления...',
         statusTextEn: 'Verifying and extracting update archive...',
@@ -1238,7 +1387,19 @@ export async function applyPluginUpdate(options = {}) {
       }
       validateExtractedTreeSafe(extractDir);
       const sourceDir = findExtractedPluginRoot(extractDir);
+      const extractedManifest = safeReadJsonSync(join(sourceDir, 'plugin.json'), null, { selfHeal: false });
+      const localManifest = safeReadJsonSync(join(root, 'plugin.json'), null, { selfHeal: false });
+      const expectedPluginName = typeof localManifest?.name === 'string' && localManifest.name.trim()
+        ? localManifest.name.trim()
+        : 'antigravity-model-router';
+      const extractedName = typeof extractedManifest?.name === 'string' ? extractedManifest.name.trim() : '';
+      if (extractedName && extractedName !== expectedPluginName) {
+        throw new Error(isEn ? `Unexpected plugin name in archive: ${extractedName}` : `Неожиданное имя плагина в архиве: ${extractedName}`);
+      }
       const extractedMeta = readPluginMeta(sourceDir);
+      if (extractedMeta.repo.toLowerCase() !== meta.repo.toLowerCase()) {
+        throw new Error(isEn ? `Archive repository mismatch: ${extractedMeta.repo}` : `Репозиторий в архиве не совпадает с плагином: ${extractedMeta.repo}`);
+      }
       if (extractedMeta.version && !effectiveVersion) {
         effectiveVersion = extractedMeta.version;
       }
@@ -1317,6 +1478,7 @@ export async function applyPluginUpdate(options = {}) {
         targetVersion: doneVer,
         installedTarget: installTarget,
         needsRestart: true,
+        checksumVerified,
         appliedByPid: effectiveAppliedByPid,
         error: '',
         statusText: isEn

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,6 +12,7 @@ import {
   compareSemver,
   getPluginUpdateStatus,
   isAllowedGitHubUrl,
+  isAllowedPluginDownloadUrl,
   isUpdateCheckDisabledByEnv,
   parseGitHubRepoSlug,
   parseSemver,
@@ -568,6 +570,136 @@ test('8. getPluginUpdateStatus auto-clears stale needsRestart after Antigravity 
     assert.equal(legacyCleared.phase, 'idle');
     assert.equal(legacyCleared.needsRestart, false);
     assert.equal(legacyCleared.dismissed, true);
+  } finally {
+    fs.rmSync(installedRoot, { recursive: true, force: true });
+  }
+});
+
+test('9. Security hardening: repo-pinned download URL, SHA-256 verification & manifest guard before install.js', async () => {
+  // Repo pinning rejects foreign GitHub repos and direct CDN hosts as initial downloadUrl
+  assert.equal(
+    isAllowedPluginDownloadUrl('https://github.com/vaszuevvas-coder/antigravity-model-router/releases/download/v4.0.6/app.zip'),
+    true
+  );
+  assert.equal(
+    isAllowedPluginDownloadUrl('https://codeload.github.com/vaszuevvas-coder/antigravity-model-router/zip/refs/heads/main'),
+    true
+  );
+  assert.equal(
+    isAllowedPluginDownloadUrl('https://github.com/attacker/evil-plugin/releases/download/v1.0.0/evil.zip'),
+    false
+  );
+  assert.equal(
+    isAllowedPluginDownloadUrl('https://codeload.github.com/attacker/evil-plugin/zip/refs/heads/main'),
+    false
+  );
+  assert.equal(
+    isAllowedPluginDownloadUrl('https://objects.githubusercontent.com/github-production-release-asset/123/app.zip'),
+    false
+  );
+
+  const installedRoot = makeFakePluginRoot('4.0.5', { withGit: false });
+  try {
+    // 1) Foreign GitHub repo rejected by applyPluginUpdate
+    const foreignRes = await applyPluginUpdate({
+      pluginRoot: installedRoot,
+      downloadUrl: 'https://github.com/attacker/evil-plugin/releases/download/v9.9.9/evil.zip',
+      targetVersion: '9.9.9',
+      lang: 'en',
+    });
+    assert.equal(foreignRes.ok, false);
+    assert.equal(foreignRes.phase, 'error');
+
+    // 2) SHA-256 mismatch aborts before extraction and before install.js
+    const payloadBytes = Buffer.from('PK\x03\x04valid-zip-bytes');
+    const actualSha = createHash('sha256').update(payloadBytes).digest('hex');
+    const badSha = '0'.repeat(64);
+    let extractCalled = false;
+    const mismatchRes = await applyPluginUpdate({
+      pluginRoot: installedRoot,
+      downloadUrl: 'https://codeload.github.com/vaszuevvas-coder/antigravity-model-router/zip/refs/tags/v4.0.6',
+      targetVersion: '4.0.6',
+      expectedSha256: badSha,
+      lang: 'en',
+      fetchFn: async () => ({
+        ok: true,
+        status: 200,
+        url: 'https://codeload.github.com/vaszuevvas-coder/antigravity-model-router/zip/refs/tags/v4.0.6',
+        headers: { get: () => String(payloadBytes.length) },
+        arrayBuffer: async () => payloadBytes.buffer.slice(payloadBytes.byteOffset, payloadBytes.byteOffset + payloadBytes.byteLength),
+      }),
+      extractZipFn: async () => {
+        extractCalled = true;
+      },
+    });
+    assert.equal(mismatchRes.ok, false);
+    assert.equal(mismatchRes.phase, 'error');
+    assert.match(mismatchRes.error, /SHA-256 mismatch/i);
+    assert.equal(extractCalled, false, 'Must abort before extracting archive on SHA-256 mismatch');
+
+    // 3) Matching SHA-256 + mismatched archive plugin.json name aborts before install.js
+    let installRan = false;
+    const badManifestRes = await applyPluginUpdate({
+      pluginRoot: installedRoot,
+      downloadUrl: 'https://codeload.github.com/vaszuevvas-coder/antigravity-model-router/zip/refs/tags/v4.0.6',
+      targetVersion: '4.0.6',
+      expectedSha256: `sha256:${actualSha}`,
+      lang: 'en',
+      fetchFn: async () => ({
+        ok: true,
+        status: 200,
+        url: 'https://codeload.github.com/vaszuevvas-coder/antigravity-model-router/zip/refs/tags/v4.0.6',
+        headers: { get: () => String(payloadBytes.length) },
+        arrayBuffer: async () => payloadBytes.buffer.slice(payloadBytes.byteOffset, payloadBytes.byteOffset + payloadBytes.byteLength),
+      }),
+      extractZipFn: async (_zipPath, destDir) => {
+        const inner = path.join(destDir, 'spoof-4.0.6');
+        fs.mkdirSync(inner, { recursive: true });
+        fs.writeFileSync(
+          path.join(inner, 'plugin.json'),
+          JSON.stringify({ name: 'rogue-plugin', version: '4.0.6' }),
+          'utf8'
+        );
+      },
+      runInstallFn: async () => {
+        installRan = true;
+      },
+    });
+    assert.equal(badManifestRes.ok, false);
+    assert.match(badManifestRes.error, /Unexpected plugin name/i);
+    assert.equal(installRan, false, 'Must never execute installer for mismatched plugin.json');
+
+    // 4) Valid SHA-256 + valid manifest succeeds and records checksumVerified=true
+    const okRes = await applyPluginUpdate({
+      pluginRoot: installedRoot,
+      downloadUrl: 'https://codeload.github.com/vaszuevvas-coder/antigravity-model-router/zip/refs/tags/v4.0.6',
+      targetVersion: '4.0.6',
+      expectedSha256: actualSha,
+      lang: 'en',
+      fetchFn: async () => ({
+        ok: true,
+        status: 200,
+        url: 'https://codeload.github.com/vaszuevvas-coder/antigravity-model-router/zip/refs/tags/v4.0.6',
+        headers: { get: () => String(payloadBytes.length) },
+        arrayBuffer: async () => payloadBytes.buffer.slice(payloadBytes.byteOffset, payloadBytes.byteOffset + payloadBytes.byteLength),
+      }),
+      extractZipFn: async (_zipPath, destDir) => {
+        const inner = path.join(destDir, 'antigravity-model-router-4.0.6');
+        fs.mkdirSync(inner, { recursive: true });
+        fs.writeFileSync(
+          path.join(inner, 'plugin.json'),
+          JSON.stringify({
+            name: 'antigravity-model-router',
+            version: '4.0.6',
+            repository: { type: 'git', url: 'https://github.com/vaszuevvas-coder/antigravity-model-router.git' },
+          }),
+          'utf8'
+        );
+      },
+    });
+    assert.equal(okRes.ok, true);
+    assert.equal(okRes.phase, 'done');
+    assert.equal(okRes.checksumVerified, true);
   } finally {
     fs.rmSync(installedRoot, { recursive: true, force: true });
   }

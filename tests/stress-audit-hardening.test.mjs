@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { knowledgeHub } from '../core/sqlite-knowledge-hub.mjs';
 import { updateJsonAtomicSync, withFileLockSync } from '../core/safe-json.mjs';
+import { detectWorkspaceFastLinter, runFastLinterPrecheck } from '../core/auto-verifier.mjs';
 import { getActiveSidecarRequest, validateRequestOrigin } from '../sidecars/panel/lib/panel-security.mjs';
 import { loadState, sanitizeStatePatch, startSidecarPanel } from '../sidecars/panel/server.mjs';
 
@@ -721,5 +722,173 @@ test('8. Hardening wave: router-cli decoupling, 1-arg ALS origin enforcement, he
     if (prevCacheDir === undefined) delete process.env.TUNNEL_CACHE_DIR;
     else process.env.TUNNEL_CACHE_DIR = prevCacheDir;
     try { fs.rmSync(tmpParent, { recursive: true, force: true, maxRetries: 4, retryDelay: 60 }); } catch {}
+  }
+});
+
+test('9. Security audit hardening: SIDECAR_TOKEN non-bypass, same-port loopback, update-apply repo check, MCP hint, no PS Bypass, safe linter precheck', async () => {
+  // 1) SIDECAR_TOKEN cannot be bypassed via static x-router-panel header or same-origin alone
+  assert.equal(
+    validateRequestOrigin(
+      {
+        method: 'POST',
+        headers: {
+          host: '127.0.0.1:41234',
+          origin: 'http://127.0.0.1:41234',
+          'x-router-panel': 'antigravity-v38',
+          'sec-fetch-site': 'same-origin',
+        },
+      },
+      { expectedToken: 'secret-token-123', enforceGetOrigin: true }
+    ),
+    false
+  );
+  assert.equal(
+    validateRequestOrigin(
+      {
+        method: 'POST',
+        headers: {
+          host: '127.0.0.1:41234',
+          origin: 'http://127.0.0.1:41234',
+          'x-router-panel': 'antigravity-v38',
+          'x-sidecar-token': 'secret-token-123',
+        },
+      },
+      { expectedToken: 'secret-token-123', enforceGetOrigin: true }
+    ),
+    true
+  );
+  assert.equal(
+    validateRequestOrigin(
+      {
+        method: 'GET',
+        url: '/api/state?token=secret-token-123',
+        headers: {
+          host: '127.0.0.1:41234',
+          origin: 'http://127.0.0.1:41234',
+        },
+      },
+      { expectedToken: 'secret-token-123', enforceGetOrigin: true }
+    ),
+    true
+  );
+  // Exchange-auth route keeps working for single-use authCode exchange
+  assert.equal(
+    validateRequestOrigin(
+      {
+        method: 'POST',
+        headers: {
+          host: '127.0.0.1:41234',
+          origin: 'http://127.0.0.1:41234',
+          'x-router-panel': 'antigravity-v38',
+        },
+      },
+      { expectedToken: 'secret-token-123', enforceGetOrigin: true, allowAuthCodeExchange: true }
+    ),
+    true
+  );
+
+  // 2) Cross-port loopback Origin must be rejected when Host port differs
+  assert.equal(
+    validateRequestOrigin(
+      {
+        method: 'POST',
+        headers: {
+          host: '127.0.0.1:41234',
+          origin: 'http://localhost:3000',
+          'x-router-panel': 'antigravity-v38',
+        },
+      },
+      { expectedToken: '' }
+    ),
+    false
+  );
+  assert.equal(
+    validateRequestOrigin(
+      {
+        method: 'POST',
+        headers: {
+          host: '127.0.0.1:41234',
+          origin: 'http://localhost:41234',
+          'x-router-panel': 'antigravity-v38',
+        },
+      },
+      { expectedToken: '' }
+    ),
+    true
+  );
+
+  // 3) /api/plugin/update-apply rejects foreign GitHub repository URLs
+  const tmpPanel = makeTempDir('amr-sec-panel-');
+  const prevIsolate = process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+  const prevStatePath = process.env.TUNNEL_TEST_STATE_PATH;
+  const prevCacheDir = process.env.TUNNEL_CACHE_DIR;
+  process.env.TUNNEL_TEST_ISOLATE_INSTALLED = '1';
+  process.env.TUNNEL_TEST_STATE_PATH = path.join(tmpPanel, 'router-state.json');
+  process.env.TUNNEL_CACHE_DIR = path.join(tmpPanel, '.cache');
+  let app = null;
+  try {
+    app = await startSidecarPanel({ SidecarAppClass: createMiniSidecarAppClass(), pluginRoot: ROOT_DIR });
+    const updateApplyHandler = app._routes.get('/api/plugin/update-apply')?.get('POST');
+    assert.equal(typeof updateApplyHandler, 'function');
+    const authReq = {
+      method: 'POST',
+      headers: {
+        host: '127.0.0.1:41234',
+        origin: 'http://127.0.0.1:41234',
+        'x-router-panel': 'antigravity-v38',
+      },
+    };
+    const foreignUpdateRes = await updateApplyHandler(
+      { downloadUrl: 'https://github.com/attacker/rogue-router/releases/download/v9.9.9/payload.zip', targetVersion: '9.9.9' },
+      authReq
+    );
+    assert.equal(foreignUpdateRes.ok, false);
+    assert.equal(foreignUpdateRes.status, 400);
+  } finally {
+    await app?.close?.().catch(() => {});
+    if (prevIsolate === undefined) delete process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+    else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIsolate;
+    if (prevStatePath === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
+    else process.env.TUNNEL_TEST_STATE_PATH = prevStatePath;
+    if (prevCacheDir === undefined) delete process.env.TUNNEL_CACHE_DIR;
+    else process.env.TUNNEL_CACHE_DIR = prevCacheDir;
+    fs.rmSync(tmpPanel, { recursive: true, force: true });
+  }
+
+  // 4) git_bisect_auto MCP annotation must declare readOnlyHint: false & zero -ExecutionPolicy Bypass in runtime modules
+  const mcpSrc = fs.readFileSync(path.join(ROOT_DIR, 'core', 'ram-memory-mcp.mjs'), 'utf8');
+  const bisectBlockMatch = mcpSrc.match(/name:\s*'git_bisect_auto'[\s\S]{0,450}/);
+  assert.ok(bisectBlockMatch, 'git_bisect_auto tool definition must exist');
+  assert.match(bisectBlockMatch[0], /readOnlyHint:\s*false/);
+
+  const hwSrc = fs.readFileSync(path.join(ROOT_DIR, 'core', 'hardware-profiler.mjs'), 'utf8');
+  const hudSrc = fs.readFileSync(path.join(ROOT_DIR, 'core', 'floating-hud.mjs'), 'utf8');
+  assert.equal(/-ExecutionPolicy\s*['"]?,?\s*['"]?Bypass/i.test(hwSrc), false);
+  assert.equal(/-ExecutionPolicy\s*['"]?,?\s*['"]?Bypass/i.test(hudSrc), false);
+
+  // 5) Fast linter precheck refuses unconfirmed node_modules/.bin and Win32 shell metacharacters
+  const tmpLinterWs = makeTempDir('amr-sec-lint-');
+  try {
+    const binDir = path.join(tmpLinterWs, 'node_modules', '.bin');
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.writeFileSync(path.join(binDir, process.platform === 'win32' ? 'oxlint.cmd' : 'oxlint'), 'echo evil\n', 'utf8');
+    fs.writeFileSync(path.join(tmpLinterWs, 'app.js'), 'export const x = 1;\n', 'utf8');
+    // No .oxlintrc and no package.json dependency -> must NOT pick unconfirmed binary
+    assert.equal(detectWorkspaceFastLinter(tmpLinterWs), null);
+
+    // Unsafe path with shell metacharacter '&' must be skipped safely when invoked via Windows .cmd wrapper
+    const unsafeFile = path.join(tmpLinterWs, 'a&calc.js');
+    fs.writeFileSync(unsafeFile, 'export const y = 2;\n', 'utf8');
+    const precheckRes = await runFastLinterPrecheck({
+      rootDir: tmpLinterWs,
+      filePath: unsafeFile,
+      linterSpec: { tool: 'oxlint', bin: path.join(binDir, 'oxlint.cmd') },
+    });
+    assert.equal(precheckRes.ran, false);
+    if (process.platform === 'win32') {
+      assert.equal(precheckRes.skippedUnsafePath, true);
+    }
+  } finally {
+    fs.rmSync(tmpLinterWs, { recursive: true, force: true });
   }
 });

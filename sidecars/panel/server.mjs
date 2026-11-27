@@ -18,6 +18,8 @@ import {
   checkForPluginUpdate,
   clearPluginUpdateStatus,
   getPluginUpdateStatus,
+  isAllowedPluginDownloadUrl,
+  readPluginMeta,
 } from '../../core/plugin-updater.mjs';
 import { loadPluginChangelog } from '../../core/changelog-parser.mjs';
 import {
@@ -294,10 +296,13 @@ export async function startSidecarPanel(options = {}) {
   const resolveReq = (req) => req || getActiveSidecarRequest() || null;
   const hasRequestContext = (req) => Boolean(resolveReq(req));
   const ensurePostReq = (req) => (req && typeof req === 'object' ? (req.method ? req : { ...req, method: 'POST' }) : req);
-  const isRouteAuthorized = (req) => {
+  const isRouteAuthorized = (req, authOpts = {}) => {
     const activeReq = resolveReq(req);
     return activeReq
-      ? validateRequestOrigin(ensurePostReq(activeReq), { enforceGetOrigin: true })
+      ? validateRequestOrigin(ensurePostReq(activeReq), {
+          enforceGetOrigin: true,
+          allowAuthCodeExchange: Boolean(authOpts?.allowAuthCodeExchange),
+        })
       : securityMiddlewareActive;
   };
 
@@ -2572,7 +2577,7 @@ export async function startSidecarPanel(options = {}) {
   };
 
   app.api('/api/project-graph/exchange-auth', async (data, req) => {
-    if (hasRequestContext(req) && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    if (hasRequestContext(req) && !isRouteAuthorized(req, { allowAuthCodeExchange: true })) return { ok: false, status: 403, error: 'Forbidden origin' };
     pruneGraphAuthCodes();
     const code = typeof data?.authCode === 'string' ? data.authCode.trim() : '';
     if (!code) return { ok: false, error: 'Missing authCode' };
@@ -4088,6 +4093,18 @@ export async function startSidecarPanel(options = {}) {
     const downloadUrl = typeof data?.downloadUrl === 'string' ? data.downloadUrl.trim() : '';
     const targetVersion = typeof data?.targetVersion === 'string' ? data.targetVersion.trim() : '';
     const forceApply = data?.forceApply === true || data?.force === true;
+    const pinnedRepo = readPluginMeta(pluginRoot).repo;
+    if (downloadUrl && !isAllowedPluginDownloadUrl(downloadUrl, pinnedRepo)) {
+      return {
+        ok: false,
+        status: 400,
+        started: false,
+        error: pickLang(lang, 'Отклонён недоверенный URL обновления (не соответствует репозиторию плагина)', 'Blocked untrusted update URL (does not match plugin repository)'),
+      };
+    }
+    const cachedCheck = lastPluginUpdateCheck && lastPluginUpdateCheck.downloadUrl === downloadUrl
+      ? lastPluginUpdateCheck
+      : null;
     try {
       const applyFn = typeof updateHandlers?.applyPluginUpdate === 'function'
         ? updateHandlers.applyPluginUpdate
@@ -4096,6 +4113,8 @@ export async function startSidecarPanel(options = {}) {
         pluginRoot,
         downloadUrl,
         targetVersion,
+        expectedSha256: cachedCheck?.expectedSha256 || '',
+        checksumUrl: cachedCheck?.checksumUrl || '',
         forceApply,
         lang,
         awaitCompletion: false,

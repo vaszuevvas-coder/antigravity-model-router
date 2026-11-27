@@ -86,6 +86,24 @@ export function isAllowedLoopbackHost(hostHeader = '') {
   return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1';
 }
 
+function parseHostPortHeader(rawHost) {
+  if (typeof rawHost !== 'string') return null;
+  const trimmed = rawHost.trim().toLowerCase();
+  if (!trimmed || trimmed.length > 128) return null;
+  if (trimmed.startsWith('[')) {
+    const closing = trimmed.indexOf(']');
+    if (closing === -1) return null;
+    const after = trimmed.slice(closing + 1);
+    if (!after) return { port: '' };
+    const m = /^:(\d{1,5})$/.exec(after);
+    return m ? { port: m[1] } : null;
+  }
+  const colonIdx = trimmed.indexOf(':');
+  if (colonIdx === -1) return { port: '' };
+  const portStr = trimmed.slice(colonIdx + 1);
+  return /^\d{1,5}$/.test(portStr) ? { port: portStr } : null;
+}
+
 export function validateRequestOrigin(req, options = {}) {
   if (!req || typeof req !== 'object') return false;
   const headers = req.headers || {};
@@ -120,16 +138,28 @@ export function validateRequestOrigin(req, options = {}) {
   const bearerToken = rawAuthHdr !== undefined && rawAuthHdr !== null
     ? String(rawAuthHdr).trim().replace(/^Bearer\s+/i, '')
     : '';
+  let queryToken = '';
+  if (typeof req.url === 'string' && req.url.includes('token=')) {
+    try {
+      queryToken = String(new URL(req.url, 'http://127.0.0.1').searchParams.get('token') || '').trim();
+    } catch {}
+  }
   const providedToken = String(
     getHdr('x-sidecar-token') ||
     getHdr('x-antigravity-token') ||
     bearerToken ||
+    queryToken ||
     ''
   ).trim();
   if (providedToken && expectedToken && !isValidSidecarToken(providedToken, expectedToken)) {
     return false;
   }
   const hasValidToken = Boolean(expectedToken && providedToken && isValidSidecarToken(providedToken, expectedToken));
+  const requireToken = Boolean(expectedToken && !options.allowAuthCodeExchange);
+  const isPost = method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE';
+  if (requireToken && (isPost || options.enforceGetOrigin) && !hasValidToken) {
+    return false;
+  }
   const hasSidecarAuth = Boolean(hasValidToken || secFetchSite === 'same-origin');
 
   const isWebviewScheme = (proto) =>
@@ -142,6 +172,14 @@ export function validateRequestOrigin(req, options = {}) {
     proto === 'electron:' ||
     proto === 'file:';
 
+  const hostPortInfo = parseHostPortHeader(getHdr('host'));
+  const isMatchingLoopbackPort = (u) => {
+    if (!hostPortInfo) return true;
+    const reqPort = u.port || (u.protocol === 'https:' ? '443' : '80');
+    if (hostPortInfo.port) return reqPort === hostPortInfo.port;
+    return !u.port || u.port === '80' || u.port === '443';
+  };
+
   const isLoopbackHttpUrl = (raw) => {
     try {
       const u = new URL(String(raw));
@@ -153,7 +191,6 @@ export function validateRequestOrigin(req, options = {}) {
     }
   };
 
-  const isPost = method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE';
   const rawOrigin = getHdr('origin');
   if (rawOrigin === undefined || rawOrigin === null || rawOrigin === '') {
     const rawReferer = getHdr('referer');
@@ -164,7 +201,10 @@ export function validateRequestOrigin(req, options = {}) {
     }
     try {
       const refUrl = new URL(String(rawReferer));
-      if (isWebviewScheme(refUrl.protocol) || isLoopbackHttpUrl(rawReferer)) {
+      if (isWebviewScheme(refUrl.protocol)) {
+        return isPost ? (hasValidPanelHdr || hasSidecarAuth || secFetchSite !== 'cross-site') : true;
+      }
+      if (isLoopbackHttpUrl(rawReferer) && isMatchingLoopbackPort(refUrl)) {
         return isPost ? (hasValidPanelHdr || hasSidecarAuth || secFetchSite !== 'cross-site') : true;
       }
       return false;
@@ -183,7 +223,7 @@ export function validateRequestOrigin(req, options = {}) {
     if (isWebviewScheme(u.protocol)) {
       return isPost ? (hasValidPanelHdr || hasSidecarAuth) : true;
     }
-    if (isLoopbackHttpUrl(originStr)) {
+    if (isLoopbackHttpUrl(originStr) && isMatchingLoopbackPort(u)) {
       return isPost ? (hasValidPanelHdr || hasSidecarAuth) : true;
     }
     return false;
@@ -232,7 +272,11 @@ export function attachSidecarSecurityMiddleware(server, options = {}) {
     }
 
     const isApiRoute = pathname.startsWith('/api/') || pathname.startsWith('/_sidecar/');
-    if (!validateRequestOrigin(req, { enforceGetOrigin: isApiRoute, expectedToken: options.expectedToken })) {
+    if (!validateRequestOrigin(req, {
+      enforceGetOrigin: isApiRoute,
+      expectedToken: options.expectedToken,
+      allowAuthCodeExchange: pathname === '/api/project-graph/exchange-auth',
+    })) {
       res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ ok: false, error: 'Forbidden origin' }));
       return;

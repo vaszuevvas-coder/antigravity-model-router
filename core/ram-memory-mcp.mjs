@@ -1921,7 +1921,7 @@ export const MCP_TOOLS = [
     description: 'Runs automated binary-search `git bisect` inside an isolated temporary detached worktree to pinpoint the exact commit that broke a test command without modifying the working tree.',
     annotations: {
       title: 'Automated Git Bisect Culprit Finder',
-      readOnlyHint: true,
+      readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: false,

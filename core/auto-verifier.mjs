@@ -7,7 +7,7 @@
 
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import * as nodeModule from 'node:module';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -698,6 +698,33 @@ export function formatCompactProcessError(err, fallbackMsg = 'Process failed') {
   return (rawMsg.length > 450 ? rawMsg.slice(0, 450) : rawMsg) || fallbackMsg;
 }
 
+function isInsideWorkspaceRealpath(absRoot, candidatePath) {
+  try {
+    const rootReal = realpathSync(absRoot);
+    const binReal = realpathSync(candidatePath);
+    const normRoot = process.platform === 'win32' ? rootReal.toLowerCase() : rootReal;
+    const normBin = process.platform === 'win32' ? binReal.toLowerCase() : binReal;
+    return normBin === normRoot || normBin.startsWith(normRoot + (normRoot.endsWith('\\') || normRoot.endsWith('/') ? '' : (process.platform === 'win32' ? '\\' : '/')));
+  } catch {
+    return false;
+  }
+}
+
+function hasDeclaredPackageDep(absRoot, depNames = []) {
+  try {
+    const pkgPath = join(absRoot, 'package.json');
+    if (!existsSync(pkgPath)) return false;
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+    if (!pkg || typeof pkg !== 'object') return false;
+    for (const field of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+      const sec = pkg[field];
+      if (!sec || typeof sec !== 'object') continue;
+      if (depNames.some((n) => Object.hasOwn(sec, n))) return true;
+    }
+  } catch {}
+  return false;
+}
+
 /**
  * Detects local multi-threaded oxlint or biome binary in workspace (cached 60s).
  * @param {string} rootDir
@@ -715,21 +742,30 @@ export function detectWorkspaceFastLinter(rootDir = process.cwd()) {
   const isWin = process.platform === 'win32';
   const oxBin = join(absRoot, 'node_modules', '.bin', isWin ? 'oxlint.cmd' : 'oxlint');
   const biomeBin = join(absRoot, 'node_modules', '.bin', isWin ? 'biome.cmd' : 'biome');
+  const hasOxConfig =
+    existsSync(join(absRoot, '.oxlintrc.json')) ||
+    existsSync(join(absRoot, '.oxlintrc.jsonc')) ||
+    existsSync(join(absRoot, 'oxlint.config.ts'));
+  const hasBiomeConfig = existsSync(join(absRoot, 'biome.json')) || existsSync(join(absRoot, 'biome.jsonc'));
+  const hasOxDeclared = hasOxConfig || hasDeclaredPackageDep(absRoot, ['oxlint']);
+  const hasBiomeDeclared = hasBiomeConfig || hasDeclaredPackageDep(absRoot, ['@biomejs/biome', 'biome']);
   let spec = null;
 
-  if (existsSync(oxBin)) {
+  if (existsSync(oxBin) && hasOxDeclared && isInsideWorkspaceRealpath(absRoot, oxBin)) {
     spec = { tool: 'oxlint', bin: oxBin };
-  } else if (existsSync(join(absRoot, '.oxlintrc.json')) || existsSync(join(absRoot, '.oxlintrc.jsonc')) || existsSync(join(absRoot, 'oxlint.config.ts'))) {
+  } else if (hasOxConfig) {
     spec = { tool: 'oxlint', bin: isWin ? 'oxlint.cmd' : 'oxlint' };
-  } else if (existsSync(biomeBin)) {
+  } else if (existsSync(biomeBin) && hasBiomeDeclared && isInsideWorkspaceRealpath(absRoot, biomeBin)) {
     spec = { tool: 'biome', bin: biomeBin };
-  } else if (existsSync(join(absRoot, 'biome.json')) || existsSync(join(absRoot, 'biome.jsonc'))) {
+  } else if (hasBiomeConfig) {
     spec = { tool: 'biome', bin: isWin ? 'biome.cmd' : 'biome' };
   }
 
   fastLinterDetectCache.set(cacheKey, { ts: now, spec });
   return spec;
 }
+
+const UNSAFE_WIN_CMD_META_RE = /[&|;<>^%!`\r\n"]/;
 
 /**
  * Runs fast local multi-threaded oxlint/biome precheck on edited file (<= 1200ms).
@@ -755,13 +791,17 @@ export async function runFastLinterPrecheck({
     return { ran: false, valid: true, tool: null, durationMs: 0, error: null };
   }
 
+  const isWinCmd = process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(spec.bin);
+  if (isWinCmd && (UNSAFE_WIN_CMD_META_RE.test(targetAbs) || UNSAFE_WIN_CMD_META_RE.test(String(spec.bin || '')))) {
+    return { ran: false, valid: true, tool: spec.tool, durationMs: 0, skippedUnsafePath: true, error: null };
+  }
+
   const budget = Math.min(1200, Math.max(150, Number(timeoutMs) || 1200));
   const args = spec.tool === 'oxlint'
     ? ['--quiet', targetAbs]
     : ['check', '--diagnostic-level=error', targetAbs];
   const t0 = Date.now();
   try {
-    const isWinCmd = process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(spec.bin);
     const quoteCmdArg = (s) => `"${String(s).replace(/"/g, '""')}"`;
     const runBin = isWinCmd ? (process.env.ComSpec || 'cmd.exe') : spec.bin;
     const runArgs = isWinCmd

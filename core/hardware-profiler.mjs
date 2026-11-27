@@ -198,7 +198,7 @@ function probeWindowsWmiAndRegistryGpu(execFn) {
 
   const out = execFn(
     'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', psScript],
+    ['-NoProfile', '-NonInteractive', '-Command', psScript],
     { encoding: 'utf8', timeout: 1800, windowsHide: true }
   );
   const trimmed = String(out || '').trim();

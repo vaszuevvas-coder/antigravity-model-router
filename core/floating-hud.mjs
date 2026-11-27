@@ -6,8 +6,7 @@
  * and automatic synchronization with core/task-progress.mjs.
  */
 
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWriteJsonSync, safeReadJsonSync } from './safe-json.mjs';
@@ -442,45 +441,9 @@ export function ensureFloatingHudRunning({
     stopFloatingHud();
   }
 
-  try {
-    if (!existsSync(TASK_PROGRESS_FILE)) {
-      getTaskProgressSnapshot();
-    }
-    const ps1Content = buildWpfFloatingHudScript({ lang: state?.uiLanguage || '' });
-    writeFileSync(HUD_PS1_SCRIPT_FILE, ps1Content, 'utf8');
-
-    const child = spawn(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-Sta',
-        '-File',
-        HUD_PS1_SCRIPT_FILE,
-      ],
-      {
-        detached: false,
-        stdio: 'ignore',
-        windowsHide: true,
-      }
-    );
-    if (typeof child.unref === 'function') {
-      child.unref();
-    }
-    const pid = Number(child.pid || 0);
-
-    atomicWriteJsonSync(HUD_RUNTIME_FILE, {
-      enabled: true,
-      stopRequested: false,
-      pid,
-      updatedAt: Date.now(),
-    });
-
-    return { ok: true, supported: true, running: pid > 0, pid, reused: false };
-  } catch (err) {
-    return { ok: false, supported: true, running: false, error: err.message };
-  }
+  // External PowerShell WPF window retired for security/EDR hygiene; progress renders inline in the panel.
+  stopFloatingHud();
+  return { ok: true, supported: true, running: false, retired: true };
 }
 
 /**
