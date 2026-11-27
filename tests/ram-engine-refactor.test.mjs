@@ -581,3 +581,52 @@ test('10. Cross-subsystem contracts: warmWorkspaceAsync in MCP (/gpu/warm, gpu_s
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });
+
+test('Batch 2 audit regressions: partialLazyLoad, blocked-file eviction, slice endLine window, search snippet & Windows memo colon', async () => {
+  const tmpWs = makeTempDir('ram-b2-reg-');
+  const engine = new RamMemoryEngine({ budgetMb: 128, startWatcher: false, sqliteKnowledgeEnabled: false });
+  try {
+    const bigLines = Array.from({ length: 260 }, (_, i) => `export const row_${i + 1} = "MCPServer_${i + 1}";`).join('\n');
+    const aPath = path.join(tmpWs, 'alpha.mjs');
+    const bPath = path.join(tmpWs, 'beta.mjs');
+    fs.writeFileSync(aPath, bigLines, 'utf8');
+    fs.writeFileSync(bPath, 'export function runCheck() { return 1; }\n', 'utf8');
+
+    // 1. ram_slice on cold workspace marks partialLazyLoad so ensureWarm & hasWarmWorkspace still warm the full repo
+    const sliceRes = await executeMcpTool('ram_slice', { workspaceRoot: tmpWs, filePath: 'alpha.mjs', startLine: 150 }, { engine });
+    assert.equal(sliceRes.isError, false);
+    assert.ok(sliceRes.text.includes('row_260'), 'ram_slice without endLine must slice a 120-line window past line 150');
+    assert.equal(engine.hasWarmWorkspace(tmpWs), false);
+
+    const ws = engine.ensureWarm(tmpWs);
+    assert.equal(ws.files.has('beta.mjs'), true);
+    assert.equal(engine.hasWarmWorkspace(tmpWs), true);
+
+    // 2. Truncating file to 0 bytes evicts stale entry from RAM
+    fs.writeFileSync(bPath, '', 'utf8');
+    assert.equal(engine.upsertFile(tmpWs, bPath), null);
+    assert.equal(ws.files.has('beta.mjs'), false);
+
+    // 3. searchWorkspace populates snippet and splits acronym MCPServer
+    const searchRes = engine.search(tmpWs, 'MCPServer', { maxResults: 3 });
+    assert.equal(searchRes.ok, true);
+    assert.ok(typeof searchRes.results[0]?.snippet === 'string' && searchRes.results[0].snippet.length > 0);
+
+    // 4. Memoizer invalidates Windows absolute paths with :line suffixes
+    engine.recordObservationMemo({
+      toolName: 'run_command',
+      targetKey: `${aPath}:10-20`,
+      contentSha1: 'a1b2c3d4',
+      charLen: 200,
+    });
+    assert.ok(engine.invalidateObservationFile(tmpWs, aPath) >= 1);
+
+    // 5. /ipc/lsp-status accepts GET|POST + ?wsPath=
+    const lspRes = await dispatchIpcRoute('POST', `/ipc/lsp-status?wsPath=${encodeURIComponent(tmpWs)}`, {}, { engine });
+    assert.equal(lspRes.status, 200);
+    assert.equal(lspRes.body.ok, true);
+  } finally {
+    engine.close();
+    fs.rmSync(tmpWs, { recursive: true, force: true });
+  }
+});

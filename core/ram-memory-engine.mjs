@@ -258,6 +258,7 @@ export class RamMemoryEngine {
         watcher: null,
         watchTimers: new Map(),
         warmedAt: 0,
+        partialLazyLoad: false,
         lastAccessTs: Date.now(),
         totalBytes: 0,
         epoch: 0,
@@ -290,7 +291,7 @@ export class RamMemoryEngine {
       const absRoot = path.resolve(rootDir);
       const wsKey = process.platform === 'win32' ? absRoot.toLowerCase() : absRoot;
       const ws = this.workspaces.get(wsKey);
-      return Boolean(ws && ws.files && ws.files.size > 0);
+      return Boolean(ws && ws.files && ws.files.size > 0 && !ws.partialLazyLoad);
     } catch {
       return false;
     }
@@ -542,6 +543,16 @@ export class RamMemoryEngine {
 
     this.unlinkFileDeps(ws, relPath);
     if (purgeIncoming) {
+      const incoming = ws.reverseDeps.get(relPath);
+      if (incoming) {
+        for (const imp of incoming) {
+          const fset = ws.forwardDeps.get(imp);
+          if (fset) {
+            fset.delete(relPath);
+            if (fset.size === 0) ws.forwardDeps.delete(imp);
+          }
+        }
+      }
       ws.reverseDeps.delete(relPath);
     }
 
@@ -648,7 +659,11 @@ export class RamMemoryEngine {
    */
   upsertFile(rootDir, filePath, { rebuildDeps = true, precomputedMeta = null, preloadedBuf = null, preloadedStat = null, preloadedArenaSlice = null, cpuCfg = null } = {}) {
     const ws = this.getOrCreateWorkspace(rootDir);
-    if (!ws) return null;
+    if (!ws || typeof filePath !== 'string' || !filePath) return null;
+
+    if (rebuildDeps !== false) {
+      ws.partialLazyLoad = false;
+    }
 
     const absPath = path.isAbsolute(filePath) ? path.resolve(filePath) : path.resolve(ws.absRoot, filePath);
     const relPath = toRelPath(ws.absRoot, absPath);
@@ -656,6 +671,7 @@ export class RamMemoryEngine {
 
     const secCheck = checkFileSecurity({ filePath: absPath, workspaceRoot: ws.absRoot, toolName: 'ram_memory' });
     if (!secCheck.allow) {
+      this.removeEntry(ws, relPath);
       return null;
     }
 
@@ -665,14 +681,20 @@ export class RamMemoryEngine {
     if (!stat) {
       try {
         stat = fs.statSync(absPath);
-        if (!stat.isFile()) return null;
+        if (!stat.isFile()) {
+          this.removeEntry(ws, relPath);
+          return null;
+        }
       } catch {
         this.removeEntry(ws, relPath);
         return null;
       }
     }
 
-    if (!this.shouldIndexFile(relPath, stat.size)) return null;
+    if (!this.shouldIndexFile(relPath, stat.size)) {
+      this.removeEntry(ws, relPath);
+      return null;
+    }
 
     const prevKey = this._resolveCanonicalRel(ws, relPath);
     const prev = ws.files.get(prevKey);
@@ -951,7 +973,7 @@ export class RamMemoryEngine {
         if (fs.existsSync(full)) {
           let st = null;
           try {
-            st = fs.statSync(full);
+            st = fs.lstatSync(full);
           } catch {}
           if (st?.isFile()) {
             const entry = this.upsertFile(ws.absRoot, full, { rebuildDeps: true });
@@ -1076,11 +1098,18 @@ export class RamMemoryEngine {
       let stat = null;
       try {
         stat = fs.statSync(fullPath);
-        if (!stat.isFile()) continue;
+        if (!stat.isFile()) {
+          this.removeEntry(ws, relPath);
+          continue;
+        }
       } catch {
+        this.removeEntry(ws, relPath);
         continue;
       }
-      if (!this.shouldIndexFile(relPath, stat.size)) continue;
+      if (!this.shouldIndexFile(relPath, stat.size)) {
+        this.removeEntry(ws, relPath);
+        continue;
+      }
       const prevKey = this._resolveCanonicalRel(ws, relPath);
       const prev = ws.files.get(prevKey);
       if (prev && prevKey === relPath && prev.mtimeMs === stat.mtimeMs && prev.sizeBytes === stat.size) {
@@ -1148,6 +1177,7 @@ export class RamMemoryEngine {
       this.ensureWatcher(ws);
     }
     ws.warmedAt = Date.now();
+    ws.partialLazyLoad = false;
 
     let symbolsCount = 0;
     for (const e of ws.files.values()) symbolsCount += e.symbols.length;
@@ -1189,12 +1219,18 @@ export class RamMemoryEngine {
         let stat;
         try {
           stat = fs.statSync(fullPath);
-          if (!stat.isFile()) continue;
+          if (!stat.isFile()) {
+            this.removeEntry(ws, relPath);
+            continue;
+          }
         } catch {
           this.removeEntry(ws, relPath);
           continue;
         }
-        if (!this.shouldIndexFile(relPath, stat.size)) continue;
+        if (!this.shouldIndexFile(relPath, stat.size)) {
+          this.removeEntry(ws, relPath);
+          continue;
+        }
         const prevKey = this._resolveCanonicalRel(ws, relPath);
         const prev = ws.files.get(prevKey);
         if (prev && prevKey === relPath && prev.mtimeMs === stat.mtimeMs && prev.sizeBytes === stat.size) {
@@ -1337,6 +1373,7 @@ export class RamMemoryEngine {
         this.ensureWatcher(ws);
       }
       ws.warmedAt = Date.now();
+    ws.partialLazyLoad = false;
 
       let symbolsCount = 0;
       for (const e of ws.files.values()) symbolsCount += e.symbols.length;
@@ -1388,8 +1425,10 @@ export class RamMemoryEngine {
   ensureWarm(rootDir, options = {}) {
     const ws = this.getOrCreateWorkspace(rootDir);
     if (!ws) return null;
-    if (ws.files.size === 0 && ws.warmedAt === 0) {
+    if (ws.warmedAt === 0 && (ws.files.size === 0 || ws.partialLazyLoad)) {
       this.warmWorkspace(ws.absRoot, options);
+    } else if ((options?.startWatcher ?? this.defaultStartWatcher) && !ws.watcher && ws.warmedAt > 0) {
+      this.ensureWatcher(ws);
     }
     return ws;
   }
@@ -1436,7 +1475,7 @@ export class RamMemoryEngine {
    */
   _resolveAndLoadEntry(rootDir, filePath, toolName = 'ram_slice') {
     const ws = this.getOrCreateWorkspace(rootDir);
-    if (!ws || !filePath) {
+    if (!ws || typeof filePath !== 'string' || !filePath) {
       return { ok: false, formatted: 'Invalid workspace or filePath.' };
     }
 
@@ -1453,7 +1492,10 @@ export class RamMemoryEngine {
     let entry = ws.files.get(canonicalRel);
     if (!entry) {
       this.stats.misses += 1;
-      entry = this.upsertFile(ws.absRoot, absTarget, { rebuildDeps: false });
+      const wasCold = ws.warmedAt === 0 && ws.files.size === 0;
+      if (wasCold) ws.partialLazyLoad = true;
+      entry = this.upsertFile(ws.absRoot, absTarget, { rebuildDeps: ws.warmedAt > 0 });
+      if (!entry && wasCold && ws.files.size === 0) ws.partialLazyLoad = false;
     } else {
       this.stats.hits += 1;
     }
@@ -1619,7 +1661,7 @@ export class RamMemoryEngine {
    * Invalidates memoized observations touching a modified file path.
    */
   invalidateObservationFile(rootDir, filePath) {
-    if (!filePath) return 0;
+    if (!filePath || typeof filePath !== 'string') return 0;
     const ws = this.getOrCreateWorkspace(rootDir);
     const relPath = ws
       ? toRelPath(ws.absRoot, path.isAbsolute(filePath) ? path.resolve(filePath) : path.resolve(ws.absRoot, filePath))
@@ -1662,7 +1704,7 @@ export class RamMemoryEngine {
    */
   scheduleSpeculativePrefetch(rootDir, editedFilePath) {
     const ws = this.getOrCreateWorkspace(rootDir);
-    if (!ws || !editedFilePath) {
+    if (!ws || typeof editedFilePath !== 'string' || !editedFilePath) {
       return { ok: false, scheduled: false };
     }
 

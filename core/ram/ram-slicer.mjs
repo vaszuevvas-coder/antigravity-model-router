@@ -318,7 +318,7 @@ export function sliceFile(
     symbol = '',
     section = '',
     startLine = 1,
-    endLine = 120,
+    endLine = undefined,
     skeleton = false,
     query = '',
     maxChars = 3200,
@@ -327,17 +327,21 @@ export function sliceFile(
     foldBoilerplateHead = false,
   } = {}
 ) {
+  const safeFilePath = typeof filePath === 'string' ? filePath : '';
+  const symStr = typeof symbol === 'string' ? symbol.trim() : '';
+  const secStr = typeof section === 'string' ? section.trim() : '';
+  const queryStr = typeof query === 'string' ? query : '';
   if (skeleton === true) {
-    return skeletonizeFile(engine, rootDir, filePath, {
-      query: query || symbol || '',
-      symbol,
+    return skeletonizeFile(engine, rootDir, safeFilePath, {
+      query: queryStr || symStr || '',
+      symbol: symStr,
       maxChars,
     });
   }
 
   engine.stats.slices += 1;
   const t0 = performance.now();
-  const loaded = engine._resolveAndLoadEntry(rootDir, filePath, 'ram_slice');
+  const loaded = engine._resolveAndLoadEntry(rootDir, safeFilePath, 'ram_slice');
   if (!loaded.ok) {
     return { ok: false, formatted: loaded.formatted };
   }
@@ -354,8 +358,8 @@ export function sliceFile(
     }
   };
 
-  if (section && String(section).trim()) {
-    const secQuery = String(section).trim();
+  if (secStr) {
+    const secQuery = secStr;
     const rawText = buf.toString('utf8');
     const sec = extractMarkdownSection(rawText, secQuery);
     if (sec.found) {
@@ -388,8 +392,8 @@ export function sliceFile(
     };
   }
 
-  if (symbol && symbol.trim()) {
-    const symNeedle = symbol.trim();
+  if (symStr) {
+    const symNeedle = symStr;
     const safeVariableSlice = (textStr) => {
       try {
         const res = extractVariableSliceFromText(textStr, symNeedle, { focusLine: startLine > 1 ? startLine : 0 });
@@ -409,7 +413,8 @@ export function sliceFile(
       let bodyFormatted = '';
       if (matchedSym) {
         const symStart = Math.max(1, Number(matchedSym.startLine) || 1);
-        const symEnd = Math.min(entry.lineCount, Math.max(symStart, Number(matchedSym.endLine) || symStart));
+        const rawSymEnd = Math.max(symStart, Number(matchedSym.endLine) || symStart);
+        const symEnd = inferEffectiveSymbolEndLine(entry, entry.symbols, symStart, rawSymEnd, symStart + 55, 120);
         const slicedSym = sliceBufferLines(buf, entry.lineOffsets, symStart, symEnd);
         bodyFormatted = `// [RAM Symbol Slice ${symStart}-${symEnd}/${entry.lineCount}] ${entry.relPath}#${matchedSym.name}\n${slicedSym}`;
       } else {
@@ -452,7 +457,8 @@ export function sliceFile(
 
   const totalLines = Math.max(1, entry.lineCount || 1);
   const safeStart = Math.max(1, Math.min(totalLines, Math.floor(Number(startLine) || 1)));
-  const rawEndNum = Number(endLine);
+  const isUnsetEnd = endLine === undefined || endLine === null || endLine === '';
+  const rawEndNum = isUnsetEnd ? (safeStart + 119) : Number(endLine);
   const boundedEnd = Math.max(
     safeStart,
     Math.min(totalLines, Number.isFinite(rawEndNum) && rawEndNum > 0 ? Math.floor(rawEndNum) : totalLines)

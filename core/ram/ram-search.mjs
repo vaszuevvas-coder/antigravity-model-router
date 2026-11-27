@@ -43,6 +43,7 @@ function buildReSlicedLexFallback(engine, ws, lexRes, maxResults, contextLines) 
       endLine: endL,
       score: r.score,
       bm25fScore: r.bm25fScore,
+      snippet,
     });
     formattedBlocks.push(`### \`${r.file}\` [L${startL}-L${endL}]\n\`\`\`\n${snippet}\n\`\`\``);
   }
@@ -323,9 +324,11 @@ export function searchWorkspace(
   if (!_skipStats) engine.stats.searches += 1;
   const t0 = performance.now();
   const ws = engine.ensureWarm(rootDir);
-  if (!ws || !query || !query.trim()) {
+  if (!ws || typeof query !== 'string' || !query.trim()) {
     return { ok: false, results: [], formatted: 'Empty query or invalid workspace.' };
   }
+  maxResults = Math.max(1, Math.min(50, Math.floor(Number(maxResults) || 12)));
+  contextLines = Math.max(0, Math.min(20, Math.floor(Number(contextLines ?? 2) || 0)));
 
   const cpuCfg = fastMode
     ? { cpuTrigramIndex: Boolean(ws.trigramIndex?.size > 0), ramSotaEngines: true }
@@ -336,7 +339,7 @@ export function searchWorkspace(
   const qTokens = Array.from(new Set([...rawQueryTokens, ...qInfo.synonymTerms, ...ruLex.enTerms]));
 
   let csrConjSet = null;
-  if (cpuCfg.ramSotaEngines !== false && ws.files.size > 0 && rawQueryTokens.size > 0) {
+  if (cpuCfg.ramSotaEngines !== false && ws.files.size > 0 && rawQueryTokens.size >= 2 && (!fastMode || ws.csrIndex)) {
     const csr = engine.ensureCsrIndex(ws);
     if (csr) {
       const rawArr = Array.from(rawQueryTokens).slice(0, 4);
@@ -637,6 +640,7 @@ export function searchWorkspace(
       endLine: c.endLine,
       score: c.score,
       bm25fScore: c.bm25fScore,
+      snippet: c.snippetText,
     });
     formattedBlocks.push(`### \`${c.file}\` [L${c.startLine}-L${c.endLine}]\n\`\`\`\n${c.snippetText}\n\`\`\``);
   }
@@ -675,9 +679,11 @@ export async function searchWorkspaceSemantic(
 ) {
   engine.stats.searches += 1;
   const ws = engine.ensureWarm(rootDir);
-  if (!ws || !query || !query.trim()) {
+  if (!ws || typeof query !== 'string' || !query.trim()) {
     return { ok: false, results: [], formatted: 'Empty query or invalid workspace.' };
   }
+  maxResults = Math.max(1, Math.min(50, Math.floor(Number(maxResults) || 6)));
+  contextLines = Math.max(0, Math.min(20, Math.floor(Number(contextLines ?? 2) || 0)));
 
   const startEpoch = ws.epoch;
   const gpuCfg = loadGpuConfig();

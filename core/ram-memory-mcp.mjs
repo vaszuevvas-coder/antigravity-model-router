@@ -7,7 +7,7 @@
  */
 
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, statSync, unlinkSync } from 'node:fs';
 import http from 'node:http';
 import * as nodeModule from 'node:module';
 import os from 'node:os';
@@ -39,7 +39,7 @@ import {
   warmGgufModelsInHostRam,
 } from './local-gpu-engine.mjs';
 import * as localGpuNs from './local-gpu-engine.mjs';
-import { atomicWriteJsonSync, safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
+import { safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
 import { getCpuStatusSnapshot } from './cpu-worker-pool.mjs';
 import { canonicalizeJson } from './toon-formatter.mjs';
 import { lspBridge } from './lsp-bridge.mjs';
@@ -312,7 +312,11 @@ export function registerDaemonWorkspace(wsRoot, options = {}) {
   if (!wsRoot || typeof wsRoot !== 'string') return;
   try {
     const abs = path.resolve(wsRoot);
-    if (isEphemeralOrScratchWorkspace(abs)) return;
+    let isDir = false;
+    try {
+      isDir = statSync(abs).isDirectory();
+    } catch {}
+    if (!isDir || isEphemeralOrScratchWorkspace(abs)) return;
     const makeActive = options?.makeActive !== false;
     const norm = normWsKey(abs);
     const prevLastKey = registeredWorkspaces.size > 0 ? Array.from(registeredWorkspaces.keys()).pop() : '';
@@ -464,15 +468,19 @@ function fallbackRecordMemo({ convoId = 'default', epoch = 0, toolName = '', tar
 function fallbackInvalidateObservationFile(wsPath = '', filePath = '') {
   const normRel = normalizeRelForMemo(wsPath, filePath);
   if (!normRel) return;
-  const base = path.posix.basename(normRel);
   for (const [key, entry] of fallbackMemoMap.entries()) {
     const parts = key.split('|');
-    const targetRaw = parts.slice(3).join('|').replace(/\\/g, '/');
-    const targetCmp = process.platform === 'win32' ? targetRaw.toLowerCase() : targetRaw;
-    const touchesTarget = targetCmp === normRel || targetCmp.endsWith(`/${base}`) || targetCmp === base;
+    let targetRaw = parts.slice(3).join('|').replace(/\\/g, '/');
+    const cStart = /^[a-zA-Z]:\//.test(targetRaw) ? 3 : 0;
+    const cIdx = targetRaw.indexOf(':', cStart);
+    const hIdx = targetRaw.indexOf('#');
+    const cut = cIdx !== -1 && hIdx !== -1 ? Math.min(cIdx, hIdx) : Math.max(cIdx, hIdx);
+    if (cut > 0) targetRaw = targetRaw.slice(0, cut);
+    const targetNorm = normalizeRelForMemo(wsPath, targetRaw);
+    const touchesTarget = targetNorm === normRel || targetNorm.endsWith(`/${normRel}`);
     const touchesDep = Array.isArray(entry?.fileDeps) && entry.fileDeps.some((d) => {
       const dc = normalizeRelForMemo(wsPath, d);
-      return dc === normRel || dc === base || dc.endsWith(`/${base}`);
+      return dc === normRel || dc.endsWith(`/${normRel}`);
     });
     if (touchesTarget || touchesDep) {
       fallbackMemoMap.delete(key);
@@ -507,7 +515,13 @@ function fallbackArchiveCompactionFacts({ convoId = 'default', wsPath = '', rawT
   if (prev.length > FALLBACK_REPAIR_MAX) {
     prev.splice(0, prev.length - FALLBACK_REPAIR_MAX);
   }
+  if (fallbackRepairMap.has(bucketKey)) fallbackRepairMap.delete(bucketKey);
   fallbackRepairMap.set(bucketKey, prev);
+  while (fallbackRepairMap.size > 128) {
+    const oldest = fallbackRepairMap.keys().next().value;
+    if (oldest === undefined) break;
+    fallbackRepairMap.delete(oldest);
+  }
 }
 
 function fallbackRecallCompactionFacts({ convoId = 'default', wsPath = '', query = '', topK = 3 } = {}) {
@@ -538,7 +552,7 @@ function fallbackRecallCompactionFacts({ convoId = 'default', wsPath = '', query
   return { recalled: top, formattedHint };
 }
 
-function scheduleBackgroundGpuWarm(wsPath, delayMs = 200) {
+function scheduleBackgroundGpuWarm(wsPath, delayMs = 200, { bypassCooldown = false } = {}) {
   if (!wsPath || daemonShuttingDown) return;
   try {
     const st = loadRamSettings();
@@ -548,7 +562,7 @@ function scheduleBackgroundGpuWarm(wsPath, delayMs = 200) {
     const key = process.platform === 'win32' ? absRoot.toLowerCase() : absRoot;
     const now = Date.now();
     const lastTs = gpuWarmCooldown.get(key) || 0;
-    if ((now - lastTs) < 120_000) return;
+    if (!bypassCooldown && (now - lastTs) < 120_000) return;
     if (gpuWarmCooldown.has(key)) gpuWarmCooldown.delete(key);
     gpuWarmCooldown.set(key, now);
     while (gpuWarmCooldown.size > MAX_GPU_WARM_COOLDOWN) {
@@ -609,7 +623,7 @@ function scheduleDebouncedFileReindex(wsAbsRoot, entry, targetEngine = engine, d
         try { clearTimeout(timerHandle); } catch {}
       }
       debouncedReindexTimers.clear();
-      scheduleBackgroundGpuWarm(wsAbsRoot, 2500);
+      scheduleBackgroundGpuWarm(wsAbsRoot, 2500, { bypassCooldown: true });
       return;
     }
 
@@ -801,7 +815,7 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
 
     registerDaemonWorkspace(wsPath);
     const ws = targetEngine.getOrCreateWorkspace(wsPath);
-    if (ws && ws.files.size > 0) {
+    if (ws && ws.files.size > 0 && !ws.partialLazyLoad) {
       scheduleBackgroundGpuWarm(wsPath, 250);
       const tMap0 = performance.now();
       const map = targetEngine.getFastRepoMap(wsPath, maxChars);
@@ -1057,7 +1071,7 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
       };
     }
 
-    if (!ws || ws.files.size === 0) {
+    if (!ws || ws.files.size === 0 || ws.partialLazyLoad) {
       if (st.autoWarm) scheduleWarm(wsPath);
       let skillTimer = null;
       const skillRes = body.includeSemantic === false
@@ -1142,7 +1156,7 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
 
     registerDaemonWorkspace(wsPath);
     const ws = targetEngine.getOrCreateWorkspace(wsPath);
-    if (ws && ws.files.size > 0) {
+    if (ws && ws.files.size > 0 && !ws.partialLazyLoad) {
       const entry = targetEngine.upsertFile(wsPath, filePath, { rebuildDeps: true });
       if (entry) {
         scheduleDebouncedFileReindex(ws.absRoot, entry, targetEngine);
@@ -1406,7 +1420,7 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
     try {
       if (signal?.aborted) return abortedBody();
       let ws = targetEngine.getOrCreateWorkspace(wsPath);
-      if (!ws || !ws.files || ws.files.size === 0) {
+      if (!ws || !ws.files || ws.files.size === 0 || ws.partialLazyLoad) {
         const warmRes = await targetEngine.warmWorkspaceAsync(wsPath);
         if (signal?.aborted) return abortedBody();
         if (warmRes?.ok) {
@@ -1520,8 +1534,13 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
     return { status: 200, body: diagRes };
   }
 
-  if (method === 'GET' && url === '/ipc/lsp-status') {
-    const wsPath = body?.wsPath ? resolveDefaultWorkspace(body.wsPath) : '';
+  if ((method === 'GET' || method === 'POST') && (url === '/ipc/lsp-status' || url.startsWith('/ipc/lsp-status?'))) {
+    let qWs = '';
+    try {
+      qWs = new URL(url, 'http://localhost').searchParams.get('wsPath') || '';
+    } catch {}
+    const rawWs = body?.wsPath || qWs;
+    const wsPath = rawWs ? resolveDefaultWorkspace(rawWs) : '';
     return { status: 200, body: lspBridge.getStatusSnapshot(wsPath) };
   }
 
@@ -1968,7 +1987,7 @@ export const MCP_TOOLS = [
         },
         from: { type: 'string', description: 'Starting symbol or file path for mode="path".' },
         to: { type: 'string', description: 'Destination symbol or file path for mode="path".' },
-        target: { type: 'string', description: 'Target symbol name or file path for mode="doc_refs" or mode="explain".' },
+        target: { type: 'string', description: 'Target symbol name or file path for mode="doc_refs", mode="explain", or mode="affected".' },
         maxDepth: { type: 'integer', description: 'Maximum BFS hops for mode="path" (1..8, default 5).' },
         direction: { type: 'string', enum: ['both', 'directed'], description: 'Traversal direction for mode="path" (default both).' },
         maxClusters: { type: 'integer', description: 'Maximum clusters to return (default 8).' },
@@ -2137,7 +2156,7 @@ export async function executeMcpTool(name, args = {}, opts = {}) {
         symbol: args.symbol || '',
         section: args.section || '',
         startLine: args.startLine || 1,
-        endLine: args.endLine || 120,
+        endLine: args.endLine,
         skeleton: Boolean(args.skeleton),
         callGraph: Boolean(args.callGraph),
         query: args.query || '',
@@ -2508,7 +2527,7 @@ function drainInputBuffer() {
       const msgStart = headerEnd + sepLen;
       if (inputBuf.length < msgStart + len) break;
       const bodyStr = inputBuf.subarray(msgStart, msgStart + len).toString('utf8');
-      inputBuf = inputBuf.subarray(msgStart + len);
+      inputBuf = msgStart + len >= inputBuf.length ? Buffer.alloc(0) : inputBuf.subarray(msgStart + len);
       try {
         dispatchRpcPayload(JSON.parse(bodyStr));
       } catch {}
@@ -2516,7 +2535,7 @@ function drainInputBuffer() {
       const nlIdx = inputBuf.indexOf(10);
       if (nlIdx === -1) break;
       const lineStr = inputBuf.subarray(0, nlIdx).toString('utf8').trim();
-      inputBuf = inputBuf.subarray(nlIdx + 1);
+      inputBuf = nlIdx + 1 >= inputBuf.length ? Buffer.alloc(0) : inputBuf.subarray(nlIdx + 1);
       if (!lineStr) continue;
       try {
         dispatchRpcPayload(JSON.parse(lineStr));

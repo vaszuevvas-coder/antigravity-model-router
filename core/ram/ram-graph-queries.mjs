@@ -24,10 +24,10 @@ import {
   queryCoChangePartners,
   verifyExportArityAndKeyContracts,
 } from '../cpu-graph-contracts.mjs';
-import { buildGraphUncertaintyNote, toRelPath } from './ram-index-helpers.mjs';
+import { buildGraphUncertaintyNote, inferEffectiveSymbolEndLine, toRelPath } from './ram-index-helpers.mjs';
 
 /**
- * Collects a bounded local import/reverse-dep neighborhood around seed files.
+ * Collects a bounded local import/reverse-dep neighborhood around seed files (up to 2 hops).
  */
 export function buildLocalNeighborhoodFiles(ws, seedRelFiles = [], maxFiles = 120) {
   const sub = new Map();
@@ -35,7 +35,7 @@ export function buildLocalNeighborhoodFiles(ws, seedRelFiles = [], maxFiles = 12
   for (const rel of seedRelFiles) {
     if (rel && ws.files.has(rel) && !sub.has(rel)) {
       sub.set(rel, ws.files.get(rel));
-      queue.push(rel);
+      queue.push({ rel, depth: 0 });
     }
   }
   if (sub.size === 0) {
@@ -45,20 +45,28 @@ export function buildLocalNeighborhoodFiles(ws, seedRelFiles = [], maxFiles = 12
     }
     return sub;
   }
-  for (const rel of queue) {
+  for (let qi = 0; qi < queue.length; qi++) {
     if (sub.size >= maxFiles) break;
+    const { rel, depth } = queue[qi];
+    const nextDepth = depth + 1;
     const deps = ws.forwardDeps?.get(rel);
     if (deps) {
       for (const d of deps) {
         if (sub.size >= maxFiles) break;
-        if (ws.files.has(d) && !sub.has(d)) sub.set(d, ws.files.get(d));
+        if (ws.files.has(d) && !sub.has(d)) {
+          sub.set(d, ws.files.get(d));
+          if (nextDepth < 2) queue.push({ rel: d, depth: nextDepth });
+        }
       }
     }
     const rev = ws.reverseDeps?.get(rel);
     if (rev) {
       for (const r of rev) {
         if (sub.size >= maxFiles) break;
-        if (ws.files.has(r) && !sub.has(r)) sub.set(r, ws.files.get(r));
+        if (ws.files.has(r) && !sub.has(r)) {
+          sub.set(r, ws.files.get(r));
+          if (nextDepth < 2) queue.push({ rel: r, depth: nextDepth });
+        }
       }
     }
   }
@@ -556,7 +564,8 @@ export function getEgoGraphHintForResultsImpl(engine, rootDir, results = [], que
     const eLine = Number(r.endLine) || sLine + 40;
     for (const sym of entry.symbols) {
       if (!sym?.name || sym.name === 'anonymous' || sym.kind === 'class') continue;
-      if ((sym.endLine || sym.startLine) >= sLine && sym.startLine <= eLine) {
+      const effEnd = inferEffectiveSymbolEndLine(entry, entry.symbols, sym.startLine, Number(sym.endLine) || sym.startLine);
+      if (effEnd >= sLine && sym.startLine <= eLine) {
         if (!seen.has(sym.name)) {
           seen.add(sym.name);
           targetSyms.push(sym.name);
@@ -587,7 +596,8 @@ export function getTwoHopContractStripImpl(engine, rootDir, matchedResults = [])
   const focusSyms = [];
   for (const sym of primaryEntry.symbols || []) {
     if (!sym?.name || sym.name === 'anonymous' || sym.kind === 'class') continue;
-    if ((sym.endLine || sym.startLine) >= sLine && sym.startLine <= eLine) {
+    const effEnd = inferEffectiveSymbolEndLine(primaryEntry, primaryEntry.symbols, sym.startLine, Number(sym.endLine) || sym.startLine);
+    if (effEnd >= sLine && sym.startLine <= eLine) {
       focusSyms.push(sym.name);
       if (focusSyms.length >= 2) break;
     }
@@ -651,7 +661,7 @@ export function getTwoHopContractStripImpl(engine, rootDir, matchedResults = [])
 
 export function getFastBlastRadiusImpl(engine, rootDir, targetFilePath) {
   const ws = engine.ensureWarm(rootDir);
-  if (!ws || !targetFilePath) return null;
+  if (!ws || typeof targetFilePath !== 'string' || !targetFilePath) return null;
   const absTarget = path.isAbsolute(targetFilePath) ? path.resolve(targetFilePath) : path.resolve(ws.absRoot, targetFilePath);
   const rawRel = toRelPath(ws.absRoot, absTarget);
   if (!rawRel || rawRel === '..' || rawRel.startsWith('../') || path.isAbsolute(rawRel)) {
@@ -704,7 +714,7 @@ export function getFastBlastRadiusImpl(engine, rootDir, targetFilePath) {
 
 export function verifyContractsInRamImpl(engine, rootDir, editedFilePath) {
   const ws = engine.getOrCreateWorkspace(rootDir);
-  if (!ws || ws.files.size === 0 || !editedFilePath) {
+  if (!ws || ws.files.size === 0 || typeof editedFilePath !== 'string' || !editedFilePath) {
     return { ok: false, valid: true, alert: '', brokenImports: [], semanticIssues: [], cloneWarning: '' };
   }
   const absEdited = path.isAbsolute(editedFilePath) ? path.resolve(editedFilePath) : path.resolve(ws.absRoot, editedFilePath);

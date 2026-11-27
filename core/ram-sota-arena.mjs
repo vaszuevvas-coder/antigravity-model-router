@@ -518,7 +518,8 @@ export class ObservationWindowMemoizer {
     if (normCandidate === normRel) return true;
     if (normCandidate.endsWith(`/${normRel}`)) return true;
     if (normCandidate.startsWith(`${normRel}:`) || normCandidate.startsWith(`${normRel}#`)) return true;
-    const colonIdx = normCandidate.indexOf(':');
+    const colonStart = /^[a-zA-Z]:\//.test(normCandidate) ? 3 : 0;
+    const colonIdx = normCandidate.indexOf(':', colonStart);
     const hashIdx = normCandidate.indexOf('#');
     const cutIdx = colonIdx !== -1 && hashIdx !== -1 ? Math.min(colonIdx, hashIdx) : Math.max(colonIdx, hashIdx);
     if (cutIdx > 0) {
@@ -644,9 +645,17 @@ export class EpisodicRepairIndex {
   archiveFacts({ convoId = 'default', wsPath = '', rawText = '', steps = [] } = {}) {
     const key = this._bucketKey(convoId, wsPath);
     let bucket = this.buckets.get(key);
-    if (!bucket) {
+    if (bucket) {
+      this.buckets.delete(key);
+      this.buckets.set(key, bucket);
+    } else {
       bucket = [];
       this.buckets.set(key, bucket);
+      while (this.buckets.size > 128) {
+        const oldest = this.buckets.keys().next().value;
+        if (oldest === undefined) break;
+        this.buckets.delete(oldest);
+      }
     }
 
     const candidateLines = [];
@@ -710,9 +719,12 @@ export class EpisodicRepairIndex {
    */
   recallFacts({ convoId = 'default', wsPath = '', query = '', topK = 3 } = {}) {
     const key = this._bucketKey(convoId, wsPath);
-    const bucket = this.buckets.get(key);
+    const exactBucket = this.buckets.get(key) || [];
+    const genericKey = wsPath ? this._bucketKey(convoId, '') : '';
+    const genericBucket = genericKey ? (this.buckets.get(genericKey) || []) : [];
+    const bucket = exactBucket.length > 0 ? [...exactBucket, ...genericBucket] : genericBucket;
     const cleanQuery = String(query || '').trim();
-    if (!bucket || bucket.length === 0 || !cleanQuery) {
+    if (bucket.length === 0 || !cleanQuery) {
       return { recalled: [], formattedHint: '' };
     }
 

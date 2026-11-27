@@ -129,7 +129,7 @@ export const RU_CONVERSATIONAL_STOPWORDS = new Set([
 export function extractSearchTokens(text) {
   const tokens = new Set();
   if (!text || typeof text !== 'string') return tokens;
-  const unCamel = text.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+  const unCamel = text.replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').replace(/([a-z0-9])([A-Z])/g, '$1 $2');
   const matches = unCamel.toLowerCase().match(/[a-zа-яё0-9_]{2,}/g) || [];
   for (const w of matches) {
     if (w.length > 48 || RU_CONVERSATIONAL_STOPWORDS.has(w)) continue;
@@ -176,7 +176,7 @@ export function tokenizeFieldCounts(text) {
   const tfMap = new Map();
   let totalLen = 0;
   if (!text || typeof text !== 'string') return { tfMap, totalLen };
-  const unCamel = text.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+  const unCamel = text.replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').replace(/([a-z0-9])([A-Z])/g, '$1 $2');
   const matches = unCamel.toLowerCase().match(/[a-zа-яё0-9_]{2,}/g) || [];
   for (const w of matches) {
     if (w.length > 48 || RU_CONVERSATIONAL_STOPWORDS.has(w)) continue;
@@ -384,7 +384,8 @@ export function loadJsAliasRules(absRoot = '') {
     if (!extRel.endsWith('.json')) candidates.push(path.resolve(childDir, `${extRel}.json`));
     for (const cand of candidates) {
       const normCand = path.resolve(cand);
-      if (!normCand.startsWith(absRoot) && !normCand.startsWith(parentLimit)) continue;
+      const relFromParent = toRelPath(parentLimit, normCand);
+      if (!relFromParent || relFromParent === '..' || relFromParent.startsWith('../') || path.isAbsolute(relFromParent)) continue;
       const parsed = readJsoncBounded(normCand);
       if (parsed && typeof parsed === 'object') return parsed;
     }
@@ -1087,7 +1088,7 @@ export function extractExplicitFileMatches(text = '', filesMap) {
   return matched;
 }
 
-const JS_METHOD_EXT_SET = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx']);
+const JS_METHOD_EXT_SET = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.mts', '.cts']);
 const JS_CONTROL_KEYWORDS = new Set([
   'if',
   'for',

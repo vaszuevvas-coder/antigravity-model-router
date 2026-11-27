@@ -199,18 +199,30 @@ export function getContextPackImpl(
       }
     }
   } else if (effectivePhase === 'debug' && matchedResults.length > 0) {
-    const topFile = matchedResults[0].file;
+    const topHit = matchedResults[0];
+    const topFile = topHit.file;
     const topEntry = ws.files.get(topFile);
     const topBuf = topEntry?.buf;
+    const hitStart = Number(topHit.startLine || topHit.line || 0);
+    const hitEnd = Number(topHit.endLine || hitStart || 0);
+    const overlappingSym = (topEntry?.symbols || []).find((sym) => {
+      if (!sym?.name || sym.name === 'anonymous' || sym.kind === 'class' || !hitStart) return false;
+      const effEnd = inferEffectiveSymbolEndLine(topEntry, topEntry.symbols, sym.startLine, Number(sym.endLine) || sym.startLine);
+      return effEnd >= hitStart && sym.startLine <= hitEnd;
+    });
     const idMatch = String(faultText || prompt).match(/\b([a-zA-Z_][a-zA-Z0-9_]{3,})\b/);
-    const focusSym = (topEntry?.symbols?.[0]?.name) || (idMatch ? idMatch[1] : '');
+    const focusSym = overlappingSym?.name || (idMatch ? idMatch[1] : '') || (topEntry?.symbols?.[0]?.name) || '';
     if (focusSym && topBuf) {
-      const dfSlice = extractVariableSliceFromText(topBuf.toString('utf8'), focusSym, {
-        focusLine: matchedResults[0].line || 0,
-        maxLines: 30,
-      });
-      if (dfSlice?.formatted) {
-        parts.push(`## 🔬 Debug Data-Flow Slice (${topFile}#${focusSym})\n${dfSlice.formatted.slice(0, 900)}`);
+      try {
+        const dfSlice = extractVariableSliceFromText(topBuf.toString('utf8'), focusSym, {
+          focusLine: topHit.line || topHit.startLine || 0,
+          maxLines: 30,
+        });
+        if (dfSlice?.formatted) {
+          parts.push(`## 🔬 Debug Data-Flow Slice (${topFile}#${focusSym})\n${dfSlice.formatted.slice(0, 900)}`);
+        }
+      } catch {
+        if (engine?.errorStats) engine.errorStats.parse += 1;
       }
     }
   }
