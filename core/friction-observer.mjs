@@ -67,7 +67,10 @@ export function detectUserCorrectionFriction(userPrompt = '', context = {}) {
   if (!matched) return empty;
 
   const files = Array.isArray(context?.touchedFiles)
-    ? context.touchedFiles.slice(0, 3).map((f) => basename(String(f || ''))).filter(Boolean)
+    ? context.touchedFiles.slice(0, 3).map((f) => {
+        const rawPath = typeof f === 'string' ? f : (f?.file || f?.filePath || '');
+        return basename(String(rawPath || ''));
+      }).filter(Boolean)
     : [];
   const topSkill = Array.isArray(context?.semanticSkills) && context.semanticSkills[0]?.slug
     ? String(context.semanticSkills[0].slug)
@@ -112,7 +115,7 @@ export function detectEditChurnFriction(opts = {}) {
   const winPath = getChurnWindowPath(stateFile);
   let detectedReason = '';
 
-  updateJsonAtomicSync(winPath, () => ({ windows: {} }), (cur) => {
+  updateJsonAtomicSync(winPath, () => ({ windows: {}, cliFails: {} }), (cur) => {
     const rawWins = cur?.windows && typeof cur.windows === 'object' && !Array.isArray(cur.windows) ? cur.windows : {};
     const nextWins = {};
     for (const [k, v] of Object.entries(rawWins)) {
@@ -139,13 +142,18 @@ export function detectEditChurnFriction(opts = {}) {
       detectedReason = 'rapid_block_reedit';
     }
 
-    const updatedEvents = [
-      ...prevEvents.filter((e) => e && (nowMs - Number(e.ts || 0)) < CHURN_TTL_MS),
-      { file: cleanFile, targetNorm, replaceNorm, ts: nowMs },
-    ].slice(-MAX_EDIT_EVENTS_PER_CONVO);
+    const updatedEvents = detectedReason
+      ? prevEvents.filter((e) => e && e.file !== cleanFile && (nowMs - Number(e.ts || 0)) < CHURN_TTL_MS).slice(-MAX_EDIT_EVENTS_PER_CONVO)
+      : [
+          ...prevEvents.filter((e) => e && (nowMs - Number(e.ts || 0)) < CHURN_TTL_MS),
+          { file: cleanFile, targetNorm, replaceNorm, ts: nowMs },
+        ].slice(-MAX_EDIT_EVENTS_PER_CONVO);
 
     nextWins[cid] = { updatedAt: nowMs, events: updatedEvents };
-    return { windows: nextWins };
+    return {
+      windows: nextWins,
+      cliFails: cur?.cliFails && typeof cur.cliFails === 'object' && !Array.isArray(cur.cliFails) ? cur.cliFails : {},
+    };
   }, { spaces: 0 });
 
   if (!detectedReason) return empty;
@@ -187,7 +195,7 @@ function extractBaseCliCommand(rawCmd = '') {
   }
   const parts = cleaned.split(/\s+/).filter(Boolean);
   if (parts.length === 0) return '';
-  const first = parts[0].replace(/^["']|["']$/g, '').toLowerCase();
+  const first = basename(parts[0].replace(/^["']|["']$/g, '')).replace(/\.(?:exe|cmd|bat)$/i, '').toLowerCase();
   if ((first === 'npx' || first === 'npm' || first === 'pnpm' || first === 'yarn' || first === 'git' || first === 'node' || first === 'python' || first === 'python3' || first === 'cargo' || first === 'go') && parts[1] && !parts[1].startsWith('-')) {
     return `${first} ${parts[1].toLowerCase()}`;
   }
@@ -261,7 +269,7 @@ export function detectCliFailRecoveryFriction(opts = {}) {
     }
 
     return {
-      windows: cur?.windows && typeof cur.windows === 'object' ? cur.windows : {},
+      windows: cur?.windows && typeof cur.windows === 'object' && !Array.isArray(cur.windows) ? cur.windows : {},
       cliFails: nextFails,
     };
   }, { spaces: 0 });

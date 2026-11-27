@@ -187,10 +187,15 @@ export function synthesizeTriggerDescription(opts = {}) {
     return cleanDesc;
   }
   const humanSlug = String(slug || 'custom-skill').replace(/[-_]+/g, ' ').trim();
-  const sampleHint = String(recipeSteps[0] || invariants[0] || '')
+  let sampleHint = String(recipeSteps[0] || invariants[0] || '')
     .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 90);
+    .trim();
+  if (sampleHint.length > 90) {
+    const cut = sampleHint.slice(0, 90);
+    const sp = cut.lastIndexOf(' ');
+    sampleHint = (sp > 45 ? cut.slice(0, sp) : cut);
+  }
+  sampleHint = sampleHint.trim().replace(/[,:;.\s-]+$/, '');
   const summaryPart = sampleHint ? `: ${sampleHint}` : '';
   const trigList = (Array.isArray(triggers) ? triggers : [])
     .map(t => String(t || '').replace(/\s+/g, ' ').trim())
@@ -202,11 +207,17 @@ export function synthesizeTriggerDescription(opts = {}) {
   return `Specialized workflow for ${humanSlug}${summaryPart}. ${trigClause}`;
 }
 
+function formatYamlDescriptionScalar(desc = '') {
+  const clean = String(desc || '').replace(/\r?\n/g, ' ').trim();
+  if (!clean) return '""';
+  return /:\s|["'#\[\]{}]|^[>|*&!%@`]/.test(clean) ? JSON.stringify(clean) : clean;
+}
+
 function buildSkillBundle({ slug, description, triggers = [], invariants = [], recipeSteps = [], verifyCmd = '' }) {
   const trigList = triggers.length > 0 ? triggers : ['manual execution'];
   const fullInvList = invariants.length > 0 ? [...invariants] : ['keep changes minimal and backward-compatible'];
   const fullStepList = recipeSteps.length > 0 ? [...recipeSteps] : ['execute task adhering to specification'];
-  const vCmd = verifyCmd || 'node --check';
+  const vCmd = verifyCmd || 'npm test';
 
   const render = (invs, steps, overflowLink = '') => {
     const stepLines = steps.map((step, idx) => `${idx + 1}. ${step}`);
@@ -216,7 +227,7 @@ function buildSkillBundle({ slug, description, triggers = [], invariants = [], r
     return [
       '---',
       `name: ${slug}`,
-      `description: ${description}`,
+      `description: ${formatYamlDescriptionScalar(description)}`,
       '---',
       `# ${slug} — Compact EN Execution Capsule`,
       '',
@@ -676,18 +687,24 @@ export function crystallizeSkill({
       }
 
       const mergedInvariants = [...parsed.invariants];
+      const invKeys = mergedInvariants.map(normalizePatternKey).filter(Boolean);
       for (const inv of invariants) {
         const norm = String(inv || '').trim();
-        if (norm && !mergedInvariants.some(x => x.toLowerCase() === norm.toLowerCase())) {
+        const key = normalizePatternKey(norm);
+        if (norm && !mergedInvariants.some(x => x.toLowerCase() === norm.toLowerCase()) && (!key || !invKeys.some(k => arePatternsNearDuplicate(k, key)))) {
           mergedInvariants.push(norm);
+          if (key) invKeys.push(key);
         }
       }
 
       const mergedSteps = [...parsed.recipeSteps];
+      const stepKeys = mergedSteps.map(normalizePatternKey).filter(Boolean);
       for (const step of recipeSteps) {
         const norm = String(step || '').trim();
-        if (norm && !mergedSteps.some(x => x.toLowerCase() === norm.toLowerCase())) {
+        const key = normalizePatternKey(norm);
+        if (norm && !mergedSteps.some(x => x.toLowerCase() === norm.toLowerCase()) && (!key || !stepKeys.some(k => arePatternsNearDuplicate(k, key)))) {
           mergedSteps.push(norm);
+          if (key) stepKeys.push(key);
         }
       }
 
@@ -698,7 +715,7 @@ export function crystallizeSkill({
         invariants: mergedInvariants,
         recipeSteps: mergedSteps
       });
-      const finalVerify = verifyCmd || parsed.verifyCmd || 'node --check';
+      const finalVerify = verifyCmd || parsed.verifyCmd || 'npm test';
 
       const bundle = buildSkillBundle({
         slug: effectiveSlug,

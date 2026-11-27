@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWriteJsonSync, safeReadJsonSync } from './safe-json.mjs';
 import { normalizeLang, readActiveUiLanguage } from './i18n.mjs';
+import { resolveTunnelCacheDir } from './cache-dir.mjs';
 import {
   TASK_PROGRESS_FILE,
   getTaskProgressSnapshot,
@@ -19,14 +20,18 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
+const getCacheDir = () => resolveTunnelCacheDir(PLUGIN_ROOT);
+const getHudRuntimeFile = () => join(getCacheDir(), 'floating-hud.json');
+const getHudPositionFile = () => join(getCacheDir(), 'hud-position.json');
 const CACHE_DIR = join(PLUGIN_ROOT, '.cache');
 export const HUD_RUNTIME_FILE = join(CACHE_DIR, 'floating-hud.json');
 export const HUD_POSITION_FILE = join(CACHE_DIR, 'hud-position.json');
 export const HUD_PS1_SCRIPT_FILE = join(CACHE_DIR, 'floating-hud-host.ps1');
 
 function ensureCacheDir() {
-  if (!existsSync(CACHE_DIR)) {
-    mkdirSync(CACHE_DIR, { recursive: true });
+  const dir = getCacheDir();
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
   }
 }
 
@@ -391,13 +396,13 @@ $window.Show()
  */
 export function getFloatingHudStatus() {
   ensureCacheDir();
-  const rt = safeReadJsonSync(HUD_RUNTIME_FILE, () => ({
+  const rt = safeReadJsonSync(getHudRuntimeFile(), () => ({
     enabled: true,
     stopRequested: false,
     pid: 0,
     updatedAt: 0,
   }));
-  const pos = safeReadJsonSync(HUD_POSITION_FILE, () => null);
+  const pos = safeReadJsonSync(getHudPositionFile(), () => null);
   const progress = getTaskProgressSnapshot();
   const pid = Number(rt?.pid || 0);
   const running = pid > 0 && isPidAlive(pid);
@@ -451,10 +456,11 @@ export function ensureFloatingHudRunning({
  */
 export function stopFloatingHud() {
   ensureCacheDir();
-  const rt = safeReadJsonSync(HUD_RUNTIME_FILE, () => ({ pid: 0 }));
+  const runtimeFile = getHudRuntimeFile();
+  const rt = safeReadJsonSync(runtimeFile, () => ({ pid: 0 }));
   const pid = Number(rt?.pid || 0);
 
-  atomicWriteJsonSync(HUD_RUNTIME_FILE, {
+  atomicWriteJsonSync(runtimeFile, {
     enabled: false,
     stopRequested: true,
     pid: 0,
@@ -475,7 +481,7 @@ export function stopFloatingHud() {
  */
 export function resetFloatingHudPosition() {
   ensureCacheDir();
-  atomicWriteJsonSync(HUD_POSITION_FILE, { left: null, top: null, resetAt: Date.now() });
+  atomicWriteJsonSync(getHudPositionFile(), { left: null, top: null, resetAt: Date.now() });
   const st = getFloatingHudStatus();
   if (st.running) {
     return ensureFloatingHudRunning({ forceRestart: true });

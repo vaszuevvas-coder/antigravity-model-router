@@ -466,6 +466,7 @@ export function inspectSubagentTranscriptMeta(filePath) {
 
     let fallbackSubagent = null;
     let pendingSwarmParent = '';
+    let detectedSwarmRes = null;
 
     for (let i = 0; i < maxLineIdx && parsedCount < 10; i++) {
       const trimmed = lines[i].trim();
@@ -493,6 +494,11 @@ export function inspectSubagentTranscriptMeta(filePath) {
         return res;
       }
 
+      // Skip SessionStart/system SDK injections so quoted rules/handoff text cannot falsely classify a main chat
+      if (src === 'SYSTEM_SDK') {
+        continue;
+      }
+
       const senderMatch = text.includes('[Message]')
         ? text.match(/\[Message\][\s\S]*?\bsender\s*=\s*["']?([a-zA-Z0-9_-]{1,128})["']?/)
         : null;
@@ -504,38 +510,39 @@ export function inspectSubagentTranscriptMeta(filePath) {
       const boardBriefMatch = text.match(
         /Your assignment\s*\(recorded on the board as #\d+\s+for\s+@([a-zA-Z0-9_-]{1,48})\)/i
       );
-      if (boardBriefMatch) {
-        const res = {
+      if (boardBriefMatch && !detectedSwarmRes) {
+        detectedSwarmRes = {
           isSubagent: true,
           parentConversationId: senderCid || pendingSwarmParent,
           agentKind: 'swarm_worker',
           agentHint: boardBriefMatch[1],
         };
-        setSubagentMetaCache(stableKey, { size: st.size, conclusive: true, value: res });
-        return res;
+        continue;
       }
 
       // 2. Explicit <swarm_worker> tag or narrator/monitor prompt
-      if (/<swarm_worker\b/.test(text) || /(?:^|\n)You are this swarm's (?:narrator|stall monitor)/m.test(text)) {
+      if ((/<swarm_worker\b/.test(text) || /(?:^|\n)You are this swarm's (?:narrator|stall monitor)/m.test(text)) && !detectedSwarmRes) {
         const nameMatch = text.match(/<swarm_worker\b[^>]*?\bname=["']?([a-zA-Z0-9_-]{1,48})["']?/i)
           || text.match(/@([a-zA-Z0-9_-]{2,36})\b/);
         const workerHint = /(?:^|\n)You are this swarm's narrator/m.test(text)
           ? 'narrator'
           : (/(?:^|\n)You are this swarm's stall monitor/m.test(text) ? 'monitor' : (nameMatch ? nameMatch[1] : ''));
-        const res = {
+        detectedSwarmRes = {
           isSubagent: true,
           parentConversationId: senderCid || pendingSwarmParent,
           agentKind: 'swarm_worker',
           agentHint: workerHint,
         };
-        setSubagentMetaCache(stableKey, { size: st.size, conclusive: true, value: res });
-        return res;
+        continue;
       }
 
       // 3. Initial Swarm board wakeup ("[swarm] new board message #N"): keep scanning next step for @name & coordinator sender
       if (/\bcontent=\[swarm\]\s+new board message\b/i.test(text) || /^\[board\]\s+the latest message is #\d+/m.test(text)) {
         if (!pendingSwarmParent && senderCid) {
           pendingSwarmParent = senderCid;
+          if (detectedSwarmRes && !detectedSwarmRes.parentConversationId) {
+            detectedSwarmRes.parentConversationId = senderCid;
+          }
         }
         continue;
       }
@@ -548,11 +555,15 @@ export function inspectSubagentTranscriptMeta(filePath) {
           agentKind: 'subagent',
           agentHint: extractShortHintFromSubagentMessage(text),
         };
-        if (!pendingSwarmParent) {
-          setSubagentMetaCache(stableKey, { size: st.size, conclusive: true, value: fallbackSubagent });
-          return fallbackSubagent;
-        }
       }
+    }
+
+    if (detectedSwarmRes) {
+      if (!detectedSwarmRes.parentConversationId && pendingSwarmParent) {
+        detectedSwarmRes.parentConversationId = pendingSwarmParent;
+      }
+      setSubagentMetaCache(stableKey, { size: st.size, conclusive: true, value: detectedSwarmRes });
+      return detectedSwarmRes;
     }
 
     if (pendingSwarmParent) {
@@ -572,9 +583,9 @@ export function inspectSubagentTranscriptMeta(filePath) {
     }
 
     // Raw head fallback when step 0 exceeded 64 KB without newline boundary
-    if (!head.includes('"USER_EXPLICIT"') && !head.includes('<USER_REQUEST>')) {
+    if (!head.includes('"USER_EXPLICIT"') && !head.includes('<USER_REQUEST>') && !head.includes('"SYSTEM_SDK"')) {
       const rawSender = head.match(/\[Message\][\s\S]*?\bsender\s*=\s*["']?([a-zA-Z0-9_-]{1,128})["']?/);
-      if (rawSender) {
+      if (rawSender && rawSender[1] && rawSender[1].toLowerCase() !== 'system') {
         const res = {
           isSubagent: true,
           parentConversationId: rawSender[1],

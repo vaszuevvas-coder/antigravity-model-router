@@ -703,15 +703,18 @@ function defaultShadowTestsRecord(enabled = false) {
 /**
  * Fast, zero-GPU reader of cached Sentinel status across processes (used by UI sidecar server).
  */
-export function readCachedSentinelSnapshot(wsPath = '', stateOverride = null, { cacheDir = DEFAULT_CACHE_DIR } = {}) {
+export function readCachedSentinelSnapshot(wsPath = '', stateOverride = null, { cacheDir = '' } = {}) {
   const config = loadSentinelConfig(stateOverride);
   const wsKey = wsPath ? normWsKey(wsPath) : '';
   const wsHash = wsPath ? computeWsHash(wsPath) : '';
+  const effCacheDir = cacheDir && cacheDir !== DEFAULT_CACHE_DIR
+    ? resolve(String(cacheDir))
+    : resolveTunnelCacheDir(PLUGIN_ROOT);
 
-  const healthFile = join(cacheDir, 'sentinel-health.json');
-  const bugBotFile = join(cacheDir, 'sentinel-bugbot.json');
-  const runtimeFile = join(cacheDir, 'sentinel-runtime.json');
-  const cardsFile = wsHash ? join(cacheDir, 'symbol-cards', `${wsHash}.json`) : '';
+  const healthFile = join(effCacheDir, 'sentinel-health.json');
+  const bugBotFile = join(effCacheDir, 'sentinel-bugbot.json');
+  const runtimeFile = join(effCacheDir, 'sentinel-runtime.json');
+  const cardsFile = wsHash ? join(effCacheDir, 'symbol-cards', `${wsHash}.json`) : '';
 
   const healthAll = safeReadJsonSync(healthFile, () => ({ workspaces: {} }), { selfHeal: false }) || { workspaces: {} };
   const bugBotAll = safeReadJsonSync(bugBotFile, () => ({ workspaces: {} }), { selfHeal: false }) || { workspaces: {} };
@@ -722,7 +725,9 @@ export function readCachedSentinelSnapshot(wsPath = '', stateOverride = null, { 
 
   const pickWsEntry = (mapObj, fallbackFn) => {
     const map = mapObj && typeof mapObj === 'object' ? mapObj : {};
-    if (wsKey && Object.hasOwn(map, wsKey)) return { ...fallbackFn(), ...map[wsKey] };
+    if (wsKey) {
+      return Object.hasOwn(map, wsKey) ? { ...fallbackFn(), ...map[wsKey] } : fallbackFn();
+    }
     const firstKey = Object.keys(map)[0];
     return firstKey ? { ...fallbackFn(), ...map[firstKey] } : fallbackFn();
   };
@@ -733,6 +738,7 @@ export function readCachedSentinelSnapshot(wsPath = '', stateOverride = null, { 
   const shadowTests = {
     ...defaultShadowTestsRecord(config.sentinelShadowTests),
     ...(rtWs.shadowTests || {}),
+    lastSummaryEn: String(rtWs.shadowTests?.lastSummaryEn || rtWs.shadowTests?.lastSummaryRu || ''),
     enabled: Boolean(config.sentinelShadowTests),
   };
 
@@ -756,6 +762,7 @@ export function readCachedSentinelSnapshot(wsPath = '', stateOverride = null, { 
     config,
     state,
     currentTaskRu: state === 'working' ? String(runtime.currentTaskRu || '') : '',
+    currentTaskEn: state === 'working' ? String(runtime.currentTaskEn || runtime.currentTaskRu || '') : '',
     preemptedCount: Number(runtime.preemptedCount || 0),
     speculativeHits: Number(runtime.speculativeHits || 0),
     shadowGuard: {
@@ -1171,7 +1178,7 @@ export class BackgroundSentinel {
       let gitStatusOk = false;
       const actualGitDirtySet = new Set();
       try {
-        const stOut = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], {
+        const stOut = execFileSync('git', ['-c', 'core.quotepath=false', 'status', '--porcelain', '--untracked-files=all'], {
           cwd: absRoot,
           encoding: 'utf8',
           timeout: 1200,
@@ -1344,7 +1351,7 @@ export class BackgroundSentinel {
     let rawDiff = typeof opts.diffTextOverride === 'string' ? opts.diffTextOverride : '';
 
     if (!rawDiff && existsSync(join(absRoot, '.git'))) {
-      const headRes = await execFileWithAbort('git', ['--no-pager', 'diff', '-U2', '--no-color', 'HEAD'], {
+      const headRes = await execFileWithAbort('git', ['-c', 'core.quotepath=false', '--no-pager', 'diff', '-U2', '--no-color', 'HEAD'], {
         cwd: absRoot,
         timeout: 2500,
         maxBuffer: 2 * 1024 * 1024,
@@ -1352,7 +1359,7 @@ export class BackgroundSentinel {
       });
       rawDiff = headRes.ok && headRes.stdout.trim() ? headRes.stdout : '';
       if (!rawDiff) {
-        const idxRes = await execFileWithAbort('git', ['--no-pager', 'diff', '-U2', '--no-color'], {
+        const idxRes = await execFileWithAbort('git', ['-c', 'core.quotepath=false', '--no-pager', 'diff', '-U2', '--no-color'], {
           cwd: absRoot,
           timeout: 2500,
           maxBuffer: 2 * 1024 * 1024,
@@ -1787,14 +1794,23 @@ export class BackgroundSentinel {
       clearTimeout(wsState.specDebounceTimer);
       wsState.specDebounceTimer = null;
     }
+    if (typeof wsState.specDebounceResolve === 'function') {
+      const prevResolve = wsState.specDebounceResolve;
+      wsState.specDebounceResolve = null;
+      try { prevResolve({ ok: false, superseded: true, elapsedMs: 0 }); } catch {}
+    }
     const seq = ++wsState.specDebounceSeq;
 
     return new Promise((resolvePromise) => {
+      wsState.specDebounceResolve = resolvePromise;
       const waitMs = Math.max(10, Number(delayMs) || 250);
       wsState.specDebounceTimer = setTimeout(() => {
         wsState.specDebounceTimer = null;
+        if (wsState.specDebounceResolve === resolvePromise) {
+          wsState.specDebounceResolve = null;
+        }
         if (seq !== wsState.specDebounceSeq) {
-          resolvePromise({ ok: false, superseded: true });
+          resolvePromise({ ok: false, superseded: true, elapsedMs: 0 });
           return;
         }
         const res = this.warmSpeculativeContextNow(wsState.absRoot, draftQuery, ramEngine || this.ramEngineRef);
@@ -2121,13 +2137,13 @@ export class BackgroundSentinel {
       let rawDiff = '';
       let statusOut = '';
       try {
-        statusOut = String(execFileSync('git', ['status', '--porcelain'], { cwd: targetWs, encoding: 'utf8', timeout: 4000, windowsHide: true }) || '');
+        statusOut = String(execFileSync('git', ['-c', 'core.quotepath=false', 'status', '--porcelain'], { cwd: targetWs, encoding: 'utf8', timeout: 4000, windowsHide: true }) || '');
       } catch {}
       try {
-        rawDiff = String(execFileSync('git', ['diff', 'HEAD'], { cwd: targetWs, encoding: 'utf8', timeout: 5000, windowsHide: true }) || '');
+        rawDiff = String(execFileSync('git', ['-c', 'core.quotepath=false', 'diff', 'HEAD'], { cwd: targetWs, encoding: 'utf8', timeout: 5000, windowsHide: true }) || '');
       } catch {
         try {
-          rawDiff = String(execFileSync('git', ['diff', '--cached'], { cwd: targetWs, encoding: 'utf8', timeout: 5000, windowsHide: true }) || '');
+          rawDiff = String(execFileSync('git', ['-c', 'core.quotepath=false', 'diff', '--cached'], { cwd: targetWs, encoding: 'utf8', timeout: 5000, windowsHide: true }) || '');
         } catch {}
       }
       const { diffSlice, touchedFiles } = filterLockfilesFromGitDiff(rawDiff);
@@ -2325,6 +2341,11 @@ export class BackgroundSentinel {
       if (wsState.specDebounceTimer) {
         clearTimeout(wsState.specDebounceTimer);
         wsState.specDebounceTimer = null;
+      }
+      if (typeof wsState.specDebounceResolve === 'function') {
+        const prevResolve = wsState.specDebounceResolve;
+        wsState.specDebounceResolve = null;
+        try { prevResolve({ ok: false, superseded: true, elapsedMs: 0 }); } catch {}
       }
     }
   }

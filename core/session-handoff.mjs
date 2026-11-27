@@ -6,16 +6,26 @@
 
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, isAbsolute, join, relative } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWriteJsonSync, safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
 import { redactSecretsInText } from './security-guard.mjs';
 import { formatActiveSpecsForHandoff } from './reusable-blocks-specs.mjs';
+import { resolveTunnelCacheDir } from './cache-dir.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
-const CACHE_DIR = join(PLUGIN_ROOT, '.cache');
-const MIRROR_FILE = join(CACHE_DIR, 'session-handoff.json');
+const getCacheDir = () => resolveTunnelCacheDir(PLUGIN_ROOT);
+const getMirrorFile = () => join(getCacheDir(), 'session-handoff.json');
+
+function normWsPath(ws = '') {
+  if (!ws || typeof ws !== 'string') return '';
+  try {
+    return resolve(ws).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  } catch {
+    return ws.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  }
+}
 
 const TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days retention TTL
 const MAX_GOALS = 4;
@@ -101,8 +111,9 @@ export function resolveValidWorkspaceDir(workspaceRoot = '') {
  * Ensures cache directory exists.
  */
 function ensureCacheDir() {
-  if (!existsSync(CACHE_DIR)) {
-    mkdirSync(CACHE_DIR, { recursive: true });
+  const dir = getCacheDir();
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
   }
 }
 
@@ -123,7 +134,7 @@ function getStoragePath(workspaceRoot = '', { createDir = true } = {}) {
     } catch {}
   }
   if (createDir) ensureCacheDir();
-  return MIRROR_FILE;
+  return getMirrorFile();
 }
 
 /**
@@ -170,8 +181,9 @@ function isLiveNonEphemeralWorkspace(wsPath = '') {
 }
 
 function readWorkspaceMirrorFallback(normWs = '') {
-  if (!existsSync(MIRROR_FILE)) return null;
-  const mirror = safeReadJsonSync(MIRROR_FILE, createInitialState);
+  const mirrorFile = getMirrorFile();
+  if (!existsSync(mirrorFile)) return null;
+  const mirror = safeReadJsonSync(mirrorFile, createInitialState);
   if (!mirror || typeof mirror !== 'object') return null;
   const queryingEphemeral = Boolean(normWs && isEphemeralTestWorkspace(normWs));
 
@@ -211,7 +223,7 @@ function syncWorkspaceToMirror(normWs = '', updatedState = {}) {
     isSyntheticTestConvoId(cleanEntry.lastConvoId) ||
     Boolean(process.env.NODE_TEST_CONTEXT && isEphemeralTestWorkspace(normWs));
 
-  updateJsonAtomicSync(MIRROR_FILE, createInitialState, (cur) => {
+  updateJsonAtomicSync(getMirrorFile(), createInitialState, (cur) => {
     const prevMap = cur && cur.workspaces && typeof cur.workspaces === 'object' && !Array.isArray(cur.workspaces)
       ? { ...cur.workspaces }
       : {};
@@ -301,7 +313,7 @@ export function recordHandoffGoal(opts = {}) {
     return getSessionHandoff(workspaceRoot, { createDir: false });
   }
 
-  let cleanPrompt = userPrompt
+  let cleanPrompt = redactSecretsInText(userPrompt)
     .replace(/\r?\n/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -311,12 +323,13 @@ export function recordHandoffGoal(opts = {}) {
   }
 
   const primaryPath = getStoragePath(workspaceRoot);
-  const normWs = workspaceRoot ? workspaceRoot.replace(/\\/g, '/').toLowerCase() : '';
+  const mirrorFile = getMirrorFile();
+  const normWs = normWsPath(workspaceRoot);
   ensureCacheDir();
 
   const updater = (current) => {
     let state = current && typeof current === 'object' ? current : createInitialState();
-    if ((!state.recentGoals || state.recentGoals.length === 0) && primaryPath !== MIRROR_FILE) {
+    if ((!state.recentGoals || state.recentGoals.length === 0) && primaryPath !== mirrorFile) {
       const mirror = readWorkspaceMirrorFallback(normWs);
       if (mirror?.recentGoals?.length > 0) {
         state = { ...mirror, ...state };
@@ -348,7 +361,7 @@ export function recordHandoffGoal(opts = {}) {
 
   const updatedState = updateJsonAtomicSync(primaryPath, createInitialState, updater);
 
-  if (primaryPath !== MIRROR_FILE) {
+  if (primaryPath !== mirrorFile) {
     syncWorkspaceToMirror(normWs, updatedState);
   }
 
@@ -399,12 +412,13 @@ export function recordHandoffAction(rawOpts = {}) {
   const relOrBasePath = normalizeDisplayPath(filePath, workspaceRoot);
   if (UNSAFE_KEYS.has(relOrBasePath.trim())) return;
   const primaryPath = getStoragePath(workspaceRoot);
-  const normWs = workspaceRoot ? workspaceRoot.replace(/\\/g, '/').toLowerCase() : '';
+  const mirrorFile = getMirrorFile();
+  const normWs = normWsPath(workspaceRoot);
   ensureCacheDir();
 
   const updater = (current) => {
     let state = current && typeof current === 'object' ? current : createInitialState();
-    if ((!state.touchedFiles || state.touchedFiles.length === 0) && primaryPath !== MIRROR_FILE) {
+    if ((!state.touchedFiles || state.touchedFiles.length === 0) && primaryPath !== mirrorFile) {
       const mirror = readWorkspaceMirrorFallback(normWs);
       if (mirror?.touchedFiles?.length > 0 || mirror?.rationales?.length > 0) {
         state = { ...mirror, ...state };
@@ -430,8 +444,8 @@ export function recordHandoffAction(rawOpts = {}) {
     }
 
     let rationales = Array.isArray(state.rationales) ? state.rationales : [];
-    const cleanRationale = typeof rationale === 'string' ? rationale.trim().slice(0, 120) : String(rationale || '').trim().slice(0, 120);
-    const cleanRejected = typeof rejectedApproach === 'string' ? rejectedApproach.trim().slice(0, 100) : String(rejectedApproach || '').trim().slice(0, 100);
+    const cleanRationale = typeof rationale === 'string' ? redactSecretsInText(rationale.trim()).slice(0, 120) : redactSecretsInText(String(rationale || '').trim()).slice(0, 120);
+    const cleanRejected = typeof rejectedApproach === 'string' ? redactSecretsInText(rejectedApproach.trim()).slice(0, 100) : redactSecretsInText(String(rejectedApproach || '').trim()).slice(0, 100);
 
     if (cleanRationale || cleanRejected) {
       rationales = rationales.filter((r) => r && String(r.file).toLowerCase() !== normKey);
@@ -444,6 +458,11 @@ export function recordHandoffAction(rawOpts = {}) {
       if (rationales.length > 4) {
         rationales = rationales.slice(0, 4);
       }
+    } else if (verifyOk === true) {
+      rationales = rationales.filter((r) => {
+        if (!r || String(r.file).toLowerCase() !== normKey) return true;
+        return Boolean(r.rationale);
+      });
     }
 
     return {
@@ -461,7 +480,7 @@ export function recordHandoffAction(rawOpts = {}) {
 
   const updatedState = updateJsonAtomicSync(primaryPath, createInitialState, updater);
 
-  if (primaryPath !== MIRROR_FILE) {
+  if (primaryPath !== mirrorFile) {
     syncWorkspaceToMirror(normWs, updatedState);
   }
 
@@ -519,6 +538,12 @@ export function recordUserDecision(rawOpts = {}) {
   if (!cleanQ || !cleanA) return undefined;
 
   const cleanCat = typeof category === 'string' && category.trim() ? category.trim() : 'general';
+  if (
+    !isEphemeralTestWorkspace(workspaceRoot) &&
+    (Boolean(process.env.NODE_TEST_CONTEXT) || isSyntheticTestConvoId(conversationId))
+  ) {
+    return getSessionHandoff(workspaceRoot, { createDir: false });
+  }
   const now = new Date().toISOString();
   const decisionItem = {
     category: cleanCat,
@@ -529,7 +554,8 @@ export function recordUserDecision(rawOpts = {}) {
 
   const normQ = cleanQ.toLowerCase();
   const primaryPath = getStoragePath(workspaceRoot);
-  const normWs = workspaceRoot ? workspaceRoot.replace(/\\/g, '/').toLowerCase() : '';
+  const mirrorFile = getMirrorFile();
+  const normWs = normWsPath(workspaceRoot);
   ensureCacheDir();
 
   const updater = (current) => {
@@ -555,7 +581,7 @@ export function recordUserDecision(rawOpts = {}) {
   };
 
   const updatedState = updateJsonAtomicSync(primaryPath, createInitialState, updater);
-  if (primaryPath !== MIRROR_FILE) {
+  if (primaryPath !== mirrorFile) {
     syncWorkspaceToMirror(normWs, updatedState);
   }
 
@@ -613,12 +639,13 @@ export function getSessionHandoff(workspaceRoot = '', { createDir = true } = {})
   }
 
   const primaryPath = getStoragePath(workspaceRoot, { createDir });
-  const normWs = workspaceRoot ? workspaceRoot.replace(/\\/g, '/').toLowerCase() : '';
+  const mirrorFile = getMirrorFile();
+  const normWs = normWsPath(workspaceRoot);
   let state = safeReadJsonSync(primaryPath, createInitialState);
 
   if (
     !isEphemeral &&
-    primaryPath === MIRROR_FILE &&
+    primaryPath === mirrorFile &&
     state?.workspaceRoot &&
     (isEphemeralTestWorkspace(state.workspaceRoot) || !resolveValidWorkspaceDir(state.workspaceRoot))
   ) {
@@ -632,7 +659,7 @@ export function getSessionHandoff(workspaceRoot = '', { createDir = true } = {})
     (Array.isArray(state.pinnedDecisions) && state.pinnedDecisions.length > 0)
   );
 
-  if (!hasContent && primaryPath !== MIRROR_FILE) {
+  if (!hasContent && primaryPath !== mirrorFile) {
     const mirrorState = readWorkspaceMirrorFallback(normWs);
     if (
       mirrorState &&
@@ -703,7 +730,7 @@ function getPassportPath(workspaceRoot = '', { createDir = true } = {}) {
     } catch {}
   }
   if (createDir) ensureCacheDir();
-  return join(CACHE_DIR, 'project-passport.json');
+  return join(getCacheDir(), 'project-passport.json');
 }
 
 /**
@@ -874,10 +901,15 @@ export function getOrBuildProjectPassport(workspaceRoot = '', { createDir = true
  * @param {{ workspaceRoot?: string, stack?: string, entrypoints?: string[], invariants?: string[] }} [options={}]
  * @returns {object} Updated passport object
  */
-export function updateProjectPassport({ workspaceRoot = '', stack = '', entrypoints = [], invariants = [] } = {}) {
+export function updateProjectPassport(rawOpts = {}) {
+  const { workspaceRoot = '', stack = '', entrypoints = [], invariants = [] } =
+    rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
+  const targetDir = workspaceRoot || process.cwd();
+  if (!isEphemeralTestWorkspace(targetDir) && Boolean(process.env.NODE_TEST_CONTEXT)) {
+    return getOrBuildProjectPassport(workspaceRoot);
+  }
   const passportPath = getPassportPath(workspaceRoot);
   const preRead = safeReadJsonSync(passportPath, null);
-  const targetDir = workspaceRoot || process.cwd();
   const fallbackDetect = (!preRead || !preRead.stack) ? detectProjectPassport(targetDir) : null;
 
   ensureCacheDir();
@@ -1046,12 +1078,13 @@ export function formatHandoffForSessionStart(workspaceRoot = '', currentConversa
  */
 export function clearSessionHandoff(workspaceRoot = '') {
   const primaryPath = getStoragePath(workspaceRoot);
-  const normWs = workspaceRoot ? workspaceRoot.replace(/\\/g, '/').toLowerCase() : '';
+  const mirrorFile = getMirrorFile();
+  const normWs = normWsPath(workspaceRoot);
   ensureCacheDir();
   const emptyState = createInitialState();
   atomicWriteJsonSync(primaryPath, emptyState);
-  if (primaryPath !== MIRROR_FILE && existsSync(MIRROR_FILE)) {
-    updateJsonAtomicSync(MIRROR_FILE, createInitialState, (cur) => {
+  if (primaryPath !== mirrorFile && existsSync(mirrorFile)) {
+    updateJsonAtomicSync(mirrorFile, createInitialState, (cur) => {
       const prevMap = cur && cur.workspaces && typeof cur.workspaces === 'object' && !Array.isArray(cur.workspaces)
         ? { ...cur.workspaces }
         : {};

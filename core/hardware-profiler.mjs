@@ -9,8 +9,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import os from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveTunnelCacheDir } from './cache-dir.mjs';
 import { atomicWriteJsonSync, safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
 import { normalizeLang } from './i18n.mjs';
 
@@ -352,24 +353,31 @@ export function probeAnyGpu(opts = {}) {
         ],
         { encoding: 'utf8', timeout: 1000, windowsHide: true }
       ).trim();
-      const firstLine = out.split(/\r?\n/)[0] || '';
-      const parts = firstLine.split(',').map((s) => s.trim());
-      if (parts.length >= 4 && parts[0]) {
-        const res = {
-          available: true,
-          vendor: 'nvidia',
-          isDiscrete: true,
-          backendHint: 'cuda',
-          vramReliable: true,
-          name: parts[0],
-          totalMb: Number(parts[1]) || 0,
-          usedMb: Number(parts[2]) || 0,
-          freeMb: Number(parts[3]) || 0,
-          tempC: Number(parts[4]) || 0,
-          utilPct: Number(parts[5]) || 0,
-        };
-        memoryGpuProbeCache = { ts: now, key: cacheKey, data: res };
-        return res;
+      let bestGpu = null;
+      for (const line of out.split(/\r?\n/)) {
+        const parts = line.split(',').map((s) => s.trim());
+        if (parts.length < 4 || !parts[0]) continue;
+        const totalMb = Number(parts[1]);
+        if (!Number.isFinite(totalMb) || totalMb <= 0) continue;
+        if (!bestGpu || totalMb > bestGpu.totalMb) {
+          bestGpu = {
+            available: true,
+            vendor: 'nvidia',
+            isDiscrete: true,
+            backendHint: 'cuda',
+            vramReliable: true,
+            name: parts[0],
+            totalMb,
+            usedMb: Number(parts[2]) || 0,
+            freeMb: Number(parts[3]) || 0,
+            tempC: Number(parts[4]) || 0,
+            utilPct: Number(parts[5]) || 0,
+          };
+        }
+      }
+      if (bestGpu) {
+        memoryGpuProbeCache = { ts: now, key: cacheKey, data: bestGpu };
+        return bestGpu;
       }
     }
   } catch {}
@@ -907,7 +915,10 @@ function readCachedGpuFast(pluginRoot = DEFAULT_PLUGIN_ROOT) {
     return memoryGpuProbeCache.data;
   }
   try {
-    const cacheFile = join(pluginRoot, '.cache', 'hardware-profile.json');
+    const baseCache = resolve(pluginRoot) === resolve(DEFAULT_PLUGIN_ROOT)
+      ? resolveTunnelCacheDir(pluginRoot)
+      : join(pluginRoot, '.cache');
+    const cacheFile = join(baseCache, 'hardware-profile.json');
     if (existsSync(cacheFile)) {
       const cached = safeReadJsonSync(cacheFile, () => null, { selfHeal: false });
       if (cached?.gpu && cached.scannedAt && now - Date.parse(cached.scannedAt) < PROFILE_CACHE_TTL_MS) {
@@ -1050,7 +1061,9 @@ export function syncMcpRamBudget(pluginRoot = DEFAULT_PLUGIN_ROOT, ramMaxBudgetM
  */
 export async function getHardwareProfile(opts = {}) {
   const pluginRoot = opts.pluginRoot || DEFAULT_PLUGIN_ROOT;
-  const cacheDir = join(pluginRoot, '.cache');
+  const cacheDir = resolve(pluginRoot) === resolve(DEFAULT_PLUGIN_ROOT)
+    ? resolveTunnelCacheDir(pluginRoot)
+    : join(pluginRoot, '.cache');
   const cacheFile = join(cacheDir, 'hardware-profile.json');
   const force = Boolean(opts.force);
   const subscriptionTier = opts.subscriptionTier === 'ultra' ? 'ultra' : 'pro';

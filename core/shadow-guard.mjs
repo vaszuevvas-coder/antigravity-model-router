@@ -150,10 +150,6 @@ export function resolveEffectiveProjectRoot(filePath = '', workspaceRoot = '') {
   return absWs;
 }
 
-function resolveRepoRootForFile(filePath = '') {
-  return resolveEffectiveProjectRoot(filePath, '');
-}
-
 /**
  * Создаёт теневой чекпоинт перед изменением файла.
  * @param {object} params Параметры чекпоинта.
@@ -664,7 +660,8 @@ function resolveTurnKeyMatch(cp, turnId) {
  * @param {{ lang?: 'en'|'ru' }} [opts={}]
  * @returns {object}
  */
-export function getTurnDiffSummary(turnId = 'latest', workspaceRoot = '', { lang = 'ru' } = {}) {
+export function getTurnDiffSummary(turnId = 'latest', workspaceRoot = '', opts = {}) {
+  const { lang = 'ru' } = opts && typeof opts === 'object' ? opts : {};
   const isEn = String(lang || '').trim().toLowerCase() === 'en';
   if (typeof turnId !== 'string' || (workspaceRoot !== undefined && typeof workspaceRoot !== 'string')) {
     return { ok: false, error: isEn ? 'Invalid turnId' : 'Некорректный turnId', files: [] };
@@ -719,7 +716,12 @@ export function getTurnDiffSummary(turnId = 'latest', workspaceRoot = '', { lang
     const existsNow = existsSync(cp.filePath);
     let afterText = '';
     if (existsNow) {
-      try { afterText = readFileSync(cp.filePath, 'utf8'); } catch {}
+      try {
+        const stNow = statSync(cp.filePath);
+        if (stNow.isFile() && stNow.size <= MAX_BACKUP_SIZE_BYTES) {
+          afterText = readFileSync(cp.filePath, 'utf8');
+        }
+      } catch {}
     }
 
     let status = 'modified';
@@ -757,7 +759,8 @@ export function getTurnDiffSummary(turnId = 'latest', workspaceRoot = '', { lang
  * @param {string} [workspaceRoot='']
  * @returns {object}
  */
-export function rollbackTurn(turnId = 'latest', workspaceRoot = '', { lang = 'ru' } = {}) {
+export function rollbackTurn(turnId = 'latest', workspaceRoot = '', opts = {}) {
+  const { lang = 'ru' } = opts && typeof opts === 'object' ? opts : {};
   const isEn = String(lang || '').trim().toLowerCase() === 'en';
   const cleanTurnArg = safeStr(turnId, 128).trim();
   const rawWs = safeStr(workspaceRoot, 1024).trim();

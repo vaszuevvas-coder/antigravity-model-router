@@ -28,7 +28,8 @@ const MAX_STRING_LEN = 2000;
 const MAX_ARRAY_ITEMS = 80;
 const MAX_OBJECT_KEYS = 80;
 const MAX_DEPTH = 6;
-const SENSITIVE_KEY_RE = /(?:token|secret|password|passwd|auth|cookie|apikey|api_key|privatekey|credential)/i;
+const SENSITIVE_KEY_RE = /(?:token|secret|password|passwd|auth(?!or\b)|cookie|apikey|api_key|privatekey|credential)/i;
+const SAFE_NUMERIC_COUNT_KEY_RE = /(?:tokens|tokencount|tokenbudget|tokenlimit)$/i;
 
 function escapeRegexLiteral(str = '') {
   return String(str || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -138,11 +139,17 @@ export function sanitizeDebugText(text = '', opts = {}) {
 
   if (user && user.length >= 3) {
     const flags = process.platform === 'win32' ? 'gi' : 'g';
-    out = out.replace(new RegExp(`\\b${escapeRegexLiteral(user)}\\b`, flags), '<USER>');
+    out = out.replace(
+      new RegExp(`(^|[^A-Za-z0-9_А-Яа-яЁё-])${escapeRegexLiteral(user)}(?=$|[^A-Za-z0-9_А-Яа-яЁё-])`, flags),
+      '$1<USER>'
+    );
   }
 
   if (host && host.length >= 3 && !/^(?:localhost|127\.0\.0\.1)$/i.test(host)) {
-    out = out.replace(new RegExp(`\\b${escapeRegexLiteral(host)}\\b`, 'gi'), '<HOST>');
+    out = out.replace(
+      new RegExp(`(^|[^A-Za-z0-9_А-Яа-яЁё-])${escapeRegexLiteral(host)}(?=$|[^A-Za-z0-9_А-Яа-яЁё-])`, 'gi'),
+      '$1<HOST>'
+    );
   }
 
   if (out.length > MAX_STRING_LEN) {
@@ -177,11 +184,12 @@ export function sanitizeDebugPayload(value, opts = {}, depth = 0) {
     const keys = Object.keys(value).slice(0, MAX_OBJECT_KEYS);
     for (const k of keys) {
       if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
-      if (SENSITIVE_KEY_RE.test(k)) {
+      const v = value[k];
+      if (SENSITIVE_KEY_RE.test(k) && !((typeof v === 'number' || typeof v === 'boolean') && SAFE_NUMERIC_COUNT_KEY_RE.test(k))) {
         out[k] = '[REDACTED]';
         continue;
       }
-      out[k] = sanitizeDebugPayload(value[k], opts, depth + 1);
+      out[k] = sanitizeDebugPayload(v, opts, depth + 1);
     }
     return out;
   }

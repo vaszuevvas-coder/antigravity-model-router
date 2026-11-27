@@ -128,12 +128,13 @@ export function extractFileShortcutMarkers(relFile = '', content = '', { marker 
 
 function listWorkspaceCandidateFiles(absRoot, maxFiles = DEFAULT_MAX_FILES) {
   try {
-    const stdout = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], {
+    const stdout = execFileSync('git', ['-c', 'core.quotepath=false', 'ls-files', '--cached', '--others', '--exclude-standard'], {
       cwd: absRoot,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 3500,
       maxBuffer: 64 * 1024 * 1024,
+      windowsHide: true,
     });
     const tracked = stdout
       .split(/\r?\n/)

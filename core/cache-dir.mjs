@@ -86,7 +86,7 @@ export function pruneObjectMapByTimestamp(mapObj, options = {}) {
   const getTs = typeof opts.getTs === 'function' ? opts.getTs : defaultGetTs;
   const keepPredicate = typeof opts.keepPredicate === 'function' ? opts.keepPredicate : null;
 
-  const rawNow = opts.now;
+  const rawNow = opts.now ?? opts.nowMs;
   const now = typeof rawNow === 'number' && Number.isFinite(rawNow) ? rawNow : Date.now();
 
   const maxAgeMs = parsePositiveNumber(opts.maxAgeMs) ?? DEFAULT_MAX_AGE_MS;

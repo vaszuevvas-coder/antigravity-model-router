@@ -10,7 +10,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolveTunnelCacheDir } from './cache-dir.mjs';
-import { atomicWriteJsonSync } from './safe-json.mjs';
+import { atomicWriteJsonSync, safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
 
 // Директории, которые полностью исключаются из сканирования
 const IGNORED_DIRS = new Set([
@@ -1506,7 +1506,7 @@ function computePageRankForFilesIndex(filesIndex, absRootDir, queryText = '', op
 
 function extractExportedSymbolsFromLines(ext, cleanContent, lines) {
   const symbols = new Set();
-  if (ext === '.js' || ext === '.mjs' || ext === '.cjs' || ext === '.ts' || ext === '.tsx') {
+  if (ext === '.js' || ext === '.mjs' || ext === '.cjs' || ext === '.jsx' || ext === '.ts' || ext === '.tsx' || ext === '.mts' || ext === '.cts') {
     for (const rawLine of lines) {
       const line = rawLine.trim();
       if (!line || line.startsWith('//')) continue;
@@ -1596,7 +1596,7 @@ export function extractFileAllMetadata(ext, content) {
     };
   }
 
-  if (ext === '.js' || ext === '.mjs' || ext === '.cjs' || ext === '.ts' || ext === '.tsx') {
+  if (ext === '.js' || ext === '.mjs' || ext === '.cjs' || ext === '.jsx' || ext === '.ts' || ext === '.tsx' || ext === '.mts' || ext === '.cts') {
     const cleanContent = maskBlockComments(content);
     const lines = cleanContent.split(/\r?\n/);
     const importsSet = new Set();
@@ -1868,7 +1868,12 @@ export function invalidateRepoMapCache(rootDir = '') {
  * @param {boolean} [forceRefresh=false] Принудительно обновить кэш
  * @returns {{ markdown: string, fileCount: number, symbolCount: number, fullBytes: number, mapBytes: number, savedBytes: number, generatedAt: string }}
  */
-export function getCachedRepoMap(rootDir, forceRefresh = false) {
+export function getCachedRepoMap(rootDir, forceRefreshOrOpts = false) {
+  const opts = typeof forceRefreshOrOpts === 'object' && forceRefreshOrOpts !== null
+    ? forceRefreshOrOpts
+    : { forceRefresh: Boolean(forceRefreshOrOpts) };
+  const forceRefresh = Boolean(opts.forceRefresh);
+  const skipWrite = Boolean(opts.skipWrite);
   const targetDir = path.resolve(rootDir);
   const normKey = process.platform === 'win32' ? targetDir.toLowerCase() : targetDir;
   const hash = crypto.createHash('sha1').update(normKey).digest('hex').slice(0, 10);
@@ -1910,6 +1915,10 @@ export function getCachedRepoMap(rootDir, forceRefresh = false) {
 
   const data = generateRepoMap(targetDir);
   const nowTs = Date.now();
+
+  if (skipWrite) {
+    return data;
+  }
 
   try {
     if (!fs.existsSync(cacheDir)) {
@@ -2736,7 +2745,7 @@ export function verifyImportContracts(rootDir, editedFilePath, options = {}) {
     : path.resolve(absRoot, editedFilePath);
 
   const ext = path.extname(absEdited).toLowerCase();
-  const supported = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx']);
+  const supported = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.mts', '.cts']);
   if (!supported.has(ext)) {
     return { valid: true, brokenImports: [], formattedAlert: '' };
   }
@@ -2764,26 +2773,26 @@ export function verifyImportContracts(rootDir, editedFilePath, options = {}) {
   }
 
   const exportedNames = new Set();
+  const cleanEdited = maskBlockComments(editedContent);
 
-  // a) extractFileSymbolsWithRanges
+  // a) extractExportedSymbols (handles JS/TS exports accurately without leaking internal symbols)
   try {
-    const rangeSymbols = extractFileSymbolsWithRanges(ext, editedContent);
-    for (const s of rangeSymbols) {
-      if (s?.name) exportedNames.add(s.name);
+    for (const sym of extractExportedSymbols(ext, cleanEdited)) {
+      if (sym) exportedNames.add(sym);
     }
   } catch {}
 
   // b) export [async] (function|const|let|var|class|type|interface|enum) name
   const exportDeclRegex = /export\s+(?:async\s+)?(?:function|const|let|var|class|type|interface|enum)\s+([A-Za-z0-9_$]+)/g;
   let declMatch;
-  while ((declMatch = exportDeclRegex.exec(editedContent)) !== null) {
+  while ((declMatch = exportDeclRegex.exec(cleanEdited)) !== null) {
     if (declMatch[1]) exportedNames.add(declMatch[1].trim());
   }
 
   // c) export { ... }
   const exportBraceRegex = /export\s*\{([^}]+)\}/g;
   let braceMatch;
-  while ((braceMatch = exportBraceRegex.exec(editedContent)) !== null) {
+  while ((braceMatch = exportBraceRegex.exec(cleanEdited)) !== null) {
     const inner = braceMatch[1];
     for (const item of inner.split(',')) {
       const trimmed = item.trim().replace(/^type\s+/, '').trim();
@@ -2794,6 +2803,10 @@ export function verifyImportContracts(rootDir, editedFilePath, options = {}) {
         exportedNames.add(exportedName);
       }
     }
+  }
+
+  if (/\bexport\s+default\b/.test(cleanEdited)) {
+    exportedNames.add('default');
   }
 
   const normEdited = absEdited.replace(/\\/g, '/');
@@ -3007,23 +3020,25 @@ export function diffRepoChronos(rootDir, { resetBaseline = false } = {}) {
 
   const currentFilePath = fileURLToPath(import.meta.url);
   const pluginRoot = path.resolve(path.dirname(currentFilePath), '..');
-  const cacheDir = path.join(pluginRoot, '.cache');
+  const cacheDir = resolveTunnelCacheDir(pluginRoot);
   const baselineFile = path.join(cacheDir, 'chronos-baseline.json');
-  const rootHash = crypto.createHash('sha256').update(absRoot).digest('hex').slice(0, 16);
+  const normRootForHash = process.platform === 'win32' ? absRoot.toLowerCase() : absRoot;
+  const rootHash = crypto.createHash('sha256').update(normRootForHash).digest('hex').slice(0, 16);
 
-  let baselineStore = {};
-  try {
-    if (fs.existsSync(baselineFile)) {
-      baselineStore = JSON.parse(fs.readFileSync(baselineFile, 'utf8'));
-    }
-  } catch {}
-
-  const baselineSnapshot = baselineStore[rootHash];
+  const baselineStore = safeReadJsonSync(baselineFile, () => ({}), { selfHeal: false });
+  const safeStore = baselineStore && typeof baselineStore === 'object' && !Array.isArray(baselineStore) ? baselineStore : {};
+  const baselineSnapshot = Object.hasOwn(safeStore, rootHash) && safeStore[rootHash] && typeof safeStore[rootHash] === 'object'
+    ? safeStore[rootHash]
+    : null;
 
   if (!baselineSnapshot || resetBaseline === true) {
-    baselineStore[rootHash] = currentSnapshot;
     try {
-      atomicWriteJsonSync(baselineFile, baselineStore);
+      if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+      updateJsonAtomicSync(baselineFile, () => ({}), (cur) => {
+        const next = cur && typeof cur === 'object' && !Array.isArray(cur) ? { ...cur } : {};
+        next[rootHash] = currentSnapshot;
+        return next;
+      });
     } catch {}
     return {
       ok: true,
@@ -3034,16 +3049,21 @@ export function diffRepoChronos(rootDir, { resetBaseline = false } = {}) {
     };
   }
 
+  const splitChronosKey = (rawKey) => {
+    const idx = rawKey.lastIndexOf('::');
+    return idx >= 0 ? [rawKey.slice(0, idx), rawKey.slice(idx + 2)] : [rawKey, ''];
+  };
+
   const addedSymbols = [];
   const removedSymbols = [];
   const modifiedSignatures = [];
 
   for (const [key, signature] of Object.entries(currentSnapshot)) {
-    if (!(key in baselineSnapshot)) {
-      const [file, name] = key.split('::');
+    if (!Object.hasOwn(baselineSnapshot, key)) {
+      const [file, name] = splitChronosKey(key);
       addedSymbols.push({ key, file, symbol: name, signature });
     } else if (baselineSnapshot[key] !== signature) {
-      const [file, name] = key.split('::');
+      const [file, name] = splitChronosKey(key);
       modifiedSignatures.push({
         key,
         file,
@@ -3055,8 +3075,8 @@ export function diffRepoChronos(rootDir, { resetBaseline = false } = {}) {
   }
 
   for (const [key, signature] of Object.entries(baselineSnapshot)) {
-    if (!(key in currentSnapshot)) {
-      const [file, name] = key.split('::');
+    if (!Object.hasOwn(currentSnapshot, key)) {
+      const [file, name] = splitChronosKey(key);
       removedSymbols.push({ key, file, symbol: name, signature });
     }
   }
@@ -3198,7 +3218,7 @@ export function verifySemanticContracts(rootDir, editedFilePath, options = {}) {
     : path.resolve(absRoot, editedFilePath);
 
   const ext = path.extname(absEdited).toLowerCase();
-  const supported = new Set(['.html', '.js', '.mjs', '.cjs', '.ts', '.tsx']);
+  const supported = new Set(['.html', '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.mts', '.cts']);
   if (!supported.has(ext)) {
     return { valid: true, issues: [], formattedAlert: '' };
   }
@@ -3315,7 +3335,7 @@ export function verifySemanticContracts(rootDir, editedFilePath, options = {}) {
   // =========================================================================
   // CHECK (B): Destructured Object Parameter Linker
   // =========================================================================
-  const jsExts = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx']);
+  const jsExts = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.mts', '.cts']);
   if (jsExts.has(ext)) {
     const editedContent = readText(absEdited) || '';
 

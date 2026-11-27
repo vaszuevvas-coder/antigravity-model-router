@@ -523,7 +523,7 @@ export function postCompactionArchiveBestEffort(opts = {}) {
  */
 export function buildCompactionDigest(transcriptPath, conversationId = '', workspaceRoot = '') {
   ensureCacheDir();
-  const shortId = (conversationId || 'latest').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 8);
+  const shortId = (conversationId || 'latest').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 8) || 'latest';
   const digestPath = join(getCacheDir(), `compaction-digest-${shortId}.md`);
 
   const { steps } = parseTranscript(transcriptPath);
@@ -854,7 +854,7 @@ export async function checkHistoryCompaction(rawOpts = {}) {
     : '';
 
   // Тихое фоновое создание дайджеста при достижении промежуточного порога длинного диалога (approxSteps >= 40)
-  const shortId = (convoId || 'latest').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 8);
+  const shortId = (convoId || 'latest').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 8) || 'latest';
   const expectedDigestFile = join(getCacheDir(), `compaction-digest-${shortId}.md`);
   if (!readOnly && tailInfo.approxSteps >= 40 && !existsSync(expectedDigestFile) && resolved.transcriptPath) {
     try {

@@ -341,16 +341,6 @@ export function extractDirKey(filePath = '', workspaceRoot = '') {
   return `dir:${folder.toLowerCase()}`;
 }
 
-/**
- * Сохраняет состояние априорных распределений в кэш.
- * @param {object} state Объект состояния.
- */
-function savePriorsState(state) {
-  ensureCacheDir();
-  state.updatedAt = new Date().toISOString();
-  atomicWriteJsonSync(getPriorsFile(), state);
-}
-
 function decayBucketInPlace(bucket, now, nowIso, persistTs) {
   if (!bucket || typeof bucket !== 'object') return false;
   let modified = false;
@@ -989,29 +979,44 @@ export function resetBayesianPriors(options = {}) {
   const isScopedWs = Boolean(cleanWs && cleanWs !== '__all__');
   const onlyFragility = Boolean(options && typeof options === 'object' && options.onlyFragility);
 
-  if (onlyFragility && isScopedWs) {
-    const abs = resolve(cleanWs);
-    const norm = process.platform === 'win32' ? abs.toLowerCase() : abs;
-    const prefix = `${createHash('sha1').update(norm).digest('hex').slice(0, 8)}:`;
+  if (onlyFragility) {
+    if (isScopedWs) {
+      const abs = resolve(cleanWs);
+      const norm = process.platform === 'win32' ? abs.toLowerCase() : abs;
+      const prefix = `${createHash('sha1').update(norm).digest('hex').slice(0, 8)}:`;
+      updateJsonAtomicSync(getPriorsFile(), createInitialState, (rawState) => {
+        const state = (rawState && typeof rawState === 'object' && rawState.priors)
+          ? { ...rawState, fileFragility: { ...(rawState.fileFragility || {}) } }
+          : createInitialState();
+        for (const k of Object.keys(state.fileFragility || {})) {
+          if (k.startsWith(prefix)) {
+            delete state.fileFragility[k];
+          } else if (!/^[0-9a-f]{8}:/i.test(k)) {
+            try {
+              if (existsSync(join(cleanWs, k))) delete state.fileFragility[k];
+            } catch {}
+          }
+        }
+        state.updatedAt = new Date().toISOString();
+        return state;
+      });
+      return {
+        ok: true,
+        summary: getBayesianSummary(cleanWs),
+      };
+    }
+
     updateJsonAtomicSync(getPriorsFile(), createInitialState, (rawState) => {
       const state = (rawState && typeof rawState === 'object' && rawState.priors)
-        ? { ...rawState, fileFragility: { ...(rawState.fileFragility || {}) } }
+        ? { ...rawState }
         : createInitialState();
-      for (const k of Object.keys(state.fileFragility || {})) {
-        if (k.startsWith(prefix)) {
-          delete state.fileFragility[k];
-        } else if (!/^[0-9a-f]{8}:/i.test(k)) {
-          try {
-            if (existsSync(join(cleanWs, k))) delete state.fileFragility[k];
-          } catch {}
-        }
-      }
+      state.fileFragility = {};
       state.updatedAt = new Date().toISOString();
       return state;
     });
     return {
       ok: true,
-      summary: getBayesianSummary(cleanWs),
+      summary: getBayesianSummary(''),
     };
   }
 

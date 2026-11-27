@@ -11,11 +11,12 @@ import { fileURLToPath } from 'node:url';
 import { deflateSync, inflateSync } from 'node:zlib';
 import { extractFileSymbolsWithRanges } from './repo-mapper.mjs';
 import { safeReadJsonSync, updateJsonAtomicSync, withFileLockSync } from './safe-json.mjs';
+import { resolveTunnelCacheDir } from './cache-dir.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
-const SNAPSHOT_DIR = join(PLUGIN_ROOT, '.cache', 'read-snapshots');
-const SNAPSHOT_INDEX_FILE = join(SNAPSHOT_DIR, 'index.json');
+const getSnapshotDir = () => join(resolveTunnelCacheDir(PLUGIN_ROOT), 'read-snapshots');
+const getSnapshotIndexFile = () => join(getSnapshotDir(), 'index.json');
 
 const MIN_SNAPSHOT_LINES = 60;
 const MAX_SNAPSHOT_BYTES = 384 * 1024; // 384 KB
@@ -24,8 +25,9 @@ const SNAPSHOT_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const MAX_MYERS_D = 800;
 
 function ensureSnapshotDir() {
-  if (!existsSync(SNAPSHOT_DIR)) {
-    mkdirSync(SNAPSHOT_DIR, { recursive: true });
+  const dir = getSnapshotDir();
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
   }
 }
 
@@ -48,21 +50,22 @@ function sanitizeSha1(sha1 = '') {
 }
 
 function snapshotBlobPath(sha1) {
-  return join(SNAPSHOT_DIR, `${sha1}.zlib`);
+  return join(getSnapshotDir(), `${sha1}.zlib`);
 }
 
 function removeOrphanBlobs(activeEntries = []) {
   try {
-    if (!existsSync(SNAPSHOT_DIR)) return;
+    const dir = getSnapshotDir();
+    if (!existsSync(dir)) return;
     const keepFiles = new Set(['index.json', 'index.json.lock']);
     for (const e of activeEntries) {
       if (e?.sha1) keepFiles.add(`${e.sha1}.zlib`);
     }
-    const files = readdirSync(SNAPSHOT_DIR);
+    const files = readdirSync(dir);
     for (const f of files) {
       if (!keepFiles.has(f) && f.endsWith('.zlib')) {
         try {
-          const full = join(SNAPSHOT_DIR, f);
+          const full = join(dir, f);
           const st = statSync(full);
           if (Date.now() - st.mtimeMs < 5000) continue;
           rmSync(full, { force: true });
@@ -99,12 +102,13 @@ export function saveReadSnapshot(params = {}, positionalText = undefined, positi
   try {
     ensureSnapshotDir();
     const compressed = deflateSync(Buffer.from(text, 'utf8'));
+    const indexFile = getSnapshotIndexFile();
 
-    withFileLockSync(SNAPSHOT_INDEX_FILE, () => {
+    withFileLockSync(indexFile, () => {
       writeFileSync(snapshotBlobPath(sha1), compressed);
 
       let activeEntries = [];
-      updateJsonAtomicSync(SNAPSHOT_INDEX_FILE, defaultSnapshotIndex, (state) => {
+      updateJsonAtomicSync(indexFile, defaultSnapshotIndex, (state) => {
         const now = Date.now();
         let entries = (Array.isArray(state?.entries) ? state.entries : []).filter(
           (e) => e && e.sha1 && (now - (e.ts || 0) <= SNAPSHOT_TTL_MS)
@@ -162,7 +166,8 @@ export function loadReadSnapshot(sha1OrOpts = '') {
   if (!existsSync(blobFile)) return null;
 
   const now = Date.now();
-  const index = safeReadJsonSync(SNAPSHOT_INDEX_FILE, defaultSnapshotIndex, { selfHeal: false });
+  const indexFile = getSnapshotIndexFile();
+  const index = safeReadJsonSync(indexFile, defaultSnapshotIndex, { selfHeal: false });
   const entries = Array.isArray(index?.entries) ? index.entries : [];
   const matching = entries.find((e) => e && e.sha1 === sha1);
   if (!matching || (now - (matching.ts || 0) > SNAPSHOT_TTL_MS)) {
@@ -174,7 +179,7 @@ export function loadReadSnapshot(sha1OrOpts = '') {
     // Touch LRU timestamp if tracked in index
     if (matching) {
       try {
-        updateJsonAtomicSync(SNAPSHOT_INDEX_FILE, defaultSnapshotIndex, (state) => {
+        updateJsonAtomicSync(indexFile, defaultSnapshotIndex, (state) => {
           const list = Array.isArray(state?.entries) ? state.entries : [];
           for (const e of list) {
             if (e && e.sha1 === sha1) {
@@ -196,7 +201,9 @@ export function loadReadSnapshot(sha1OrOpts = '') {
  * @param {{ filePath?: string, normPath?: string, conversationId?: string, convoKey?: string, sha1?: string }} [filter={}]
  */
 export function clearReadSnapshots(filter = {}) {
-  if (!existsSync(SNAPSHOT_DIR)) return;
+  const snapshotDir = getSnapshotDir();
+  if (!existsSync(snapshotDir)) return;
+  const indexFile = getSnapshotIndexFile();
   const targetNorm = filter?.normPath
     ? String(filter.normPath).toLowerCase()
     : normalizePathSafe(filter?.filePath || '');
@@ -205,14 +212,17 @@ export function clearReadSnapshots(filter = {}) {
 
   if (!targetNorm && !rawConvo && !targetSha1) {
     try {
-      const files = readdirSync(SNAPSHOT_DIR);
-      for (const f of files) {
-        if (f.endsWith('.zlib') || f === 'index.json') {
-          try {
-            rmSync(join(SNAPSHOT_DIR, f), { force: true });
-          } catch {}
+      withFileLockSync(indexFile, () => {
+        if (!existsSync(snapshotDir)) return;
+        const files = readdirSync(snapshotDir);
+        for (const f of files) {
+          if (f.endsWith('.zlib') || f === 'index.json') {
+            try {
+              rmSync(join(snapshotDir, f), { force: true });
+            } catch {}
+          }
         }
-      }
+      });
     } catch {}
     return;
   }
@@ -220,8 +230,8 @@ export function clearReadSnapshots(filter = {}) {
   const baseConvo = rawConvo ? String(rawConvo).replace(/__[0-9a-f]{8}$/i, '') || 'default' : '';
   let activeEntries = [];
   try {
-    withFileLockSync(SNAPSHOT_INDEX_FILE, () => {
-      updateJsonAtomicSync(SNAPSHOT_INDEX_FILE, defaultSnapshotIndex, (state) => {
+    withFileLockSync(indexFile, () => {
+      updateJsonAtomicSync(indexFile, defaultSnapshotIndex, (state) => {
         const now = Date.now();
         const entries = (Array.isArray(state?.entries) ? state.entries : []).filter((e) => {
           if (!e || !e.sha1) return false;
@@ -318,7 +328,7 @@ function runBoundedMyersMiddle(A, B, prefix, maxD) {
         revOps.push({ type: 'add', newIdx: prefix + y, line: B[y] });
       } else {
         x--;
-        revOps.push({ type: 'del', oldIdx: prefix + x, line: A[x] });
+        revOps.push({ type: 'del', oldIdx: prefix + x, newIdx: prefix + y, line: A[x] });
       }
     }
   }
@@ -524,7 +534,7 @@ export function computeMyersLineDelta(
         if (op.type === 'add') {
           changedLines.add(effStart + (op.newIdx ?? 0));
         } else if (op.type === 'del') {
-          changedLines.add(effStart + (op.oldIdx ?? 0));
+          changedLines.add(effStart + (op.newIdx ?? op.oldIdx ?? 0));
         }
       }
       const modifiedNames = [];

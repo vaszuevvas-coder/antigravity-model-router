@@ -347,12 +347,14 @@ for (const entry of RU_EN_STEM_ENTRIES) {
  * @param {{ maxTerms?: number }} [options={}]
  * @returns {{ matchedStems: string[], enTerms: string[] }}
  */
-export function expandRuQueryToEnTerms(query = '', { maxTerms = 24 } = {}) {
-  const raw = typeof query === 'string' ? query.toLowerCase() : String(query || '').toLowerCase();
-  if (!raw || !/[а-яё]/.test(raw)) {
+export function expandRuQueryToEnTerms(query = '', options = {}) {
+  const opts = options && typeof options === 'object' ? options : {};
+  const maxTerms = opts.maxTerms ?? 24;
+  const raw = (typeof query === 'string' ? query : String(query || '')).toLowerCase().replace(/ё/g, 'е');
+  if (!raw || !/[а-я]/.test(raw)) {
     return { matchedStems: [], enTerms: [] };
   }
-  const tokens = raw.match(/[а-яё]{3,}/g) || [];
+  const tokens = raw.match(/[а-я]{3,}/g) || [];
   if (tokens.length === 0) {
     return { matchedStems: [], enTerms: [] };
   }
@@ -364,20 +366,37 @@ export function expandRuQueryToEnTerms(query = '', { maxTerms = 24 } = {}) {
   const cap = Math.max(4, Math.min(64, Number(maxTerms) || 24));
 
   for (const tok of tokens) {
-    const bucket = PREFIX_INDEX.get(tok.slice(0, 3));
-    if (!bucket) continue;
-    for (const [stem, terms] of bucket) {
-      if (tok.startsWith(stem) || (stem.length >= 4 && tok.includes(stem))) {
-        if (!seenStems.has(stem)) {
-          seenStems.add(stem);
-          matchedStems.push(stem);
-        }
-        for (const en of terms) {
-          if (!seenEn.has(en)) {
-            seenEn.add(en);
-            enTerms.push(en);
-            if (enTerms.length >= cap) {
-              return { matchedStems, enTerms };
+    const candidateBuckets = [];
+    const seenPrefixes = new Set();
+    const headPfx = tok.slice(0, 3);
+    seenPrefixes.add(headPfx);
+    const headBucket = PREFIX_INDEX.get(headPfx);
+    if (headBucket) candidateBuckets.push({ bucket: headBucket, headMatch: true });
+    if (tok.length >= 6) {
+      const maxOffset = Math.min(6, tok.length - 4);
+      for (let off = 1; off <= maxOffset; off++) {
+        const subPfx = tok.slice(off, off + 3);
+        if (seenPrefixes.has(subPfx)) continue;
+        seenPrefixes.add(subPfx);
+        const subBucket = PREFIX_INDEX.get(subPfx);
+        if (subBucket) candidateBuckets.push({ bucket: subBucket, headMatch: false });
+      }
+    }
+    for (const { bucket, headMatch } of candidateBuckets) {
+      for (const [stem, terms] of bucket) {
+        const matched = headMatch ? (tok.startsWith(stem) || (stem.length >= 4 && tok.includes(stem))) : (stem.length >= 4 && tok.includes(stem));
+        if (matched) {
+          if (!seenStems.has(stem)) {
+            seenStems.add(stem);
+            matchedStems.push(stem);
+          }
+          for (const en of terms) {
+            if (!seenEn.has(en)) {
+              seenEn.add(en);
+              enTerms.push(en);
+              if (enTerms.length >= cap) {
+                return { matchedStems, enTerms };
+              }
             }
           }
         }

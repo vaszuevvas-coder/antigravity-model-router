@@ -354,3 +354,66 @@ test('8 & 9 & 11-15. AST method clamp, delta-reread lock, diff-patcher isolation
   assert.ok(Date.now() - tPrune0 < 200);
   assert.equal(typeof prRes.formattedSpec, 'string');
 });
+
+test('16. Batch 1 audit regressions: bayesian, security file://, verifyImportContracts, pitfall null-guard & skill-crystallizer YAML', async () => {
+  const { resetBayesianPriors, recordModelOutcome } = await import('../core/bayesian-router.mjs');
+  const { checkFileSecurity } = await import('../core/security-guard.mjs');
+  const { verifyImportContracts } = await import('../core/repo-mapper.mjs');
+  const { recordPitfall, listPitfalls } = await import('../core/pitfall-ledger.mjs');
+  const { crystallizeSkill, synthesizeTriggerDescription } = await import('../core/skill-crystallizer.mjs');
+
+  const tmpDir = mkTmp('amr-b1-reg-');
+  const prevCache = process.env.TUNNEL_CACHE_DIR;
+  process.env.TUNNEL_CACHE_DIR = path.join(tmpDir, '.cache');
+  try {
+    // 1. resetBayesianPriors({ onlyFragility: true }) keeps priors intact
+    recordModelOutcome({ domain: 'backend', modelTier: 'flash', success: true });
+    const resetRes = resetBayesianPriors({ onlyFragility: true, workspaceRoot: '__all__' });
+    assert.equal(resetRes.ok, true);
+    const savedPriors = JSON.parse(fs.readFileSync(path.join(tmpDir, '.cache', 'domain-priors.json'), 'utf8'));
+    assert.ok(savedPriors?.priors?.backend);
+
+    // 2. checkFileSecurity blocks file:// URI to .env
+    const secUri = checkFileSecurity({ filePath: 'file:///C:/repo/.env' });
+    assert.equal(secUri.allow, false);
+
+    // 3. verifyImportContracts flags imported unexported private symbol & allows default export
+    const srcA = path.join(tmpDir, 'modA.mjs');
+    const srcB = path.join(tmpDir, 'modB.mjs');
+    fs.writeFileSync(srcA, 'function secretHelper() { return 1; }\nexport const publicVal = 2;\nexport default function mainFn() {}\n', 'utf8');
+    fs.writeFileSync(srcB, "import mainFn, { secretHelper } from './modA.mjs';\nexport const x = [mainFn, secretHelper];\n", 'utf8');
+    const ic = verifyImportContracts(tmpDir, srcA);
+    assert.equal(ic.valid, false);
+    assert.ok(ic.brokenImports.some((b) => Array.isArray(b.missingSymbols) && b.missingSymbols.includes('secretHelper')));
+    assert.equal(ic.brokenImports.some((b) => Array.isArray(b.missingSymbols) && b.missingSymbols.includes('default')), false);
+
+    // 4. pitfall-ledger null guard & read-only listPitfalls ({ createDir: false })
+    assert.doesNotThrow(() => recordPitfall(null));
+    const emptyWs = path.join(tmpDir, 'clean-ws');
+    fs.mkdirSync(emptyWs, { recursive: true });
+    assert.deepEqual(listPitfalls(5, emptyWs), []);
+    assert.equal(fs.existsSync(path.join(emptyWs, '.agents')), false);
+
+    // 5. skill-crystallizer YAML quoting and clean boundary truncation
+    const longDesc = synthesizeTriggerDescription({
+      slug: 'sample-skill',
+      recipeSteps: ['Inspect surrounding callers and invariants in verylongfilename_helper.mjs before applying multi-pass edits safely'],
+      triggers: ['multi-pass'],
+    });
+    assert.equal(longDesc.includes(' . '), false);
+    const cry = crystallizeSkill({
+      slug: 'yaml-quote-test',
+      targetDir: path.join(tmpDir, 'skills'),
+      triggers: ['yaml'],
+      invariants: ['Validate key: value pairs cleanly'],
+      recipeSteps: ['Inspect surrounding callers and invariants in file.mjs before applying edits'],
+    });
+    assert.equal(cry.ok, true);
+    const md = fs.readFileSync(cry.skillPath, 'utf8');
+    assert.match(md, /^description: "/m);
+  } finally {
+    if (prevCache === undefined) delete process.env.TUNNEL_CACHE_DIR;
+    else process.env.TUNNEL_CACHE_DIR = prevCache;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});

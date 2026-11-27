@@ -8,7 +8,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { extractFileSymbolsWithRanges } from './repo-mapper.mjs';
 import { buildSymbolCallGraph } from './cpu-ast-graph-compressor.mjs';
@@ -290,9 +290,18 @@ export function computeBipartiteSymbolPPR(
 
 function getGitHeadMtimeMs(absRoot) {
   let maxMt = 0;
-  for (const rel of ['.git/HEAD', '.git/index', '.git/logs/HEAD']) {
+  const gitRootPath = path.join(absRoot, '.git');
+  let gitDir = gitRootPath;
+  try {
+    const stGit = statSync(gitRootPath);
+    if (stGit.isFile()) {
+      const m = /^gitdir:\s*(.+)$/im.exec(readFileSync(gitRootPath, 'utf8'));
+      if (m && m[1]) gitDir = path.resolve(absRoot, m[1].trim());
+    }
+  } catch {}
+  for (const rel of ['HEAD', 'index', 'logs/HEAD']) {
     try {
-      const st = statSync(path.join(absRoot, rel));
+      const st = statSync(path.join(gitDir, rel));
       if (st.mtimeMs > maxMt) maxMt = st.mtimeMs;
     } catch {}
   }
@@ -324,7 +333,7 @@ export function mineGitCoChangeGraph(rootDir, { maxCommits = 200, halfLifeCommit
   try {
     rawLog = execFileSync(
       'git',
-      ['--no-pager', 'log', `-n${Math.max(10, Math.min(500, maxCommits))}`, '--name-only', '--pretty=format:__AMR_C__'],
+      ['-c', 'core.quotepath=false', '--no-pager', 'log', `-n${Math.max(10, Math.min(500, maxCommits))}`, '--name-only', '--pretty=format:__AMR_C__'],
       { cwd: absRoot, encoding: 'utf8', timeout: 1500, maxBuffer: 4 * 1024 * 1024, windowsHide: true }
     );
   } catch {
@@ -766,30 +775,44 @@ export function verifyExportArityAndKeyContracts(editedRelPath = '', editedText 
     return { valid: true, issues: [], formattedAlert: '' };
   }
 
-  const ext = path.posix.extname(editedRelPath.replace(/\\/g, '/'));
-  const baseNoExt = path.posix.basename(editedRelPath.replace(/\\/g, '/'), ext);
-  const baseWithExt = path.posix.basename(editedRelPath.replace(/\\/g, '/'));
+  const editedNorm = editedRelPath.replace(/\\/g, '/').replace(/^\.\//, '');
+  const ext = path.posix.extname(editedNorm);
+  const editedNoExt = ext ? editedNorm.slice(0, -ext.length) : editedNorm;
+  const baseNoExt = path.posix.basename(editedNorm, ext);
+  const baseWithExt = path.posix.basename(editedNorm);
+  const editedHasDir = editedNorm.includes('/');
   const issues = [];
-  const importRe = /import\s+(?:type\s+)?(?:[A-Za-z0-9_$]+\s*,\s*)?\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]/g;
+  const importRe = /import\s+(?:(type\s+)|(?:[A-Za-z0-9_$]+\s*,\s*)?)\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]/g;
 
   for (const dep of dependentEntries) {
     const depFile = dep?.file || '';
     const depText = dep?.text || '';
     if (!depFile || !depText) continue;
+    const depNorm = depFile.replace(/\\/g, '/').replace(/^\.\//, '');
+    const depDir = path.posix.dirname(depNorm);
 
     const aliasMap = new Map(); // localName -> exportedName
     importRe.lastIndex = 0;
     let im;
     while ((im = importRe.exec(depText)) !== null) {
-      const spec = im[2].replace(/\\/g, '/');
-      const specBase = path.posix.basename(spec);
-      const specNoExt = path.posix.basename(spec, path.posix.extname(spec));
-      if (specBase !== baseWithExt && specNoExt !== baseNoExt) continue;
+      if (im[1]) continue; // skip `import type { ... }`
+      const spec = im[3].replace(/\\/g, '/');
+      if (editedHasDir && !spec.startsWith('.') && !spec.startsWith('/')) continue;
+      if (spec.startsWith('.') && depNorm.includes('/') && editedHasDir) {
+        const resolvedSpec = path.posix.normalize(path.posix.join(depDir === '.' ? '' : depDir, spec));
+        const specExt = path.posix.extname(resolvedSpec);
+        const resolvedNoExt = specExt ? resolvedSpec.slice(0, -specExt.length) : resolvedSpec;
+        if (resolvedSpec !== editedNorm && resolvedNoExt !== editedNoExt) continue;
+      } else {
+        const specBase = path.posix.basename(spec);
+        const specNoExt = path.posix.basename(spec, path.posix.extname(spec));
+        if (specBase !== baseWithExt && specNoExt !== baseNoExt) continue;
+      }
 
-      for (const item of im[1].split(',')) {
-        const clean = item.trim().replace(/^type\s+/, '').trim();
-        if (!clean) continue;
-        const asParts = clean.split(/\s+as\s+/);
+      for (const item of im[2].split(',')) {
+        const trimmed = item.trim();
+        if (!trimmed || /^type\s+/.test(trimmed)) continue;
+        const asParts = trimmed.split(/\s+as\s+/);
         const expName = asParts[0].trim();
         const locName = (asParts[1] || asParts[0]).trim();
         if (contracts.has(expName)) aliasMap.set(locName, expName);

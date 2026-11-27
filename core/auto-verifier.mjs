@@ -114,15 +114,6 @@ function loadCascadeState() {
 }
 
 /**
- * Сохраняет состояние каскада в cascade-state.json атомарно через safe-json.
- * @param {object} state Состояние для сохранения.
- */
-function saveCascadeState(state) {
-  ensureCacheDir();
-  atomicWriteJsonSync(getCascadeStateFile(), state);
-}
-
-/**
  * Быстрая проверка JS-кода строго в ОЗУ (<0.5мс), при наличии ESM/await — fallback на node --input-type=module --check.
  */
 function checkJsSyntaxFast(content, filename, extLabel = 'node --input-type=module --check') {
@@ -434,10 +425,11 @@ function normalizeCascadeStore(raw) {
           alerts[k] = v;
         }
       }
-    } else if (raw.activeAlert && raw.activeAlert.filePath) {
+    }
+    if (raw.activeAlert && raw.activeAlert.filePath) {
       const key = String(raw.activeAlert.conversationId || 'default').trim() || 'default';
       const ts = raw.activeAlert.failedAt ? Date.parse(raw.activeAlert.failedAt) : 0;
-      if (!ts || now - ts <= CASCADE_TTL_MS) {
+      if ((!ts || now - ts <= CASCADE_TTL_MS) && !alerts[key]) {
         alerts[key] = raw.activeAlert;
       }
     }
@@ -445,9 +437,14 @@ function normalizeCascadeStore(raw) {
   return { alerts, lastCheckedAt: raw?.lastCheckedAt || null };
 }
 
-export function recordVerifyAndCheckCascade({ filePath, conversationId = '', modelName = '' }) {
-  const result = verifyFileSyntax(filePath);
-  const absPath = resolve(filePath);
+export function recordVerifyAndCheckCascade(opts = {}) {
+  const { filePath = '', conversationId = '', modelName = '' } = opts && typeof opts === 'object' ? opts : {};
+  const cleanFile = typeof filePath === 'string' ? filePath.trim() : '';
+  if (!cleanFile) {
+    return { valid: true, checked: false, checker: 'skip', error: null, escalated: false };
+  }
+  const result = verifyFileSyntax(cleanFile);
+  const absPath = resolve(cleanFile);
   const convKey = String(conversationId || 'default').trim() || 'default';
 
   if (!result.valid) {
@@ -857,6 +854,7 @@ export async function runImpactedMicroTests({
   timeoutMs = 4500,
   runLinterPrecheck = true,
   linterSpec = null,
+  conversationId = '',
 } = {}) {
   const cpuCfg = loadCpuConfig();
   const limit = cpuCfg.cpuParallelVerify ? 6 : 2;
@@ -1052,15 +1050,17 @@ export async function runImpactedMicroTests({
 
   if (firstFailure) {
     const targetAbs = filePath ? resolve(rootDir, filePath) : (testFiles[0] || rootDir);
+    const convKey = String(conversationId || 'default').trim() || 'default';
     ensureCacheDir();
-    updateJsonAtomicSync(getCascadeStateFile(), () => ({ activeAlert: null }), (raw) => {
-      const state = raw && typeof raw === 'object' ? { ...raw } : { activeAlert: null };
+    updateJsonAtomicSync(getCascadeStateFile(), () => ({ alerts: {} }), (raw) => {
+      const state = normalizeCascadeStore(raw);
       const nowIso = new Date().toISOString();
-      state.activeAlert = {
+      state.alerts[convKey] = {
         filePath: targetAbs,
         checker: firstFailure.checker,
         error: firstFailure.error,
         failedAt: nowIso,
+        conversationId: String(conversationId || ''),
         escalateTo: 'pro',
       };
       state.lastCheckedAt = nowIso;

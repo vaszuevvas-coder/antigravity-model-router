@@ -6,6 +6,7 @@
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const _agentIgnoreCache = new Map(); // wsKey -> { sig, patterns, compiled }
 const MAX_AGENT_IGNORE_CACHE = 64;
@@ -187,9 +188,16 @@ export function checkFileSecurity(opts = {}) {
     };
   }
 
+  let rawPath = filePath.trim();
+  if (/^file:\/\//i.test(rawPath)) {
+    try {
+      rawPath = fileURLToPath(rawPath);
+    } catch {
+      rawPath = rawPath.replace(/^file:\/\/(?:localhost)?\/?/i, '');
+    }
+  }
   // Normalize Win32 device prefixes (\\?\C:\..., \\?\UNC\..., \\.\C:\...) and separators across platforms
-  const dePrefixedPath = filePath
-    .trim()
+  const dePrefixedPath = rawPath
     .replace(/^\\\\\?\\UNC\\/i, '\\\\')
     .replace(/^\\\\[?.]\\/, '');
   const slashNormPath = dePrefixedPath.replace(/\\/g, '/').replace(/[. ]+$/, '');
@@ -403,7 +411,7 @@ function checkCommandSecurityImpl(opts = {}, positionalWorkspaceRoot = '') {
   }
 
   // Decode and inspect PowerShell -EncodedCommand payloads to prevent Base64 secret/firewall bypass
-  const psEncodedRe = /\b(?:powershell|pwsh)(?:\.exe)?\b[^\r\n]*?\s-(?:e|ec|enc|encodedcommand)(?:\s+|:)(?:"([^"]*)"|'([^']*)'|([^\s|;&]+))/gi;
+  const psEncodedRe = /\b(?:powershell|pwsh)(?:\.exe)?\b[^\r\n]*?\s-(?:ec|e(?:n(?:c(?:o(?:d(?:e(?:d(?:c(?:o(?:m(?:m(?:a(?:n(?:d)?)?)?)?)?)?)?)?)?)?)?)?)?)(?=\s|:)(?:\s+|:)(?:"([^"]*)"|'([^']*)'|([^\s|;&]+))/gi;
   const isPrintableDecodedText = (s) => Boolean(s) && !/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFD\uD800-\uDFFF]/.test(s);
   let psEncMatch;
   while ((psEncMatch = psEncodedRe.exec(trimmed)) !== null) {
@@ -486,7 +494,7 @@ function checkCommandSecurityImpl(opts = {}, positionalWorkspaceRoot = '') {
     }
   }
 
-  const inlineReadRe = /(?:readFileSync|readFile|ReadAllText|ReadAllLines|ReadAllBytes)\s*\(\s*['"]([^'"]+)['"]|\bcurl\b[^\r\n]*?(?:\s|-[A-Za-z]+)@(['"]?[^\s|;&>'"]+['"]?)|\bpowershell(?:\.exe)?\b[^\r\n]*?\b(?:Get-Content|gc|cat|type|Select-String|sls)\s+(['"]?[^\s"'|;&\)]+['"]?)/gi;
+  const inlineReadRe = /(?:readFileSync|readFile|ReadAllText|ReadAllLines|ReadAllBytes)\s*\(\s*['"]([^'"]+)['"]|\bcurl\b[^\r\n]*?(?:\s|-[A-Za-z]+)@(['"]?[^\s|;&>'"]+['"]?)|\b(?:powershell|pwsh)(?:\.exe)?\b[^\r\n]*?\b(?:Get-Content|gc|cat|type|Select-String|sls)\s+(['"]?[^\s"'|;&\)]+['"]?)/gi;
   let readMatch;
   while ((readMatch = inlineReadRe.exec(trimmed)) !== null) {
     const rawArg = (readMatch[1] || readMatch[2] || readMatch[3] || '').replace(/^['"]|['"]$/g, '');
@@ -536,10 +544,12 @@ function checkCommandSecurityImpl(opts = {}, positionalWorkspaceRoot = '') {
     };
   }
 
-  // Git push --force (allow --force-with-lease)
-  if (new RegExp(`${gitPrefix}push\\b`, 'i').test(unquoted)) {
-    const hasForceWithLease = /--force-with-lease\b/i.test(unquoted);
-    const hasForce = /(?:--force|-f)\b/i.test(unquoted);
+  // Git push --force (allow --force-with-lease), scoped per command segment
+  const gitPushSegRe = new RegExp(`${gitPrefix}push\\b`, 'i');
+  for (const seg of unquoted.split(/[|;&\r\n]+/)) {
+    if (!gitPushSegRe.test(seg)) continue;
+    const hasForceWithLease = /(?:^|\s)--force-with-lease\b/i.test(seg);
+    const hasForce = /(?:^|\s)(?:--force\b|-(?!-)[a-z]*f[a-z]*\b)/i.test(seg);
     if (hasForce && !hasForceWithLease) {
       return {
         allow: false,
@@ -787,9 +797,9 @@ export function redactSecretsInText(text = '') {
   // Standalone JWT tokens
   result = result.replace(/\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[REDACTED_SECRET]');
 
-  // Basic-auth / DB credentials embedded in URIs (http(s), postgres, mysql, mongodb, redis, amqp, ftp, ssh)
+  // Basic-auth / DB credentials embedded in URIs (http(s), postgres, mysql, mongodb, redis(s), amqp(s), ftp, ssh)
   result = result.replace(
-    /\b((?:https?|postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqps?|ftp|ssh):\/\/[^/\s:@?#]*):([^/\s@?#]+)@/gi,
+    /\b((?:https?|postgres(?:ql)?|mysql|mongodb(?:\+srv)?|rediss?|amqps?|ftp|ssh):\/\/[^/\s:@?#]*):([^/\s@?#]+)@/gi,
     '$1:[REDACTED_SECRET]@'
   );
 

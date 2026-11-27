@@ -618,6 +618,9 @@ export function getPluginUpdateStatus(pluginRoot = '', runtimeCtx = {}) {
   const root = resolvePluginRoot(pluginRoot);
   const mem = activeJobs.get(root);
   if (mem?.status) {
+    if (!mem.active && isRestartAlreadyCompleted(mem.status, runtimeCtx)) {
+      return clearPluginUpdateStatus(root);
+    }
     return { ...mem.status };
   }
   const disk = safeReadJsonSync(getStatusFilePath(root), null, { selfHeal: false });
@@ -648,10 +651,16 @@ export function clearPluginUpdateStatus(pluginRoot = '') {
   const idle = { ...createIdleStatus(root), dismissed: true, updatedAt: Date.now() };
   const mem = activeJobs.get(root);
   if (mem && !mem.active) {
-    mem.status = idle;
+    activeJobs.delete(root);
   }
   try {
     atomicWriteJsonSync(getStatusFilePath(root), idle);
+  } catch {}
+  try {
+    const safeTarget = resolveSafeInstallTarget(root);
+    if (safeTarget && resolve(safeTarget) !== resolve(root)) {
+      atomicWriteJsonSync(getStatusFilePath(safeTarget), { ...idle, pluginRoot: safeTarget });
+    }
   } catch {}
   return idle;
 }

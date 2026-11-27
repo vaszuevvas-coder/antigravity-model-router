@@ -6,10 +6,10 @@
  */
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, statSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { atomicWriteJsonSync, safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
+import { updateJsonAtomicSync, safeReadJsonSync } from './safe-json.mjs';
 import { ensureTunnelCacheDir, pruneObjectMapByTimestamp, resolveTunnelCacheDir } from './cache-dir.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -112,17 +112,6 @@ function normalizeStore(raw) {
 }
 
 let _cachedCircuitStore = { filePath: '', mtimeMs: -1, size: -1, checkedAt: 0, store: null };
-
-/**
- * Сохраняет состояние автомата защиты в файл.
- * @param {typeof DEFAULT_STATE} state
- */
-function saveState(state) {
-  ensureCacheDir();
-  atomicWriteJsonSync(getCircuitFile(), state, { spaces: 0 });
-  _cachedCircuitStore.checkedAt = 0;
-  _cachedCircuitStore.mtimeMs = -1;
-}
 
 /**
  * Валидирует и нормализует состояние автомата, проверяя кулдаун.
@@ -335,11 +324,17 @@ export function recordEditStateHash(opts = {}) {
         ? resolve(bucketSnapshot.targetFile).toLowerCase() === normTarget
         : resolve(bucketSnapshot.targetFile) === normTarget));
 
+  const repeatReason = trippedThisFile
+    ? bucketSnapshot.reason
+    : count === 2
+      ? `Warning: repeated file state (2x) in ${basename(absPath)}`
+      : '';
+
   return {
     tripped: trippedThisFile,
     status: trippedThisFile ? 'TRIPPED' : count === 2 ? 'WARNING' : 'CLOSED',
     repeatCount: count,
-    reason: trippedThisFile || count === 2 ? bucketSnapshot.reason : ''
+    reason: repeatReason
   };
 }
 
@@ -459,11 +454,13 @@ export function recordCleanSuccess(filePathOrOpts = '') {
     const state = sanitizeState(store.buckets[bucketKey]);
     state.updatedAt = new Date().toISOString();
 
-    // Очищаем старые отпечатки ошибок и хеши повторов по данному файлу
+    // Очищаем старые отпечатки ошибок и хеши повторов по данному файлу (или командные при общем успехе)
     if (normTarget && state.errorFingerprints.length > 0) {
       state.errorFingerprints = state.errorFingerprints.filter(
         (ef) => !ef.filePath || (process.platform === 'win32' ? resolve(ef.filePath).toLowerCase() : resolve(ef.filePath)) !== normTarget
       );
+    } else if (!normTarget && state.errorFingerprints.length > 0) {
+      state.errorFingerprints = state.errorFingerprints.filter((ef) => Boolean(ef.filePath));
     }
     if (normTarget && state.editHashes.length > 0) {
       state.editHashes = state.editHashes.filter(
@@ -645,9 +642,16 @@ function getToolLoopFile(customCacheDir = '') {
   return join(dir, 'stalled-tool-loops.json');
 }
 
+const UNSAFE_CONVO_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function sanitizeConvoKey(conversationId = 'default') {
+  const raw = String(conversationId || 'default').trim().slice(0, 120) || 'default';
+  return UNSAFE_CONVO_KEYS.has(raw) ? 'default' : raw;
+}
+
 export function resetToolRoundHistory(opts = {}) {
   const { conversationId = 'default', cacheDir = '' } = opts && typeof opts === 'object' ? opts : {};
-  const convoKey = String(conversationId || 'default').trim().slice(0, 120) || 'default';
+  const convoKey = sanitizeConvoKey(conversationId);
   const filePath = getToolLoopFile(cacheDir);
   try {
     updateJsonAtomicSync(filePath, () => ({ convos: {} }), (doc) => {
@@ -679,7 +683,7 @@ export function recordAndCheckStalledToolRound(opts = {}) {
   if (!cleanTool) {
     return { stalled: false, reason: '', formattedAlert: '' };
   }
-  const convoKey = String(conversationId || 'default').trim().slice(0, 120) || 'default';
+  const convoKey = sanitizeConvoKey(conversationId);
   const callSig = createHash('sha1')
     .update(`${cleanTool}|${canonicalizeStableValue(args)}`)
     .digest('hex')
@@ -700,7 +704,7 @@ export function recordAndCheckStalledToolRound(opts = {}) {
       const convos = pruneObjectMapByTimestamp(rawConvos, {
         maxEntries: 40,
         maxAgeMs: 30 * 60 * 1000,
-        nowMs,
+        now: nowMs,
         getTs: (v) => Number(v?.updatedAt || 0),
       });
       const prevEntry = Object.hasOwn(convos, convoKey) ? convos[convoKey] : { history: [], updatedAt: nowMs };

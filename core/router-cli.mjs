@@ -11,12 +11,11 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { atomicWriteJsonSync, safeReadJsonSync } from './safe-json.mjs';
+import { resolveTunnelCacheDir } from './cache-dir.mjs';
 import { sanitizeStatePatch } from '../sidecars/panel/lib/panel-state-skills.mjs';
 import { diffRepoChronos, findDeadExports, findSymbolUsagesAcrossRepo } from './repo-mapper.mjs';
 import {
-  appendLearnedPattern,
   appendLearnedPatternAi,
-  distillPitfallsIntoSkills,
   distillPitfallsIntoSkillsAi,
   evolveReadyInstincts,
   listCrystallizedSkills,
@@ -27,7 +26,7 @@ import { checkProjectCompletionInvariants, initAcceptanceGatesMarkdown } from '.
 import { scanShortcutDebt } from './shortcut-debt-ledger.mjs';
 import { listOpenSpecDeltas, listReusableBlocks, readOpenSpecDelta, saveReusableBlock, upsertOpenSpecDelta } from './reusable-blocks-specs.mjs';
 import { aggregateEvalIteration, initSkillEvalsTemplate } from '../skills/skill-architect/scripts/eval-skill-benchmark.mjs';
-import { formatProjectSetupReport, formatProjectSetupReportRu, recommendProjectSetup } from './project-setup-recommender.mjs';
+import { formatProjectSetupReport, recommendProjectSetup } from './project-setup-recommender.mjs';
 import { importSkillFromSource, searchSkillsCatalog } from './skill-registry-bridge.mjs';
 import { clearExpiredComboCooldowns, DEFAULT_COMBO_CHAINS, recordComboProviderCooldown, resolveComboFailoverTarget } from './quota-pacer.mjs';
 import { auditAllSkills, auditSkill } from '../skills/skill-architect/scripts/audit-skill.mjs';
@@ -38,7 +37,7 @@ import { normalizeLang, readActiveUiLanguage } from './i18n.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = resolve(__dirname, '..');
-const CACHE_DIR = join(PLUGIN_ROOT, '.cache');
+const getCacheDir = () => resolveTunnelCacheDir(PLUGIN_ROOT);
 const ROUTER_STATE_FILE = join(PLUGIN_ROOT, 'router-state.json');
 
 function getRouterStateFile() {
@@ -134,7 +133,8 @@ const BACKUP_CACHE_FILES = [
 ];
 
 function resolveSafeBackupPath(backupPath = '', { allowArbitraryPath = false } = {}) {
-  const defaultPath = join(CACHE_DIR, 'router-profile-backup.json');
+  const cacheDir = getCacheDir();
+  const defaultPath = join(cacheDir, 'router-profile-backup.json');
   if (!backupPath || typeof backupPath !== 'string' || !backupPath.trim()) {
     return { ok: true, path: defaultPath };
   }
@@ -148,7 +148,7 @@ function resolveSafeBackupPath(backupPath = '', { allowArbitraryPath = false } =
     const r = process.platform === 'win32' ? norm(rootDir).toLowerCase() : norm(rootDir);
     return c === r || c.startsWith(`${r}/`);
   };
-  const allowedRoots = [CACHE_DIR, join(homedir(), '.gemini')];
+  const allowedRoots = [cacheDir, join(homedir(), '.gemini')];
   if (!allowedRoots.some((root) => isInsideRoot(resolved, root))) {
     return {
       ok: false,
@@ -178,12 +178,13 @@ export function backupRouterProfile(backupPath = '', options = {}) {
       };
     }
     const targetPath = pathCheck.path;
+    const cacheDir = getCacheDir();
     const state = stripDeprecatedStateKeys(safeReadJsonSync(getRouterStateFile(), {}, { selfHeal: false }));
 
     const cacheFiles = {};
     for (const item of BACKUP_CACHE_FILES) {
       for (const cand of item.candidates) {
-        const candPath = join(CACHE_DIR, cand);
+        const candPath = join(cacheDir, cand);
         if (fs.existsSync(candPath)) {
           const content = safeReadJsonSync(candPath, null, { selfHeal: false });
           if (content !== null) {
@@ -263,7 +264,8 @@ export function restoreRouterProfile(backupPath = '', options = {}) {
     if (process.env.TUNNEL_TEST_ISOLATE_INSTALLED !== '1') {
       candidates.push(join(homedir(), '.gemini', 'router-profile-backup.json'));
     }
-    candidates.push(join(CACHE_DIR, 'router-profile-backup.json'));
+    const cacheDir = getCacheDir();
+    candidates.push(join(cacheDir, 'router-profile-backup.json'));
 
     for (const cand of candidates) {
       if (fs.existsSync(cand)) {
@@ -332,13 +334,13 @@ export function restoreRouterProfile(backupPath = '', options = {}) {
       sectionsRestored++;
     }
 
-    if (!fs.existsSync(CACHE_DIR)) {
-      fs.mkdirSync(CACHE_DIR, { recursive: true });
+    if (!fs.existsSync(cacheDir)) {
+      fs.mkdirSync(cacheDir, { recursive: true });
     }
 
     for (const [key, data] of Object.entries(cacheFiles)) {
       const targetName = ALLOWED_RESTORE_CACHE_MAP.get(key);
-      atomicWriteJsonSync(join(CACHE_DIR, targetName), data);
+      atomicWriteJsonSync(join(cacheDir, targetName), data);
       sectionsRestored++;
     }
 
@@ -944,7 +946,15 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     if (cooldownModel) {
       recordComboProviderCooldown({ modelOrTier: cooldownModel, cooldownMs: minutes * 60 * 1000 });
     }
-    const res = resolveComboFailoverTarget({ combo: comboName });
+    let stateObj = {};
+    try {
+      stateObj = safeReadJsonSync(getRouterStateFile(), {}, { selfHeal: false }) || {};
+    } catch {}
+    const res = resolveComboFailoverTarget({
+      combo: comboName,
+      subscriptionTier: stateObj?.subscriptionTier === 'ultra' ? 'ultra' : 'pro',
+      localGpuAvailable: Boolean(stateObj?.gpuEnabled),
+    });
     if (asJson) {
       console.log(JSON.stringify(res, null, 2));
     } else {

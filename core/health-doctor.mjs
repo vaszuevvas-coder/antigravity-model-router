@@ -5,10 +5,10 @@
  *   shadow git worktrees, and GPU VRAM model mismatches.
  */
 
-import { existsSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveTunnelCacheDir } from './cache-dir.mjs';
+import { isPidAlive, resolveTunnelCacheDir } from './cache-dir.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
@@ -45,7 +45,36 @@ function findStaleFilesBySuffix(cacheDir, suffix, nowMs = Date.now()) {
 }
 
 function findStaleLockFiles(cacheDir, nowMs = Date.now()) {
-  return findStaleFilesBySuffix(cacheDir, '.lock', nowMs);
+  if (!cacheDir || !existsSync(cacheDir)) return [];
+  const stale = [];
+  try {
+    const entries = readdirSync(cacheDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const isFile = entry.isFile();
+      const isDir = entry.isDirectory();
+      if (!isFile && !isDir) continue;
+      if (!entry.name.endsWith('.lock') && !/\.lock\.stale\./.test(entry.name)) continue;
+      const fullPath = join(cacheDir, entry.name);
+      try {
+        if (isDir) {
+          const ownerPath = join(fullPath, 'owner');
+          if (existsSync(ownerPath)) {
+            const ownerRaw = readFileSync(ownerPath, 'utf8').trim();
+            const ownerPid = Number(ownerRaw.split(':')[0]);
+            if (Number.isInteger(ownerPid) && ownerPid > 0 && isPidAlive(ownerPid)) {
+              continue;
+            }
+          }
+        }
+        const st = statSync(fullPath);
+        const ageMs = Math.max(0, nowMs - Number(st.mtimeMs || 0));
+        if (ageMs >= STALE_LOCK_AGE_MS) {
+          stale.push({ name: entry.name, path: fullPath, ageMs, isDirectory: isDir });
+        }
+      } catch {}
+    }
+  } catch {}
+  return stale;
 }
 
 function findStaleTmpFiles(cacheDir, nowMs = Date.now()) {
@@ -241,7 +270,11 @@ export async function applyHealthDoctorFix(opts = {}) {
       let removed = 0;
       for (const item of stale) {
         try {
-          unlinkSync(item.path);
+          if (item.isDirectory || statSync(item.path).isDirectory()) {
+            rmSync(item.path, { recursive: true, force: true });
+          } else {
+            unlinkSync(item.path);
+          }
           removed += 1;
         } catch {}
       }
@@ -255,16 +288,25 @@ export async function applyHealthDoctorFix(opts = {}) {
     } else if (act === 'prune_orphan_worktrees') {
       const orphans = findOrphanWorktrees(worktrees, nowMs);
       let pruned = 0;
+      let errMsg = '';
       if (typeof safeOpts.pruneWorktreesFn === 'function') {
-        const res = await safeOpts.pruneWorktreesFn(orphans);
-        pruned = Number(res?.pruned ?? orphans.length);
+        try {
+          const res = await safeOpts.pruneWorktreesFn(orphans);
+          pruned = Number(res?.pruned ?? orphans.length);
+        } catch (err) {
+          errMsg = err?.message || 'prune failed';
+        }
       }
       if (pruned > 0) applied += 1;
       log.push({
         action: act,
-        ok: true,
-        messageRu: pruned > 0 ? `Очищено сиротских песочниц: ${pruned}` : 'Сиротских песочниц не найдено',
-        messageEn: pruned > 0 ? `Pruned orphaned worktrees: ${pruned}` : 'No orphaned worktrees found',
+        ok: !errMsg,
+        messageRu: errMsg
+          ? `Ошибка очистки сиротских песочниц: ${errMsg}`
+          : (pruned > 0 ? `Очищено сиротских песочниц: ${pruned}` : 'Сиротских песочниц не найдено'),
+        messageEn: errMsg
+          ? `Failed to prune orphaned worktrees: ${errMsg}`
+          : (pruned > 0 ? `Pruned orphaned worktrees: ${pruned}` : 'No orphaned worktrees found'),
       });
     } else if (act === 'start_ollama') {
       let ok = false;
@@ -288,16 +330,25 @@ export async function applyHealthDoctorFix(opts = {}) {
     } else if (act === 'apply_vram_fallback') {
       const fallback = String(gpuStatus?.vramFit?.bestFallbackChatModel || '').trim();
       let ok = false;
+      let errMsg = '';
       if (fallback && typeof safeOpts.saveStateFn === 'function') {
-        safeOpts.saveStateFn({ gpuChatModel: fallback });
-        ok = true;
-        applied += 1;
+        try {
+          await safeOpts.saveStateFn({ gpuChatModel: fallback });
+          ok = true;
+          applied += 1;
+        } catch (err) {
+          errMsg = err?.message || 'saveState failed';
+        }
       }
       log.push({
         action: act,
         ok,
-        messageRu: ok ? `Модель переключена на ${fallback}` : 'Подходящая модель-замена не найдена',
-        messageEn: ok ? `Switched chat model to ${fallback}` : 'No suitable fallback model found',
+        messageRu: errMsg
+          ? `Ошибка переключения модели: ${errMsg}`
+          : (ok ? `Модель переключена на ${fallback}` : 'Подходящая модель-замена не найдена'),
+        messageEn: errMsg
+          ? `Failed to switch chat model: ${errMsg}`
+          : (ok ? `Switched chat model to ${fallback}` : 'No suitable fallback model found'),
       });
     } else if (act === 'warm_ram_cache') {
       let ok = false;

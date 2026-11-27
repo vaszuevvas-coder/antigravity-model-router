@@ -124,13 +124,18 @@ function normalizeSymbolLabel(sym) {
  * @param {Array<object>} candidates
  * @param {{ topK?: number, maxCandidates?: number, skipTelemetry?: boolean }} [options={}]
  */
-export function rerankCandidates(query = '', candidates = [], { topK = 6, maxCandidates = 25, skipTelemetry = false } = {}) {
+export function rerankCandidates(query = '', candidates = [], options = {}) {
+  const opts = options && typeof options === 'object' ? options : {};
+  const topK = Math.max(1, Math.min(100, Math.floor(Number(opts.topK) || 6)));
+  const maxCandidates = opts.maxCandidates ?? 25;
+  const skipTelemetry = Boolean(opts.skipTelemetry);
   const t0 = performance.now();
-  if (!Array.isArray(candidates) || candidates.length === 0) {
+  const validCandidates = Array.isArray(candidates) ? candidates.filter((c) => c && typeof c === 'object') : [];
+  if (validCandidates.length === 0) {
     return { ok: true, results: [], elapsedMs: 0, rerankedCount: 0, vramUsedMb: 0 };
   }
 
-  const slice = candidates.slice(0, Math.max(1, Math.min(40, Number(maxCandidates) || 25)));
+  const slice = validCandidates.slice(0, Math.max(1, Math.min(40, Number(maxCandidates) || 25)));
   const qInfo = expandQueryBilingualStems(query);
   const queryWantsTests = NON_TEST_QUERY_GUARD.test(query);
 

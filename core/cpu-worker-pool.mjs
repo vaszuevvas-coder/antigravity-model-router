@@ -85,8 +85,11 @@ export function loadCpuConfig(override = {}) {
   if (configCache.cfg && now - configCache.ts < CONFIG_TTL_MS) {
     disk = configCache.cfg;
   } else {
-    disk = safeReadJsonSync(STATE_FILE, () => ({}), { selfHeal: false }) || {};
-    if (disk && disk.hardwareProfiled === false && disk.onboardingCompleted === false) {
+    const stateFile = typeof process.env.TUNNEL_TEST_STATE_PATH === 'string' && process.env.TUNNEL_TEST_STATE_PATH.trim()
+      ? resolve(process.env.TUNNEL_TEST_STATE_PATH.trim())
+      : STATE_FILE;
+    disk = safeReadJsonSync(stateFile, () => ({}), { selfHeal: false }) || {};
+    if (disk && disk.hardwareProfiled === false && disk.onboardingCompleted === false && stateFile === STATE_FILE) {
       const globalStateFile = join(os.homedir(), '.gemini', 'config', 'plugins', 'antigravity-model-router', 'router-state.json');
       if (resolve(globalStateFile).toLowerCase() !== resolve(STATE_FILE).toLowerCase() && existsSync(globalStateFile)) {
         const globalSt = safeReadJsonSync(globalStateFile, () => null, { selfHeal: false });
@@ -282,7 +285,7 @@ async function runBatchTaskLocally(type, items = []) {
     }
     return out;
   }
-  if (type === 'auditFileBatch') {
+  if (type === 'auditFileBatch' || type === 'auditFilesBatch') {
     if (!lazyAuditFileItem) {
       const mod = await import('../skills/deep-stress-auditor/scripts/lib/file-worker-tasks.mjs');
       lazyAuditFileItem = mod.auditFileItem;
@@ -626,7 +629,17 @@ class CpuWorkerPool {
     if (typeof slot.jobTimer.unref === 'function') {
       slot.jobTimer.unref();
     }
-    slot.worker.postMessage({ id: job.id, type: job.type, payload: job.payload });
+    try {
+      slot.worker.postMessage({ id: job.id, type: job.type, payload: job.payload });
+    } catch (err) {
+      this.clearSlotTimer(slot);
+      slot.busy = false;
+      slot.currentJob = null;
+      try { slot.worker.unref(); } catch {}
+      this.stats.workerErrors += 1;
+      job.reject(err);
+      this.drainQueue();
+    }
   }
 
   drainQueue() {

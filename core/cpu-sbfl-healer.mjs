@@ -472,27 +472,36 @@ export function skimAstBranchesWithBraceBalance(codeText = '', query = '', { max
 
   let headerEnd = 0;
   let baseDepth = 0;
-  for (let i = 0; i < Math.min(8, lines.length); i++) {
+  let parenDepth = 0;
+  const maxHeaderLines = Math.min(24, Math.max(0, lines.length - 1));
+  for (let i = 0; i < maxHeaderLines; i++) {
     const clean = stripStringsAndLineComments(lines[i]);
     for (const ch of clean) {
-      if (ch === '{') baseDepth++;
+      if (ch === '(') parenDepth++;
+      else if (ch === ')') parenDepth = Math.max(0, parenDepth - 1);
+      else if (ch === '{') baseDepth++;
       else if (ch === '}') baseDepth--;
     }
     headerEnd = i + 1;
-    if (clean.includes('{') && baseDepth > 0) break;
+    if (clean.includes('{') && baseDepth > 0 && parenDepth === 0) break;
   }
 
-  const tailStart = Math.max(headerEnd, lines.length - 2);
+  const tailStart = Math.max(headerEnd, lines.length - 1);
   const regions = [];
   let depth = baseDepth;
-  let cur = { start: headerEnd, lines: [], declaredVars: new Set(), usedVars: new Set(), score: 0 };
+  let cur = { start: headerEnd, lines: [], declaredVars: new Set(), usedVars: new Set(), score: 0, braceDelta: 0 };
 
   for (let i = headerEnd; i < tailStart; i++) {
     const line = lines[i];
     const clean = stripStringsAndLineComments(line);
     for (const ch of clean) {
-      if (ch === '{') depth++;
-      else if (ch === '}') depth--;
+      if (ch === '{') {
+        depth++;
+        cur.braceDelta++;
+      } else if (ch === '}') {
+        depth--;
+        cur.braceDelta--;
+      }
     }
     cur.lines.push(line);
 
@@ -508,10 +517,10 @@ export function skimAstBranchesWithBraceBalance(codeText = '', query = '', { max
       }
     }
     const chainedClause = /^(?:else\b|catch\b|finally\b)/.test(nextTrim);
-    const isBalancedBoundary = depth <= baseDepth && !chainedClause;
+    const isBalancedBoundary = depth <= baseDepth && cur.braceDelta === 0 && !chainedClause;
     if (isBalancedBoundary && (cur.lines.length >= 2 || clean.includes('}') || clean.trim().endsWith(';'))) {
       regions.push(cur);
-      cur = { start: i + 1, lines: [], declaredVars: new Set(), usedVars: new Set(), score: 0 };
+      cur = { start: i + 1, lines: [], declaredVars: new Set(), usedVars: new Set(), score: 0, braceDelta: 0 };
     }
   }
   if (cur.lines.length > 0) regions.push(cur);
@@ -543,6 +552,11 @@ export function skimAstBranchesWithBraceBalance(codeText = '', query = '', { max
 
   const ranked = [...regions].sort((a, b) => b.score - a.score || a.start - b.start);
   const keepSet = new Set();
+  for (const reg of regions) {
+    if (reg.braceDelta !== 0) {
+      keepSet.add(reg.start);
+    }
+  }
   let remaining = Math.max(4, budget - headerEnd - (lines.length - tailStart));
   for (const reg of ranked) {
     if (reg.score <= 0 && keepSet.size > 0) continue;

@@ -6,13 +6,22 @@
  */
 
 import { existsSync, mkdirSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWriteJsonSync, safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
 import { resolveTunnelCacheDir } from './cache-dir.mjs';
 import { redactSecretsInText } from './security-guard.mjs';
 
 const UNSAFE_WORKSPACE_NAMES = new Set(['__proto__', 'constructor', 'prototype', 'toString', 'valueOf', 'hasOwnProperty']);
+
+function normWs(ws = '') {
+  if (!ws || typeof ws !== 'string') return '';
+  try {
+    return resolve(ws).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  } catch {
+    return ws.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  }
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
@@ -36,7 +45,7 @@ function ensureCacheDir() {
  * @param {string} [workspaceRoot='']
  * @returns {string}
  */
-function getStoragePath(workspaceRoot = '') {
+function getStoragePath(workspaceRoot = '', { createDir = true } = {}) {
   if (workspaceRoot && typeof workspaceRoot === 'string') {
     const trimmed = workspaceRoot.trim();
     const isUnsafe =
@@ -50,14 +59,14 @@ function getStoragePath(workspaceRoot = '') {
     if (looksLikeValidDir) {
       try {
         const agentsDir = join(trimmed, '.agents');
-        if (!existsSync(agentsDir)) {
+        if (createDir && !existsSync(agentsDir)) {
           mkdirSync(agentsDir, { recursive: true });
         }
         return join(agentsDir, 'pitfalls-ledger.json');
       } catch {}
     }
   }
-  ensureCacheDir();
+  if (createDir) ensureCacheDir();
   return getMirrorFile();
 }
 
@@ -99,13 +108,14 @@ function saveToFile(filePath, items) {
  * @param {string} [params.workspaceRoot=''] Корень рабочей области
  * @returns {object} Записанный объект правила
  */
-export function recordPitfall({
-  type = 'rollback',
-  fileName = '',
-  summary = '',
-  workspaceRoot = '',
-  maxRuleLength = 160,
-} = {}) {
+export function recordPitfall(rawOpts = {}) {
+  const {
+    type = 'rollback',
+    fileName = '',
+    summary = '',
+    workspaceRoot = '',
+    maxRuleLength = 160,
+  } = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   const primaryPath = getStoragePath(workspaceRoot);
   ensureCacheDir();
 
@@ -167,14 +177,14 @@ export function recordPitfall({
 
   const now = new Date().toISOString();
   const id = `pf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-  const normWs = workspaceRoot ? workspaceRoot.replace(/\\/g, '/').toLowerCase() : '';
+  const normalizedWs = normWs(workspaceRoot);
 
   const newEntry = {
     id,
     type,
     fileName: cleanBase,
     rule: ruleText,
-    workspaceRoot: normWs,
+    workspaceRoot: normalizedWs,
     createdAt: now,
     normKey
   };
@@ -183,7 +193,7 @@ export function recordPitfall({
     let list = Array.isArray(existing) ? existing : [];
     if (list.length === 0 && primaryPath !== getMirrorFile()) {
       const mirrorList = loadFromFile(getMirrorFile()).filter(
-        (item) => !normWs || (Boolean(item.workspaceRoot) && item.workspaceRoot === normWs)
+        (item) => !normalizedWs || (Boolean(item.workspaceRoot) && item.workspaceRoot === normalizedWs)
       );
       if (mirrorList.length > 0) list = mirrorList;
     }
@@ -233,15 +243,15 @@ export function recordPitfall({
  * @returns {Array<{ id: string, type: string, fileName: string, rule: string, createdAt: string }>}
  */
 export function listPitfalls(limit = 15, workspaceRoot = '') {
-  const primaryPath = getStoragePath(workspaceRoot);
-  const normWs = workspaceRoot ? workspaceRoot.replace(/\\/g, '/').toLowerCase() : '';
+  const primaryPath = getStoragePath(workspaceRoot, { createDir: false });
+  const normalizedWs = normWs(workspaceRoot);
   let list = loadFromFile(primaryPath);
   if (list.length === 0 && primaryPath !== getMirrorFile()) {
     list = loadFromFile(getMirrorFile()).filter(
-      (item) => !normWs || (item.workspaceRoot && item.workspaceRoot === normWs)
+      (item) => !normalizedWs || (item.workspaceRoot && item.workspaceRoot === normalizedWs)
     );
-  } else if (normWs) {
-    list = list.filter((item) => Boolean(item.workspaceRoot) && item.workspaceRoot === normWs);
+  } else if (normalizedWs) {
+    list = list.filter((item) => Boolean(item.workspaceRoot) && item.workspaceRoot === normalizedWs);
   }
 
   return list.slice(0, Math.max(1, limit)).map((item) => ({
@@ -262,11 +272,11 @@ export function clearPitfalls(workspaceRoot = '') {
   const primaryPath = getStoragePath(workspaceRoot);
   saveToFile(primaryPath, []);
   if (primaryPath !== getMirrorFile()) {
-    const normWs = workspaceRoot ? workspaceRoot.replace(/\\/g, '/').toLowerCase() : '';
+    const normalizedWs = normWs(workspaceRoot);
     updateJsonAtomicSync(getMirrorFile(), () => [], (existing) => {
       const list = Array.isArray(existing) ? existing : [];
-      return normWs
-        ? list.filter((item) => item && (!item.workspaceRoot || item.workspaceRoot !== normWs))
+      return normalizedWs
+        ? list.filter((item) => item && (!item.workspaceRoot || item.workspaceRoot !== normalizedWs))
         : [];
     });
   }
@@ -293,8 +303,8 @@ export function resolvePitfallsForFile(opts = {}) {
   const typeSet = new Set(Array.isArray(types) ? types : []);
   if (typeSet.size === 0) return { removed: 0 };
 
-  const primaryPath = getStoragePath(workspaceRoot);
-  const normWs = workspaceRoot ? workspaceRoot.replace(/\\/g, '/').toLowerCase() : '';
+  const primaryPath = getStoragePath(workspaceRoot, { createDir: false });
+  const normalizedWs = normWs(workspaceRoot);
   const matchesResolved = (item) => {
     if (!item || !typeSet.has(item.type)) return false;
     const itemBase = String(item.fileName || '').toLowerCase();
@@ -308,7 +318,7 @@ export function resolvePitfallsForFile(opts = {}) {
   if (primaryPath !== getMirrorFile() && existsSync(getMirrorFile())) {
     const mirrorPreview = loadFromFile(getMirrorFile());
     hasMirrorMatch = mirrorPreview.some(
-      (item) => (!normWs || item.workspaceRoot === normWs) && matchesResolved(item)
+      (item) => (!normalizedWs || item.workspaceRoot === normalizedWs) && matchesResolved(item)
     );
   }
 
@@ -334,7 +344,7 @@ export function resolvePitfallsForFile(opts = {}) {
     updateJsonAtomicSync(getMirrorFile(), () => [], (existing) => {
       const list = Array.isArray(existing) ? existing : [];
       return list.filter((item) => {
-        const sameWs = !normWs ? !item?.workspaceRoot : item?.workspaceRoot === normWs;
+        const sameWs = !normalizedWs ? !item?.workspaceRoot : item?.workspaceRoot === normalizedWs;
         if (sameWs && matchesResolved(item)) {
           if (!hasPrimaryMatch) removed++;
           return false;
@@ -352,13 +362,14 @@ export function resolvePitfallsForFile(opts = {}) {
  * `[file] Avoid: <antiPattern> -> Why: <rootCause> -> Fix: <verifiedFix>` (<= 220 chars).
  * @param {object} [params={}]
  */
-export function recordContrastiveLesson({
-  fileName = '',
-  antiPattern = '',
-  rootCause = '',
-  verifiedFix = '',
-  workspaceRoot = '',
-} = {}) {
+export function recordContrastiveLesson(rawOpts = {}) {
+  const {
+    fileName = '',
+    antiPattern = '',
+    rootCause = '',
+    verifiedFix = '',
+    workspaceRoot = '',
+  } = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   const cleanFile = fileName ? basename(String(fileName).trim()) : 'general';
   const cleanAnti = String(antiPattern || '').replace(/\s+/g, ' ').trim();
   const cleanWhy = String(rootCause || '').replace(/\s+/g, ' ').trim();

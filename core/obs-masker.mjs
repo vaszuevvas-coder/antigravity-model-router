@@ -9,7 +9,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { redactSecretsInText } from './security-guard.mjs';
+import { checkFileSecurity, redactSecretsInText } from './security-guard.mjs';
 import { compressLogsDrain3, crushStructuredPayload } from './cpu-log-json-compressor.mjs';
 import { knowledgeHub } from './sqlite-knowledge-hub.mjs';
 
@@ -339,7 +339,7 @@ function normalizeTerminalRawText(rawOutput) {
     .join('\n');
 }
 
-const LINE_FRAME_RE = /(?:^|[\s(])(?:file:\/\/\/)?([A-Za-z]:[\\/][^\s:()]{1,220}|[^\s:()]{1,220}\.(?:[cm]?[jt]sx?|py)):(\d{1,6})(?::\d{1,5})?/;
+const LINE_FRAME_RE = /(?:^|[\s(])(file:\/\/\/[^\s:()]{1,260}|[A-Za-z]:[\\/][^\s:()]{1,220}|[^\s:()]{1,220}\.(?:[cm]?[jt]sx?|py)):(\d{1,6})(?::\d{1,5})?/;
 
 /**
  * Zero-Turn Fault Frame Pinning: locates the first user-code stack frame (skipping node_modules / node:)
@@ -359,27 +359,41 @@ export function extractTopFaultCodePin(rawText = '', workspaceRoot = '') {
     if (!ln || ln.length > 400 || !ln.includes(':')) continue;
     const m = LINE_FRAME_RE.exec(ln);
     if (!m) continue;
-    const rawFile = m[1];
+    let rawFile = m[1];
     const lineNum = Number(m[2]);
     if (!rawFile || !Number.isFinite(lineNum) || lineNum < 1) continue;
+    if (/^file:\/\//i.test(rawFile)) {
+      try {
+        rawFile = fileURLToPath(rawFile);
+      } catch {
+        rawFile = rawFile.replace(/^file:\/\/(?:localhost)?\/?/i, '');
+      }
+    }
     const norm = rawFile.replace(/\\/g, '/');
     if (norm.includes('node_modules/') || norm.startsWith('node:') || norm.startsWith('internal/')) {
       continue;
     }
     try {
+      const wsAbs = workspaceRoot ? path.resolve(workspaceRoot) : '';
       const candidate = path.isAbsolute(rawFile)
         ? path.resolve(rawFile)
-        : path.resolve(workspaceRoot || process.cwd(), rawFile);
+        : path.resolve(wsAbs || process.cwd(), rawFile);
+      if (wsAbs) {
+        const relCheck = path.relative(wsAbs, candidate);
+        if (relCheck.startsWith('..') || path.isAbsolute(relCheck)) continue;
+      }
+      const sec = checkFileSecurity({ filePath: candidate, workspaceRoot: wsAbs, toolName: 'read_file' });
+      if (sec && sec.allow === false) continue;
       if (!existsSync(candidate)) continue;
       const st = statSync(candidate);
       if (!st.isFile() || st.size > 512 * 1024) continue;
       const fileLines = readFileSync(candidate, 'utf8').split(/\r?\n/);
       if (lineNum > fileLines.length) continue;
-      const codeLine = String(fileLines[lineNum - 1] || '').trim().slice(0, 140);
+      const codeLine = redactSecretsInText(String(fileLines[lineNum - 1] || '').trim()).slice(0, 140);
       if (!codeLine) continue;
       let relPosix = norm;
-      if (workspaceRoot) {
-        const rel = path.relative(path.resolve(workspaceRoot), candidate).replace(/\\/g, '/');
+      if (wsAbs) {
+        const rel = path.relative(wsAbs, candidate).replace(/\\/g, '/');
         if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) relPosix = rel;
       } else {
         relPosix = path.basename(candidate);
@@ -399,7 +413,9 @@ export function extractTopFaultCodePin(rawText = '', workspaceRoot = '') {
  * @returns {{ masked: string, originalLines: number, originalChars: number, maskedChars: number, savedChars: number, needsFlashLiteTriage: boolean, cpuCompressed: boolean, rtkProfile?: string }}
  */
 export function maskTerminalOutput(rawOutput = '', exitCode = 0, options = {}) {
-  const maxErrorLines = options.maxErrorLines || 25;
+  const safeOptions = options && typeof options === 'object' ? options : {};
+  options = safeOptions;
+  const maxErrorLines = safeOptions.maxErrorLines || 25;
 
   const normalizedRaw = normalizeTerminalRawText(rawOutput);
 

@@ -252,18 +252,6 @@ export class SqliteKnowledgeHub {
     };
   }
 
-  _writeFallbackDoc(doc) {
-    this._syncDefaultPathIfNeeded();
-    try {
-      const dir = dirname(this.jsonFallbackPath);
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-      atomicWriteJsonSync(this.jsonFallbackPath, doc);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   _updateFallbackDoc(mutatorFn) {
     this._syncDefaultPathIfNeeded();
     try {
@@ -345,11 +333,22 @@ export class SqliteKnowledgeHub {
             items_json = excluded.items_json,
             updated_at = excluded.updated_at
         `);
+        const pruneStmt = db.prepare(`
+          DELETE FROM repair_kv_snapshots
+          WHERE ws_key = ?
+            AND bucket_key NOT IN (
+              SELECT bucket_key FROM repair_kv_snapshots
+              WHERE ws_key = ?
+              ORDER BY updated_at DESC
+              LIMIT ?
+            )
+        `);
         db.exec('BEGIN IMMEDIATE;');
         try {
           for (const m of matched) {
             stmt.run(m.bucketKey, wsKey, JSON.stringify(m.items), now);
           }
+          pruneStmt.run(wsKey, wsKey, this.maxBucketsPerWs);
           db.exec('COMMIT;');
         } catch (err) {
           try { db.exec('ROLLBACK;'); } catch {}
@@ -1918,21 +1917,32 @@ export class SqliteKnowledgeHub {
     }
 
     const doc = this._readFallbackDoc();
+    const sumNestedObjectKeys = (mapObj) =>
+      Object.values(asObj(mapObj)).reduce((acc, v) => acc + Object.keys(asObj(v)).length, 0);
+    const sumArrayBuckets = (mapObj) =>
+      Object.values(asObj(mapObj)).reduce((acc, v) => acc + (Array.isArray(v) ? v.length : 0), 0);
     return {
       ok: true,
       backend: this.backend,
       dbPath: this.dbPath,
-      repairBucketsCount: wsKey ? Object.keys(asObj(doc.repairBuckets[wsKey])).length : Object.keys(doc.repairBuckets).length,
-      astCachedFilesCount: wsKey ? Object.keys(asObj(doc.astMeta[wsKey])).length : Object.keys(doc.astMeta).length,
-      recipesCount: wsKey && Array.isArray(doc.victoryRecipes[wsKey]) ? doc.victoryRecipes[wsKey].length : 0,
-      federatedCount: wsKey && Array.isArray(doc.federation[wsKey]) ? doc.federation[wsKey].length : 0,
-      instinctsCount: wsKey && Array.isArray(doc.projectInstincts[wsKey]) ? doc.projectInstincts[wsKey].length : 0,
+      repairBucketsCount: wsKey ? Object.keys(asObj(doc.repairBuckets[wsKey])).length : sumNestedObjectKeys(doc.repairBuckets),
+      astCachedFilesCount: wsKey ? Object.keys(asObj(doc.astMeta[wsKey])).length : sumNestedObjectKeys(doc.astMeta),
+      recipesCount: wsKey ? (Array.isArray(doc.victoryRecipes[wsKey]) ? doc.victoryRecipes[wsKey].length : 0) : sumArrayBuckets(doc.victoryRecipes),
+      federatedCount: wsKey ? (Array.isArray(doc.federation[wsKey]) ? doc.federation[wsKey].length : 0) : sumArrayBuckets(doc.federation),
+      instinctsCount: wsKey ? (Array.isArray(doc.projectInstincts[wsKey]) ? doc.projectInstincts[wsKey].length : 0) : sumArrayBuckets(doc.projectInstincts),
       ccrBlobsCount: wsKey
         ? Object.values(asObj(doc.ccrBlobs)).filter((b) => b && b.wsKey === wsKey).length
         : Object.keys(asObj(doc.ccrBlobs)).length,
-      sessionEpisodesCount: wsKey && Array.isArray(doc.sessionEpisodes[wsKey]) ? doc.sessionEpisodes[wsKey].length : 0,
+      sessionEpisodesCount: wsKey ? (Array.isArray(doc.sessionEpisodes[wsKey]) ? doc.sessionEpisodes[wsKey].length : 0) : sumArrayBuckets(doc.sessionEpisodes),
     };
   }
 }
 
 export const knowledgeHub = new SqliteKnowledgeHub();
+if (typeof process !== 'undefined' && typeof process.once === 'function') {
+  process.once('exit', () => {
+    try {
+      knowledgeHub.close();
+    } catch {}
+  });
+}

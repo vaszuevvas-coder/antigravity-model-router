@@ -10,11 +10,10 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWriteJsonSync, safeReadJsonSync, withFileLockSync } from './safe-json.mjs';
-import { resolveTunnelCacheDir } from './cache-dir.mjs';
+import { pruneObjectMapByTimestamp, resolveTunnelCacheDir } from './cache-dir.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
-const DEFAULT_CACHE_DIR = resolveTunnelCacheDir(PLUGIN_ROOT);
 const getDefaultCacheDir = () => resolveTunnelCacheDir(PLUGIN_ROOT);
 const BLOCKED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -139,6 +138,8 @@ export function computeQuotaBurnForecast(eventsOrSamples = null, state = {}) {
 
   if (Array.isArray(eventsOrSamples)) {
     samples = eventsOrSamples;
+  } else if (eventsOrSamples !== null && eventsOrSamples !== undefined) {
+    samples = [];
   } else {
     const baseCache = asStr(safeState.cacheDir, 1024).trim()
       ? resolve(asStr(safeState.cacheDir, 1024).trim())
@@ -294,13 +295,16 @@ export function auditPrefixStability(opts = {}) {
   let streakTurns = 1;
   let driftCount = 0;
 
+  const prefixNowMs = Number.isFinite(Number(safeOpts.nowMs)) ? Number(safeOpts.nowMs) : Date.now();
   withFileLockSync(prefixFile, () => {
     const doc = safeReadJsonSync(prefixFile, () => ({ convos: {} }), { selfHeal: false });
-    const convos = doc?.convos && typeof doc.convos === 'object' ? { ...doc.convos } : {};
-    const now = Date.now();
-    for (const [k, v] of Object.entries(convos)) {
-      if (!v || (v.ts && now - v.ts > 6 * 60 * 60 * 1000)) delete convos[k];
-    }
+    const rawConvos = doc?.convos && typeof doc.convos === 'object' ? doc.convos : {};
+    const convos = pruneObjectMapByTimestamp(rawConvos, {
+      maxEntries: 64,
+      maxAgeMs: 6 * 60 * 60 * 1000,
+      now: prefixNowMs,
+      getTs: (v) => Number(v?.ts || 0),
+    });
     const prev = Object.hasOwn(convos, convoId) ? convos[convoId] : null;
     if (prev && prev.hash && prev.hash !== prefixHash) {
       drifted = true;
@@ -310,7 +314,7 @@ export function auditPrefixStability(opts = {}) {
       streakTurns = Number(prev.streakTurns || 0) + 1;
       driftCount = Number(prev.driftCount || 0);
     }
-    convos[convoId] = { hash: prefixHash, streakTurns, driftCount, ts: now };
+    convos[convoId] = { hash: prefixHash, streakTurns, driftCount, ts: prefixNowMs };
     atomicWriteJsonSync(prefixFile, { convos });
   });
 
@@ -660,7 +664,13 @@ export function classifyAntigravity429(rawErrorText = '', opts = {}) {
     ? Number(opts.retryAfterMs)
     : parseRetryAfterMsFromText(text);
 
-  const hasAny = (list) => list.some((k) => low.includes(k));
+  const hasAny = (list) =>
+    list.some((k) => {
+      if (/^[a-z0-9]{2,4}$/.test(k)) {
+        return new RegExp(`(?:^|[^a-z0-9])${k}(?=$|[^a-z0-9])`, 'i').test(low);
+      }
+      return low.includes(k);
+    });
 
   if (hasAny(AGY_CREDITS_KEYWORDS)) {
     return {

@@ -254,8 +254,14 @@ function formatGapSegment(lines, startLine, endLine, { isTopHeader = false, ext 
  */
 export function foldCodeWithKnapsack(
   sourceText,
-  { query = '', focusSymbol = '', focusLines = [], maxBudgetChars = 3200, ext = '.mjs' } = {}
+  options = {}
 ) {
+  const opts = options && typeof options === 'object' ? options : {};
+  const query = typeof opts.query === 'string' ? opts.query : '';
+  const focusSymbol = typeof opts.focusSymbol === 'string' ? opts.focusSymbol : '';
+  const focusLines = Array.isArray(opts.focusLines) ? opts.focusLines : [];
+  const maxBudgetChars = opts.maxBudgetChars ?? opts.maxChars ?? 3200;
+  const ext = typeof opts.ext === 'string' ? opts.ext : '.mjs';
   const t0 = performance.now();
   if (!sourceText || typeof sourceText !== 'string') {
     return {
@@ -278,7 +284,9 @@ export function foldCodeWithKnapsack(
   const lines = sourceText.split(/\r?\n/);
   const totalLines = lines.length;
 
-  const rawSymbols = extractFileSymbolsWithRanges(normExt, sourceText);
+  const rawSymbols = Array.isArray(opts.symbolsWithRanges)
+    ? opts.symbolsWithRanges
+    : (Array.isArray(opts.symbols) ? opts.symbols : extractFileSymbolsWithRanges(normExt, sourceText));
   const blocks = buildNonOverlappingBlocks(rawSymbols, totalLines);
 
   if (blocks.length === 0) {

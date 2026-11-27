@@ -26,10 +26,10 @@ import { applySearchReplace, applySymbolReplacement } from './diff-patcher.mjs';
 import { maskTerminalOutput, maskTerminalOutputSmart } from './obs-masker.mjs';
 import { verifyFileSyntax, runImpactedMicroTests } from './auto-verifier.mjs';
 import { createShadowCheckpoint, rollbackCheckpoint, listCheckpoints } from './shadow-guard.mjs';
-import { formatPitfallsForSessionStart, recordPitfall, listPitfalls } from './pitfall-ledger.mjs';
-import { formatHandoffForSessionStart, recordHandoffGoal, recordHandoffAction } from './session-handoff.mjs';
+import { formatPitfallsForSessionStart, recordPitfall } from './pitfall-ledger.mjs';
+import { formatHandoffForSessionStart, recordHandoffAction } from './session-handoff.mjs';
 import { estimateTaskGradeAndThinkingBudget, compileUserIntentToTechSpec } from './tool-pruner.mjs';
-import { evaluateBayesianRoute, recordModelOutcome, getBayesianSummary } from './bayesian-router.mjs';
+import { recordModelOutcome, getBayesianSummary } from './bayesian-router.mjs';
 import { resolveComboFailoverTarget } from './quota-pacer.mjs';
 import { checkCommandSecurity, redactSecretsInText } from './security-guard.mjs';
 import { recordErrorFingerprint, recordCleanSuccess, getCircuitState } from './circuit-breaker.mjs';
@@ -105,15 +105,17 @@ Usage: node ag-cli.mjs <command> [arguments]
 🛠️ SAFE EDITING & SELF-HEALING EXECUTION:
   patch <file> [patchFile|-]      Apply <<<<<<< SEARCH ... >>>>>>> REPLACE block with:
                                   1) Shadow Checkpoint, 2) In-RAM Syntax Check, 3) Contract Check.
+  patch-symbol <file> <symbol> [patchFile|-]
+                                  Replace a named AST symbol cleanly with checkpoint & verification.
   verify <file> [dir]             Run Syntax Check + Import Contract Check + Impacted Micro-Tests.
   run "<command>" [--gpu]         Execute shell command via Security Guard + Observation Masker
                                   (add --gpu to distill huge logs on local RTX GPU).
   watch <command...>              Live Runtime Wiretap: stream output & auto-capture crashes into UI.
-  gpu <status|warm|search|distill|unload>
+  gpu <status|warm|search|distill|chat|unload>
                                   Manage local RTX GPU / Ollama (12 GB VRAM cap):
                                     status, warm [dir], search "<q>" [dir],
-                                    distill "<q>" [file|-], unload.
-  codemod --find <A> --replace <B> [--word] [--regex] [--dry-run] [dir]
+                                    distill "<q>" [file|-], chat "<q>" [dir], unload.
+  codemod --find <A> --replace <B> [--word] [--regex] [--dry-run] [dir] [--no-gpu]
                                   Multi-file deterministic refactor with syntax rollback.
   rollback [latest|<id>]          Restore file from Shadow Checkpoint (or 'list' checkpoints).
 
@@ -171,14 +173,29 @@ async function main() {
     const route = mapModelToGemini4Route(gradeInfo.grade, gradeInfo.recommendedModel, { batch: isBatch });
     const comboName = gradeInfo.grade === 'XL' || gradeInfo.grade === 'L' ? 'deep_architect' : (gradeInfo.grade === 'S' ? 'budget_fast' : 'daily_coding');
     let localGpuAvailable = false;
+    let subscriptionTier = 'pro';
     try {
-      const stateFile = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'router-state.json');
-      if (fs.existsSync(stateFile)) {
-        const st = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-        localGpuAvailable = Boolean(st?.gpuEnabled);
+      const installedStateFile = path.join(os.homedir(), '.gemini', 'config', 'plugins', 'antigravity-model-router', 'router-state.json');
+      const localStateFile = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'router-state.json');
+      const envState = typeof process.env.TUNNEL_TEST_STATE_PATH === 'string' && process.env.TUNNEL_TEST_STATE_PATH.trim()
+        ? path.resolve(process.env.TUNNEL_TEST_STATE_PATH.trim())
+        : '';
+      const candidates = envState ? [envState] : [installedStateFile, localStateFile];
+      for (const stateFile of candidates) {
+        if (!fs.existsSync(stateFile)) continue;
+        const st = JSON.parse(fs.readFileSync(stateFile, 'utf8').replace(/^\uFEFF/, ''));
+        if (st && typeof st === 'object') {
+          if (st.onboardingCompleted !== false || st.hardwareProfiled !== false || envState) {
+            localGpuAvailable = Boolean(st.gpuEnabled);
+            subscriptionTier = st.subscriptionTier === 'ultra' ? 'ultra' : 'pro';
+            break;
+          }
+          localGpuAvailable = Boolean(st.gpuEnabled);
+          subscriptionTier = st.subscriptionTier === 'ultra' ? 'ultra' : 'pro';
+        }
       }
     } catch {}
-    const comboPick = resolveComboFailoverTarget({ combo: comboName, localGpuAvailable });
+    const comboPick = resolveComboFailoverTarget({ combo: comboName, subscriptionTier, localGpuAvailable });
     const rawGateway = (gatewayFlag || process.env.OMNIROUTE_BASE_URL || '').trim();
     const safeGateway = /^https?:\/\/[^\s]+$/i.test(rawGateway) ? rawGateway : '';
     const techSpec = compileUserIntentToTechSpec(prompt, { wsPath: rootDir });
@@ -282,7 +299,8 @@ async function main() {
     console.log(`💥 [Blast Radius] Target: ${file}`);
     console.log(`Reverse dependents (${rev.dependents?.length || 0}):`);
     for (const d of rev.dependents || []) {
-      console.log(`  - ${d.file || d.relPath} (imports: ${(d.importedSymbols || []).join(', ') || '*'})`);
+      const syms = (d.signatures || d.importedSymbols || []).join(', ') || '*';
+      console.log(`  - ${d.file || d.relPath} (imports: ${syms})`);
     }
     const brokenList = (contracts.brokenImports || [])
       .map((b) => `${b.dependentFile}: missing ${(b.missingSymbols || []).join(', ')}`)
@@ -675,13 +693,38 @@ async function main() {
     const childArgs = tokens.slice(1);
     let capturedErr = '';
     const faultRx = /(?:Error|Exception|AssertionError|TypeError|ReferenceError|SyntaxError|Unhandled|FATAL|panic:)/i;
+    let watchExitCode = 0;
+    let faultRecorded = false;
+    const recordFaultOnce = (errText, code) => {
+      if (faultRecorded || !String(errText || '').trim()) return;
+      faultRecorded = true;
+      try {
+        ingestRuntimeFault({
+          workspaceRoot: process.cwd(),
+          source: 'ag-watch',
+          command: rawCmdStr,
+          rawError: errText,
+          exitCode: code || 1,
+        });
+      } catch {}
+    };
 
     await new Promise((resolveWatch) => {
-      const child = spawn(bin, childArgs, {
+      const useWinComSpec =
+        process.platform === 'win32' &&
+        bin !== process.execPath &&
+        !/\.(?:exe|com)$/i.test(bin) &&
+        !/[&|<>^%\r\n]/.test(bin);
+      const spawnBin = useWinComSpec ? (process.env.ComSpec || 'cmd.exe') : bin;
+      const spawnArgs = useWinComSpec
+        ? ['/d', '/s', '/c', `"${[bin, ...childArgs].map((a) => `"${String(a).replace(/"/g, '""')}"`).join(' ')}"`]
+        : childArgs;
+      const child = spawn(spawnBin, spawnArgs, {
         cwd: process.cwd(),
         stdio: ['inherit', 'pipe', 'pipe'],
         windowsHide: false,
         shell: false,
+        windowsVerbatimArguments: useWinComSpec,
       });
       child.stdout?.on('data', (chunk) => {
         const txt = chunk.toString('utf8');
@@ -695,45 +738,26 @@ async function main() {
         process.stderr.write(txt);
         capturedErr = `${capturedErr}\n${txt}`.slice(-8000);
         if (faultRx.test(txt)) {
-          try {
-            ingestRuntimeFault({
-              workspaceRoot: process.cwd(),
-              source: 'ag-watch',
-              command: rawCmdStr,
-              rawError: capturedErr,
-              exitCode: 1,
-            });
-          } catch {}
+          recordFaultOnce(capturedErr, 1);
         }
       });
       child.on('exit', (code) => {
-        if ((code || 0) !== 0 && capturedErr.trim()) {
-          try {
-            ingestRuntimeFault({
-              workspaceRoot: process.cwd(),
-              source: 'ag-watch',
-              command: rawCmdStr,
-              rawError: capturedErr,
-              exitCode: code || 1,
-            });
-          } catch {}
+        watchExitCode = typeof code === 'number' ? code : 1;
+        if (watchExitCode !== 0 && capturedErr.trim()) {
+          recordFaultOnce(capturedErr, watchExitCode);
         }
         resolveWatch();
       });
       child.on('error', (err) => {
-        try {
-          ingestRuntimeFault({
-            workspaceRoot: process.cwd(),
-            source: 'ag-watch',
-            command: rawCmdStr,
-            rawError: err?.stack || err?.message || String(err),
-            exitCode: 1,
-          });
-        } catch {}
+        watchExitCode = 1;
+        recordFaultOnce(err?.stack || err?.message || String(err), 1);
         console.error(err?.message || err);
         resolveWatch();
       });
     });
+    if (watchExitCode !== 0) {
+      process.exit(watchExitCode);
+    }
     return;
   }
 

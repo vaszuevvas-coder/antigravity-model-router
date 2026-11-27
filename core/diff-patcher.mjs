@@ -312,9 +312,13 @@ export function computeSymbolReplacement(originalContent, symbolName, replacemen
       candidates = syms.filter(
         (s) => s.name === methName && s.startLine > cls.startLine && s.endLine <= cls.endLine
       );
-    }
-    if (candidates.length === 0) {
-      candidates = syms.filter((s) => s.name === methName);
+    } else {
+      const classRanges = syms.filter((s) => s.kind === 'class');
+      candidates = syms.filter(
+        (s) =>
+          s.name === methName &&
+          !classRanges.some((c) => s.startLine > c.startLine && s.endLine <= c.endLine)
+      );
     }
   } else {
     candidates = syms.filter((s) => s.name === needle);

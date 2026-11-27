@@ -111,7 +111,14 @@ export function extractFaultFrame(errorText = '', workspaceRoot = '') {
 
     if (!rawPath || !lineStr) continue;
 
-    let cleanPath = rawPath.replace(/^file:\/\//, '');
+    let cleanPath = rawPath;
+    if (/^file:\/\//i.test(cleanPath)) {
+      try {
+        cleanPath = fileURLToPath(cleanPath);
+      } catch {
+        cleanPath = cleanPath.replace(/^file:\/\//i, '');
+      }
+    }
     if (/^\/[a-zA-Z]:/.test(cleanPath)) {
       cleanPath = cleanPath.slice(1);
     }

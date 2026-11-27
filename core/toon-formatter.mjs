@@ -123,7 +123,11 @@ function isAnomalyRow(obj) {
  * @param {string|Array<Record<string, unknown>>} input
  * @param {{ tableName?: string, sampleKeep?: number, maxAnomalies?: number }} [options={}]
  */
-export function crushJsonArrayToToon(input, { tableName = 'items', sampleKeep = 3, maxAnomalies = 12 } = {}) {
+export function crushJsonArrayToToon(input, options = {}) {
+  const opts = options && typeof options === 'object' ? options : {};
+  const tableName = typeof opts.tableName === 'string' && opts.tableName ? opts.tableName : 'items';
+  const sampleKeep = opts.sampleKeep ?? 3;
+  const maxAnomalies = opts.maxAnomalies ?? 12;
   let arr = input;
   let originalChars = 0;
   if (typeof input === 'string') {
@@ -276,10 +280,11 @@ export function canonicalizeJson(value, space = 0) {
 export function toPosixRelPath(filePath = '', workspaceRoot = '') {
   const cleanFile = String(filePath || '').trim().replace(/\\/g, '/');
   if (!cleanFile) return '';
-  const cleanWs = String(workspaceRoot || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+  const rawWs = String(workspaceRoot || '').trim().replace(/\\/g, '/');
+  const cleanWs = rawWs === '/' ? '/' : rawWs.replace(/\/+$/, '');
   if (cleanWs) {
     const fileLower = cleanFile.toLowerCase();
-    const wsPrefixLower = `${cleanWs.toLowerCase()}/`;
+    const wsPrefixLower = cleanWs === '/' ? '/' : `${cleanWs.toLowerCase()}/`;
     if (fileLower === cleanWs.toLowerCase()) return '.';
     if (fileLower.startsWith(wsPrefixLower)) {
       return cleanFile.slice(wsPrefixLower.length);
@@ -294,7 +299,10 @@ export function toPosixRelPath(filePath = '', workspaceRoot = '') {
  * @param {string|Record<string, unknown>} input
  * @param {{ maxEntries?: number, prefix?: string }} [options={}]
  */
-export function flattenNestedConfigToDotPaths(input, { maxEntries = 60, prefix = '' } = {}) {
+export function flattenNestedConfigToDotPaths(input, options = {}) {
+  const opts = options && typeof options === 'object' ? options : {};
+  const maxEntries = opts.maxEntries ?? 60;
+  const prefix = opts.prefix ?? '';
   let obj = input;
   let originalChars = 0;
   if (typeof input === 'string') {
@@ -334,30 +342,34 @@ export function flattenNestedConfigToDotPaths(input, { maxEntries = 60, prefix =
     }
     if (seen.has(node)) return;
     seen.add(node);
-    if (Array.isArray(node)) {
-      const allPrim = node.every((x) => x === null || typeof x !== 'object');
-      if (allPrim && node.length <= 12) {
-        if (lines.length < cap) {
-          lines.push(`${pathPrefix}=[${node.map((x) => String(x ?? 'null')).join(', ')}]`);
+    try {
+      if (Array.isArray(node)) {
+        const allPrim = node.every((x) => x === null || typeof x !== 'object');
+        if (allPrim && node.length <= 12) {
+          if (lines.length < cap) {
+            lines.push(`${pathPrefix}=[${node.map((x) => String(x ?? 'null')).join(', ')}]`);
+          } else {
+            truncatedCount++;
+          }
         } else {
-          truncatedCount++;
+          for (let i = 0; i < node.length; i++) {
+            walk(node[i], `${pathPrefix}[${i}]`);
+          }
         }
-      } else {
-        for (let i = 0; i < node.length; i++) {
-          walk(node[i], `${pathPrefix}[${i}]`);
-        }
+        return;
       }
-      return;
-    }
-    const keys = Object.keys(node).sort();
-    if (keys.length === 0 && pathPrefix) {
-      if (lines.length < cap) lines.push(`${pathPrefix}={}`);
-      else truncatedCount++;
-      return;
-    }
-    for (const k of keys) {
-      const nextKey = pathPrefix ? `${pathPrefix}.${k}` : k;
-      walk(node[k], nextKey);
+      const keys = Object.keys(node).sort();
+      if (keys.length === 0 && pathPrefix) {
+        if (lines.length < cap) lines.push(`${pathPrefix}={}`);
+        else truncatedCount++;
+        return;
+      }
+      for (const k of keys) {
+        const nextKey = pathPrefix ? `${pathPrefix}.${k}` : k;
+        walk(node[k], nextKey);
+      }
+    } finally {
+      seen.delete(node);
     }
   }
 

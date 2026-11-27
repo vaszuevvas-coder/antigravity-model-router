@@ -17,12 +17,13 @@ import {
   saveReadSnapshot,
 } from './cpu-delta-reread.mjs';
 import { recordCpuCompressionSaving } from './cpu-worker-pool.mjs';
+import { resolveTunnelCacheDir } from './cache-dir.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
-const CACHE_DIR = join(PLUGIN_ROOT, '.cache');
-const DEDUP_FILE = join(CACHE_DIR, 'read-dedup-state.json');
-const COMPACTION_STATE_FILE = join(CACHE_DIR, 'compaction-state.json');
+const getCacheDir = () => resolveTunnelCacheDir(PLUGIN_ROOT);
+const getDedupFile = () => join(getCacheDir(), 'read-dedup-state.json');
+const getCompactionStateFile = () => join(getCacheDir(), 'compaction-state.json');
 
 const MAX_ENTRIES = 120;
 const TTL_MS = 6 * 60 * 60 * 1000; // 6 hours auto-prune TTL
@@ -61,8 +62,9 @@ function mergeContiguousRanges(existingRanges = [], [newStart, newEnd]) {
  * Ensures cache directory exists.
  */
 function ensureCacheDir() {
-  if (!existsSync(CACHE_DIR)) {
-    mkdirSync(CACHE_DIR, { recursive: true });
+  const dir = getCacheDir();
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
   }
 }
 
@@ -211,7 +213,7 @@ export function checkAndRecordRead(opts = {}) {
   const rawEnd = Number(endLine);
 
   // Zero-disk-read fast-path when file mtime + size are unchanged since last SHA-1 computation
-  const preState = safeReadJsonSync(DEDUP_FILE, createInitialState, { selfHeal: false });
+  const preState = safeReadJsonSync(getDedupFile(), createInitialState, { selfHeal: false });
   const preEntry = Array.isArray(preState?.entries)
     ? preState.entries.find((e) => e && e.convoKey === convoKey && e.normPath === normPath)
     : null;
@@ -287,9 +289,13 @@ export function checkAndRecordRead(opts = {}) {
   }
 
   const shortHash = sha1.slice(0, 8);
-  const compState = safeReadJsonSync(COMPACTION_STATE_FILE, () => ({ epochs: {}, resetTimestamps: {} }), { selfHeal: false });
-  const compactionEpoch = Number(compState?.epochs?.[convoKey] || 0);
-  const stateResetTs = Number(compState?.resetTimestamps?.[convoKey] || 0);
+  const baseConvoKey = convoKey.replace(/__[0-9a-f]{8}$/i, '') || 'default';
+  const compState = safeReadJsonSync(getCompactionStateFile(), () => ({ epochs: {}, resetTimestamps: {} }), { selfHeal: false });
+  const compactionEpoch = Number((compState?.epochs?.[convoKey] ?? compState?.epochs?.[baseConvoKey]) || 0);
+  const stateResetTs = Math.max(
+    Number(compState?.resetTimestamps?.[convoKey] || 0),
+    Number(compState?.resetTimestamps?.[baseConvoKey] || 0)
+  );
   const tailResetTs = transcriptPath ? peekTranscriptCompactionTailTs(transcriptPath) : 0;
   const effectiveResetTs = Math.max(stateResetTs, tailResetTs);
 
@@ -302,8 +308,8 @@ export function checkAndRecordRead(opts = {}) {
   let snapshotToSave = null;
   let deltaTelemetry = null;
 
-  updateJsonAtomicSync(DEDUP_FILE, createInitialState, (state) => {
-    const curTime = Date.now();
+  updateJsonAtomicSync(getDedupFile(), createInitialState, (state) => {
+    const curTime = Number.isFinite(Number(opts?.nowMs)) ? Number(opts.nowMs) : Date.now();
     let entries = Array.isArray(state?.entries) ? state.entries : [];
 
     // Auto-prune entries older than 6 hours
@@ -492,7 +498,7 @@ export function markFileEditedForDelta(filePath = '') {
   }
 
   ensureCacheDir();
-  updateJsonAtomicSync(DEDUP_FILE, createInitialState, (state) => {
+  updateJsonAtomicSync(getDedupFile(), createInitialState, (state) => {
     const entries = Array.isArray(state?.entries) ? state.entries : [];
     for (const e of entries) {
       if (e && e.normPath === targetNorm) {
@@ -521,7 +527,7 @@ export function invalidateReadCacheForFile(filePath = '') {
   }
 
   ensureCacheDir();
-  updateJsonAtomicSync(DEDUP_FILE, createInitialState, (state) => {
+  updateJsonAtomicSync(getDedupFile(), createInitialState, (state) => {
     const entries = (state?.entries || []).filter((e) => e && e.normPath !== targetNorm);
     return {
       version: 1,
@@ -540,7 +546,7 @@ export function invalidateReadCacheForConvo(conversationId = 'default') {
   const convoKey = UNSAFE_PROTO_KEYS.has(rawConvo) ? 'default' : rawConvo;
   const baseKey = convoKey.replace(/__[0-9a-f]{8}$/i, '') || 'default';
   ensureCacheDir();
-  updateJsonAtomicSync(DEDUP_FILE, createInitialState, (state) => {
+  updateJsonAtomicSync(getDedupFile(), createInitialState, (state) => {
     const entries = (state?.entries || []).filter((e) => {
       if (!e) return false;
       const k = String(e.convoKey || '');
@@ -559,6 +565,6 @@ export function invalidateReadCacheForConvo(conversationId = 'default') {
  */
 export function resetReadDedupState() {
   ensureCacheDir();
-  atomicWriteJsonSync(DEDUP_FILE, createInitialState());
+  atomicWriteJsonSync(getDedupFile(), createInitialState());
   clearReadSnapshots();
 }

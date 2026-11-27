@@ -10,7 +10,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { maskTerminalOutputSmart } from './obs-masker.mjs';
+import { maskTerminalOutput } from './obs-masker.mjs';
 import { atomicWriteJsonSync, safeReadJsonSync, withFileLockSync } from './safe-json.mjs';
 import { checkCommandSecurity, redactSecretsInText } from './security-guard.mjs';
 import { normalizeLang, pickLang } from './i18n.mjs';
@@ -182,10 +182,17 @@ export function ingestRuntimeFault(opts = {}) {
   }
 
   const wsRoot = resolve(asStr(safeOpts.workspaceRoot, 1024).trim() || process.cwd());
-  const masked = maskTerminalOutputSmart(rawError, 3200);
-  const cleanText = redactSecretsInText(typeof masked === 'string' ? masked : (masked?.output || rawError));
+  const effExitCode = Number.isFinite(Number(safeOpts.exitCode)) ? Number(safeOpts.exitCode) : 1;
+  const ansiClean = redactSecretsInText(rawError.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, ''));
+  const frame = extractTopLocalFrame(wsRoot, ansiClean);
+  const masked = maskTerminalOutput(rawError, effExitCode, {
+    workspaceRoot: wsRoot,
+    disableFaultPin: true,
+    enableCcr: false,
+  });
+  const maskedText = typeof masked === 'string' ? masked : (masked?.masked || rawError);
+  const cleanText = redactSecretsInText(maskedText).slice(0, 3200);
   const summary = extractHeadlineError(cleanText, resolvedLang);
-  const frame = extractTopLocalFrame(wsRoot, cleanText);
   const sim = computeSimHash32Pair(`${summary}\n${frame?.file || ''}`);
   const normHash = createHash('sha1').update(`${summary.toLowerCase()}|${frame?.file || ''}:${frame?.line || 0}`).digest('hex').slice(0, 14);
   const nowIso = new Date().toISOString();
@@ -453,13 +460,31 @@ export function runAutomatedGitBisect(opts = {}) {
 
     for (let i = 0; i < 16 && !culpritCommit; i++) {
       stepsRun += 1;
-      const checkRun = spawnSync(bin, cmdArgs, {
+      const useWinComSpec =
+        process.platform === 'win32' &&
+        bin !== process.execPath &&
+        !/\.(?:exe|com)$/i.test(bin) &&
+        !/[&|<>^%\r\n]/.test(bin);
+      const spawnBin = useWinComSpec ? (process.env.ComSpec || 'cmd.exe') : bin;
+      const spawnArgs = useWinComSpec
+        ? ['/d', '/s', '/c', `"${[bin, ...cmdArgs].map((a) => `"${String(a).replace(/"/g, '""')}"`).join(' ')}"`]
+        : cmdArgs;
+      const checkRun = spawnSync(spawnBin, spawnArgs, {
         cwd: wtDir,
         encoding: 'utf8',
         timeout: stepTimeout,
         windowsHide: true,
         shell: false,
+        windowsVerbatimArguments: useWinComSpec,
       });
+      if (checkRun.error?.code === 'ENOENT') {
+        return {
+          ok: false,
+          error: isEn
+            ? `Test executable not found for git bisect: ${bin}`
+            : `Исполняемый файл теста не найден для git bisect: ${bin}`,
+        };
+      }
       const exitCode = Number.isInteger(checkRun.status) ? checkRun.status : 1;
       const mark = exitCode === 0 ? 'good' : (exitCode === 125 ? 'skip' : 'bad');
 
@@ -497,7 +522,7 @@ export function runAutomatedGitBisect(opts = {}) {
       windowsHide: true,
     }) || '').trim();
     const [fullSha = culpritCommit, subject = '', author = ''] = metaRaw.split(/\r?\n/);
-    const filesRaw = String(execFileSync('git', ['diff-tree', '--no-commit-id', '--name-only', '-r', culpritCommit], {
+    const filesRaw = String(execFileSync('git', ['-c', 'core.quotepath=false', 'diff-tree', '--no-commit-id', '--name-only', '-r', culpritCommit], {
       cwd: wtDir,
       encoding: 'utf8',
       timeout: 5000,

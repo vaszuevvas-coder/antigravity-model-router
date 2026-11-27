@@ -261,7 +261,7 @@ export function estimateCodebaseScope(userPrompt = '', rawOptions = {}) {
       const explicitScan = promptText.length > 16000 ? promptText.slice(0, 16000) : promptText;
       const explicitFileNames = Array.from(
         new Set(
-          (explicitScan.match(/[\w./\\-]+\.(?:mjs|cjs|js|ts|tsx|jsx|py|go|rs|java|cs|cpp|c|h|json|css|scss|html|vue|svelte)\b/gi) || [])
+          (explicitScan.match(/(?<![\w./\\-])[\w./\\-]+\.(?:mjs|cjs|js|ts|tsx|jsx|py|go|rs|java|cs|cpp|c|h|json|css|scss|html|vue|svelte)\b/gi) || [])
             .map((m) => normalizeRelPath(m).split('/').pop().toLowerCase())
         )
       );
@@ -511,7 +511,7 @@ export function compileUserIntentToTechSpec(userPrompt = '', rawOptions = {}) {
 
   if (targetFiles.length < 4) {
     const fileScanText = promptText.length > 12000 ? promptText.slice(0, 12000) : promptText;
-    const pathRefs = fileScanText.match(/[a-zA-Z0-9_.-]+[\\/][a-zA-Z0-9_.\\/-]+\.[a-zA-Z0-9]{1,6}/g) || [];
+    const pathRefs = fileScanText.match(/(?<![a-zA-Z0-9_.\\/-])[a-zA-Z0-9_.-]+[\\/][a-zA-Z0-9_.\\/-]+\.[a-zA-Z0-9]{1,6}/g) || [];
     const rootRefs = fileScanText.match(/\b[a-zA-Z0-9_-]+\.(?:mjs|cjs|js|ts|tsx|jsx|py|go|rs|java|cs|cpp|c|h|json|css|scss|html|vue|svelte|md|ya?ml|toml)\b/gi) || [];
     for (const rawRef of [...pathRefs, ...rootRefs]) {
       const fileRef = normalizeRelPath(rawRef);

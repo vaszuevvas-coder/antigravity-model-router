@@ -3,11 +3,14 @@
  * @description Zero-dependency Keep-a-Changelog parser for in-app "What's new" viewer.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizeLang, pickLang, readActiveUiLanguage } from './i18n.mjs';
-import { compareSemver, readPluginMeta } from './plugin-updater.mjs';
+import { compareSemver, isAllowedGitHubUrl, readPluginMeta } from './plugin-updater.mjs';
+
+const _changelogMemCache = new Map();
+const MAX_CHANGELOG_CACHE = 8;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PLUGIN_ROOT = join(__dirname, '..');
@@ -128,7 +131,7 @@ export function resolveChangelogFilePath(pluginRoot, lang = 'en') {
  */
 export function parseChangelogMarkdown(markdownText = '', options = {}) {
   const lang = normalizeLang(options?.lang, 'en');
-  const lines = String(markdownText || '').replace(/\r\n/g, '\n').split('\n');
+  const lines = String(markdownText || '').replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').split('\n');
   let title = 'The Tunnel';
   const introParts = [];
   const versions = [];
@@ -264,14 +267,41 @@ export function loadPluginChangelog(options = {}) {
     };
   }
 
-  const rawMd = readFileSync(resolvedFile.path, 'utf8');
-  const parsed = parseChangelogMarkdown(rawMd, { lang });
-  const versions = parsed.versions.map((v) => ({
-    ...v,
-    isCurrent: compareSemver(v.version, resolvedCurrent) === 0 || v.version === resolvedCurrent,
-    isRemotePending: false,
-    releaseUrl: `${meta.homepage}/releases/tag/v${v.version}`,
-  }));
+  let rawMd = '';
+  let parsed = null;
+  let versions = null;
+  try {
+    const st = statSync(resolvedFile.path);
+    const cacheKey = `${resolvedFile.path}|${lang}|${resolvedCurrent}|${st.mtimeMs}|${st.size}`;
+    const hit = _changelogMemCache.get(cacheKey);
+    if (hit) {
+      parsed = hit.parsed;
+      versions = hit.versions.map((v) => ({ ...v }));
+    } else {
+      rawMd = readFileSync(resolvedFile.path, 'utf8');
+      parsed = parseChangelogMarkdown(rawMd, { lang });
+      versions = parsed.versions.map((v) => ({
+        ...v,
+        isCurrent: compareSemver(v.version, resolvedCurrent) === 0 || v.version === resolvedCurrent,
+        isRemotePending: false,
+        releaseUrl: `${meta.homepage}/releases/tag/v${v.version}`,
+      }));
+      if (_changelogMemCache.size >= MAX_CHANGELOG_CACHE) {
+        const firstKey = _changelogMemCache.keys().next().value;
+        if (firstKey !== undefined) _changelogMemCache.delete(firstKey);
+      }
+      _changelogMemCache.set(cacheKey, { parsed, versions: versions.map((v) => ({ ...v })) });
+    }
+  } catch {
+    rawMd = readFileSync(resolvedFile.path, 'utf8');
+    parsed = parseChangelogMarkdown(rawMd, { lang });
+    versions = parsed.versions.map((v) => ({
+      ...v,
+      isCurrent: compareSemver(v.version, resolvedCurrent) === 0 || v.version === resolvedCurrent,
+      isRemotePending: false,
+      releaseUrl: `${meta.homepage}/releases/tag/v${v.version}`,
+    }));
+  }
 
   const remote = opts.remoteRelease && typeof opts.remoteRelease === 'object' ? opts.remoteRelease : null;
   const remoteVer = typeof remote?.latestVersion === 'string' ? remote.latestVersion.trim().replace(/^v/i, '') : '';
@@ -306,7 +336,7 @@ export function loadPluginChangelog(options = {}) {
       itemCount,
       isCurrent: compareSemver(remoteVer, resolvedCurrent) === 0 || remoteVer === resolvedCurrent,
       isRemotePending: true,
-      releaseUrl: typeof remote.releaseUrl === 'string' && remote.releaseUrl.trim()
+      releaseUrl: typeof remote.releaseUrl === 'string' && remote.releaseUrl.trim() && isAllowedGitHubUrl(remote.releaseUrl.trim())
         ? remote.releaseUrl.trim()
         : `${meta.homepage}/releases/tag/v${remoteVer}`,
     });

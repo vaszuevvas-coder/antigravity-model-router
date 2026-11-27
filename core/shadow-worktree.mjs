@@ -285,17 +285,36 @@ export function runInShadowWorktree(opts = {}) {
     ? Math.max(500, Math.min(120_000, Math.round(Number(safeOpts.timeoutMs))))
     : 30_000;
 
-  const res = spawnSync(bin, cmdArgs, {
+  const useWinComSpec =
+    process.platform === 'win32' &&
+    bin !== process.execPath &&
+    !/\.(?:exe|com)$/i.test(bin) &&
+    !/[&|<>^%\r\n]/.test(bin);
+  const spawnBin = useWinComSpec ? (process.env.ComSpec || 'cmd.exe') : bin;
+  const spawnArgs = useWinComSpec
+    ? ['/d', '/s', '/c', `"${[bin, ...cmdArgs].map((a) => `"${String(a).replace(/"/g, '""')}"`).join(' ')}"`]
+    : cmdArgs;
+
+  const res = spawnSync(spawnBin, spawnArgs, {
     cwd: entry.worktreePath,
     encoding: 'utf8',
     timeout: timeoutMs,
     windowsHide: true,
     shell: false,
+    windowsVerbatimArguments: useWinComSpec,
   });
 
-  const stdout = maskTerminalOutput(String(res.stdout || ''), 4000);
-  const stderr = maskTerminalOutput(String(res.stderr || res.error?.message || ''), 4000);
   const exitCode = Number.isInteger(res.status) ? res.status : (res.error ? 1 : 0);
+  const rawOut = String(res.stdout || '');
+  const rawErr = String(res.stderr || res.error?.message || '');
+  const stdoutRes = rawOut
+    ? maskTerminalOutput(rawOut, exitCode, { workspaceRoot: entry.worktreePath, enableCcr: false })
+    : null;
+  const stderrRes = rawErr
+    ? maskTerminalOutput(rawErr, exitCode || 1, { workspaceRoot: entry.worktreePath, enableCcr: false })
+    : null;
+  const stdout = typeof stdoutRes === 'string' ? stdoutRes.slice(0, 4000) : String(stdoutRes?.masked || '').slice(0, 4000);
+  const stderr = typeof stderrRes === 'string' ? stderrRes.slice(0, 4000) : String(stderrRes?.masked || '').slice(0, 4000);
   return {
     ok: exitCode === 0 && !res.error,
     id: entry.id,
@@ -318,7 +337,7 @@ export function getShadowWorktreeDiff(opts = {}) {
     return { ok: false, error: isEn ? 'Git worktree sandbox not found' : 'Песочница git worktree не найдена', changedFiles: [] };
   }
 
-  const statusRes = runGit(['status', '--porcelain'], entry.worktreePath, 6000, { trimOutput: false });
+  const statusRes = runGit(['-c', 'core.quotepath=false', 'status', '--porcelain', '--untracked-files=all'], entry.worktreePath, 6000, { trimOutput: false });
   if (!statusRes.ok) {
     return { ok: false, error: statusRes.stderr || (isEn ? 'Failed to inspect sandbox status' : 'Не удалось получить статус песочницы'), changedFiles: [] };
   }
@@ -341,8 +360,8 @@ export function getShadowWorktreeDiff(opts = {}) {
     });
   }
 
-  const statRes = runGit(['diff', '--stat', 'HEAD'], entry.worktreePath, 6000);
-  const diffRes = runGit(['diff', 'HEAD'], entry.worktreePath, 8000);
+  const statRes = runGit(['-c', 'core.quotepath=false', 'diff', '--stat', 'HEAD'], entry.worktreePath, 6000);
+  const diffRes = runGit(['-c', 'core.quotepath=false', 'diff', 'HEAD'], entry.worktreePath, 8000);
 
   return {
     ok: true,
@@ -411,10 +430,14 @@ export function promoteShadowWorktree(opts = {}) {
           mkdirSync(dirname(targetAbs), { recursive: true });
           copyFileSync(srcAbs, targetAbs);
           promotedFiles.push(item.path);
+        } else {
+          failedFiles.push({ path: item.path, error: 'Source entry in worktree is not a regular file' });
         }
       } catch (err) {
         failedFiles.push({ path: item.path, error: String(err?.message || err) });
       }
+    } else {
+      failedFiles.push({ path: item.path, error: 'Source file missing in worktree' });
     }
   }
 

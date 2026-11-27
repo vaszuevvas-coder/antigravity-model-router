@@ -524,7 +524,7 @@ export function recordSessionTestExecution(opts = {}) {
   const wsKey = normWsKey(workspaceRoot);
   const counts = parseTestPassFailCounts(output);
   const passed = counts.passed;
-  const failed = counts.failed ?? (exitCode !== 0 ? 1 : 0);
+  const failed = exitCode !== 0 ? Math.max(1, counts.failed ?? 1) : (counts.failed ?? 0);
   const lastTestExitOk = exitCode === 0 && (counts.failed === undefined || counts.failed === 0);
 
   updateJsonAtomicSync(targetPath, defaultState, (cur) => {
@@ -554,7 +554,7 @@ export function recordSessionTestExecution(opts = {}) {
 function pickSessionEntry(mapObj, cid, wsKey = '', nowMs = Date.now()) {
   const obj = mapObj && typeof mapObj === 'object' ? mapObj : {};
   const direct = Object.hasOwn(obj, cid) ? obj[cid] : null;
-  if (direct && (nowMs - Number(direct.updatedAt || 0)) < STUB_STATE_TTL_MS) {
+  if (direct && (nowMs - Number(direct.updatedAt || 0)) < STUB_STATE_TTL_MS && (!wsKey || !direct.wsKey || direct.wsKey === wsKey)) {
     return direct;
   }
   if (cid !== 'default') return null;
@@ -563,8 +563,7 @@ function pickSessionEntry(mapObj, cid, wsKey = '', nowMs = Date.now()) {
     .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
   if (fresh.length === 0) return null;
   if (wsKey) {
-    const wsMatch = fresh.find((v) => v.wsKey === wsKey);
-    if (wsMatch) return wsMatch;
+    return fresh.find((v) => v.wsKey === wsKey) || null;
   }
   return fresh[0];
 }
@@ -750,7 +749,7 @@ export function evaluateStopCompletionGates(opts = {}) {
     warnings.push(...invRes.warnings);
   }
 
-  const verFresh = getSessionVerificationFreshness({ conversationId, stateFile, nowMs });
+  const verFresh = getSessionVerificationFreshness({ conversationId, workspaceRoot, stateFile, nowMs });
   if (verFresh.state === 'stale') {
     const editedShort = verFresh.lastEditedFile ? verFresh.lastEditedFile.split('/').pop() : 'source';
     warnings.push({

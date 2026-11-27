@@ -121,7 +121,10 @@ export class LspFrameDecoder {
       }
 
       const bodySlice = this.buffer.subarray(bodyStart, bodyStart + contentLength);
-      this.buffer = this.buffer.subarray(bodyStart + contentLength);
+      const nextOffset = bodyStart + contentLength;
+      this.buffer = nextOffset >= this.buffer.length
+        ? Buffer.alloc(0)
+        : Buffer.from(this.buffer.subarray(nextOffset));
 
       try {
         const parsed = JSON.parse(bodySlice.toString('utf8'));
@@ -508,6 +511,9 @@ class LspSession {
     try { proc.stdout?.removeAllListeners?.(); } catch {}
     try { proc.stderr?.removeAllListeners?.(); } catch {}
     try { proc.removeAllListeners?.(); } catch {}
+    try { proc.stdin?.destroy?.(); } catch {}
+    try { proc.stdout?.destroy?.(); } catch {}
+    try { proc.stderr?.destroy?.(); } catch {}
     try { if (!proc.killed) proc.kill(); } catch {}
   }
 
@@ -515,7 +521,13 @@ class LspSession {
     while (!this.openDocs.has(key) && this.openDocs.size >= MAX_OPEN_DOCS) {
       const oldestKey = this.openDocs.keys().next().value;
       if (oldestKey === undefined) break;
+      const evicted = this.openDocs.get(oldestKey);
       this.openDocs.delete(oldestKey);
+      if (evicted?.uri && this.initialized && this.proc && !this.proc.killed) {
+        try {
+          this.sendNotification('textDocument/didClose', { textDocument: { uri: evicted.uri } });
+        } catch {}
+      }
     }
     this.openDocs.set(key, doc);
   }
@@ -530,11 +542,20 @@ class LspSession {
     this.initPromise = (async () => {
       let spawnedProc = null;
       try {
-        const proc = this.spawnFn(this.serverCmd.command, this.serverCmd.args || [], {
+        const useWinCmd =
+          process.platform === 'win32' &&
+          Boolean(this.serverCmd.shell) &&
+          !/[&|<>^%\r\n]/.test(String(this.serverCmd.command || ''));
+        const spawnBin = useWinCmd ? (process.env.ComSpec || 'cmd.exe') : this.serverCmd.command;
+        const spawnArgs = useWinCmd
+          ? ['/d', '/s', '/c', `"${[this.serverCmd.command, ...(this.serverCmd.args || [])].map((a) => `"${String(a).replace(/"/g, '""')}"`).join(' ')}"`]
+          : (this.serverCmd.args || []);
+        const proc = this.spawnFn(spawnBin, spawnArgs, {
           cwd: this.wsRoot,
           stdio: ['pipe', 'pipe', 'pipe'],
           windowsHide: true,
-          shell: Boolean(this.serverCmd.shell),
+          shell: useWinCmd ? false : Boolean(this.serverCmd.shell),
+          windowsVerbatimArguments: useWinCmd,
           env: { ...process.env, ...(this.serverCmd.env || {}) },
         });
         if (!proc || !proc.stdin || !proc.stdout) {
@@ -788,10 +809,7 @@ class LspSession {
         });
       });
       try {
-        await Promise.race([
-          this.sendRequest('shutdown', null, 150).catch(() => {}),
-          new Promise((r) => setTimeout(r, 150)),
-        ]);
+        await this._raceTimeout(this.sendRequest('shutdown', null, 150).catch(() => {}), 150, null);
         this._writeFrame({ jsonrpc: '2.0', method: 'exit', params: null });
       } catch {}
       try {

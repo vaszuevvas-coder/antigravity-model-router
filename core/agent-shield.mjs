@@ -33,7 +33,7 @@ const SECRET_PATTERNS = [
   { id: 'private_key_pem', severity: 'critical', label: 'Приватный криптографический ключ PEM', labelEn: 'Private cryptographic PEM key', rx: /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/g },
   { id: 'bearer_token', severity: 'high', label: 'Захардкоженный Bearer-токен', labelEn: 'Hardcoded Bearer token', rx: /\bBearer\s+[A-Za-z0-9._-]{25,}/g },
   { id: 'jwt_token', severity: 'high', label: 'Захардкоженный JWT-токен', labelEn: 'Hardcoded JWT token', rx: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
-  { id: 'db_uri_password', severity: 'critical', label: 'Учётные данные в URI базы данных', labelEn: 'Database URI credentials', rx: /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis):\/\/[^:\s/]+:[^@\s/]{3,}@[^\s"']+/gi },
+  { id: 'db_uri_password', severity: 'critical', label: 'Учётные данные в URI базы данных', labelEn: 'Database URI credentials', rx: /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|rediss?):\/\/[^:\s/]+:[^@\s/]{3,}@[^\s"']+/gi },
 ];
 
 const PLACEHOLDER_RE = /^(?:\$\{[^}]+\}|%[A-Za-z0-9_]+%|\$[A-Za-z_][A-Za-z0-9_]*|<[A-Z0-9_:-]+>|YOUR_[A-Z0-9_]+|REPLACE_ME|EXAMPLE_.*)$/i;
@@ -129,7 +129,7 @@ function readShieldTargetFile(filePath, kind, findings, lang = 'ru') {
       );
       return null;
     }
-    raw = readFileSync(filePath, 'utf8');
+    raw = readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
   } catch {
     return null;
   }
@@ -150,10 +150,23 @@ export function scanMcpConfigFile(filePath, opts = {}) {
   const raw = readShieldTargetFile(filePath, 'mcp', findings, resolvedLang);
   if (raw === null) return findings;
 
+  if (BIDI_TROJAN_RE.test(raw)) {
+    findings.push(
+      makeFinding({
+        file: filePath,
+        kind: 'mcp',
+        severity: 'critical',
+        ruleId: 'mcp_bidi_trojan',
+        message: isEn ? 'Hidden Unicode BiDi characters detected in MCP config' : 'Обнаружены скрытые Unicode BiDi-символы в конфигурации MCP',
+      })
+    );
+  }
+
   let parsed = null;
   try {
     parsed = JSON.parse(raw);
   } catch {
+    scanTextForSecrets(raw, filePath, 'mcp', findings, resolvedLang);
     findings.push(
       makeFinding({
         file: filePath,
@@ -268,10 +281,23 @@ export function scanHooksConfigFile(filePath, opts = {}) {
   const raw = readShieldTargetFile(filePath, 'hooks', findings, resolvedLang);
   if (raw === null) return findings;
 
+  if (BIDI_TROJAN_RE.test(raw)) {
+    findings.push(
+      makeFinding({
+        file: filePath,
+        kind: 'hooks',
+        severity: 'critical',
+        ruleId: 'hooks_bidi_trojan',
+        message: isEn ? 'Hidden Unicode BiDi characters detected in hooks config' : 'Обнаружены скрытые Unicode BiDi-символы в конфигурации хуков',
+      })
+    );
+  }
+
   let parsed = null;
   try {
     parsed = JSON.parse(raw);
   } catch {
+    scanTextForSecrets(raw, filePath, 'hooks', findings, resolvedLang);
     findings.push(
       makeFinding({
         file: filePath,
@@ -377,11 +403,14 @@ export function scanSkillFile(filePath, opts = {}) {
 
   const lines = raw.split(/\r?\n/);
   for (const line of lines) {
-    const codePart = line.replace(/(?:^|\s)(?:#|\/\/).*$/, '');
-    const pipeMatch = REMOTE_PIPE_RE.exec(codePart);
+    if (/^\s*(?:#|\/\/)/.test(line)) continue;
+    const pipeMatch = REMOTE_PIPE_RE.exec(line);
     if (pipeMatch) {
-      const prefix = codePart.slice(0, pipeMatch.index);
-      if (!/\b(?:never|do\s+not|block(?:ed)?|forbidden|avoid|запрещ)\b/i.test(prefix)) {
+      const prefix = line.slice(0, pipeMatch.index);
+      const isProhibitive =
+        /\b(?:never|do\s+not|block(?:ed)?|forbidden|avoid)\b/i.test(prefix) ||
+        /(?:^|[^a-zа-яё])запрещ/i.test(prefix);
+      if (!isProhibitive) {
         findings.push(
           makeFinding({
             file: filePath,

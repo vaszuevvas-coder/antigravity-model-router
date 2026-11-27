@@ -4,6 +4,7 @@
  */
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -123,11 +124,32 @@ export function detectTextLanguage(text, fallback = 'en') {
  */
 export function readActiveUiLanguage(pluginRoot = DEFAULT_PLUGIN_ROOT) {
   try {
-    const statePath = path.join(pluginRoot || DEFAULT_PLUGIN_ROOT, 'router-state.json');
-    if (!fs.existsSync(statePath)) return 'en';
-    const raw = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-    if (typeof raw?.uiLanguage === 'string') {
-      return normalizeLang(raw.uiLanguage, 'en');
+    const resolvedRoot = path.resolve(pluginRoot || DEFAULT_PLUGIN_ROOT);
+    const isDefaultRoot = resolvedRoot === path.resolve(DEFAULT_PLUGIN_ROOT);
+    const envTestState = isDefaultRoot && typeof process.env.TUNNEL_TEST_STATE_PATH === 'string'
+      ? process.env.TUNNEL_TEST_STATE_PATH.trim()
+      : '';
+    const statePath = envTestState ? path.resolve(envTestState) : path.join(resolvedRoot, 'router-state.json');
+    let parsed = null;
+    if (fs.existsSync(statePath)) {
+      parsed = JSON.parse(fs.readFileSync(statePath, 'utf8').replace(/^\uFEFF/, ''));
+    }
+    if (
+      isDefaultRoot &&
+      !envTestState &&
+      process.env.TUNNEL_TEST_ISOLATE_INSTALLED !== '1' &&
+      (!parsed || (parsed.onboardingCompleted === false && parsed.hardwareProfiled === false))
+    ) {
+      const installedState = path.join(os.homedir(), '.gemini', 'config', 'plugins', 'antigravity-model-router', 'router-state.json');
+      if (path.resolve(installedState) !== path.resolve(statePath) && fs.existsSync(installedState)) {
+        const instParsed = JSON.parse(fs.readFileSync(installedState, 'utf8').replace(/^\uFEFF/, ''));
+        if (typeof instParsed?.uiLanguage === 'string') {
+          return normalizeLang(instParsed.uiLanguage, 'en');
+        }
+      }
+    }
+    if (typeof parsed?.uiLanguage === 'string') {
+      return normalizeLang(parsed.uiLanguage, 'en');
     }
   } catch {}
   return 'en';

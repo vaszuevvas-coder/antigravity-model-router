@@ -16,8 +16,8 @@ const BINARY_SKIP_EXTS = new Set(['.exe', '.dll', '.so', '.dylib', '.node', '.wa
 const MAX_SUPPORT_FILE_BYTES = 2 * 1024 * 1024;
 
 const MUTATION_RULES = [
-  { rx: />=/, original: '>=', mutated: '>' },
-  { rx: /<=/, original: '<=', mutated: '<' },
+  { rx: /(?<![<>])>=(?!=)/, original: '>=', mutated: '>' },
+  { rx: /(?<![<>])<=(?!=)/, original: '<=', mutated: '<' },
   { rx: /===/, original: '===', mutated: '!==' },
   { rx: /!==/, original: '!==', mutated: '===' },
   { rx: /\+\s*1\b/, original: '+ 1', mutated: '- 1' },
@@ -84,9 +84,23 @@ export function generateBoundaryMutants(sourceCode = '', maxMutants = 4) {
   return mutants;
 }
 
-function copyWorkspaceSubsetToTemp(wsRoot, tempRoot) {
+function copyWorkspaceSubsetToTemp(wsRoot, tempRoot, priorityRelPaths = []) {
   let copiedCount = 0;
   const maxCopyFiles = 1500;
+  const copiedRelSet = new Set();
+  for (const rawRel of priorityRelPaths) {
+    if (!rawRel || typeof rawRel !== 'string') continue;
+    const src = resolve(wsRoot, rawRel);
+    const rel = relative(wsRoot, src);
+    if (!rel || rel.startsWith('..') || isAbsolute(rel) || !existsSync(src)) continue;
+    const dst = join(tempRoot, rel);
+    try {
+      mkdirSync(dirname(dst), { recursive: true });
+      copyFileSync(src, dst);
+      copiedRelSet.add(rel);
+      copiedCount += 1;
+    } catch {}
+  }
   const queue = [wsRoot];
   let qHead = 0;
 
@@ -115,6 +129,7 @@ function copyWorkspaceSubsetToTemp(wsRoot, tempRoot) {
           }
         }
         const rel = relative(wsRoot, src);
+        if (copiedRelSet.has(rel)) continue;
         const dst = join(tempRoot, rel);
         try {
           mkdirSync(dirname(dst), { recursive: true });
@@ -198,7 +213,7 @@ export function runSemanticMutationGuard(opts = {}) {
   const tempRoot = join(sandboxParent, basename(wsRoot) || 'repo');
   mkdirSync(tempRoot, { recursive: true });
   try {
-    copyWorkspaceSubsetToTemp(wsRoot, tempRoot);
+    copyWorkspaceSubsetToTemp(wsRoot, tempRoot, [relFile, relTest]);
     const tempTarget = join(tempRoot, relFile);
     if (!existsSync(tempTarget)) {
       return { ok: false, error: isEn ? 'Failed to prepare isolated copy of file' : 'Не удалось подготовить изолированную копию файла' };
