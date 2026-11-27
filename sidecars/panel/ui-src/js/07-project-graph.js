@@ -4966,10 +4966,48 @@
         : (node.isSymbol ? (node.file || node.id) : node.id);
       const topIncoming = incoming.slice(0, 6).map(function (e) { return e.id; }).filter(Boolean);
       const topOutgoing = outgoing.slice(0, 6).map(function (e) { return e.id; }).filter(Boolean);
+      const hop1Set = new Set([node.id]);
+      for (let i = 0; i < incoming.length; i++) {
+        if (incoming[i] && incoming[i].id) hop1Set.add(incoming[i].id);
+      }
+      const hop2List = [];
+      const hop2Seen = new Set();
+      if (pgState.inNeighbors) {
+        for (let i = 0; i < incoming.length && hop2List.length < 24; i++) {
+          const depId = incoming[i] && incoming[i].id;
+          if (!depId) continue;
+          const second = pgState.inNeighbors.get(depId) || [];
+          for (let j = 0; j < second.length; j++) {
+            const sId = second[j] && second[j].id;
+            if (sId && !hop1Set.has(sId) && !hop2Seen.has(sId)) {
+              hop2Seen.add(sId);
+              hop2List.push(sId);
+            }
+          }
+        }
+      }
       const rawFolderFiles = node.isFolder && Array.isArray(node.fileIds)
         ? node.fileIds.filter(Boolean)
         : [];
       const folderFiles = rawFolderFiles.slice(0, 8);
+      const testMap = (pgState.rawGraphData && typeof pgState.rawGraphData.testFilesByTarget === 'object' && pgState.rawGraphData.testFilesByTarget) || null;
+      const relatedTestsSet = new Set();
+      const collectTestsFor = function (fileId) {
+        if (!testMap || !fileId) return;
+        const arr = testMap[fileId];
+        if (Array.isArray(arr)) {
+          for (let k = 0; k < arr.length; k++) {
+            if (arr[k]) relatedTestsSet.add(arr[k]);
+          }
+        }
+      };
+      if (node.isFolder) {
+        for (let i = 0; i < rawFolderFiles.length; i++) collectTestsFor(rawFolderFiles[i]);
+      } else {
+        collectTestsFor(targetFile);
+      }
+      const relatedTestsAll = Array.from(relatedTestsSet);
+      const inCycle = Boolean(node.inCycle || (pgState.cycleNodeSet && pgState.cycleNodeSet.has(node.id)));
       return {
         nodeId: node.id,
         targetFile: targetFile,
@@ -4977,15 +5015,22 @@
         isFolder: Boolean(node.isFolder),
         isSymbol: Boolean(node.isSymbol),
         symbolName: node.isSymbol ? (node.label || '') : '',
+        startLine: node.isSymbol ? Number(node.startLine || 0) : 0,
+        endLine: node.isSymbol ? Number(node.endLine || 0) : 0,
         lines: Number(node.lines || 0),
         inCount: Math.max(incoming.length, Number(node.inDeg || 0)),
         outCount: Math.max(outgoing.length, Number(node.outDeg || 0)),
         topIncoming: topIncoming,
         topOutgoing: topOutgoing,
+        topHop2Incoming: hop2List.slice(0, 6),
+        hop2Count: hop2List.length,
+        relatedTests: relatedTestsAll.slice(0, 6),
+        relatedTestsTotal: relatedTestsAll.length,
         folderFiles: folderFiles,
         folderFilesTotal: rawFolderFiles.length,
         isGod: Boolean(node.isGod || (node.godCount || 0) > 0),
         isFragile: Boolean(node.isFragile || (node.fragileCount || 0) > 0),
+        inCycle: inCycle,
         reliabilityPct: Number(node.reliabilityPercent !== undefined ? node.reliabilityPercent : 100),
         clusterLabel: node.clusterLabel || '',
       };
@@ -4993,9 +5038,12 @@
 
     function pgBuildAiPresetPrompt(preset, ctx) {
       if (!ctx) return '';
+      const symLoc = ctx.startLine > 0
+        ? (ctx.targetFile + ':L' + ctx.startLine + (ctx.endLine >= ctx.startLine ? ('-L' + ctx.endLine) : ''))
+        : ctx.targetFile;
       const subject = ctx.isSymbol
-        ? (ctx.symbolName + ' (' + ctx.targetFile + ')')
-        : (ctx.isFolder ? (ctx.nodeLabel + ' (хаб: ' + ctx.targetFile + ')') : ctx.targetFile);
+        ? (ctx.symbolName + ' (' + symLoc + ')')
+        : (ctx.isFolder ? (ctx.nodeLabel + L(' (хаб: ', ' (hub: ') + ctx.targetFile + ')') : ctx.targetFile);
       if (preset === 'explain') {
         return L(
           'Кратко объясни, за что отвечает ' + subject + ', какие ключевые функции/экспорты он предоставляет и как встроен в проект.',
@@ -5004,20 +5052,52 @@
       }
       if (preset === 'risks') {
         return L(
-          'Оцени зависимости и риски изменений (Blast Radius) для ' + subject + '. Кто от него зависит и что может сломаться при правке?',
-          'Analyze dependencies and change risks (Blast Radius) for ' + subject + '. What depends on it and what can break on edit?'
+          'Проведи анализ зависимостей и радиуса поражения (Blast Radius) для ' + subject + ' (только анализ, без правки файлов):\n' +
+          '1. Публичные контракты и экспорты: какие сигнатуры, форматы данных, события, IPC/API или shared state могут сломаться при изменении.\n' +
+          '2. Прямые (1-й хоп) и транзитивные (2-й хоп) потребители: какие конкретные модули и вызовы затронет правка.\n' +
+          '3. Неявные связи: конфиги, side-effects, порядок инициализации, циклы импортов.\n' +
+          'Формат ответа: список рисков по приоритету (Critical / High / Medium) с указанием file:line, конкретной ловушки и короткого чек-листа безопасного изменения.',
+          'Analyze dependencies and Blast Radius for ' + subject + ' (read-only analysis, do not edit files):\n' +
+          '1. Public contracts & exports: signatures, data shapes, events, IPC/API, or shared state that can break on change.\n' +
+          '2. Direct (1-hop) and transitive (2-hop) consumers: exact modules and call sites impacted by an edit.\n' +
+          '3. Implicit coupling: configs, side effects, initialization order, and import cycles.\n' +
+          'Output format: prioritized risk list (Critical / High / Medium) with file:line, exact failure trap, and a short safe-edit checklist.'
         );
       }
       if (preset === 'bugs') {
+        const folderScopeRu = ctx.isFolder
+          ? ' Обязательно проверь все файлы папки и стыки между ними, а не только хаб.'
+          : '';
+        const folderScopeEn = ctx.isFolder
+          ? ' Inspect all files in the folder and their boundaries, not only the hub.'
+          : '';
         return L(
-          'Найди потенциальные баги, гонки, утечки или слабые места обработки ошибок в ' + subject + '.',
-          'Find potential bugs, race conditions, leaks, or weak error handling in ' + subject + '.'
+          'Найди реальные потенциальные баги, гонки, утечки и слабые места обработки ошибок в ' + subject + '.' + folderScopeRu + ' Игнорируй косметику, стиль и общие советы; только аудит, файлы не редактируй.\n' +
+          'Проверь по чек-листу:\n' +
+          '1. Краевые случаи: null/undefined, пустые строки/массивы, границы чисел, Windows-пути.\n' +
+          '2. Гонки и состояние: async/await, TOCTOU, неатомарные обновления shared state или кэша.\n' +
+          '3. Утечки ресурсов: незакрытые таймеры/слушатели/AbortController, неограниченный рост Map/массивов.\n' +
+          '4. Обработка ошибок и границы доверия: проглоченные исключения, неполный откат, невалидированные входы.\n' +
+          'Формат ответа: Critical / High / Medium — для каждой находки укажи file:line, сценарий воспроизведения, последствие и минимальный фикс.',
+          'Find real potential bugs, race conditions, leaks, and weak error handling in ' + subject + '.' + folderScopeEn + ' Skip style/cosmetics and generic advice; read-only audit, do not edit files.\n' +
+          'Check specifically:\n' +
+          '1. Edge cases: null/undefined, empty inputs, numeric bounds, Windows path handling.\n' +
+          '2. Races & state: async/await ordering, TOCTOU, non-atomic shared state or cache updates.\n' +
+          '3. Resource leaks: uncleaned timers/listeners/AbortController, unbounded Map/array growth.\n' +
+          '4. Error handling & trust boundaries: swallowed exceptions, partial rollback, unvalidated inputs.\n' +
+          'Output format: Critical / High / Medium — for each finding state file:line, reproduction scenario, impact, and smallest fix.'
         );
       }
       if (preset === 'tests') {
         return L(
-          'Какие сценарии и краевые случаи стоит проверить тестами при изменении ' + subject + '?',
-          'What scenarios and edge cases should be covered by tests when changing ' + subject + '?'
+          'Составь план тестового покрытия для ' + subject + ' (только план и сценарии, без создания файлов до подтверждения):\n' +
+          '1. Сначала сверься с уже существующими тестами (если указаны в контексте связей) и не дублируй то, что уже покрыто.\n' +
+          '2. Выдели критичные сценарии по уровням: Must-have (контракты для зависимых модулей), Edge (краевые/битые входы, ошибки, границы), Regression (гонки, таймауты, откат, хрупкие узлы и циклы).\n' +
+          'Формат ответа: компактная таблица или список — приоритет, сценарий (Given/When/Then), целевой тест-файл и точная команда запуска.',
+          'Design a test coverage plan for ' + subject + ' (plan and scenarios only, do not create files until confirmed):\n' +
+          '1. Cross-check existing tests first (if listed in the relations context) and avoid duplicating already-covered cases.\n' +
+          '2. Group scenarios by tier: Must-have (contracts for dependent modules), Edge (invalid/empty inputs, errors, bounds), Regression (races, timeouts, rollback, fragile/cyclic nodes).\n' +
+          'Output format: compact table or list — priority, scenario (Given/When/Then), target test file, and exact run command.'
         );
       }
       return L(
@@ -5070,16 +5150,29 @@
           lines.push(L('Зависимые модули / Blast Radius (↙ ' + ctx.inCount + '): ', 'Dependent modules / Blast Radius (↙ ' + ctx.inCount + '): ') + incList);
         }
       }
+      if (Array.isArray(ctx.topHop2Incoming) && ctx.topHop2Incoming.length > 0) {
+        const hop2List = formatList(ctx.topHop2Incoming, ctx.hop2Count || ctx.topHop2Incoming.length);
+        if (hop2List) {
+          lines.push(L('2-й хоп Blast Radius (' + (ctx.hop2Count || ctx.topHop2Incoming.length) + '): ', '2nd-hop Blast Radius (' + (ctx.hop2Count || ctx.topHop2Incoming.length) + '): ') + hop2List);
+        }
+      }
       if (Array.isArray(ctx.topOutgoing) && ctx.topOutgoing.length > 0) {
         const outList = formatList(ctx.topOutgoing, ctx.outCount);
         if (outList) {
           lines.push(L('Импорты / зависимости (↗ ' + ctx.outCount + '): ', 'Imports / dependencies (↗ ' + ctx.outCount + '): ') + outList);
         }
       }
+      if (Array.isArray(ctx.relatedTests) && ctx.relatedTests.length > 0) {
+        const testsList = formatList(ctx.relatedTests, ctx.relatedTestsTotal || ctx.relatedTests.length);
+        if (testsList) {
+          lines.push(L('Связанные тесты (' + (ctx.relatedTestsTotal || ctx.relatedTests.length) + '): ', 'Related tests (' + (ctx.relatedTestsTotal || ctx.relatedTests.length) + '): ') + testsList);
+        }
+      }
 
       const meta = [];
       if (ctx.isGod) meta.push('God-module');
       if (ctx.isFragile) meta.push(L('Хрупкий (' + ctx.reliabilityPct + '%)', 'Fragile (' + ctx.reliabilityPct + '%)'));
+      if (ctx.inCycle) meta.push(L('Цикл импортов', 'Import cycle'));
       if (ctx.clusterLabel) meta.push(L('кластер: ', 'cluster: ') + ctx.clusterLabel);
       if (meta.length > 0) {
         lines.push(L('Риски / метаданные: ', 'Risks / metadata: ') + meta.join(' · '));
@@ -5710,6 +5803,18 @@
       }
     }
 
+    function pgGetAiPresetLabel(preset, ctx) {
+      if (preset === 'explain') {
+        if (ctx && ctx.isFolder) return L('Объяснить, за что отвечает папка', 'Explain what this folder does');
+        if (ctx && ctx.isSymbol) return L('Объяснить, за что отвечает символ', 'Explain what this symbol does');
+        return L('Объяснить, за что отвечает файл', 'Explain what this file does');
+      }
+      if (preset === 'risks') return L('Зависимости и риски (Blast Radius)', 'Dependencies & risks (Blast Radius)');
+      if (preset === 'bugs') return L('Найти баги и слабые места', 'Find bugs & weak spots');
+      if (preset === 'tests') return L('Что проверить тестами', 'What to cover with tests');
+      return '';
+    }
+
     async function pgRunAiPreset(preset) {
       pgToggleAskAiMenu(false);
       const node = pgState.selectedNodeId ? pgState.nodeById.get(pgState.selectedNodeId) : null;
@@ -5732,7 +5837,10 @@
         pgSendAiToComposer(prompt);
         return;
       }
-      await pgExecuteFileAiQuestion(prompt, prompt);
+      const relationsBlock = pgBuildNodeRelationsContextBlock(ctx);
+      const promptWithContext = relationsBlock ? (prompt + '\n\n' + relationsBlock) : prompt;
+      const displayLabel = pgGetAiPresetLabel(preset, ctx) || prompt;
+      await pgExecuteFileAiQuestion(promptWithContext, displayLabel);
     }
 
     async function pgAskInNewProjectChat(preset, explicitNode) {

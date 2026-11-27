@@ -5676,6 +5676,8 @@ test('35. Project Map chat & composer handoff attaches connected modules, folder
         removeAttribute: (k) => attrs.delete(String(k)),
         focus() {},
         closest: () => null,
+        getContext: () => null,
+        getBoundingClientRect: () => ({ width: 800, height: 600, left: 0, top: 0 }),
         querySelectorAll: () => [],
         querySelector: () => null,
       });
@@ -5851,6 +5853,225 @@ test('35. Project Map chat & composer handoff attaches connected modules, folder
       safeClearTimeout(id);
     }
   }
+});
+
+test('36. Project Map AI presets (risks/bugs/tests) enforce structured read-only prompts, 2nd-hop, tests, cycles & EN hub label', async () => {
+  const vm = await import('node:vm');
+  buildPanelUi({ repoRoot: ROOT_DIR });
+  const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+  assert.ok(html.includes('function pgGetAiPresetLabel('), 'Compiled ui.html must include pgGetAiPresetLabel');
+
+  const mainScriptMatch = html.match(/<script>\s*([\s\S]*?)\s*<\/script>\s*<\/body>/i);
+  assert.ok(mainScriptMatch, 'Main script block must exist in ui.html');
+
+  const localChatCalls = [];
+  const fetchMock = async (url, opts = {}) => {
+    const u = String(url || '');
+    if (u.includes('/api/local-chat')) {
+      localChatCalls.push(opts.body ? JSON.parse(opts.body) : {});
+      return { ok: true, status: 200, json: async () => ({ ok: true, answer: 'OK', sources: [] }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+
+  const makeClassList = () => {
+    const set = new Set();
+    return {
+      add: (...cs) => cs.forEach((c) => set.add(c)),
+      remove: (...cs) => cs.forEach((c) => set.delete(c)),
+      toggle: (c, f) => (f === true ? (set.add(c), true) : f === false ? (set.delete(c), false) : (set.has(c) ? (set.delete(c), false) : (set.add(c), true))),
+      contains: (c) => set.has(c),
+    };
+  };
+  const els = new Map();
+  const getEl = (id) => {
+    if (!els.has(id)) {
+      const attrs = new Map();
+      els.set(id, {
+        id,
+        tagName: 'DIV',
+        hidden: false,
+        classList: makeClassList(),
+        style: { display: '', setProperty() {}, removeProperty() {} },
+        dataset: {},
+        value: '',
+        textContent: '',
+        innerHTML: '',
+        setAttribute: (k, v) => attrs.set(String(k), String(v)),
+        getAttribute: (k) => (attrs.has(String(k)) ? attrs.get(String(k)) : null),
+        removeAttribute: (k) => attrs.delete(String(k)),
+        focus() {},
+        closest: () => null,
+        getContext: () => null,
+        getBoundingClientRect: () => ({ width: 800, height: 600, left: 0, top: 0 }),
+        querySelectorAll: () => [],
+        querySelector: () => null,
+        addEventListener() {},
+        removeEventListener() {},
+      });
+    }
+    return els.get(id);
+  };
+  const doc = {
+    body: getEl('body'),
+    documentElement: getEl('html'),
+    activeElement: null,
+    getElementById: (id) => getEl(id),
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: (tag) => getEl('tmp_' + tag),
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  const ctx = vm.createContext({
+    window: {
+      location: { search: '?token=tok1', href: 'http://127.0.0.1:4242/?token=tok1' },
+      innerWidth: 1200,
+      innerHeight: 800,
+      devicePixelRatio: 1,
+      document: doc,
+      localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+      navigator: { clipboard: { writeText: async () => {} } },
+      setTimeout: () => 0,
+      clearTimeout() {},
+      requestAnimationFrame: () => 0,
+      cancelAnimationFrame() {},
+      fetch: fetchMock,
+      URLSearchParams,
+      addEventListener() {},
+      removeEventListener() {},
+      matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+    },
+    document: doc,
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    navigator: { clipboard: { writeText: async () => {} } },
+    location: { search: '?token=tok1' },
+    CSS: { escape: (s) => String(s) },
+    URL,
+    URLSearchParams,
+    AbortController,
+    performance,
+    Event: class { constructor(t) { this.type = t; } },
+    CustomEvent: class { constructor(t, o) { this.type = t; this.detail = o?.detail; } },
+    requestAnimationFrame: () => 0,
+    cancelAnimationFrame() {},
+    setTimeout: () => 0,
+    clearTimeout() {},
+    setInterval: () => 0,
+    clearInterval() {},
+    fetch: fetchMock,
+    console,
+    Promise, Set, Map, WeakMap, Array, Object, String, Number, Boolean, Math, Date, JSON, RegExp, Error,
+    encodeURIComponent, decodeURIComponent,
+  });
+
+  vm.runInContext(mainScriptMatch[1], ctx, { filename: 'sidecars/panel/ui.html' });
+
+  const out = await vm.runInContext(`(async () => {
+    currentUiLanguage = 'ru';
+    currentState = { ...(currentState || {}), gpuEnabled: true, uiLanguage: 'ru' };
+    pgState.open = true;
+    pgState.rawGraphData = {
+      testFilesByTarget: {
+        'core/gpu/gpu-shared-state.mjs': ['tests/gpu-shared-state.test.mjs'],
+      },
+    };
+    const folderNode = {
+      id: 'folder:core/gpu',
+      label: 'core/gpu',
+      isFolder: true,
+      topHubFile: 'core/gpu/gpu-shared-state.mjs',
+      fileIds: ['core/gpu/gpu-shared-state.mjs', 'core/gpu/gpu-vram-runtime.mjs'],
+      inDeg: 1,
+      outDeg: 1,
+      inCycle: true,
+    };
+    const fileNode = {
+      id: 'core/gpu/gpu-shared-state.mjs',
+      label: 'gpu-shared-state.mjs',
+      isFolder: false,
+      isSymbol: false,
+      inDeg: 1,
+      outDeg: 0,
+      inCycle: true,
+    };
+    const symNode = {
+      id: 'sym:core/gpu/gpu-shared-state.mjs#loadGpuConfig:10',
+      label: 'loadGpuConfig',
+      isSymbol: true,
+      file: 'core/gpu/gpu-shared-state.mjs',
+      startLine: 10,
+      endLine: 45,
+      inDeg: 1,
+      outDeg: 0,
+    };
+    pgState.nodes = [folderNode, fileNode, symNode];
+    pgState.nodeById = new Map([
+      [folderNode.id, folderNode],
+      [fileNode.id, fileNode],
+      [symNode.id, symNode],
+    ]);
+    pgState.inNeighbors = new Map([
+      [folderNode.id, [{ id: 'core/local-gpu-engine.mjs' }]],
+      ['core/local-gpu-engine.mjs', [{ id: 'sidecars/panel/server.mjs' }]],
+      [fileNode.id, [{ id: 'core/gpu/gpu-vram-runtime.mjs' }]],
+      ['core/gpu/gpu-vram-runtime.mjs', [{ id: 'core/local-gpu-engine.mjs' }]],
+      [symNode.id, []],
+    ]);
+    pgState.outNeighbors = new Map([
+      [folderNode.id, [{ id: 'core/i18n.mjs' }]],
+      [fileNode.id, []],
+      [symNode.id, []],
+    ]);
+
+    const fCtx = pgBuildNodeAiContext(folderNode);
+    const sCtx = pgBuildNodeAiContext(symNode);
+    const ruRisks = pgBuildAiPresetPrompt('risks', fCtx);
+    const ruBugsFolder = pgBuildAiPresetPrompt('bugs', fCtx);
+    const ruTests = pgBuildAiPresetPrompt('tests', fCtx);
+    const ruRel = pgBuildNodeRelationsContextBlock(fCtx);
+    const symPrompt = pgBuildAiPresetPrompt('risks', sCtx);
+
+    currentUiLanguage = 'en';
+    const enBugsFolder = pgBuildAiPresetPrompt('bugs', fCtx);
+    const enRisks = pgBuildAiPresetPrompt('risks', fCtx);
+    const enTests = pgBuildAiPresetPrompt('tests', fCtx);
+
+    currentUiLanguage = 'ru';
+    pgState.selectedNodeId = fileNode.id;
+    await pgRunAiPreset('bugs');
+    const lastUserBubble = pgState.aiHistory.find((m) => m.role === 'user')?.content || '';
+
+    return {
+      ruRisks,
+      ruBugsFolder,
+      ruTests,
+      ruRel,
+      symPrompt,
+      enBugsFolder,
+      enRisks,
+      enTests,
+      lastUserBubble,
+    };
+  })()`, ctx);
+
+  assert.ok(out.ruRisks.includes('без правки файлов') && out.ruRisks.includes('2-й хоп'), 'RU risks preset must enforce read-only and 2-hop analysis');
+  assert.ok(out.ruBugsFolder.includes('TOCTOU') && out.ruBugsFolder.includes('все файлы папки'), 'RU bugs preset for folder must require checking all folder files and TOCTOU/races');
+  assert.ok(out.ruTests.includes('Must-have') && out.ruTests.includes('существующими тестами'), 'RU tests preset must check existing tests and group Must-have/Edge/Regression');
+  assert.ok(out.ruRel.includes('2-й хоп Blast Radius') && out.ruRel.includes('sidecars/panel/server.mjs'), 'Relations block must include 2nd-hop Blast Radius');
+  assert.ok(out.ruRel.includes('tests/gpu-shared-state.test.mjs'), 'Relations block must include related tests from testFilesByTarget');
+  assert.ok(out.ruRel.includes('Цикл импортов'), 'Relations block must include import cycle flag');
+  assert.ok(out.symPrompt.includes('core/gpu/gpu-shared-state.mjs:L10-L45'), 'Symbol prompt must include line range');
+
+  assert.ok(out.enBugsFolder.includes('(hub: core/gpu/gpu-shared-state.mjs)'), 'EN folder subject must use (hub: ...), not Russian (хаб: ...)');
+  assert.ok(!out.enBugsFolder.includes('хаб:'), 'EN prompt must never leak Russian (хаб:)');
+  assert.ok(out.enRisks.includes('do not edit files'), 'EN risks preset must forbid editing files');
+  assert.ok(out.enTests.includes('do not create files until confirmed'), 'EN tests preset must forbid creating files before confirmation');
+
+  assert.equal(localChatCalls.length, 1, 'pgRunAiPreset must dispatch to /api/local-chat');
+  assert.ok(localChatCalls[0].message.includes('[Контекст связей с карты проекта]'), 'Local GPU chat must receive enriched relations context');
+  assert.ok(localChatCalls[0].message.includes('tests/gpu-shared-state.test.mjs'), 'Local GPU chat must receive related test file');
+  assert.equal(out.lastUserBubble, 'Найти баги и слабые места', 'User chat bubble must stay compact with preset title');
 });
 
 
