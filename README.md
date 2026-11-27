@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="The Tunnel v4.0.6 — 3D AI Autopilot &amp; Coprocessor for Google Antigravity" width="100%" />
+  <img src="assets/banner.svg" alt="The Tunnel v4.0.7 — 3D AI Autopilot &amp; Coprocessor for Google Antigravity" width="100%" />
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v4.0.6-f04848?style=flat-square&labelColor=121316" alt="Release v4.0.6" />
+  <img src="https://img.shields.io/badge/release-v4.0.7-f04848?style=flat-square&labelColor=121316" alt="Release v4.0.7" />
   <img src="https://img.shields.io/badge/node-%3E%3D22_ESM_(0_deps)-3fb950?style=flat-square&labelColor=121316" alt="Node 22 ESM Zero Dependencies" />
   <img src="https://img.shields.io/badge/guardrails-59_active-f3f4f6?style=flat-square&labelColor=121316" alt="59 Guardrails" />
   <img src="https://img.shields.io/badge/skills-15_built--in-e09f3e?style=flat-square&labelColor=121316" alt="15 Built-in Skills" />
@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/UI-EN_%2F_RU-f04848?style=flat-square&labelColor=121316" alt="Bilingual EN and RU" />
 </p>
 
-# The Tunnel `v4.0.6` — 3D AI Autopilot & Model Router
+# The Tunnel `v4.0.7` — 3D AI Autopilot & Model Router
 
 > **Zero-dependency (`Node.js >=22` ESM) engineering cockpit for Google Antigravity:** 3D model routing (`Breadth × Depth × Risk`), Interactive Project Map (`WebGL2`), modular In-RAM MCP (`4–32 GB`), multi-core CPU coprocessor, optional local Ollama GPU (`0` cloud tokens), and **59 active guardrails**.
 
@@ -20,14 +20,14 @@
 ## 🎬 30-Second Interactive Demo (`EN` + `«RU»` · Sound & FX)
 
 <p align="center">
-  <a href="docs/media/the-tunnel-demo-v4.0.6.mp4">
+  <a href="docs/media/the-tunnel-demo-v4.0.7.mp4">
     <img src="docs/media/hero-showcase.gif" alt="The Tunnel v4.0.6 — 30-second live extension showcase (EN + RU)" width="100%" />
   </a>
   <br/>
   <sub>
     <b>Watch full 30s 1080p HD Video with Sound &amp; FX:</b>
-    <a href="https://github.com/vaszuevvas-coder/antigravity-model-router/releases/download/v4.0.6/the-tunnel-demo-v4.0.6.mp4">Download / Stream MP4 (Release v4.0.6)</a> ·
-    <a href="docs/media/the-tunnel-demo-v4.0.6.mp4">Repo MP4</a> ·
+    <a href="https://github.com/vaszuevvas-coder/antigravity-model-router/releases/download/v4.0.7/the-tunnel-demo-v4.0.7.mp4">Download / Stream MP4 (Release v4.0.7)</a> ·
+    <a href="docs/media/the-tunnel-demo-v4.0.7.mp4">Repo MP4</a> ·
     <a href="docs/demo/index.html">Interactive Web Player (Web Audio SFX &amp; Lens Switcher)</a>
   </sub>
 </p>
@@ -117,7 +117,7 @@ node install.js
 Restart **Google Antigravity** (or reload the sidecar panel) to activate hooks, In-RAM MCP, and **The Tunnel** HUD.
 
 ### Option 2 — Windows 1-Click Installer (`Setup.exe`) & Portable `.zip`
-- Download `The-Tunnel-v4.0.6-Setup.exe` or `The-Tunnel-v4.0.6.zip` from [GitHub Releases](https://github.com/vaszuevvas-coder/antigravity-model-router/releases/latest).
+- Download `The-Tunnel-v4.0.7-Setup.exe` or `The-Tunnel-v4.0.7.zip` from [GitHub Releases](https://github.com/vaszuevvas-coder/antigravity-model-router/releases/latest).
 - Auto-detects OS locale (`en` / `ru`, overridable via `--lang=en|ru` or `TUNNEL_LANG`). `Setup.exe` supports both GUI and silent flags (`--silent` / `/S`, `--uninstall`).
 - Portable `.zip` includes `install.bat` / `uninstall.bat` (and `Установить плагин.bat` / `Удалить плагин.bat`) on Windows and `./install.sh` on macOS / Linux.
 - **Safe Upgrades:** `install.js` preserves your live `router-state.json` (with automatic backup), cleans orphaned files without touching `.cache`, updates `mcp_config.json`, and migrates vector caches to `i8bin-v2`.
@@ -128,7 +128,7 @@ Restart **Google Antigravity** (or reload the sidecar panel) to activate hooks, 
 
 ```text
 antigravity-model-router/
-├── plugin.json                # Plugin manifest (The Tunnel v4.0.6)
+├── plugin.json                # Plugin manifest (The Tunnel v4.0.7)
 ├── package.json               # Scripts: test, audit, audit:mega, audit:github, lint:skills, pack
 ├── router-state.json          # Clean portable default router & guardrail template
 ├── hooks.json / mcp_config.json
@@ -136,7 +136,7 @@ antigravity-model-router/
 ├── core/                      # 59 core / 71 total ESM modules (gpu/, progress/, ram/)
 ├── sidecars/panel/            # 7-tab Crimson Rail Control Panel & Project Map
 ├── skills/                    # 15 built-in skills & deterministic scripts
-├── tests/                     # 56 automated test suites (node:test)
+├── tests/                     # 57 automated test suites (node:test)
 ├── docs/                      # Real engine media captures & interactive HTML5 demo
 └── rules/ / agents/           # Autopilot rules (AGENTS.md) & @verifier agent
 ```

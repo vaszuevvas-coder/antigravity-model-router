@@ -4,7 +4,25 @@
 
 All notable changes to **The Tunnel** (`antigravity-model-router`) are documented in this file in accordance with [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [SemVer](https://semver.org/).
 
-> The timeline from `v3.8.0` to `v4.0.6` was reconstructed from development logs and verified against the codebase (`59` primary / `71` total core ESM modules, `59` `GUARDRAIL_KEYS` contours, `15` built-in skills, and `56` automated test suites).
+> The timeline from `v3.8.0` to `v4.0.7` was reconstructed from development logs and verified against the codebase (`59` primary / `71` total core ESM modules, `59` `GUARDRAIL_KEYS` contours, `15` built-in skills, and `57` automated test suites).
+
+---
+
+## [4.0.7] — 2026-11-27
+
+### Added & Improved (Modular Bento UI, Bilingual Changelog, Security Hardening & 57 Test Suites)
+- **Modular Bento Panel Layout, Variant B Category Pages & Scroll-Fade HUD ([sidecars/panel/ui-src/head-body.html](sidecars/panel/ui-src/head-body.html), [sidecars/panel/ui-src/styles.css](sidecars/panel/ui-src/styles.css), [sidecars/panel/ui-src/js/05-progress-hud.js](sidecars/panel/ui-src/js/05-progress-hud.js), [tests/router-task-progress.test.mjs](tests/router-task-progress.test.mjs))**:
+  - Upgraded Behavior, Bugs, Memory, and Settings tabs to a modular Bento layout with seamless Variant B category pages and inline accordions.
+  - Added dynamic scroll-fade CSS masks (`has-fade-top` / `has-fade-bottom`) and scroll/resize sync for `#agActiveChatsStack` in the Progress HUD.
+- **Bilingual EN/RU Changelog with Automatic `uiLanguage` Switching ([CHANGELOG.md](CHANGELOG.md), [CHANGELOG.ru.md](CHANGELOG.ru.md), [core/changelog-parser.mjs](core/changelog-parser.mjs), [sidecars/panel/server.mjs](sidecars/panel/server.mjs))**:
+  - Added a dedicated Russian changelog (`CHANGELOG.ru.md`) alongside English `CHANGELOG.md`, automatically selected in the panel's "What's New" modal according to `uiLanguage`.
+- **Security Hardening & Runtime Reliability ([core/security-guard.mjs](core/security-guard.mjs), [core/plugin-updater.mjs](core/plugin-updater.mjs), [sidecars/panel/server.mjs](sidecars/panel/server.mjs), [core/router-cli.mjs](core/router-cli.mjs), [tests/security-cli-depth-contracts.test.mjs](tests/security-cli-depth-contracts.test.mjs))**:
+  - Hardened sidecar token/port validation, ALS auth isolation, queue lifecycle, Project Graph initialization races, and repo-pinned SHA-256 verification in `plugin-updater.mjs`.
+  - Expanded `redactSecretsInText` coverage for database URIs, PEM blocks, JWTs, Bearer tokens, and Windows paths; decoupled `router-cli.mjs` dependencies.
+- **Project Map AI Presets, RU Shorts/Reels Media & 57 Automated Test Suites ([sidecars/panel/ui-src/js/07-project-graph.js](sidecars/panel/ui-src/js/07-project-graph.js), [scripts/render-shorts-ru.mjs](scripts/render-shorts-ru.mjs), [tests/quota-pacer.test.mjs](tests/quota-pacer.test.mjs))**:
+  - Upgraded Project Map AI presets (risks/bugs/tests) with richer graph relations context.
+  - Added 25-second vertical Russian Shorts/Reels promo video pipeline with Neural TTS, karaoke subtitles, and SFX.
+  - Added dedicated unit, edge-case, and regression tests for `core/quota-pacer.mjs` (`tests/quota-pacer.test.mjs`), bringing the suite count to `57`.
 
 ---
 

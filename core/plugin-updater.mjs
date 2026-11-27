@@ -297,8 +297,8 @@ export function readPluginMeta(pluginRoot = '') {
 
   const rawVer = (typeof pluginManifest?.version === 'string' && pluginManifest.version.trim())
     || (typeof pkgManifest?.version === 'string' && pkgManifest.version.trim())
-    || '4.0.6';
-  const version = parseSemver(rawVer)?.version || '4.0.6';
+    || '4.0.7';
+  const version = parseSemver(rawVer)?.version || '4.0.7';
 
   const rawRepo =
     pluginManifest?.repository?.url

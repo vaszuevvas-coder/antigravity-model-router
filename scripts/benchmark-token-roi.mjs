@@ -24,7 +24,7 @@ function readPackageVersion() {
       return pkg.version.trim();
     }
   } catch {}
-  return '4.0.6';
+  return '4.0.7';
 }
 
 function readLiveGpuTelemetry() {

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * @file run-mega-diagnostic.mjs
- * @description Unified 6-contour 360-degree Mega-Diagnostic CLI for The Tunnel v4.0.6:
+ * @description Unified 6-contour 360-degree Mega-Diagnostic CLI for The Tunnel v4.0.7:
  *   1. Hygiene & Manifests (UI build check, version sync, Skill-Architect, GitHub Guard)
  *   2. Static, Security, Contracts & Sandboxed Fuzzing (Deep Stress Auditor --fuzz)
  *   3. 8 Practical Cross-System Missions (tests/mega-cross-system-e2e.test.mjs)

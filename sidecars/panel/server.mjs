@@ -235,7 +235,7 @@ function getPluginVersion() {
     const ver = typeof meta?.version === 'string' ? meta.version.trim() : '';
     if (ver) return ver;
   } catch {}
-  return '4.0.6';
+  return '4.0.7';
 }
 
 const PANEL_SERVER_STARTED_AT = Date.now();

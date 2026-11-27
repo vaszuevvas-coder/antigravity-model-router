@@ -5,7 +5,7 @@
   <meta name="google" content="notranslate" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='2' width='28' height='28' rx='5' fill='%230e1014' stroke='%232a2d35' stroke-width='1.8'/%3E%3Cpath d='M5.5 16h5M21.5 16h5' stroke='%239ca3af' stroke-width='1.8' stroke-linecap='round'/%3E%3Cpath d='M16 9l6.5 7-6.5 7-6.5-7z' fill='%23181215' stroke='%23f04848' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M16 12.8l2.8 3.2-2.8 3.2-2.8-3.2z' fill='%23f04848'/%3E%3Ccircle cx='16' cy='16' r='1.1' fill='%23f3f4f6'/%3E%3C/svg%3E" />
-  <title>The Tunnel v4.0.6</title>
+  <title>The Tunnel v4.0.7</title>
   <script src="/preload.js"></script>
   <style>
     :root {
@@ -11155,7 +11155,7 @@
     .full-workspace-shell > .window-body .bento-mode-grid > .mode-card {
       background: rgba(255, 255, 255, 0.022) !important;
       border: 1px solid rgba(255, 255, 255, 0.075) !important;
-      border-radius: var(--r-md, 10px) !important;
+      border-radius: var(--r-md) !important;
       padding: 9px 10px !important;
       cursor: pointer;
       display: flex;
@@ -11199,7 +11199,7 @@
     .full-workspace-shell > .window-body .bento-tile {
       background: rgba(255, 255, 255, 0.025) !important;
       border: 1px solid rgba(255, 255, 255, 0.07) !important;
-      border-radius: var(--r-md, 10px) !important;
+      border-radius: var(--r-md) !important;
       padding: 9px 11px !important;
       min-width: 0;
       max-width: 100%;
@@ -11366,7 +11366,7 @@
       gap: 5px;
       margin-top: 10px;
       padding: 4px;
-      border-radius: var(--r-md, 10px);
+      border-radius: var(--r-md);
       background: rgba(255, 255, 255, 0.02);
       border: 1px solid rgba(255, 255, 255, 0.06);
     }
@@ -12107,7 +12107,7 @@
               <span class="bento-toggle-title">Умная связка Orchestrator</span>
               <span class="bento-toggle-sub">Без опросов на S/M</span>
             </span>
-            <input type="checkbox" id="chk-orchestratorSmartSynergy" data-action="toggleOption" data-key="orchestratorSmartSynergy" />
+            <input type="checkbox" id="chk-orchestratorSmartSynergy" data-action="toggleOption" data-key="orchestratorSmartSynergy" aria-label="Orchestrator Smart-Synergy" />
           </label>
 
           <label class="toggle-row bento-tile bento-toggle-tile" title="Что делает: добавляет компактную итоговую строку о режиме, сложности, модели и подключённых навыках на крупных задачах M/L/XL.
@@ -12116,7 +12116,7 @@
               <span class="bento-toggle-title">Плашка в ответе</span>
               <span class="bento-toggle-sub">Модель и скиллы на M+</span>
             </span>
-            <input type="checkbox" id="chk-showBadge" data-action="toggleOption" data-key="showBadge" />
+            <input type="checkbox" id="chk-showBadge" data-action="toggleOption" data-key="showBadge" aria-label="Show Mode Badge" />
           </label>
         </div>
       </section>
@@ -12207,14 +12207,14 @@
               <span class="bento-toggle-title">Авто-Ревизор (<code>@verifier</code>)</span>
               <span class="bento-toggle-sub">Проверка диффов и тестов</span>
             </span>
-            <input type="checkbox" id="chk-swarmAutoVerifier" data-action="toggleOption" data-key="swarmAutoVerifier" />
+            <input type="checkbox" id="chk-swarmAutoVerifier" data-action="toggleOption" data-key="swarmAutoVerifier" aria-label="Swarm Auto-Verifier" />
           </label>
           <label class="toggle-row bento-tile bento-toggle-tile" title="Если у воркера Роя закончилась квота модели, автоматически переключать его на доступную модель без потери памяти диалога">
             <span class="bento-toggle-meta">
               <span class="bento-toggle-title">Страховка квоты</span>
               <span class="bento-toggle-sub">Пересадка без сброса памяти</span>
             </span>
-            <input type="checkbox" id="chk-swarmQuotaFailover" data-action="toggleOption" data-key="swarmQuotaFailover" />
+            <input type="checkbox" id="chk-swarmQuotaFailover" data-action="toggleOption" data-key="swarmQuotaFailover" aria-label="Swarm Quota Failover" />
           </label>
         </div>
       </section>
@@ -13132,7 +13132,7 @@
               <span class="bento-toggle-title">NVMe-память (<code>node:sqlite</code>)</span>
               <span class="bento-toggle-sub">Постоянная база на диске</span>
             </span>
-            <input type="checkbox" id="chk-sqliteKnowledgeEnabled" data-action="toggleOption" data-key="sqliteKnowledgeEnabled" />
+            <input type="checkbox" id="chk-sqliteKnowledgeEnabled" data-action="toggleOption" data-key="sqliteKnowledgeEnabled" aria-label="SQLite Knowledge Graph" />
           </label>
           <label class="toggle-row bento-tile bento-toggle-tile" title="Что делает: выделяет повторяющиеся рабочие приёмы и ошибки в проекте и накапливает их как инстинкты для последующего превращения в навыки.
 Зачем: роутер адаптируется к правилам именно вашего репозитория.">
@@ -13140,7 +13140,7 @@
               <span class="bento-toggle-title">Skill Crystallizer</span>
               <span class="bento-toggle-sub">Авто-навыки из паттернов</span>
             </span>
-            <input type="checkbox" id="chk-skillCrystallizer" data-action="toggleOption" data-key="skillCrystallizer" />
+            <input type="checkbox" id="chk-skillCrystallizer" data-action="toggleOption" data-key="skillCrystallizer" aria-label="Skill Crystallizer" />
           </label>
         </div>
 
@@ -13417,7 +13417,7 @@
       <div id="statusPill" class="status-pane status-pill-hidden" aria-live="polite">Готово · Синхронизировано</div>
       <div class="footer-credit">Created by Vasili Zuev</div>
       <div class="footer-version-group" role="group" aria-label="Версия, обновления и история изменений">
-        <div class="status-pane footer-version-pane" id="footerPluginVersion">The Tunnel v4.0.6</div>
+        <div class="status-pane footer-version-pane" id="footerPluginVersion">The Tunnel v4.0.7</div>
         <button class="lg-icon-btn round update-header-btn footer-update-btn" type="button" id="checkPluginUpdateBtn" data-action="checkPluginUpdateManual" title="Проверить обновления расширения на GitHub" aria-label="Проверить обновления расширения">
           <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M8 2.2v7.6M5 7l3 3 3-3M3 13h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
@@ -13440,7 +13440,7 @@
       <div class="wiz-head">
         <div class="lg-brand">
           <span class="lg-brand-orb" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 8h3.5M10.5 8H14M5.5 8L8 4.5 10.5 8 8 11.5z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v4.0.6</span>
+          <span class="lg-brand-title" id="wizModalBrandTitle">The Tunnel · Мастер v4.0.7</span>
           <span class="lg-session-pill" id="wizLaunchBadge">Первый запуск</span>
         </div>
         <button class="lg-icon-btn round" type="button" data-action="closeOnboardingWizard" title="Отложить или закрыть окно настройки (Esc)">×</button>
@@ -21357,7 +21357,7 @@
             '<strong>' + escapeHtml(c.label || c.id) + '</strong>' +
             '<span style="color:var(--text-sub);">' + Number(c.size || 0) + L(' ф. · hub: ', ' f. · hub: ') + escapeHtml((c.hubFile || '').split('/').pop()) + '</span>' +
           '</div>' +
-          '<div style="height:4px;background:var(--border-subtle);border-radius:2px;overflow:hidden;margin-top:2px;">' +
+          '<div style="height:4px;background:var(--border-subtle);border-radius:var(--r-xs);overflow:hidden;margin-top:2px;">' +
             '<div style="height:100%;width:' + wPct + '%;background:var(--accent-cyan);"></div>' +
           '</div>' +
         '</div>';

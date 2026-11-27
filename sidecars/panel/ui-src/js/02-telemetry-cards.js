@@ -4777,7 +4777,7 @@
             '<strong>' + escapeHtml(c.label || c.id) + '</strong>' +
             '<span style="color:var(--text-sub);">' + Number(c.size || 0) + L(' ф. · hub: ', ' f. · hub: ') + escapeHtml((c.hubFile || '').split('/').pop()) + '</span>' +
           '</div>' +
-          '<div style="height:4px;background:var(--border-subtle);border-radius:2px;overflow:hidden;margin-top:2px;">' +
+          '<div style="height:4px;background:var(--border-subtle);border-radius:var(--r-xs);overflow:hidden;margin-top:2px;">' +
             '<div style="height:100%;width:' + wPct + '%;background:var(--accent-cyan);"></div>' +
           '</div>' +
         '</div>';

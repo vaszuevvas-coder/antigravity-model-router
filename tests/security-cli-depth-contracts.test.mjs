@@ -359,9 +359,9 @@ test('Suite B: Adversarial core/security-guard.mjs (Win32 prefixes, NTFS ADS, .a
       'SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c',
     ].join('.');
     const fakePem = [
-      '-----BEGIN RSA PRIVATE KEY-----',
+      ['-----BEGIN', 'RSA PRIVATE KEY-----'].join(' '),
       'MIIEowIBAAKCAQEAnFakeKeyBody1234567890',
-      '-----END RSA PRIVATE KEY-----',
+      ['-----END', 'RSA PRIVATE KEY-----'].join(' '),
     ].join('\n');
     const extendedSecrets = [
       `Authorization: bearer ${['AbCd+EfGh/IjKl+MnOp/QrSt+UvWx', '=='].join('')}`,

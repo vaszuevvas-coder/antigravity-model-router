@@ -3,7 +3,7 @@
   "args": ["server.mjs"],
   "restart_policy": "always",
   "display_name": "The Tunnel",
-  "description": "The Tunnel · Interactive control panel v4.0.6 for Gemini 4 (Hydrogen, Neon, Carbon, Argon), adaptive In-RAM cache (up to 32 GB), and local Ollama GPU.",
+  "description": "The Tunnel · Interactive control panel v4.0.7 for Gemini 4 (Hydrogen, Neon, Carbon, Argon), adaptive In-RAM cache (up to 32 GB), and local Ollama GPU.",
   "has_web_ui": true,
   "ui_config": {
     "display_name": "The Tunnel",

@@ -4,7 +4,25 @@
 
 Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
 
-> Хронология с `v3.8.0` по `v4.0.6` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`59` основных / `71` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `56` наборов автотестов).
+> Хронология с `v3.8.0` по `v4.0.7` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`59` основных / `71` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `57` наборов автотестов).
+
+---
+
+## [4.0.7] — 2026-11-27
+
+### Добавлено и улучшено (Модульный Bento-интерфейс, двуязычный Changelog, усиление безопасности и 57 наборов тестов)
+- **Модульная Bento-вёрстка панели, страницы категорий и scroll-fade в HUD ([sidecars/panel/ui-src/head-body.html](sidecars/panel/ui-src/head-body.html), [sidecars/panel/ui-src/styles.css](sidecars/panel/ui-src/styles.css), [sidecars/panel/ui-src/js/05-progress-hud.js](sidecars/panel/ui-src/js/05-progress-hud.js), [tests/router-task-progress.test.mjs](tests/router-task-progress.test.mjs))**:
+  - Вкладки «Поведение», «Баги», «Память» и «Настройки» переведены на модульную Bento-сетку с бесшовными страницами категорий (Вариант B) и встроенными аккордеонами.
+  - В HUD прогресса добавлены динамические CSS-маски прокрутки (`has-fade-top` / `has-fade-bottom`) и автосинхронизация скролла/ресайза для списка активных чатов `#agActiveChatsStack`.
+- **Двуязычный Changelog EN/RU с автопереключением по `uiLanguage` ([CHANGELOG.md](CHANGELOG.md), [CHANGELOG.ru.md](CHANGELOG.ru.md), [core/changelog-parser.mjs](core/changelog-parser.mjs), [sidecars/panel/server.mjs](sidecars/panel/server.mjs))**:
+  - Добавлена русская версия истории изменений `CHANGELOG.ru.md`, которая автоматически подгружается в окне «Что нового» при выборе русского языка интерфейса.
+- **Усиление безопасности и стабильности рантайма ([core/security-guard.mjs](core/security-guard.mjs), [core/plugin-updater.mjs](core/plugin-updater.mjs), [sidecars/panel/server.mjs](sidecars/panel/server.mjs), [core/router-cli.mjs](core/router-cli.mjs), [tests/security-cli-depth-contracts.test.mjs](tests/security-cli-depth-contracts.test.mjs))**:
+  - Усилены проверки токена и порта сайдкара, ALS-изоляция авторизации, жизненный цикл очередей, защита от гонок инициализации Карты проекта и проверка SHA-256 обновлений с привязкой к репозиторию в `plugin-updater.mjs`.
+  - Расширена маскировка секретов в `redactSecretsInText` (URI БД, PEM-блоки, JWT, Bearer-токены, пути Windows) и развязаны зависимости `router-cli.mjs`.
+- **AI-пресеты Карты проекта, вертикальный RU-ролик Shorts/Reels и 57 наборов автотестов ([sidecars/panel/ui-src/js/07-project-graph.js](sidecars/panel/ui-src/js/07-project-graph.js), [scripts/render-shorts-ru.mjs](scripts/render-shorts-ru.mjs), [tests/quota-pacer.test.mjs](tests/quota-pacer.test.mjs))**:
+  - Обновлены AI-пресеты рисков/багов/тестов в Карте проекта с обогащённым контекстом связей графа.
+  - Добавлен пайплайн рендера 25-секундного вертикального RU-ролика Shorts/Reels с Neural TTS, караоке-субтитрами и SFX.
+  - Добавлен отдельный набор юнит-, граничных и регрессионных тестов `tests/quota-pacer.test.mjs` — всего `57` наборов автотестов.
 
 ---
 

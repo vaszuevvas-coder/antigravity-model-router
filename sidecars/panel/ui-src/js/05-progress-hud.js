@@ -450,6 +450,55 @@
       }
     }
 
+    let _agChatsStackFadeRaf = 0;
+
+    function syncActiveChatsStackFade(targetEl) {
+      const el = targetEl || document.getElementById('agActiveChatsStack');
+      if (!el) return;
+      const overflowPx = el.scrollHeight - el.clientHeight;
+      const hasOverflow = overflowPx > 2;
+      const showTop = hasOverflow && el.scrollTop > 2;
+      const showBottom = hasOverflow && (el.scrollTop + el.clientHeight < el.scrollHeight - 2);
+      el.classList.toggle('has-fade-top', showTop);
+      el.classList.toggle('has-fade-bottom', showBottom);
+    }
+
+    function scheduleActiveChatsStackFadeSync(targetEl) {
+      const el = targetEl || document.getElementById('agActiveChatsStack');
+      if (!el) return;
+      if (typeof requestAnimationFrame !== 'function') {
+        syncActiveChatsStackFade(el);
+        return;
+      }
+      if (_agChatsStackFadeRaf) return;
+      _agChatsStackFadeRaf = requestAnimationFrame(function () {
+        _agChatsStackFadeRaf = 0;
+        syncActiveChatsStackFade(el);
+      });
+    }
+
+    function ensureActiveChatsStackFadeListeners(el) {
+      if (!el || el._agChatsStackFadeBound) return;
+      el._agChatsStackFadeBound = true;
+      el.addEventListener('scroll', function () {
+        syncActiveChatsStackFade(el);
+      }, { passive: true });
+      el.addEventListener('transitionend', function () {
+        scheduleActiveChatsStackFadeSync(el);
+      });
+      if (typeof ResizeObserver === 'function') {
+        const ro = new ResizeObserver(function () {
+          scheduleActiveChatsStackFadeSync(el);
+        });
+        ro.observe(el);
+      }
+      if (typeof window !== 'undefined' && window.addEventListener) {
+        window.addEventListener('resize', function () {
+          scheduleActiveChatsStackFadeSync(el);
+        }, { passive: true });
+      }
+    }
+
     function renderTaskProgressAndHud(progress, hud) {
       const p = progress || (hud && hud.progress) || null;
       if (!p) return;
@@ -459,6 +508,7 @@
       const recentBarEl = document.getElementById('agRecentProjectsBar');
       const stackEl = document.getElementById('agActiveChatsStack');
       if (!stackEl) return;
+      ensureActiveChatsStackFadeListeners(stackEl);
 
       function formatChatsWord(n) {
         return Lplural(n, 'чат', 'чата', 'чатов', 'chat', 'chats');
@@ -1350,6 +1400,8 @@
           } catch {}
         }
         if (typeof syncFullLeftRailStickyOffset === 'function') syncFullLeftRailStickyOffset();
+        syncActiveChatsStackFade(stackEl);
+        scheduleActiveChatsStackFadeSync(stackEl);
         return;
       }
 
@@ -1665,6 +1717,8 @@
           }
         });
       }
+      syncActiveChatsStackFade(stackEl);
+      scheduleActiveChatsStackFadeSync(stackEl);
     }
 
     document.addEventListener('pointerdown', function (ev) {

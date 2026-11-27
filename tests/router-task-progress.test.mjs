@@ -2761,3 +2761,11 @@ test('Task Progress: update_steps checklist sync & step-bounded honest percentag
     fs.rmSync(tmpBrain, { recursive: true, force: true });
   }
 });
+
+test('Task Progress UI: #agActiveChatsStack defines scroll-fade CSS masks & dynamic fade sync', () => {
+  const uiHtml = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+  assert.ok(uiHtml.includes('.ag-chats-stack.has-fade-bottom'), 'ui.html must define .ag-chats-stack.has-fade-bottom');
+  assert.ok(uiHtml.includes('.ag-chats-stack.has-fade-top'), 'ui.html must define .ag-chats-stack.has-fade-top');
+  assert.ok(uiHtml.includes('mask-image:'), 'ui.html must define CSS mask-image for scroll-fade');
+  assert.ok(uiHtml.includes('syncActiveChatsStackFade'), 'ui.html must include syncActiveChatsStackFade helper');
+});
