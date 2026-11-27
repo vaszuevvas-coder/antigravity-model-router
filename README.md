@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="The Tunnel v4.0.9 — 3D AI Autopilot &amp; Coprocessor for Google Antigravity" width="100%" />
+  <img src="assets/banner.svg" alt="The Tunnel v4.10.0 — 3D AI Autopilot &amp; Coprocessor for Google Antigravity" width="100%" />
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v4.0.9-f04848?style=flat-square&labelColor=121316" alt="Release v4.0.9" />
+  <img src="https://img.shields.io/badge/release-v4.10.0-f04848?style=flat-square&labelColor=121316" alt="Release v4.10.0" />
   <img src="https://img.shields.io/badge/node-%3E%3D22_ESM_(0_deps)-3fb950?style=flat-square&labelColor=121316" alt="Node 22 ESM Zero Dependencies" />
   <img src="https://img.shields.io/badge/guardrails-59_active-f3f4f6?style=flat-square&labelColor=121316" alt="59 Guardrails" />
   <img src="https://img.shields.io/badge/skills-15_built--in-e09f3e?style=flat-square&labelColor=121316" alt="15 Built-in Skills" />
@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/UI-EN_%2F_RU-f04848?style=flat-square&labelColor=121316" alt="Bilingual EN and RU" />
 </p>
 
-# The Tunnel `v4.0.9` — 3D AI Autopilot & Model Router
+# The Tunnel `v4.10.0` — 3D AI Autopilot & Model Router
 
 > **Zero-dependency (`Node.js >=22` ESM) engineering cockpit for Google Antigravity:** 3D model routing (`Breadth × Depth × Risk`), Interactive Project Map (`WebGL2`), modular In-RAM MCP (`4–32 GB`), multi-core CPU coprocessor, optional local Ollama GPU (`0` cloud tokens), and **59 active guardrails**.
 
@@ -55,7 +55,7 @@ Explore real architecture, transitive impact waves, dependency cycles, and AST s
 ## 🎛️ 7-Tab Crimson Rail Cockpit & Smart Composer 2.0 (`EN / RU`)
 
 <p align="center">
-  <img src="docs/media/cockpit-showcase.png" alt="The Tunnel v4.0.9 — 7-Tab Crimson Rail Control Panel (Live Capture)" width="100%" />
+  <img src="docs/media/cockpit-showcase.png" alt="The Tunnel v4.10.0 — 7-Tab Crimson Rail Control Panel (Live Capture)" width="100%" />
 </p>
 
 - **7-Tab Modular Cockpit & Lite Mode:** Dedicated tabs (`cockpit / behavior / economy / hardware / bugs / memory / settings`), adaptive UI scaling (`90%–130%`), live `EN ↔ RU` switching, built-in **What's New** changelog modal, and safe 1-click **GitHub Plugin Updater**.
@@ -117,7 +117,7 @@ node install.js
 Restart **Google Antigravity** (or reload the sidecar panel) to activate hooks, In-RAM MCP, and **The Tunnel** HUD.
 
 ### Option 2 — Windows 1-Click Installer (`Setup.exe`) & Portable `.zip`
-- Download `The-Tunnel-v4.0.9-Setup.exe` or `The-Tunnel-v4.0.9.zip` from [GitHub Releases](https://github.com/vaszuevvas-coder/antigravity-model-router/releases/latest).
+- Download `The-Tunnel-v4.10.0-Setup.exe` or `The-Tunnel-v4.10.0.zip` from [GitHub Releases](https://github.com/vaszuevvas-coder/antigravity-model-router/releases/latest).
 - Auto-detects OS locale (`en` / `ru`, overridable via `--lang=en|ru` or `TUNNEL_LANG`). `Setup.exe` supports both GUI and silent flags (`--silent` / `/S`, `--uninstall`).
 - Portable `.zip` includes `install.bat` / `uninstall.bat` (and `Установить плагин.bat` / `Удалить плагин.bat`) on Windows and `./install.sh` on macOS / Linux.
 - **Safe Upgrades:** `install.js` preserves your live `router-state.json` (with automatic backup), cleans orphaned files without touching `.cache`, updates `mcp_config.json`, and migrates vector caches to `i8bin-v2`.
@@ -128,7 +128,7 @@ Restart **Google Antigravity** (or reload the sidecar panel) to activate hooks, 
 
 ```text
 antigravity-model-router/
-├── plugin.json                # Plugin manifest (The Tunnel v4.0.9)
+├── plugin.json                # Plugin manifest (The Tunnel v4.10.0)
 ├── package.json               # Scripts: test, audit, audit:mega, audit:github, lint:skills, pack
 ├── router-state.json          # Clean portable default router & guardrail template
 ├── hooks.json / mcp_config.json

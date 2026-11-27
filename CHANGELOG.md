@@ -4,7 +4,26 @@
 
 All notable changes to **The Tunnel** (`antigravity-model-router`) are documented in this file in accordance with [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [SemVer](https://semver.org/).
 
-> The timeline from `v3.8.0` to `v4.0.9` was reconstructed from development logs and verified against the codebase (`59` primary / `71` total core ESM modules, `59` `GUARDRAIL_KEYS` contours, `15` built-in skills, and `60` automated test suites).
+> The timeline from `v3.8.0` to `v4.10.0` was reconstructed from development logs and verified against the codebase (`59` primary / `71` total core ESM modules, `59` `GUARDRAIL_KEYS` contours, `15` built-in skills, and `60` automated test suites).
+
+---
+
+## [4.10.0] — 2026-11-27
+
+### Fixed & Hardened (`PreToolUse` Windows Zombie-Lock Resilience, `discoverSkills` Fallback & Full 263/263 File Codebase Audit)
+- **`PreToolUse` & Windows File Lock Resilience ([core/safe-json.mjs](core/safe-json.mjs), [core/health-doctor.mjs](core/health-doctor.mjs), [core/task-progress.mjs](core/task-progress.mjs), [core/hook-runner.mjs](core/hook-runner.mjs), [core/read-dedup.mjs](core/read-dedup.mjs), [hooks.json](hooks.json), [tests/hooks-subprocess-contract.test.mjs](tests/hooks-subprocess-contract.test.mjs))**:
+  - Eliminated the `5251 ms` `PreToolUse` timeout (`exit status 1` on `timeout: 5`) caused by Windows NTFS `STATUS_DELETE_PENDING` zombie locks in `.cache/` (`task-progress.json.lock` returning `EPERM` on `mkdirSync`/`readdirSync`/`renameSync`).
+  - Upgraded `withFileLockSync` to rename-before-delete on lock release, fast-evict corrupt regular-file `.lock` and missing-`owner` orphaned lock directories, and deterministically fall back to `.lock.fb` when `.lock` is unrenameable or unreadable (`EPERM`/`EACCES`/`EBUSY`), while strictly preserving live-PID lock contention semantics.
+  - Bounded `updateJsonAtomicSync` `maxWaitMs`/`staleLockMs` (`600–1200 ms`) across `PreToolUse` hot paths (`advanceTaskProgressOnPreTool`, `recordReadBatchActivity`, `checkAndRecordRead`, `pre-invocation-turn.json`, `pre-edit-last.json`), raised `PreToolUse` timeout in `hooks.json` from `5s` to `10s`, and extended `health-doctor.mjs` stale-lock detection to `.lock.fb` and `EPERM`-protected lock dirs.
+  - Added subprocess burst-concurrency (`6` parallel hooks) and broken/zombie/live-PID `.lock` resilience regression tests in `tests/hooks-subprocess-contract.test.mjs` (`PreToolUse` response dropped from `5251 ms` to `329 ms`).
+- **Panel `discoverSkills` Own-Plugin Fallback ([sidecars/panel/lib/panel-state-skills.mjs](sidecars/panel/lib/panel-state-skills.mjs))**:
+  - Added `PANEL_PLUGIN_ROOT/skills` fallback scan in `discoverSkillsUncached` so bundled plugin skills remain discoverable in CI, dev repos, and test isolation without touching host `config.json`, while preserving disabled third-party plugin filtering.
+- **Full 263/263 File Codebase Audit Across 9 Batches (`b01411c..76216fa`)**:
+  - **Core, Locks & Win32 Contracts ([core/auto-verifier.mjs](core/auto-verifier.mjs), [core/agent-shield.mjs](core/agent-shield.mjs), [core/ag-cli.mjs](core/ag-cli.mjs), [core/repo-mapper.mjs](core/repo-mapper.mjs), [core/shadow-guard.mjs](core/shadow-guard.mjs), [core/shadow-worktree.mjs](core/shadow-worktree.mjs))**: Hardened core modules, lock safety, Windows path normalization, and audit contracts.
+  - **In-RAM Engine, MCP Daemon & SOTA Arena ([core/ram-memory-engine.mjs](core/ram-memory-engine.mjs), [core/ram-memory-mcp.mjs](core/ram-memory-mcp.mjs), [core/ram-sota-arena.mjs](core/ram-sota-arena.mjs), [core/ram/ram-search.mjs](core/ram/ram-search.mjs), [core/ram/ram-slicer.mjs](core/ram/ram-slicer.mjs))**: Hardened slicing, search, graph queries, context packs, and daemon isolation.
+  - **Local GPU, Ollama & Task Progress ([core/gpu/gpu-vram-runtime.mjs](core/gpu/gpu-vram-runtime.mjs), [core/gpu/gpu-vector-skills.mjs](core/gpu/gpu-vector-skills.mjs), [core/gpu/gpu-distill.mjs](core/gpu/gpu-distill.mjs), [core/progress/progress-parsers.mjs](core/progress/progress-parsers.mjs))**: Hardened Ollama HTTP/redirect guards, VRAM caps, vector locks, and progress synchronization.
+  - **Hook-Runner, Prefix Stability & Sidecar Panel ([agents/router-verifier.md](agents/router-verifier.md), [sidecars/panel/server.mjs](sidecars/panel/server.mjs), [sidecars/panel/lib/panel-security.mjs](sidecars/panel/lib/panel-security.mjs), [sidecars/panel/lib/panel-telemetry-collectors.mjs](sidecars/panel/lib/panel-telemetry-collectors.mjs), [sidecars/panel/ui-src/js/00-i18n.js](sidecars/panel/ui-src/js/00-i18n.js))**: Hardened prefix stability, `update_steps` fast-path, sidecar auth/SSRF guards, TOCTOU file races, cache isolation, tab sync, i18n, and showcase DOM references.
+  - **Installers, Scripts, Skills & 60 Isolated Test Suites ([install.js](install.js), [scripts/pack-release.mjs](scripts/pack-release.mjs), [scripts/lib/edge-tts-v2.mjs](scripts/lib/edge-tts-v2.mjs), [skills/github-publish-guard/scripts/audit-github-publish.mjs](skills/github-publish-guard/scripts/audit-github-publish.mjs), [tests/helpers/router-test-env.mjs](tests/helpers/router-test-env.mjs))**: Hardened installers, C# release target guard, `isMain` checks, SSRF/bounds in skills, docs parity, and test-suite isolation / handle-leak elimination across all `60` suites.
 
 ---
 

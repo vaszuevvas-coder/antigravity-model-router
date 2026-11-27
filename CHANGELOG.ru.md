@@ -4,7 +4,26 @@
 
 Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
 
-> Хронология с `v3.8.0` по `v4.0.9` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`59` основных / `71` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `60` наборов автотестов).
+> Хронология с `v3.8.0` по `v4.10.0` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`59` основных / `71` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `60` наборов автотестов).
+
+---
+
+## [4.10.0] — 2026-11-27
+
+### Исправлено и усилено (Устойчивость `PreToolUse` к зависшим `.lock`-папкам Windows, фолбэк `discoverSkills` и полный аудит 263/263 файлов)
+- **Устойчивость `PreToolUse` и файловых блокировок Windows ([core/safe-json.mjs](core/safe-json.mjs), [core/health-doctor.mjs](core/health-doctor.mjs), [core/task-progress.mjs](core/task-progress.mjs), [core/hook-runner.mjs](core/hook-runner.mjs), [core/read-dedup.mjs](core/read-dedup.mjs), [hooks.json](hooks.json), [tests/hooks-subprocess-contract.test.mjs](tests/hooks-subprocess-contract.test.mjs))**:
+  - Устранён сбой `PreToolUse` (`exit status 1` при таймауте `5s` из-за зависания на `5251 мс`), вызванный зависшей в Windows NTFS (`STATUS_DELETE_PENDING`) папкой `.cache/task-progress.json.lock`, на которой `mkdirSync`/`readdirSync`/`renameSync` возвращали `EPERM`.
+  - В `withFileLockSync` внедрено освобождение замка по схеме rename-before-delete, быстрое вытеснение повреждённых файлов-замков и осиротевших `.lock` без `owner`, а также детерминированный фолбэк на `.lock.fb` при непереименуемых/нечитаемых зомби-замках (`EPERM`/`EACCES`/`EBUSY`) с сохранением контракта ожидания для живых PID.
+  - Ограничены таймауты `updateJsonAtomicSync` (`maxWaitMs: 600–1200 мс`, `staleLockMs: 3000–3500 мс`) на горячем пути `PreToolUse` (`advanceTaskProgressOnPreTool`, `recordReadBatchActivity`, `checkAndRecordRead`, `pre-invocation-turn.json`, `pre-edit-last.json`), увеличен таймаут `PreToolUse` в `hooks.json` с `5` до `10` с, а `health-doctor.mjs` научился обнаруживать и чистить `.lock.fb` и `EPERM`-замки.
+  - В `tests/hooks-subprocess-contract.test.mjs` добавлены регрессионные тесты конкурентного запуска (`6` параллельных `PreToolUse`) и восстановления после битых/зомби/занятых `.lock` (время отклика живого хука снизилось с `5251 мс` до `329 мс`).
+- **Фолбэк собственных навыков плагина в `discoverSkills` ([sidecars/panel/lib/panel-state-skills.mjs](sidecars/panel/lib/panel-state-skills.mjs))**:
+  - В `discoverSkillsUncached` добавлено сканирование `PANEL_PLUGIN_ROOT/skills`, чтобы собственные навыки плагина корректно находились в CI, dev-репозитории и тестовой изоляции без изменения `config.json` пользователя и с сохранением фильтрации отключённых сторонних плагинов.
+- **Полный аудит 263/263 файлов кодовой базы за 9 батчей (`b01411c..76216fa`)**:
+  - **Ядро, блокировки и контракты Win32 ([core/auto-verifier.mjs](core/auto-verifier.mjs), [core/agent-shield.mjs](core/agent-shield.mjs), [core/ag-cli.mjs](core/ag-cli.mjs), [core/repo-mapper.mjs](core/repo-mapper.mjs), [core/shadow-guard.mjs](core/shadow-guard.mjs), [core/shadow-worktree.mjs](core/shadow-worktree.mjs))**: усилены модули ядра, защита замков, нормализация путей Windows и контракты аудита.
+  - **In-RAM движок, MCP-демон и SOTA Arena ([core/ram-memory-engine.mjs](core/ram-memory-engine.mjs), [core/ram-memory-mcp.mjs](core/ram-memory-mcp.mjs), [core/ram-sota-arena.mjs](core/ram-sota-arena.mjs), [core/ram/ram-search.mjs](core/ram/ram-search.mjs), [core/ram/ram-slicer.mjs](core/ram/ram-slicer.mjs))**: усилены нарезка, поиск, графовые запросы, контекстные пакеты и изоляция демона.
+  - **Локальный GPU, Ollama и прогресс задач ([core/gpu/gpu-vram-runtime.mjs](core/gpu/gpu-vram-runtime.mjs), [core/gpu/gpu-vector-skills.mjs](core/gpu/gpu-vector-skills.mjs), [core/gpu/gpu-distill.mjs](core/gpu/gpu-distill.mjs), [core/progress/progress-parsers.mjs](core/progress/progress-parsers.mjs))**: усилены HTTP/редирект-ограничения Ollama, лимиты VRAM, векторные замки и синхронизация прогресса.
+  - **Раннер хуков, стабильность префикса и панель сайдкара ([agents/router-verifier.md](agents/router-verifier.md), [sidecars/panel/server.mjs](sidecars/panel/server.mjs), [sidecars/panel/lib/panel-security.mjs](sidecars/panel/lib/panel-security.mjs), [sidecars/panel/lib/panel-telemetry-collectors.mjs](sidecars/panel/lib/panel-telemetry-collectors.mjs), [sidecars/panel/ui-src/js/00-i18n.js](sidecars/panel/ui-src/js/00-i18n.js))**: усилены стабильность KV-префикса, fast-path `update_steps`, защита auth/SSRF панели, устранены TOCTOU-гонки файлов, изоляция кэшей, синхронизация вкладок, i18n и устаревшие DOM-ссылки шоукейсов.
+  - **Установщики, скрипты, навыки и изоляция 60 наборов тестов ([install.js](install.js), [scripts/pack-release.mjs](scripts/pack-release.mjs), [scripts/lib/edge-tts-v2.mjs](scripts/lib/edge-tts-v2.mjs), [skills/github-publish-guard/scripts/audit-github-publish.mjs](skills/github-publish-guard/scripts/audit-github-publish.mjs), [tests/helpers/router-test-env.mjs](tests/helpers/router-test-env.mjs))**: усилены установщики, защита C#-таргета сборки, проверки `isMain`, SSRF/границы в скриптах навыков, паритет документации, изоляция тестов и устранение утечек хэндлов во всех `60` наборах.
 
 ---
 
