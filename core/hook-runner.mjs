@@ -18,7 +18,6 @@ import { appendDebugLog } from './debug-logger.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
-const CACHE_DIR = resolveTunnelCacheDir(PLUGIN_ROOT);
 const ROUTER_STATE_FILE = join(PLUGIN_ROOT, 'router-state.json');
 const getCacheDir = () => resolveTunnelCacheDir(PLUGIN_ROOT);
 const getRamDaemonFile = () => join(getCacheDir(), 'ram-daemon.json');
@@ -351,7 +350,7 @@ async function ensureHookDeps(eventName, toolName = '') {
         'taskProgress',
       ]);
     case 'PreToolUse':
-      if (toolName === 'ask_question' || toolName === 'invoke_subagent' || toolName === 'swarm') {
+      if (toolName === 'ask_question' || toolName === 'invoke_subagent' || toolName === 'swarm' || toolName === 'exit_plan_mode' || toolName === 'update_steps') {
         return loadDepsByNames(['swarmController', 'modelProfileMod', 'taskProgress']);
       }
       if (toolName === 'read_file') {
@@ -500,6 +499,7 @@ export async function readStdin() {
     });
     // Таймаут безопасности при зависании дескриптора stdin
     setTimeout(() => {
+      try { process.stdin.pause(); } catch {}
       try {
         resolve(data.trim() ? JSON.parse(data) : {});
       } catch {
@@ -986,6 +986,19 @@ export async function handleSessionStart(payload = {}, rawState = {}) {
           : `\n\n> 🔄 **[Plugin Drift]** Установленный плагин отстаёт от dev-репозитория (${driftRes.driftedFiles.join(', ')}). После завершения правок выполните \`node install.js\`.`;
         injection.injectSteps[0].systemMessage.systemMessage = `${curMsg}${notice}`;
       }
+    } catch {}
+  }
+
+  if (effectiveState.quotaPacerEnabled !== false) {
+    try {
+      await loadDepsByNames(['quotaPacer']);
+      const startPrefix = injection?.injectSteps?.[0]?.systemMessage?.systemMessage || buildStaticSessionStartHeader(effectiveState).join('\n');
+      quotaPacerMod?.auditPrefixStability?.({
+        convoId: String(payload.conversationId || 'default'),
+        staticPrefix: String(startPrefix).slice(0, 6000),
+        dynamicTail: '',
+        lang: resolveUserLanguage(effectiveState),
+      });
     } catch {}
   }
 
@@ -1702,7 +1715,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
     try {
       const [fricMod, hubMod] = await loadDepsByNames(['frictionObserver', 'knowledgeHub']);
       const fric = fricMod?.detectUserCorrectionFriction?.(userInput, {
-        touchedFiles: matchedRepoFiles,
+        touchedFiles: matchedRepoFiles.map((m) => (typeof m === 'string' ? m : m?.file)).filter(Boolean),
         semanticSkills,
       });
       if (fric?.detected && fric.candidatePattern && hubMod?.knowledgeHub) {
@@ -1827,11 +1840,12 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
           tokens: Math.round((userInput.length || 0) / 3),
         });
       }
-      if (isFirstStepOfTurn && quotaPacerMod?.auditPrefixStability && Array.isArray(injection?.injectSteps) && injection.injectSteps[0]?.systemMessage?.systemMessage) {
+      if (isFirstStepOfTurn && quotaPacerMod?.auditPrefixStability) {
         quotaPacerMod.auditPrefixStability({
           convoId,
-          staticPrefix: String(injection.injectSteps[0].systemMessage.systemMessage).slice(0, 6000),
+          staticPrefix: buildStaticSessionStartHeader(baseState).join('\n').slice(0, 6000),
           dynamicTail: thinkingBudgetHint,
+          lang: resolveUserLanguage(baseState),
         });
       }
     } catch {}
@@ -2367,8 +2381,11 @@ export async function handlePreToolUse(payload = {}, rawState = {}) {
       args,
       convoId: convoKey,
       state,
-      modelProfile: resolvePreToolModelProfile(),
     });
+  }
+
+  if (toolName === 'update_steps') {
+    return { decision: 'allow' };
   }
 
   if (toolName === 'exit_plan_mode') {
@@ -2653,7 +2670,7 @@ export async function handlePreToolUse(payload = {}, rawState = {}) {
   // 3. Защита от избыточной перезаписи (Overwrite Guard: warn-then-allow)
   if (diffPatcher && typeof diffPatcher.checkOverwriteGuard === 'function') {
     try {
-      const ow = diffPatcher.checkOverwriteGuard(toolName, args, state);
+      const ow = diffPatcher.checkOverwriteGuard(toolName, args, { ...state, workspaceRoot: effectiveFileWs });
       if (ow && ow.decision === 'deny' && ow.reason) {
         return { decision: 'deny', reason: ow.reason };
       }
@@ -3034,7 +3051,7 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
               workspaceRoot: wsPath,
               pitfallLedgerMod: pitfallLedger,
             });
-            if (resolvedRes?.resolved > 0 && state.sqliteKnowledgeEnabled !== false) {
+            if (resolvedRes?.resolved > 0 && state.sqliteKnowledgeEnabled !== false && !isEphemeralPostWs) {
               try {
                 await loadDepsByNames(['knowledgeHub', 'sessionHandoff']);
                 const handoff = sessionHandoff?.getSessionHandoff?.(wsPath, { createDir: false });
@@ -3101,7 +3118,9 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
     }
 
     if (
+      state.skillCrystallizer !== false &&
       state.sqliteKnowledgeEnabled !== false &&
+      !isEphemeralPostWs &&
       frictionObserver?.detectCliFailRecoveryFriction &&
       wsPath
     ) {
@@ -3118,6 +3137,7 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
             workspaceRoot: wsPath,
             signalType: 'cli_correction',
             pattern: cliRec.candidatePattern,
+            hub: knowledgeHubMod?.knowledgeHub,
             lang: resolveUserLanguage(state),
           });
           if (obs?.readyForPromotion && obs.promotionHint) {
@@ -3268,8 +3288,10 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
         readDedup?.invalidateReadCacheForFile?.(filePath);
       }
     } catch {}
+    let warmRepoMapBeforeInvalidate = null;
     try {
       await loadDepsByNames(['repoMapper']);
+      warmRepoMapBeforeInvalidate = repoMapper?.getCachedRepoMap?.(effectiveFileWs, { skipWrite: true, readOnlyIfWarm: true }) || null;
       repoMapper?.invalidateRepoMapCache?.(effectiveFileWs, filePath);
     } catch {}
 
@@ -3335,7 +3357,7 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
           const newCode = readFileSync(filePath, 'utf8');
           const oldReconstructed = oldTextBeforeEdit || (
             toolName === 'edit_file' && args.Target !== undefined && args.Replacement !== undefined && newCode.includes(String(args.Replacement))
-              ? newCode.replace(String(args.Replacement), String(args.Target))
+              ? newCode.replace(String(args.Replacement), () => String(args.Target))
               : ''
           );
           const refRes = gpuMod.scanAddedIdentifiersForRefBugs(oldReconstructed, newCode, extname(filePath).toLowerCase());
@@ -3355,7 +3377,7 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
         const newCodeForGate = readFileSync(filePath, 'utf8');
         let prevEditText = oldTextBeforeEdit;
         if (!prevEditText && toolName === 'edit_file' && args.Target !== undefined && args.Replacement !== undefined && newCodeForGate.includes(String(args.Replacement))) {
-          prevEditText = newCodeForGate.replace(String(args.Replacement), String(args.Target));
+          prevEditText = newCodeForGate.replace(String(args.Replacement), () => String(args.Target));
         }
 
         if (state.completionGates !== false) {
@@ -3365,9 +3387,22 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
             filePath,
           });
           if (completionGates?.computeDiffReuseMetrics && prevEditText) {
-            const cachedMap = repoMapper?.getCachedRepoMap?.(effectiveFileWs, { skipWrite: true });
+            const cachedMap = warmRepoMapBeforeInvalidate || repoMapper?.getCachedRepoMap?.(effectiveFileWs, { skipWrite: true, readOnlyIfWarm: true });
             const knownSyms = [];
-            if (cachedMap?.files && typeof cachedMap.files === 'object') {
+            if (Array.isArray(cachedMap?.filesIndex)) {
+              for (const fInfo of cachedMap.filesIndex) {
+                if (Array.isArray(fInfo?.exportedSymbols)) {
+                  for (const s of fInfo.exportedSymbols) {
+                    if (s) knownSyms.push(String(s));
+                  }
+                }
+                if (Array.isArray(fInfo?.symbolsWithRanges)) {
+                  for (const sr of fInfo.symbolsWithRanges) {
+                    if (sr?.name) knownSyms.push(sr.name);
+                  }
+                }
+              }
+            } else if (cachedMap?.files && typeof cachedMap.files === 'object') {
               for (const fInfo of Object.values(cachedMap.files)) {
                 if (Array.isArray(fInfo?.symbols)) {
                   for (const s of fInfo.symbols) {
@@ -3660,6 +3695,7 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
             rootDir: effectiveFileWs,
             filePath,
             reverseImporters: br?.dependents || [],
+            conversationId: postConvoKey,
           });
           microTestsRan = Boolean(tRes?.ran);
           impactedTestFiles = Array.isArray(tRes?.testFiles)

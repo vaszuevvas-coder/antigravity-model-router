@@ -16,7 +16,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "edit_file|write_file|read_file|run_command|invoke_subagent|ask_question|swarm|exit_plan_mode",
+        "matcher": "edit_file|write_file|read_file|run_command|invoke_subagent|ask_question|swarm|exit_plan_mode|update_steps",
         "hooks": [
           {
             "type": "command",

@@ -7,6 +7,7 @@ tools:
   - read_file
   - run_command
   - manage_task
+  - send_message
 ---
 
 You are an independent **read-only verification agent** (`router-verifier`).

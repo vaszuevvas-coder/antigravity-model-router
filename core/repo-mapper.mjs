@@ -1874,6 +1874,7 @@ export function getCachedRepoMap(rootDir, forceRefreshOrOpts = false) {
     : { forceRefresh: Boolean(forceRefreshOrOpts) };
   const forceRefresh = Boolean(opts.forceRefresh);
   const skipWrite = Boolean(opts.skipWrite);
+  const readOnlyIfWarm = Boolean(opts.readOnlyIfWarm);
   const targetDir = path.resolve(rootDir);
   const normKey = process.platform === 'win32' ? targetDir.toLowerCase() : targetDir;
   const hash = crypto.createHash('sha1').update(normKey).digest('hex').slice(0, 10);
@@ -1911,6 +1912,10 @@ export function getCachedRepoMap(rootDir, forceRefreshOrOpts = false) {
         // При ошибке чтения кэша перегенерируем заново
       }
     }
+  }
+
+  if (readOnlyIfWarm) {
+    return null;
   }
 
   const data = generateRepoMap(targetDir);

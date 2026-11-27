@@ -367,3 +367,83 @@ test('PreToolUse blocks .env access via security-guard and blocks ask_question w
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });
+
+test('Batch 4 regressions: update_steps allows fast-path, SessionStart/PreInvocation auditPrefixStability writes prefix-stability.json, and $-patterns survive PostToolUse', async () => {
+  const { tmpRoot, wsDir, cacheDir } = makeIsolatedEnvDirs('amr-hook-b4-');
+  const convoId = `b4-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+
+  try {
+    const sampleFile = path.join(wsDir, 'sample.mjs');
+    fs.writeFileSync(sampleFile, 'export function greet() { return "old"; }\n', 'utf8');
+
+    const startRes = await runHookSubprocess(
+      'SessionStart',
+      JSON.stringify({
+        hookEventName: 'SessionStart',
+        conversationId: convoId,
+        workspacePaths: [wsDir],
+      }),
+      { cacheDir }
+    );
+    assert.equal(startRes.code, 0, `SessionStart stderr: ${startRes.stderr}`);
+    parseStrictSingleJsonStdout(startRes.stdout, 'SessionStart B4');
+
+    const preInvRes = await runHookSubprocess(
+      'PreInvocation',
+      JSON.stringify({
+        hookEventName: 'PreInvocation',
+        conversationId: convoId,
+        workspacePaths: [wsDir],
+        lastUserInput: 'Исправь sample.mjs и обнови шаги',
+      }),
+      { cacheDir }
+    );
+    assert.equal(preInvRes.code, 0, `PreInvocation stderr: ${preInvRes.stderr}`);
+    parseStrictSingleJsonStdout(preInvRes.stdout, 'PreInvocation B4');
+
+    const prefixStabilityFile = path.join(cacheDir, 'prefix-stability.json');
+    assert.equal(fs.existsSync(prefixStabilityFile), true, 'prefix-stability.json must be written by SessionStart/PreInvocation');
+    const prefixJson = JSON.parse(fs.readFileSync(prefixStabilityFile, 'utf8'));
+    assert.ok(prefixJson?.convos?.[convoId]?.hash, 'prefix-stability.json must track convoId hash');
+
+    const stepsRes = await runHookSubprocess(
+      'PreToolUse',
+      JSON.stringify({
+        hookEventName: 'PreToolUse',
+        conversationId: convoId,
+        workspacePaths: [wsDir],
+        toolCall: {
+          name: 'update_steps',
+          args: { steps: [{ title: 'Проверить sample.mjs', status: 'in_progress' }] },
+        },
+      }),
+      { cacheDir }
+    );
+    assert.equal(stepsRes.code, 0, `PreToolUse update_steps stderr: ${stepsRes.stderr}`);
+    const stepsJson = parseStrictSingleJsonStdout(stepsRes.stdout, 'PreToolUse update_steps');
+    assert.equal(stepsJson.decision, 'allow');
+
+    fs.writeFileSync(sampleFile, 'export function greet() { return "$&$1$$"; }\n', 'utf8');
+    const postRes = await runHookSubprocess(
+      'PostToolUse',
+      JSON.stringify({
+        hookEventName: 'PostToolUse',
+        conversationId: convoId,
+        workspacePaths: [wsDir],
+        toolCall: {
+          name: 'edit_file',
+          args: {
+            Path: sampleFile,
+            Target: 'return "old";',
+            Replacement: 'return "$&$1$$";',
+          },
+        },
+      }),
+      { cacheDir }
+    );
+    assert.equal(postRes.code, 0, `PostToolUse $-pattern stderr: ${postRes.stderr}`);
+    parseStrictSingleJsonStdout(postRes.stdout, 'PostToolUse $-pattern');
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
