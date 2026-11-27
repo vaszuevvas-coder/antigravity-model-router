@@ -451,16 +451,69 @@
     }
 
     let _agChatsStackFadeRaf = 0;
+    let _categoryScrollFadeRaf = 0;
+    let _categoryScrollFadeObserver = null;
 
-    function syncActiveChatsStackFade(targetEl) {
-      const el = targetEl || document.getElementById('agActiveChatsStack');
-      if (!el) return;
+    function syncVerticalScrollFade(el) {
+      if (!el || !el.classList) return;
       const overflowPx = el.scrollHeight - el.clientHeight;
       const hasOverflow = overflowPx > 2;
       const showTop = hasOverflow && el.scrollTop > 2;
       const showBottom = hasOverflow && (el.scrollTop + el.clientHeight < el.scrollHeight - 2);
       el.classList.toggle('has-fade-top', showTop);
       el.classList.toggle('has-fade-bottom', showBottom);
+    }
+
+    function syncActiveChatsStackFade(targetEl) {
+      const el = targetEl || document.getElementById('agActiveChatsStack');
+      syncVerticalScrollFade(el);
+    }
+
+    function syncCategoryScrollFades() {
+      const bodyEl = document.querySelector('.full-workspace-shell > .window-body');
+      const railEl = document.getElementById('fullTabsBar');
+      syncVerticalScrollFade(bodyEl);
+      syncVerticalScrollFade(railEl);
+    }
+
+    function scheduleCategoryScrollFadeSync() {
+      if (typeof requestAnimationFrame !== 'function') {
+        syncCategoryScrollFades();
+        return;
+      }
+      if (_categoryScrollFadeRaf) return;
+      _categoryScrollFadeRaf = requestAnimationFrame(function () {
+        _categoryScrollFadeRaf = 0;
+        syncCategoryScrollFades();
+      });
+    }
+
+    function ensureCategoryScrollFadeListeners() {
+      const bodyEl = document.querySelector('.full-workspace-shell > .window-body');
+      const railEl = document.getElementById('fullTabsBar');
+      [bodyEl, railEl].forEach(function (el) {
+        if (!el || el._categoryScrollFadeBound) return;
+        el._categoryScrollFadeBound = true;
+        el.addEventListener('scroll', function () {
+          syncVerticalScrollFade(el);
+        }, { passive: true });
+        el.addEventListener('transitionend', function () {
+          scheduleCategoryScrollFadeSync();
+        });
+      });
+      if (!_categoryScrollFadeObserver && typeof ResizeObserver === 'function') {
+        try {
+          _categoryScrollFadeObserver = new ResizeObserver(function () {
+            scheduleCategoryScrollFadeSync();
+          });
+          if (bodyEl) _categoryScrollFadeObserver.observe(bodyEl);
+          if (railEl) _categoryScrollFadeObserver.observe(railEl);
+          document.querySelectorAll('.full-workspace-shell > .window-body > [data-tab-panel], #fullTabsBar > .full-rail-nav').forEach(function (child) {
+            _categoryScrollFadeObserver.observe(child);
+          });
+        } catch {}
+      }
+      scheduleCategoryScrollFadeSync();
     }
 
     function scheduleActiveChatsStackFadeSync(targetEl) {
@@ -1873,9 +1926,11 @@
           rootStyle.setProperty('--full-rail-max-h', maxRailH + 'px');
         }
       }
+      scheduleCategoryScrollFadeSync();
     }
 
     function initFullLeftRailStickySync() {
+      ensureCategoryScrollFadeListeners();
       syncFullLeftRailStickyOffset();
       const hudEl = document.getElementById('lgStickyHud');
       if (!hudEl || _stickyHudResizeObserver || typeof ResizeObserver !== 'function') return;

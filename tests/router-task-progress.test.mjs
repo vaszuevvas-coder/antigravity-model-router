@@ -2768,4 +2768,9 @@ test('Task Progress UI: #agActiveChatsStack defines scroll-fade CSS masks & dyna
   assert.ok(uiHtml.includes('.ag-chats-stack.has-fade-top'), 'ui.html must define .ag-chats-stack.has-fade-top');
   assert.ok(uiHtml.includes('mask-image:'), 'ui.html must define CSS mask-image for scroll-fade');
   assert.ok(uiHtml.includes('syncActiveChatsStackFade'), 'ui.html must include syncActiveChatsStackFade helper');
+  assert.ok(uiHtml.includes('.full-workspace-shell > .window-body.has-fade-bottom'), 'ui.html must define category body bottom scroll-fade');
+  assert.ok(uiHtml.includes('.full-workspace-shell > .window-body.has-fade-top'), 'ui.html must define category body top scroll-fade');
+  assert.ok(uiHtml.includes('.full-left-rail.has-fade-bottom'), 'ui.html must define left rail bottom scroll-fade');
+  assert.ok(uiHtml.includes('.full-left-rail.has-fade-top'), 'ui.html must define left rail top scroll-fade');
+  assert.ok(uiHtml.includes('syncCategoryScrollFades'), 'ui.html must include syncCategoryScrollFades helper');
 });

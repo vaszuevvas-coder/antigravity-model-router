@@ -2631,6 +2631,7 @@
         if (typeof maybeLoadMissingSectionsForBlock === 'function') maybeLoadMissingSectionsForBlock('checkpointsCard');
       }
       if (typeof scheduleSyncAllSlidingPills === 'function') scheduleSyncAllSlidingPills();
+      if (typeof scheduleCategoryScrollFadeSync === 'function') scheduleCategoryScrollFadeSync();
     }
 
     function setMemorySubTab(sub) {
@@ -2648,6 +2649,7 @@
         void loadProjectInstincts({ silent: true });
       }
       if (typeof scheduleSyncAllSlidingPills === 'function') scheduleSyncAllSlidingPills();
+      if (typeof scheduleCategoryScrollFadeSync === 'function') scheduleCategoryScrollFadeSync();
     }
 
     function normalizePanelFullTab(rawTab) {
@@ -2718,6 +2720,9 @@
       }
       if (typeof scheduleSyncAllSlidingPills === 'function') {
         scheduleSyncAllSlidingPills();
+      }
+      if (typeof scheduleCategoryScrollFadeSync === 'function') {
+        scheduleCategoryScrollFadeSync();
       }
       if (typeof ensureHwB4Loop === 'function') {
         ensureHwB4Loop();

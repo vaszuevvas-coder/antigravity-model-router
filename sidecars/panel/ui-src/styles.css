@@ -10445,6 +10445,7 @@
       padding-right: 4px;
       padding-bottom: 8px;
       scrollbar-gutter: stable;
+      --category-scroll-fade-size: 28px;
     }
 
     .full-left-rail {
@@ -10464,6 +10465,25 @@
       background: var(--glass-card);
       border: 1px solid var(--border-hairline);
       border-radius: var(--r-md);
+      --category-scroll-fade-size: 24px;
+    }
+
+    .full-workspace-shell > .window-body.has-fade-bottom,
+    .full-left-rail.has-fade-bottom {
+      -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 calc(100% - var(--category-scroll-fade-size, 28px)), transparent 100%);
+      mask-image: linear-gradient(to bottom, #000 0%, #000 calc(100% - var(--category-scroll-fade-size, 28px)), transparent 100%);
+    }
+
+    .full-workspace-shell > .window-body.has-fade-top,
+    .full-left-rail.has-fade-top {
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 var(--category-scroll-fade-size, 28px), #000 100%);
+      mask-image: linear-gradient(to bottom, transparent 0%, #000 var(--category-scroll-fade-size, 28px), #000 100%);
+    }
+
+    .full-workspace-shell > .window-body.has-fade-top.has-fade-bottom,
+    .full-left-rail.has-fade-top.has-fade-bottom {
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 var(--category-scroll-fade-size, 28px), #000 calc(100% - var(--category-scroll-fade-size, 28px)), transparent 100%);
+      mask-image: linear-gradient(to bottom, transparent 0%, #000 var(--category-scroll-fade-size, 28px), #000 calc(100% - var(--category-scroll-fade-size, 28px)), transparent 100%);
     }
 
     .full-left-rail::-webkit-scrollbar {
@@ -11288,9 +11308,31 @@
 
     .bento-control-tile {
       display: flex;
-      flex-direction: column;
-      gap: 6px;
+      flex-direction: row;
+      flex-wrap: wrap;
+      align-items: center;
       justify-content: space-between;
+      gap: 6px 10px;
+      min-height: 44px;
+    }
+
+    .bento-control-tile > .win-btn-group,
+    .bento-control-tile > .bento-action-group {
+      flex-shrink: 0;
+      align-self: center;
+    }
+
+    .bento-control-tile > .ui-hint-collapsed {
+      flex: 1 0 100%;
+    }
+
+    .bento-action-group {
+      display: inline-flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      max-width: 100%;
     }
 
     .bento-health-tile {
