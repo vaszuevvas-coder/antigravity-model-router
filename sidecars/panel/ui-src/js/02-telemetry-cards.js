@@ -155,21 +155,6 @@
       }
     }
 
-    function updateHeaderSessionPill(t) {
-      if (!t) return;
-      const chatsCount = Number(t.totalChats || 0);
-      const convoEl = document.getElementById('convoShortId');
-      if (convoEl) {
-        convoEl.textContent = chatsCount > 0
-          ? L('Все чаты (' + chatsCount + ')', 'All Chats (' + chatsCount + ')')
-          : L('Все чаты · Автопилот', 'All Chats · Autopilot');
-        convoEl.title = L(
-          'Сводная статистика собирается по всем открытым и завершённым диалогам без путаницы между параллельными чатами',
-          'Aggregated telemetry across all active and past chats without mixing parallel conversations'
-        );
-      }
-    }
-
     function syncSwarmHeaderPills(t, s) {
       const st = s || currentState || {};
       const badgeEl = document.getElementById('swarmStatusBadge');
@@ -191,7 +176,6 @@
     function renderTelemetry(t) {
       if (!t) return;
       _lastTelemetrySnapshot = t;
-      updateHeaderSessionPill(t);
       const ac = t.activeChat || null;
       const savedTotalEl = document.getElementById('metricTotalSaved');
       const bk = t.savingsBreakdown || {};
@@ -1602,7 +1586,6 @@
 
       if (payload && payload.telemetry) {
         _lastTelemetrySnapshot = payload.telemetry;
-        updateHeaderSessionPill(payload.telemetry);
         syncSwarmHeaderPills(payload.telemetry, s);
         scheduleBlockRender('swarmTelemetryCard', function () {
           renderTelemetry(payload.telemetry);
@@ -1987,7 +1970,6 @@
         _hwHasLiveActivity = Boolean(_gpuPullActiveUi);
       }
       _lastTelemetrySnapshot = data.telemetry;
-      updateHeaderSessionPill(data.telemetry);
       syncSwarmHeaderPills(data.telemetry, currentState);
       scheduleBlockRender('swarmTelemetryCard', function () {
         renderTelemetry(data.telemetry);

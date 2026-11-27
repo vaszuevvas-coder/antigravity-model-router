@@ -11237,8 +11237,6 @@
           <span class="lg-brand-orb" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 8h3.5M10.5 8H14M5.5 8L8 4.5 10.5 8 8 11.5z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
           <span class="lg-brand-title" title="Что делает: панель управления роутером The Tunnel, локальным ускорением (RAM/GPU/CPU) и контурами защиты кода.
 Зачем: экономит квоту облачных моделей и удерживает агента от лишних чтений и ошибок.">The Tunnel</span>
-          <span class="lg-session-pill" id="convoShortId" title="Что делает: показывает активный режим работы и отслеживаемый чат.
-Зачем: позволяет сразу видеть, работает ли сейчас автопилот или советник.">Все чаты · Автопилот</span>
         </div>
         <div class="lg-header-actions">
           <button class="lg-icon-btn scale-header-btn" type="button" id="panelUiScaleBtn" data-action="cyclePanelUiScale" title="Масштаб интерфейса под 1080p / 2K / 4K (Авто / 100% / 115% / 130% / 90%)" aria-label="Масштаб интерфейса">Авто</button>
@@ -13409,7 +13407,6 @@
     }
 
     const UI_RU_TO_EN_TEXT = {
-      'Все чаты · Автопилот': 'All Chats · Autopilot',
       '↺ Сброс': '↺ Reset',
       'ИИ-Пилот активен': 'AI Pilot Active',
       '· Сам анализирует контекст и подключает навыки под задачу': '· Auto-analyzes context and activates skills for your task',
@@ -15643,21 +15640,6 @@
       }
     }
 
-    function updateHeaderSessionPill(t) {
-      if (!t) return;
-      const chatsCount = Number(t.totalChats || 0);
-      const convoEl = document.getElementById('convoShortId');
-      if (convoEl) {
-        convoEl.textContent = chatsCount > 0
-          ? L('Все чаты (' + chatsCount + ')', 'All Chats (' + chatsCount + ')')
-          : L('Все чаты · Автопилот', 'All Chats · Autopilot');
-        convoEl.title = L(
-          'Сводная статистика собирается по всем открытым и завершённым диалогам без путаницы между параллельными чатами',
-          'Aggregated telemetry across all active and past chats without mixing parallel conversations'
-        );
-      }
-    }
-
     function syncSwarmHeaderPills(t, s) {
       const st = s || currentState || {};
       const badgeEl = document.getElementById('swarmStatusBadge');
@@ -15679,7 +15661,6 @@
     function renderTelemetry(t) {
       if (!t) return;
       _lastTelemetrySnapshot = t;
-      updateHeaderSessionPill(t);
       const ac = t.activeChat || null;
       const savedTotalEl = document.getElementById('metricTotalSaved');
       const bk = t.savingsBreakdown || {};
@@ -17090,7 +17071,6 @@
 
       if (payload && payload.telemetry) {
         _lastTelemetrySnapshot = payload.telemetry;
-        updateHeaderSessionPill(payload.telemetry);
         syncSwarmHeaderPills(payload.telemetry, s);
         scheduleBlockRender('swarmTelemetryCard', function () {
           renderTelemetry(payload.telemetry);
@@ -17475,7 +17455,6 @@
         _hwHasLiveActivity = Boolean(_gpuPullActiveUi);
       }
       _lastTelemetrySnapshot = data.telemetry;
-      updateHeaderSessionPill(data.telemetry);
       syncSwarmHeaderPills(data.telemetry, currentState);
       scheduleBlockRender('swarmTelemetryCard', function () {
         renderTelemetry(data.telemetry);

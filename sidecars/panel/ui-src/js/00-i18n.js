@@ -46,7 +46,6 @@
     }
 
     const UI_RU_TO_EN_TEXT = {
-      'Все чаты · Автопилот': 'All Chats · Autopilot',
       '↺ Сброс': '↺ Reset',
       'ИИ-Пилот активен': 'AI Pilot Active',
       '· Сам анализирует контекст и подключает навыки под задачу': '· Auto-analyzes context and activates skills for your task',
