@@ -4133,19 +4133,26 @@ export async function startSidecarPanel(options = {}) {
     }
   }, 'POST');
 
-  app.api('/api/plugin/changelog', async (_data, req) => {
+  app.api('/api/plugin/changelog', async (data, req) => {
     if (hasRequestContext(req) && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    const stateLang = normalizeLang(loadState()?.uiLanguage, 'en');
+    const lang = typeof data?.lang === 'string' && data.lang.trim() ? normalizeLang(data.lang, stateLang) : stateLang;
     try {
       const pluginRoot = resolveUpdaterRoot();
       return loadPluginChangelog({
         pluginRoot,
         currentVersion: PANEL_LOADED_VERSION,
         remoteRelease: lastPluginUpdateCheck,
+        lang,
       });
     } catch (err) {
       logServerErr('plugin_changelog_failed', err);
-      return { ok: false, versions: [], error: err?.message || pickLang(lang, 'Ошибка загрузки истории изменений', 'Failed to load changelog') };
+      return {
+        ok: false,
+        lang,
+        versions: [],
+        error: err?.message || pickLang(lang, 'Ошибка загрузки истории изменений', 'Failed to load changelog'),
+      };
     }
   }, 'GET');
 

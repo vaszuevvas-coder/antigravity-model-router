@@ -457,7 +457,6 @@ export function checkVersionAndDocsParity(rootDir) {
   const pkgPath = path.join(rootDir, 'package.json');
   const pluginPath = path.join(rootDir, 'plugin.json');
   const readmePath = path.join(rootDir, 'README.md');
-  const changelogPath = path.join(rootDir, 'CHANGELOG.md');
   const bannerPath = path.join(rootDir, 'assets', 'banner.svg');
 
   if (fs.existsSync(pkgPath)) {
@@ -590,9 +589,11 @@ export function checkVersionAndDocsParity(rootDir) {
     }
   }
 
-  if (fs.existsSync(changelogPath) && canonicalVersion) {
-    const changelog = fs.readFileSync(changelogPath, 'utf8');
-    findings.push(...checkMarkdownLinks(changelog, 'CHANGELOG.md', rootDir));
+  for (const chRel of ['CHANGELOG.md', 'CHANGELOG.ru.md']) {
+    const absCh = path.join(rootDir, chRel);
+    if (!fs.existsSync(absCh) || !canonicalVersion) continue;
+    const changelog = fs.readFileSync(absCh, 'utf8');
+    findings.push(...checkMarkdownLinks(changelog, chRel, rootDir));
     const escaped = canonicalVersion.replace(/\./g, '\\.');
     const hasSection = new RegExp(`^##\\s+\\[?v?${escaped}\\]?\\b`, 'm').test(changelog);
     if (!hasSection) {
@@ -600,9 +601,9 @@ export function checkVersionAndDocsParity(rootDir) {
         severity: 'warn',
         category: 'docs',
         ruleId: 'changelog_version_missing',
-        file: 'CHANGELOG.md',
+        file: chRel,
         line: 1,
-        message: `CHANGELOG.md has no section for version ${canonicalVersion}`,
+        message: `${chRel} has no section for version ${canonicalVersion}`,
       });
     }
   }

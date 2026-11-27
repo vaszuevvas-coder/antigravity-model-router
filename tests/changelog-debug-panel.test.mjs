@@ -77,8 +77,9 @@ test('1. changelog-parser parses real CHANGELOG.md and prepends pending remote r
   assert.equal(parsed.versions[0].sections[0].items[0].lead, 'Внутреннее ТЗ');
   assert.equal(parsed.versions[0].sections[0].items[0].subitems[0], 'Вложенный подпункт про `ram_slice`');
 
-  const loaded = loadPluginChangelog({
+  const loadedEn = loadPluginChangelog({
     pluginRoot: REPO_ROOT,
+    lang: 'en',
     remoteRelease: {
       latestVersion: '9.99.0',
       releaseNotes: '### Added\n- **In-app Changelog**: full version history',
@@ -86,11 +87,36 @@ test('1. changelog-parser parses real CHANGELOG.md and prepends pending remote r
       publishedAt: '2026-11-27T10:00:00Z',
     },
   });
-  assert.equal(loaded.ok, true);
-  assert.ok(loaded.versions.length >= 3);
-  assert.equal(loaded.versions[0].version, '9.99.0');
-  assert.equal(loaded.versions[0].isRemotePending, true);
-  assert.equal(loaded.versions.some((v) => v.isCurrent === true), true);
+  assert.equal(loadedEn.ok, true);
+  assert.equal(loadedEn.lang, 'en');
+  assert.equal(loadedEn.sourceFile, 'CHANGELOG.md');
+  assert.ok(loadedEn.versions.length >= 3);
+  assert.equal(loadedEn.versions[0].version, '9.99.0');
+  assert.equal(loadedEn.versions[0].isRemotePending, true);
+  assert.equal(loadedEn.versions.some((v) => v.isCurrent === true), true);
+  assert.equal(/[А-Яа-яЁё]/.test(loadedEn.versions[1].sections[0].title), false, 'EN changelog section title must be in English');
+  assert.match(loadedEn.versions[1].sections[0].title, /Added|Fixed|Changed/i);
+
+  const loadedRu = loadPluginChangelog({
+    pluginRoot: REPO_ROOT,
+    lang: 'ru',
+    remoteRelease: {
+      latestVersion: '9.99.0',
+      releaseNotes: '',
+      releaseUrl: 'https://github.com/vaszuevvas-coder/antigravity-model-router/releases/tag/v9.99.0',
+      publishedAt: '2026-11-27T10:00:00Z',
+    },
+  });
+  assert.equal(loadedRu.ok, true);
+  assert.equal(loadedRu.lang, 'ru');
+  assert.equal(loadedRu.sourceFile, 'CHANGELOG.ru.md');
+  assert.match(loadedRu.versions[0].sections[0].title, /GitHub/);
+  assert.equal(/[А-Яа-яЁё]/.test(loadedRu.versions[1].sections[0].title), true, 'RU changelog must have Russian headings');
+  assert.deepEqual(
+    loadedEn.versions.slice(1).map((v) => v.version),
+    loadedRu.versions.slice(1).map((v) => v.version),
+    'EN and RU changelogs must keep identical version parity'
+  );
 });
 
 test('2. debug-logger respects modes, rotates files, and redacts secrets & user paths', () => {
@@ -225,9 +251,23 @@ test('3. Panel API routes (/api/plugin/changelog, /api/debug/*) and UI parity', 
       },
     };
 
-    const changelogRes = await app._routes.get('/api/plugin/changelog').get('GET')({}, reqGet);
-    assert.equal(changelogRes.ok, true);
-    assert.ok(Array.isArray(changelogRes.versions) && changelogRes.versions.length > 0);
+    await app._routes.get('/api/update').get('POST')({ uiLanguage: 'ru' }, reqPost);
+    const changelogRuRes = await app._routes.get('/api/plugin/changelog').get('GET')({}, reqGet);
+    assert.equal(changelogRuRes.ok, true);
+    assert.equal(changelogRuRes.lang, 'ru');
+    assert.equal(changelogRuRes.sourceFile, 'CHANGELOG.ru.md');
+    assert.ok(Array.isArray(changelogRuRes.versions) && changelogRuRes.versions.length > 0);
+
+    await app._routes.get('/api/update').get('POST')({ uiLanguage: 'en' }, reqPost);
+    const changelogEnRes = await app._routes.get('/api/plugin/changelog').get('GET')({}, reqGet);
+    assert.equal(changelogEnRes.ok, true);
+    assert.equal(changelogEnRes.lang, 'en');
+    assert.equal(changelogEnRes.sourceFile, 'CHANGELOG.md');
+
+    const changelogExplicitRu = await app._routes.get('/api/plugin/changelog').get('GET')({ lang: 'ru' }, reqGet);
+    assert.equal(changelogExplicitRu.ok, true);
+    assert.equal(changelogExplicitRu.lang, 'ru');
+    assert.equal(changelogExplicitRu.sourceFile, 'CHANGELOG.ru.md');
 
     const badMode = await app._routes.get('/api/debug/mode').get('POST')({ mode: 'invalid_mode' }, reqPost);
     assert.equal(badMode.ok, false);
@@ -268,6 +308,8 @@ test('3. Panel API routes (/api/plugin/changelog, /api/debug/*) and UI parity', 
     else process.env.TUNNEL_TEST_STATE_PATH = prevStatePath;
     if (prevCacheDir === undefined) delete process.env.TUNNEL_CACHE_DIR;
     else process.env.TUNNEL_CACHE_DIR = prevCacheDir;
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 6, retryDelay: 80 });
+    } catch {}
   }
 });

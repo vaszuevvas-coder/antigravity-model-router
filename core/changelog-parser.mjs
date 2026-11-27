@@ -6,6 +6,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { normalizeLang, pickLang, readActiveUiLanguage } from './i18n.mjs';
 import { compareSemver, readPluginMeta } from './plugin-updater.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -51,7 +52,7 @@ function splitLeadAndBody(cleanText = '') {
   return { lead: '', text: s };
 }
 
-function parseReleaseNotesBody(notesText = '', fallbackTitle = 'Изменения / Changes') {
+function parseReleaseNotesBody(notesText = '', fallbackTitle = 'Changes') {
   const rawLines = String(notesText || '').replace(/\r\n/g, '\n').split('\n');
   const sections = [];
   let curSection = null;
@@ -93,11 +94,40 @@ function parseReleaseNotesBody(notesText = '', fallbackTitle = 'Изменени
 }
 
 /**
+ * Resolves the best-matching changelog file path for the requested UI language.
+ * @param {string} pluginRoot
+ * @param {'en'|'ru'} lang
+ * @returns {{ path: string, fileName: string, lang: 'en'|'ru' }}
+ */
+export function resolveChangelogFilePath(pluginRoot, lang = 'en') {
+  const targetLang = normalizeLang(lang, 'en');
+  const candidates = targetLang === 'ru'
+    ? [
+        { fileName: 'CHANGELOG.ru.md', lang: 'ru' },
+        { fileName: 'CHANGELOG.md', lang: 'en' },
+      ]
+    : [
+        { fileName: 'CHANGELOG.md', lang: 'en' },
+        { fileName: 'CHANGELOG.en.md', lang: 'en' },
+        { fileName: 'CHANGELOG.ru.md', lang: 'ru' },
+      ];
+  for (const item of candidates) {
+    const abs = join(pluginRoot, item.fileName);
+    if (existsSync(abs)) {
+      return { path: abs, fileName: item.fileName, lang: item.lang };
+    }
+  }
+  return { path: '', fileName: '', lang: targetLang };
+}
+
+/**
  * Parses Keep-a-Changelog Markdown into structured versions, sections, and items.
  * @param {string} [markdownText='']
+ * @param {{ lang?: 'en'|'ru' }} [options={}]
  * @returns {{ title: string, intro: string, versions: Array<object> }}
  */
-export function parseChangelogMarkdown(markdownText = '') {
+export function parseChangelogMarkdown(markdownText = '', options = {}) {
+  const lang = normalizeLang(options?.lang, 'en');
   const lines = String(markdownText || '').replace(/\r\n/g, '\n').split('\n');
   let title = 'The Tunnel';
   const introParts = [];
@@ -166,7 +196,7 @@ export function parseChangelogMarkdown(markdownText = '') {
     const topMatch = TOP_BULLET_RE.exec(trimmed);
     if (topMatch) {
       if (!curSection) {
-        curSection = { title: 'Изменения', items: [] };
+        curSection = { title: pickLang(lang, 'Изменения', 'Changes'), items: [] };
         curVersion.sections.push(curSection);
       }
       const parsed = splitLeadAndBody(cleanChangelogInlineText(topMatch[1]));
@@ -200,8 +230,8 @@ export function parseChangelogMarkdown(markdownText = '') {
 }
 
 /**
- * Loads local CHANGELOG.md and optionally prepends an un-installed newer remote release.
- * @param {{ pluginRoot?: string, currentVersion?: string, remoteRelease?: object | null }} [options={}]
+ * Loads localized CHANGELOG (`CHANGELOG.ru.md` or `CHANGELOG.md`) and optionally prepends an un-installed newer remote release.
+ * @param {{ pluginRoot?: string, currentVersion?: string, remoteRelease?: object | null, lang?: string }} [options={}]
  */
 export function loadPluginChangelog(options = {}) {
   const opts = options && typeof options === 'object' ? options : {};
@@ -210,15 +240,21 @@ export function loadPluginChangelog(options = {}) {
       ? opts.pluginRoot.trim()
       : DEFAULT_PLUGIN_ROOT
   );
+  const lang = normalizeLang(
+    typeof opts.lang === 'string' && opts.lang.trim() ? opts.lang : readActiveUiLanguage(root),
+    'en'
+  );
   const meta = readPluginMeta(root);
   const resolvedCurrent = typeof opts.currentVersion === 'string' && opts.currentVersion.trim()
     ? opts.currentVersion.trim().replace(/^v/i, '')
     : meta.version;
 
-  const changelogPath = join(root, 'CHANGELOG.md');
-  if (!existsSync(changelogPath)) {
+  const resolvedFile = resolveChangelogFilePath(root, lang);
+  if (!resolvedFile.path) {
     return {
       ok: true,
+      lang,
+      sourceFile: '',
       currentVersion: resolvedCurrent,
       repo: meta.repo,
       releaseUrl: `${meta.homepage}/releases`,
@@ -228,8 +264,8 @@ export function loadPluginChangelog(options = {}) {
     };
   }
 
-  const rawMd = readFileSync(changelogPath, 'utf8');
-  const parsed = parseChangelogMarkdown(rawMd);
+  const rawMd = readFileSync(resolvedFile.path, 'utf8');
+  const parsed = parseChangelogMarkdown(rawMd, { lang });
   const versions = parsed.versions.map((v) => ({
     ...v,
     isCurrent: compareSemver(v.version, resolvedCurrent) === 0 || v.version === resolvedCurrent,
@@ -241,14 +277,21 @@ export function loadPluginChangelog(options = {}) {
   const remoteVer = typeof remote?.latestVersion === 'string' ? remote.latestVersion.trim().replace(/^v/i, '') : '';
   const topLocalVer = versions[0]?.version || '0.0.0';
   if (remoteVer && compareSemver(remoteVer, topLocalVer) > 0) {
-    const parsedRemoteSections = parseReleaseNotesBody(remote.releaseNotes || '');
+    const parsedRemoteSections = parseReleaseNotesBody(
+      remote.releaseNotes || '',
+      pickLang(lang, 'Изменения', 'Changes')
+    );
     const sections = parsedRemoteSections.length > 0
       ? parsedRemoteSections
       : [{
-          title: 'Доступно обновление на GitHub',
+          title: pickLang(lang, 'Доступно обновление на GitHub', 'GitHub Update Available'),
           items: [{
-            lead: `Версия v${remoteVer}`,
-            text: 'Нажмите «Да, обновить» в верхнем баннере, чтобы установить новый релиз с сохранением настроек.',
+            lead: pickLang(lang, `Версия v${remoteVer}`, `Version v${remoteVer}`),
+            text: pickLang(
+              lang,
+              'Нажмите «Да, обновить» в верхнем баннере, чтобы установить новый релиз с сохранением настроек.',
+              'Click "Yes, update" in the top banner to install the new release while keeping your settings.'
+            ),
             subitems: [],
           }],
         }];
@@ -271,6 +314,8 @@ export function loadPluginChangelog(options = {}) {
 
   return {
     ok: true,
+    lang,
+    sourceFile: resolvedFile.fileName,
     title: parsed.title,
     intro: parsed.intro,
     currentVersion: resolvedCurrent,

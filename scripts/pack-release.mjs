@@ -27,6 +27,7 @@ const ROOT_FILES = [
   'hooks.json',
   'README.md',
   'CHANGELOG.md',
+  'CHANGELOG.ru.md',
   'LICENSE',
   'install.js',
   'install.bat',

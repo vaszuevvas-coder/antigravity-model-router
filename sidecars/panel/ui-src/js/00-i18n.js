@@ -1401,6 +1401,9 @@
       if (!alreadyApplied && document.body) {
         walkAndTranslateDom(document.body, valid);
       }
+      if (!alreadyApplied && typeof invalidateChangelogForLanguage === 'function') {
+        invalidateChangelogForLanguage(valid);
+      }
       _lastAppliedUiLang = valid;
     }
 
@@ -1460,9 +1463,13 @@
       if (typeof renderPluginUpdateBanner === 'function') {
         renderPluginUpdateBanner();
       }
-      const chModal = document.getElementById('changelogModalOverlay');
-      if (chModal && chModal.style.display === 'flex' && typeof renderChangelogModal === 'function') {
-        renderChangelogModal();
+      if (typeof invalidateChangelogForLanguage === 'function') {
+        invalidateChangelogForLanguage(valid);
+      } else {
+        const chModal = document.getElementById('changelogModalOverlay');
+        if (chModal && chModal.style.display === 'flex' && typeof renderChangelogModal === 'function') {
+          renderChangelogModal();
+        }
       }
       const dbgModal = document.getElementById('debugLogModalOverlay');
       if (dbgModal && dbgModal.style.display === 'flex' && typeof renderDebugLogModal === 'function') {

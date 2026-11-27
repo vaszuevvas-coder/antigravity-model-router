@@ -168,6 +168,6 @@ node core/router-cli.mjs backup [path] / restore [path]
 ## 🔒 Security & License
 
 - **Security:** See [SECURITY.md](SECURITY.md) for loopback-only architecture guarantees and vulnerability reporting.
-- **Changelog:** Full release history in [CHANGELOG.md](CHANGELOG.md).
+- **Changelog:** Full release history in [CHANGELOG.md](CHANGELOG.md) (EN) and [CHANGELOG.ru.md](CHANGELOG.ru.md) (RU).
 - **License:** Source-Available & Commercial Royalty License ([LICENSE](LICENSE)) — **free to download and use** for personal, educational, and development workflows. Commercial sale, paid redistribution/forks, or bundling into paid products/SaaS requires prior written agreement with **Vasili Zuev** (`https://github.com/vaszuevvas-coder`).
 - **Created by Vasili Zuev**.
