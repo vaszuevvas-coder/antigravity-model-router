@@ -113,6 +113,9 @@ export function extractCompactInteractiveRefTree(html = '') {
     if (/(?:^|\s)hidden(?:\s*=\s*(?:""|''|"hidden"|'hidden'|hidden)|(?=\s|$))/i.test(attrs) && !/\btype\s*=\s*["']?hidden/i.test(attrs)) {
       continue;
     }
+    if (readHtmlAttr(attrs, 'aria-hidden').toLowerCase() === 'true' && readHtmlAttr(attrs, 'tabindex').trim() === '-1') {
+      continue;
+    }
 
     const id = readHtmlAttr(attrs, 'id');
     const ariaLabel = readHtmlAttr(attrs, 'aria-label');

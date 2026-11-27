@@ -1,6 +1,6 @@
 ---
 name: router-verifier
-description: Independent read-only verifier for code diffs, test suites, skill audits, and stress barriers in The Tunnel v4.0.8. Use after L/XL multi-file edits or as @verifier in Swarm.
+description: Independent read-only verifier for code diffs, test suites, skill audits, and stress barriers in The Tunnel v4.0.9. Use after L/XL multi-file edits or as @verifier in Swarm.
 subagent: true
 mainAgent: false
 tools:

@@ -70,7 +70,7 @@
   </g>
 
   <text x="62" y="38" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="700" fill="#f3f4f6" letter-spacing="0.9">
-    THE TUNNEL · v4.0.8
+    THE TUNNEL · v4.0.9
   </text>
   <text x="230" y="38" font-family="system-ui, -apple-system, Segoe UI, Inter, sans-serif" font-size="11.5" fill="#9ca3af" letter-spacing="0.3">
     3D AI AUTOPILOT &amp; COPROCESSOR FOR GOOGLE ANTIGRAVITY
@@ -104,7 +104,7 @@
     </g>
 
     <text x="66" y="28" font-family="system-ui, -apple-system, Segoe UI, Inter, sans-serif" font-size="28" font-weight="700" fill="#f3f4f6" letter-spacing="-0.4">
-      The Tunnel <tspan fill="#f04848">v4.0.8</tspan>
+      The Tunnel <tspan fill="#f04848">v4.0.9</tspan>
     </text>
     <text x="66" y="48" font-family="system-ui, -apple-system, Segoe UI, Inter, sans-serif" font-size="12" fill="#9ca3af">
       3D Task Tensor · Modular In-RAM MCP · Live Project Map · Local CPU &amp; Ollama GPU
@@ -242,7 +242,7 @@
   <!-- Bottom Instrument Strip -->
   <line x1="15" y1="336" x2="1185" y2="336" stroke="#ffffff" stroke-opacity="0.08" stroke-width="1"/>
   <text x="34" y="355" font-family="ui-monospace, Consolas, monospace" font-size="10.5" fill="#9ca3af">
-    <tspan fill="#f04848" font-weight="700">71</tspan> Core ESM Modules · <tspan fill="#f3f4f6" font-weight="700">15</tspan> Built-in Skills · <tspan fill="#3fb950" font-weight="700">58</tspan> Automated Test Suites · Local-Only Loopback Security
+    <tspan fill="#f04848" font-weight="700">71</tspan> Core ESM Modules · <tspan fill="#f3f4f6" font-weight="700">15</tspan> Built-in Skills · <tspan fill="#3fb950" font-weight="700">60</tspan> Automated Test Suites · Local-Only Loopback Security
   </text>
   <text x="1166" y="355" font-family="system-ui, Segoe UI, sans-serif" font-size="10.5" fill="#9ca3af" text-anchor="end">
     Created by Vasili Zuev

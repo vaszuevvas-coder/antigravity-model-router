@@ -2,7 +2,7 @@
 chcp 65001 >nul
 setlocal EnableExtensions
 set "SCRIPT_DIR=%~dp0"
-title Установка The Tunnel v4.0.8
+title Установка The Tunnel v4.0.9
 cd /d "%SCRIPT_DIR%"
 
 set "SILENT_MODE=0"

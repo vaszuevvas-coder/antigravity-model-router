@@ -571,7 +571,7 @@ function findCscCompiler() {
 }
 
 function buildInstallerCSharpSource(version) {
-  const safeVersion = String(version || '4.0.8').replace(/[^0-9A-Za-z._-]/g, '');
+  const safeVersion = String(version || '4.0.9').replace(/[^0-9A-Za-z._-]/g, '');
   // Строго C# 5.0 (без $"" интерполяции, ?., ??=, nameof, auto-property initializers)
   return `using System;
 using System.Collections.Generic;
@@ -1390,7 +1390,7 @@ export function buildReleasePackages(options = {}) {
   }
   const pluginJson = JSON.parse(fs.readFileSync(pluginJsonPath, 'utf8'));
   const pkgJson = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
-  const version = String(pluginJson.version || pkgJson.version || '4.0.8');
+  const version = String(pluginJson.version || pkgJson.version || '4.0.9');
   if (pluginJson.version && pkgJson.version && pluginJson.version !== pkgJson.version) {
     throw new Error(isRuPack ? `Несовпадение версий: plugin.json=${pluginJson.version}, package.json=${pkgJson.version}` : `Version mismatch: plugin.json=${pluginJson.version}, package.json=${pkgJson.version}`);
   }

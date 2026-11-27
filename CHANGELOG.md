@@ -4,7 +4,23 @@
 
 All notable changes to **The Tunnel** (`antigravity-model-router`) are documented in this file in accordance with [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [SemVer](https://semver.org/).
 
-> The timeline from `v3.8.0` to `v4.0.8` was reconstructed from development logs and verified against the codebase (`59` primary / `71` total core ESM modules, `59` `GUARDRAIL_KEYS` contours, `15` built-in skills, and `58` automated test suites).
+> The timeline from `v3.8.0` to `v4.0.9` was reconstructed from development logs and verified against the codebase (`59` primary / `71` total core ESM modules, `59` `GUARDRAIL_KEYS` contours, `15` built-in skills, and `60` automated test suites).
+
+---
+
+## [4.0.9] — 2026-11-27
+
+### Fixed & Hardened (Tool-Pruner State Machine, RAM & Win32 Path Contracts, Skills CLI/SSRF Hardening, Sentinel Dedup & 60 Test Suites)
+- **Tool-Pruner Null/NaN Guards, Approval State Machine & Windows Paths ([core/tool-pruner.mjs](core/tool-pruner.mjs), [tests/tool-pruner-audit-fixes.test.mjs](tests/tool-pruner-audit-fixes.test.mjs))**:
+  - Hardened null/invalid state, `NaN` bounds, scope error isolation, approval state machine transitions, and Windows path normalization in `core/tool-pruner.mjs`.
+  - Added dedicated regression suite `tests/tool-pruner-audit-fixes.test.mjs`.
+- **RAM Engine, SymbolGraph & Cross-Subsystem Win32 Contracts ([core/ram-memory-engine.mjs](core/ram-memory-engine.mjs), [core/ram-memory-mcp.mjs](core/ram-memory-mcp.mjs), [core/project-graph-builder.mjs](core/project-graph-builder.mjs), [core/sqlite-knowledge-hub.mjs](core/sqlite-knowledge-hub.mjs), [sidecars/panel/server.mjs](sidecars/panel/server.mjs), [scripts/capture-live-media.mjs](scripts/capture-live-media.mjs), [tests/ram-engine-refactor.test.mjs](tests/ram-engine-refactor.test.mjs))**:
+  - Aligned `warmWorkspaceAsync`, dirty `symbolGraph` invalidation, and Win32 path contracts across RAM memory engine, MCP server, Project Graph builder, SQLite knowledge hub, and panel server.
+- **Built-in Skills CLI, SSRF/Redirect & Cross-File Contract Hardening ([skills/deep-stress-auditor/scripts/run-webapp-dogfood.mjs](skills/deep-stress-auditor/scripts/run-webapp-dogfood.mjs), [skills/ui-ux-design-system/scripts/audit-ui.mjs](skills/ui-ux-design-system/scripts/audit-ui.mjs), [skills/ui-ux-design-system/scripts/fetch-open-media.mjs](skills/ui-ux-design-system/scripts/fetch-open-media.mjs), [skills/ui-ux-design-system/scripts/fetch-web-refs.mjs](skills/ui-ux-design-system/scripts/fetch-web-refs.mjs), [skills/skill-architect/scripts/audit-skill.mjs](skills/skill-architect/scripts/audit-skill.mjs), [skills/github-publish-guard/scripts/audit-github-publish.mjs](skills/github-publish-guard/scripts/audit-github-publish.mjs), [tests/skills-audit-regressions.test.mjs](tests/skills-audit-regressions.test.mjs))**:
+  - Hardened Windows CLI/path handling, SSRF/redirect guards, resource cleanup, and cross-file contracts across `20` skill scripts.
+  - Added `tests/skills-audit-regressions.test.mjs`, bringing the total automated test suite count to `60`.
+- **Background Sentinel Co-Change Filtering & File Collector Dedup ([core/background-sentinel.mjs](core/background-sentinel.mjs), [skills/ui-ux-design-system/scripts/build-showroom.mjs](skills/ui-ux-design-system/scripts/build-showroom.mjs), [tests/background-sentinel.test.mjs](tests/background-sentinel.test.mjs))**:
+  - Filtered stale co-change alerts against live `git status` and deduplicated the shared skill file collector.
 
 ---
 

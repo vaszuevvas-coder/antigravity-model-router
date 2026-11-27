@@ -4,7 +4,23 @@
 
 Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
 
-> Хронология с `v3.8.0` по `v4.0.8` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`59` основных / `71` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `58` наборов автотестов).
+> Хронология с `v3.8.0` по `v4.0.9` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`59` основных / `71` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `60` наборов автотестов).
+
+---
+
+## [4.0.9] — 2026-11-27
+
+### Исправлено и усилено (Защита `tool-pruner`, контракты RAM/Win32, аудит скриптов навыков, фильтрация Sentinel и 60 наборов тестов)
+- **Защита `tool-pruner` от `null`/`NaN`, автомат подтверждений и пути Windows ([core/tool-pruner.mjs](core/tool-pruner.mjs), [tests/tool-pruner-audit-fixes.test.mjs](tests/tool-pruner-audit-fixes.test.mjs))**:
+  - Усилены проверки некорректного состояния, границ `NaN`, изоляция ошибок по областям, переходы автомата подтверждений и нормализация путей Windows.
+  - Добавлен отдельный набор регрессионных тестов `tests/tool-pruner-audit-fixes.test.mjs`.
+- **Согласование RAM-движка, графа символов и Win32-путей между подсистемами ([core/ram-memory-engine.mjs](core/ram-memory-engine.mjs), [core/ram-memory-mcp.mjs](core/ram-memory-mcp.mjs), [core/project-graph-builder.mjs](core/project-graph-builder.mjs), [core/sqlite-knowledge-hub.mjs](core/sqlite-knowledge-hub.mjs), [sidecars/panel/server.mjs](sidecars/panel/server.mjs), [scripts/capture-live-media.mjs](scripts/capture-live-media.mjs), [tests/ram-engine-refactor.test.mjs](tests/ram-engine-refactor.test.mjs))**:
+  - Выровнены контракты `warmWorkspaceAsync`, сброса устаревшего `symbolGraph` и нормализации Win32-путей между RAM-движком, MCP-сервером, построителем Карты проекта, SQLite-базой знаний и сервером панели.
+- **Усиление CLI, SSRF/редиректов и контрактов в скриптах встроенных навыков ([skills/deep-stress-auditor/scripts/run-webapp-dogfood.mjs](skills/deep-stress-auditor/scripts/run-webapp-dogfood.mjs), [skills/ui-ux-design-system/scripts/audit-ui.mjs](skills/ui-ux-design-system/scripts/audit-ui.mjs), [skills/ui-ux-design-system/scripts/fetch-open-media.mjs](skills/ui-ux-design-system/scripts/fetch-open-media.mjs), [skills/ui-ux-design-system/scripts/fetch-web-refs.mjs](skills/ui-ux-design-system/scripts/fetch-web-refs.mjs), [skills/skill-architect/scripts/audit-skill.mjs](skills/skill-architect/scripts/audit-skill.mjs), [skills/github-publish-guard/scripts/audit-github-publish.mjs](skills/github-publish-guard/scripts/audit-github-publish.mjs), [tests/skills-audit-regressions.test.mjs](tests/skills-audit-regressions.test.mjs))**:
+  - Усилены обработка CLI/путей Windows, защита от SSRF и редиректов, освобождение ресурсов и межфайловые контракты в `20` скриптах навыков.
+  - Добавлен набор тестов `tests/skills-audit-regressions.test.mjs` — теперь в проекте `60` наборов автотестов.
+- **Фильтрация устаревших алертов `background-sentinel` и дедупликация сборщика файлов ([core/background-sentinel.mjs](core/background-sentinel.mjs), [skills/ui-ux-design-system/scripts/build-showroom.mjs](skills/ui-ux-design-system/scripts/build-showroom.mjs), [tests/background-sentinel.test.mjs](tests/background-sentinel.test.mjs))**:
+  - Устаревшие co-change предупреждения теперь фильтруются по живому `git status`, а общий сборщик файлов навыков дедуплицирован.
 
 ---
 
