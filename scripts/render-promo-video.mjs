@@ -339,7 +339,7 @@ function buildInteractiveVideoHtml(metrics) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>The Tunnel v${version} — Interactive 30s Demo Showcase</title>
+  <title>The Tunnel v4 — Interactive 30s Demo Showcase</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -380,7 +380,7 @@ function buildInteractiveVideoHtml(metrics) {
     }
     .top-crimson-line { position: absolute; top: 0; left: 0; right: 0; height: 3px; background: #f04848; z-index: 25; }
     .brand-mini { display: flex; align-items: center; gap: 14px; font: 700 15px ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: 1px; }
-    .brand-mini .ver { color: #f04848; }
+    .brand-mini .ver { color: #f04848; font-size: 18px; font-weight: 800; letter-spacing: 0.4px; }
     .brand-mini .sep { color: #3a3f4b; }
     .brand-mini .tagline { color: #9ca3af; font-family: system-ui, sans-serif; font-weight: 500; font-size: 14px; letter-spacing: 0.2px; }
     .rail-status { display: flex; align-items: center; gap: 12px; font: 700 13px ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums; }
@@ -426,7 +426,7 @@ function buildInteractiveVideoHtml(metrics) {
     .s1-rail-l, .s1-rail-r { width: 170px; height: 4px; background: linear-gradient(90deg, transparent, #9ca3af); border-radius: 2px; }
     .s1-rail-r { background: linear-gradient(90deg, #9ca3af, transparent); }
     .s1-title { font-size: 84px; font-weight: 850; letter-spacing: -2.2px; color: #f3f4f6; line-height: 1; }
-    .s1-title span { color: #f04848; }
+    .s1-title span { color: #f04848; font-size: 1.12em; font-weight: 900; letter-spacing: -1px; }
     .s1-sub-en { font-size: 29px; font-weight: 600; color: #d1d5db; letter-spacing: -0.3px; }
     .s1-sub-ru { font-size: 21px; font-weight: 500; color: #9ca3af; margin-top: -8px; }
     .s1-metrics { display: grid; grid-template-columns: repeat(4, 240px); gap: 18px; margin-top: 18px; }
@@ -584,7 +584,7 @@ function buildInteractiveVideoHtml(metrics) {
             <circle cx="64" cy="64" r="4" fill="#f3f4f6"/>
           </svg>
           <span>THE TUNNEL</span>
-          <span class="ver">v${version}</span>
+          <span class="ver">v4</span>
           <span class="sep">/</span>
           <span class="tagline">3D AI Autopilot &amp; Coprocessor · «3D ИИ-автопилот для Google Antigravity»</span>
         </div>
@@ -613,7 +613,7 @@ function buildInteractiveVideoHtml(metrics) {
             </svg>
             <div class="s1-rail-r"></div>
           </div>
-          <div class="s1-title" id="s1Title">The Tunnel <span>v${version}</span></div>
+          <div class="s1-title" id="s1Title">The Tunnel <span>v4</span></div>
           <div class="s1-sub-en" id="s1SubEn">3D AI Autopilot, Live Project Map &amp; Local Coprocessor for Google Antigravity</div>
           <div class="s1-sub-ru" id="s1SubRu">«3D ИИ-автопилот, интерактивная карта проекта и локальный сопроцессор»</div>
           <div class="s1-metrics" id="s1Metrics">
@@ -827,10 +827,10 @@ function buildInteractiveVideoHtml(metrics) {
             <path d="M64 51 L75 64 L64 77 L53 64 Z" fill="#f04848"/>
             <circle cx="64" cy="64" r="3.5" fill="#f3f4f6"/>
           </svg>
-          <div class="s1-title" style="font-size:74px;">The Tunnel <span>v${version}</span></div>
+          <div class="s1-title" style="font-size:74px;">The Tunnel <span>v4</span></div>
           <div class="s1-sub-en">Ready for Windows, macOS &amp; Linux · Zero External Runtime Dependencies</div>
           <div class="s1-sub-ru">«Готово к установке в 1 клик · Setup.exe, портативный .zip или node install.js»</div>
-          <div class="s6-cmd"><span>$</span> node install.js &nbsp;·&nbsp; The-Tunnel-v${version}-Setup.exe</div>
+          <div class="s6-cmd"><span>$</span> node install.js &nbsp;·&nbsp; The-Tunnel-Setup.exe</div>
           <div class="s6-links">github.com/<b>vaszuevvas-coder/antigravity-model-router</b></div>
         </div>
       </section>
@@ -1305,7 +1305,7 @@ async function main() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tunnel-video-render-'));
   const rawWavPath = path.join(tmpDir, 'soundtrack-raw.wav');
   const rawMp4Path = path.join(tmpDir, 'video-silent.mp4');
-  const finalMp4Path = path.join(MEDIA_DIR, `the-tunnel-demo-v${version}.mp4`);
+  const finalMp4Path = path.join(MEDIA_DIR, 'the-tunnel-demo-v4.mp4');
   const heroGifPath = path.join(MEDIA_DIR, 'hero-showcase.gif');
 
   let staticSrv = null;

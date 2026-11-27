@@ -20,14 +20,14 @@
 ## 🎬 30-Second Interactive Demo (`EN` + `«RU»` · Sound & FX)
 
 <p align="center">
-  <a href="docs/media/the-tunnel-demo-v4.0.7.mp4">
-    <img src="docs/media/hero-showcase.gif" alt="The Tunnel v4.0.6 — 30-second live extension showcase (EN + RU)" width="100%" />
+  <a href="docs/media/the-tunnel-demo-v4.mp4">
+    <img src="docs/media/hero-showcase.gif" alt="The Tunnel v4 — 30-second live extension showcase (EN + RU)" width="100%" />
   </a>
   <br/>
   <sub>
     <b>Watch full 30s 1080p HD Video with Sound &amp; FX:</b>
-    <a href="https://github.com/vaszuevvas-coder/antigravity-model-router/releases/download/v4.0.7/the-tunnel-demo-v4.0.7.mp4">Download / Stream MP4 (Release v4.0.7)</a> ·
-    <a href="docs/media/the-tunnel-demo-v4.0.7.mp4">Repo MP4</a> ·
+    <a href="https://github.com/vaszuevvas-coder/antigravity-model-router/raw/main/docs/media/the-tunnel-demo-v4.mp4">Download / Stream MP4 (The Tunnel v4)</a> ·
+    <a href="docs/media/the-tunnel-demo-v4.mp4">Repo MP4</a> ·
     <a href="docs/demo/index.html">Interactive Web Player (Web Audio SFX &amp; Lens Switcher)</a>
   </sub>
 </p>

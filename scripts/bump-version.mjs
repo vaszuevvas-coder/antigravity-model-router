@@ -191,7 +191,6 @@ const COMPANION_VERSION_RULES = [
       [/(alt="The Tunnel v)\d+\.\d+(?:\.\d+)?(\s+—)/, (v) => `$1${v}$2`],
       [/(Полная история изменений \(v1\.0\.0 — v)\d+\.\d+(?:\.\d+)?(\))/, (v) => `$1${v}$2`],
       [/(The-Tunnel-v)\d+\.\d+(?:\.\d+)?(-Setup\.exe|\.zip)/g, (v) => `$1${v}$2`],
-      [/(the-tunnel-demo-v)\d+\.\d+(?:\.\d+)?(\.mp4)/g, (v) => `$1${v}$2`],
       [/(releases\/download\/v)\d+\.\d+(?:\.\d+)?(\/)/g, (v) => `$1${v}$2`],
       [/(badge\/release-v)\d+\.\d+(?:\.\d+)?(-)/g, (v) => `$1${v}$2`],
       [/(Release v)\d+\.\d+(?:\.\d+)?/g, (v) => `$1${v}`],
