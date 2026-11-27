@@ -1267,6 +1267,7 @@
         case 'evolveAllInstinctsFromDock': if (typeof evolveAllInstinctsFromDock === 'function') void evolveAllInstinctsFromDock(); break;
         case 'promoteInstinctFromDock': if (typeof promoteInstinctFromDock === 'function') void promoteInstinctFromDock(arg); break;
         case 'jumpToPanelSection': if (typeof jumpToPanelSection === 'function') jumpToPanelSection(arg); break;
+        case 'toggleInlineSection': if (typeof toggleInlineSection === 'function') toggleInlineSection(arg); break;
         case 'setPanelFullTab': if (typeof setPanelFullTab === 'function') setPanelFullTab(arg); break;
         case 'applyUnifiedPreset': if (typeof applyUnifiedPreset === 'function') applyUnifiedPreset(arg); break;
         case 'toggleSentinelFindingExpand': {
@@ -1501,6 +1502,15 @@
 
     const COLLAPSED_CARDS_STORAGE_KEY = 'ag_tunnel_collapsed_cards_v1';
     const OPEN_SPOILERS_STORAGE_KEY = 'ag_tunnel_open_spoilers_v1';
+    const INLINE_SECTIONS_STORAGE_KEY = 'ag_tunnel_inline_sections_v1';
+    const INLINE_SECTION_IDS = new Set([
+      'hwEnginesSection',
+      'hwLifecycleSection',
+      'expertRamGpuFieldset',
+      'sentinelEnginesSection',
+      'intelBudgetSection',
+      'safetyContoursSection',
+    ]);
     const COLLAPSIBLE_CARD_IDS = new Set();
     const DEFAULT_COLLAPSED_CARDS_MAP = {};
     const PANEL_SPOILER_IDS = new Set();
@@ -1509,6 +1519,47 @@
     let _spoilerListenersInitialized = false;
     let _spoilerHydratedFromServer = false;
     const _locallyToggledSpoilers = Object.create(null);
+
+    function setInlineSectionOpen(sectionId, shouldOpen, skipStorage) {
+      const id = String(sectionId || '').trim();
+      if (!id) return false;
+      const box = document.getElementById(id);
+      if (!box) return false;
+      const nextOpen = Boolean(shouldOpen);
+      box.classList.toggle('is-open', nextOpen);
+      const trigger = box.querySelector('[data-action="toggleInlineSection"][data-arg="' + id + '"]');
+      if (trigger) {
+        trigger.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+      }
+      if (!skipStorage) {
+        const currentMap = loadBooleanMapFromStorage(INLINE_SECTIONS_STORAGE_KEY, INLINE_SECTION_IDS);
+        if (nextOpen) currentMap[id] = true;
+        else delete currentMap[id];
+        saveBooleanMapToStorage(INLINE_SECTIONS_STORAGE_KEY, currentMap, INLINE_SECTION_IDS);
+      }
+      if (typeof scheduleSyncAllSlidingPills === 'function') {
+        scheduleSyncAllSlidingPills();
+      }
+      return nextOpen;
+    }
+
+    function toggleInlineSection(sectionId) {
+      const id = String(sectionId || '').trim();
+      if (!id) return false;
+      const box = document.getElementById(id);
+      if (!box) return false;
+      const nextOpen = !box.classList.contains('is-open');
+      return setInlineSectionOpen(id, nextOpen, false);
+    }
+
+    function restoreInlineSectionsDom() {
+      const savedMap = loadBooleanMapFromStorage(INLINE_SECTIONS_STORAGE_KEY, INLINE_SECTION_IDS);
+      INLINE_SECTION_IDS.forEach(function (id) {
+        setInlineSectionOpen(id, savedMap[id] === true, true);
+      });
+    }
+
+    restoreInlineSectionsDom();
 
     function sanitizeBooleanIdMap(rawMap, allowedSet) {
       const out = {};
@@ -3350,6 +3401,7 @@
     // In-App Changelog ("What's new") & Diagnostic Debug Logger Modals
     // =========================================================================
     let _changelogData = null;
+    let _changelogDataLang = '';
     let _changelogSelectedVersion = '';
     let _changelogSearchQuery = '';
     let _changelogLoading = false;
@@ -3576,12 +3628,29 @@
       }
     }
 
+    function invalidateChangelogForLanguage(nextLang) {
+      const targetLang = normalizeUiLanguage(nextLang || getUiLanguage());
+      if (_changelogData && _changelogDataLang !== targetLang) {
+        _changelogData = null;
+        _changelogDataLang = '';
+      }
+      const chModal = document.getElementById('changelogModalOverlay');
+      if (chModal && chModal.style.display === 'flex') {
+        void openChangelogModal(_changelogSelectedVersion || 'latest');
+      }
+    }
+
     async function openChangelogModal(preferredVersion) {
       const overlay = document.getElementById('changelogModalOverlay');
       if (!overlay) return;
+      const reqLang = normalizeUiLanguage(getUiLanguage());
       animateModalOverlayState(overlay, true, { display: 'flex', cardSelector: '.tunnel-modal-card' });
       _changelogSearchQuery = '';
       _changelogError = '';
+      if (_changelogData && _changelogDataLang !== reqLang) {
+        _changelogData = null;
+        _changelogDataLang = '';
+      }
       _changelogLoading = !_changelogData;
       const searchEl = document.getElementById('changelogSearchInput');
       if (searchEl) searchEl.value = '';
@@ -3592,7 +3661,7 @@
       }
       renderChangelogModal();
       try {
-        const res = await panelFetch('/api/plugin/changelog', { method: 'GET' });
+        const res = await panelFetch('/api/plugin/changelog?lang=' + encodeURIComponent(reqLang), { method: 'GET' });
         if (!res || !res.ok) {
           const stCode = res ? res.status : 0;
           _changelogError = stCode === 404
@@ -3605,7 +3674,9 @@
         }
         const data = await res.json();
         if (data && data.ok) {
+          if (normalizeUiLanguage(getUiLanguage()) !== reqLang) return;
           _changelogData = data;
+          _changelogDataLang = normalizeUiLanguage(data.lang || reqLang);
           if (!_changelogSelectedVersion && Array.isArray(data.versions) && data.versions.length > 0) {
             _changelogSelectedVersion = data.versions[0].version;
           }

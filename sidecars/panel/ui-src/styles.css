@@ -10892,3 +10892,233 @@
       justify-content: flex-end;
     }
 
+    /* =========================================================================
+       Variant B: Seamless Embedded Category Pages (Clean Rubrics & Zero Boxes)
+       ========================================================================= */
+    .full-workspace-shell > .window-body {
+      gap: 20px;
+      padding: 4px 8px 16px 6px;
+    }
+
+    .full-workspace-shell > .window-body > .lg-card {
+      background: transparent !important;
+      border: none !important;
+      box-shadow: none !important;
+      border-radius: 0 !important;
+      padding: 0 !important;
+      margin: 0 !important;
+    }
+
+    .full-workspace-shell > .window-body > .lg-card > .lg-card-head {
+      margin-bottom: 8px;
+      padding: 1px 0 1px 9px;
+      border-left: 2px solid var(--accent-primary);
+    }
+
+    .full-workspace-shell > .window-body > #expertRamGpuFieldset.is-inline-accordion > .lg-card-head {
+      border-left: none;
+      padding-left: 0;
+      margin-bottom: 0;
+    }
+
+    .full-workspace-shell > .window-body .sunken-box:not(#wiretapAlertBar):not(#composerImagePreviewBar):not(#skillRegistryDrawer):not(#graphDebtDrawer),
+    .full-workspace-shell > .window-body .swarm-status-banner,
+    .full-workspace-shell > .window-body .sentinel-status-box,
+    .full-workspace-shell > .window-body .roi-timeline-box,
+    .full-workspace-shell > .window-body .roi-canvas-stage,
+    .full-workspace-shell > .window-body .roi-quota-bullet {
+      background: transparent !important;
+      border: none !important;
+      box-shadow: none !important;
+      border-radius: 0 !important;
+      padding: 2px 0 !important;
+    }
+
+    .full-workspace-shell > .window-body .mode-list {
+      gap: 4px;
+    }
+
+    .full-workspace-shell > .window-body .mode-card,
+    .full-workspace-shell > .window-body .mode-card:hover,
+    .full-workspace-shell > .window-body .mode-card.active-card {
+      background: transparent !important;
+      border: none !important;
+      box-shadow: none !important;
+      border-radius: 0 !important;
+      padding: 2px 0 !important;
+    }
+
+    .full-workspace-shell > .window-body .mode-card > .card-head {
+      padding: 5px 8px;
+      border-radius: var(--r-sm);
+      margin-bottom: 2px;
+      transition: background 140ms var(--ease-enter);
+    }
+
+    .full-workspace-shell > .window-body .mode-card:hover > .card-head {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .full-workspace-shell > .window-body #advisorBox,
+    .full-workspace-shell > .window-body #autopilotBox {
+      margin-left: 7px;
+      padding-left: 10px;
+      border-left: 1px solid var(--border-hairline);
+      border-top: none !important;
+      margin-top: 2px;
+    }
+
+    .full-workspace-shell > .window-body .settings-group-list > .control-row,
+    .full-workspace-shell > .window-body .settings-group-list > .toggle-row,
+    .full-workspace-shell > .window-body .control-row,
+    .full-workspace-shell > .window-body .toggle-row,
+    .full-workspace-shell > .window-body .preset-row {
+      border-top: none !important;
+      padding: 5px 8px;
+      margin-top: 0 !important;
+      min-height: 28px;
+      border-radius: var(--r-sm);
+      color: var(--text-main) !important;
+      transition: background 130ms var(--ease-enter);
+    }
+
+    .full-workspace-shell > .window-body .settings-group-list > .control-row:hover,
+    .full-workspace-shell > .window-body .settings-group-list > .toggle-row:hover,
+    .full-workspace-shell > .window-body .control-row:hover,
+    .full-workspace-shell > .window-body .toggle-row:hover,
+    .full-workspace-shell > .window-body .preset-row:hover {
+      background: rgba(255, 255, 255, 0.028);
+    }
+
+    .full-workspace-shell > .window-body .divider {
+      margin: 6px 0;
+      opacity: 0.45;
+    }
+
+    .full-workspace-shell > .window-body #swarmBehaviorCard .sub-settings,
+    .full-workspace-shell > .window-body #gpuRamCard > .sunken-box > div[style*="border-top"] {
+      border-top: none !important;
+      padding-top: 4px !important;
+      margin-top: 4px !important;
+    }
+
+    .full-workspace-shell > .window-body .tune-section-box {
+      background: transparent !important;
+      border: none !important;
+      border-radius: 0 !important;
+      padding: 0 !important;
+      margin-top: 4px;
+    }
+
+    button.tune-section-head {
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
+      appearance: none;
+      -webkit-appearance: none;
+      border: none;
+      background: rgba(255, 255, 255, 0.024);
+      border-radius: var(--r-sm);
+      padding: 6px 8px;
+      margin-bottom: 0;
+      color: var(--text-main);
+      font-family: inherit;
+      font-size: 11.5px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      text-align: left;
+      transition: background 140ms var(--ease-enter);
+    }
+
+    button.tune-section-head:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    button.tune-section-head:focus-visible {
+      outline: 1.5px solid var(--accent-primary);
+      outline-offset: 1px;
+    }
+
+    button.tune-section-head.is-rubric-accordion-btn {
+      padding: 6px 8px;
+    }
+
+    .tune-chevron {
+      flex-shrink: 0;
+      order: 3;
+      color: var(--text-sub);
+      transition: transform 180ms var(--ease-spring), color 140ms var(--ease-enter);
+    }
+
+    .is-inline-accordion.is-open > button.tune-section-head .tune-chevron,
+    .is-inline-accordion.is-open > .lg-card-head .tune-chevron {
+      transform: rotate(180deg);
+      color: var(--text-main);
+    }
+
+    .is-inline-accordion:not(.is-open) > .toggle-chip-grid,
+    .is-inline-accordion:not(.is-open) > .inline-accordion-body {
+      display: none !important;
+    }
+
+    .is-inline-accordion.is-open > .toggle-chip-grid,
+    .is-inline-accordion.is-open > .inline-accordion-body {
+      margin-top: 6px;
+      padding: 2px 4px 6px 8px;
+      animation: agSilkEnter var(--motion-ui) var(--ease-enter) both;
+    }
+
+    .full-workspace-shell > .window-body .toggle-chip {
+      background: transparent !important;
+      border: none !important;
+      padding: 4px 6px;
+      border-radius: var(--r-sm);
+    }
+
+    .full-workspace-shell > .window-body .toggle-chip:hover {
+      background: rgba(255, 255, 255, 0.032) !important;
+    }
+
+    .full-workspace-shell > .window-body .toggle-chip-sub,
+    .full-workspace-shell > .window-body .skill-hint,
+    .full-workspace-shell > .window-body .skill-id-tag,
+    .full-workspace-shell > .window-body .hw-unit-op,
+    .full-workspace-shell > .window-body .swarm-meta-row {
+      display: none !important;
+    }
+
+    .full-workspace-shell > .window-body #skillsContainer.skills-scroll {
+      max-height: 340px;
+      padding: 0 !important;
+    }
+
+    .full-workspace-shell > .window-body .skill-item {
+      background: transparent !important;
+      border: none !important;
+      padding: 5px 8px;
+      border-radius: var(--r-sm);
+      transition: background 130ms var(--ease-enter);
+    }
+
+    .full-workspace-shell > .window-body .skill-item:hover {
+      background: rgba(255, 255, 255, 0.028) !important;
+    }
+
+    .full-workspace-shell > .window-body .telemetry-grid .metric-cell,
+    .full-workspace-shell > .window-body .saved-breakdown-pill,
+    .full-workspace-shell > .window-body .sentinel-metric-cell,
+    .full-workspace-shell > .window-body .hw-optical-unit {
+      background: rgba(255, 255, 255, 0.02) !important;
+      box-shadow: none !important;
+    }
+
+    @media (max-width: 420px) {
+      .full-workspace-shell > .window-body .toggle-chip-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+

@@ -4018,10 +4018,16 @@
         if (cur.tagName === 'DETAILS' && !cur.open) {
           cur.open = true;
         }
+        if (cur.classList && cur.classList.contains('is-inline-accordion') && cur.id && !cur.classList.contains('is-open') && typeof setInlineSectionOpen === 'function') {
+          setInlineSectionOpen(cur.id, true, false);
+        }
         cur = cur.parentElement;
       }
       if (el.tagName === 'DETAILS' && !el.open) {
         el.open = true;
+      }
+      if (el.classList && el.classList.contains('is-inline-accordion') && el.id && !el.classList.contains('is-open') && typeof setInlineSectionOpen === 'function') {
+        setInlineSectionOpen(el.id, true, false);
       }
       if (el.classList && el.classList.contains('is-collapsed') && typeof togglePanelCardCollapse === 'function') {
         togglePanelCardCollapse(id);

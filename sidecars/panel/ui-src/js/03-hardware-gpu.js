@@ -311,6 +311,17 @@
       const chkUnloadExit = document.getElementById('chk-gpuUnloadOnExit');
       if (chkUnloadExit) chkUnloadExit.checked = s.gpuUnloadOnExit !== false;
 
+      const hwLifecycleBadge = document.getElementById('hwLifecycleCountBadge');
+      if (hwLifecycleBadge) {
+        const lifeActiveCount = [
+          s.ramAutoWarmOnSessionStart !== false,
+          s.gpuAutoStart !== false,
+          s.gpuShowPreTaskAdvice !== false,
+          s.gpuUnloadOnExit !== false,
+        ].filter(Boolean).length;
+        hwLifecycleBadge.textContent = lifeActiveCount + '/4';
+      }
+
       if (typeof syncTogglePresetsUi === 'function') {
         syncTogglePresetsUi(s);
       }

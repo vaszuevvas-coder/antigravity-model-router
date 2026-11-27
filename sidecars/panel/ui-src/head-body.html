@@ -438,7 +438,7 @@
                 </div>
                 <label class="toggle-row" id="orchestratorSmartSynergyLabel" style="margin-top: 6px;" title="Когда выбран Orchestrator (Neon / Argon), штатный движок сам передаёт правки на Hydrogen (-24% квоты), поэтому на S/M лишние опросы не показываются">
                   <input type="checkbox" id="chk-orchestratorSmartSynergy" data-action="toggleOption" data-key="orchestratorSmartSynergy" />
-                  <span><strong>Умная связка Orchestrator</strong> — без лишних опросов на <code>S/M</code></span>
+                  <span><strong>Умная связка Orchestrator</strong><span class="ui-hint-collapsed"> — без лишних опросов на <code>S/M</code></span></span>
                 </label>
                 <div class="control-row" style="margin-top: 8px;">
                   <span title="Что делает: перед написанием кода проводит короткое интервью по развилкам архитектуры и крайним случаям (метод Grill-Me).
@@ -544,7 +544,7 @@
           <label class="toggle-row" title="Что делает: добавляет компактную итоговую строку о режиме, сложности, модели и подключённых навыках на крупных задачах M/L/XL.
 Зачем: вы всегда видите, какая модель реально выполняла работу.">
             <input type="checkbox" id="chk-showBadge" data-action="toggleOption" data-key="showBadge" />
-            <span><strong>Плашка в ответе</strong> — модель и скиллы на <code>M/L/XL</code></span>
+            <span><strong>Плашка в ответе</strong><span class="ui-hint-collapsed"> — модель и скиллы на <code>M/L/XL</code></span></span>
           </label>
         </div>
       </section>
@@ -629,11 +629,11 @@
           <div style="margin-top: 6px; padding-top: 4px; border-top: 1px solid var(--border-hairline);">
             <label class="toggle-row" title="Добавлять независимого проверочного агента @verifier на каждые 2–4 автора для проверки кода и тестов перед сдачей">
               <input type="checkbox" id="chk-swarmAutoVerifier" data-action="toggleOption" data-key="swarmAutoVerifier" />
-              <span><strong>Авто-Ревизор (<code>@verifier</code>)</strong> — проверка диффов и тестов</span>
+              <span><strong>Авто-Ревизор (<code>@verifier</code>)</strong><span class="ui-hint-collapsed"> — проверка диффов и тестов</span></span>
             </label>
             <label class="toggle-row" title="Если у воркера Роя закончилась квота модели, автоматически переключать его на доступную модель без потери памяти диалога">
               <input type="checkbox" id="chk-swarmQuotaFailover" data-action="toggleOption" data-key="swarmQuotaFailover" />
-              <span><strong>Страховка квоты</strong> — авто-пересадка воркера без сброса памяти</span>
+              <span><strong>Страховка квоты</strong><span class="ui-hint-collapsed"> — авто-пересадка воркера без сброса памяти</span></span>
             </label>
           </div>
         </div>
@@ -939,11 +939,12 @@
               </div>
 
               <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-hairline);">
-                <div class="tune-section-box" id="hwEnginesSection" style="margin-top: 0;">
-                  <div class="tune-section-head" title="Тонкая настройка отдельных движков GPU, CPU и ускорителей ОЗУ">
+                <div class="tune-section-box is-inline-accordion" id="hwEnginesSection" style="margin-top: 0;">
+                  <button type="button" class="tune-section-head" data-action="toggleInlineSection" data-arg="hwEnginesSection" aria-expanded="false" title="Тонкая настройка отдельных движков GPU, CPU и ускорителей ОЗУ">
                     <span class="tune-summary-label">Движки ускорения GPU / CPU / ОЗУ</span>
                     <span class="tune-count-pill" id="hwEnginesCountBadge">9/9</span>
-                  </div>
+                    <svg class="tune-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
                   <div class="toggle-chip-grid">
                     <label class="toggle-chip" title="Что делает: строит локальные векторные эмбеддинги кода и ищет нужные файлы по смыслу (в т.ч. на русском).
 Зачем: агент находит нужный модуль даже без точного имени функции.">
@@ -1018,10 +1019,12 @@
                     </label>
                   </div>
                 </div>
-                <div class="tune-section-box" id="hwLifecycleSection">
-                  <div class="tune-section-head">
+                <div class="tune-section-box is-inline-accordion" id="hwLifecycleSection">
+                  <button type="button" class="tune-section-head" data-action="toggleInlineSection" data-arg="hwLifecycleSection" aria-expanded="false" title="Автоматический прогрев памяти и управление процессом Ollama">
                     <span class="tune-summary-label">Автоматизация ОЗУ и Ollama</span>
-                  </div>
+                    <span class="tune-count-pill" id="hwLifecycleCountBadge">4/4</span>
+                    <svg class="tune-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
                   <div class="toggle-chip-grid">
                     <label class="toggle-chip" title="Что делает: автоматически индексирует открытый проект в оперативную память при старте новой сессии.
 Зачем: к первому вашему запросу карта кода и срезы уже прогреты.">
@@ -1062,11 +1065,15 @@
       </section>
 
       <!-- Сервер и папки Ollama (вкладка ПК) -->
-      <section class="lg-card" id="expertRamGpuFieldset" data-tab-panel="hardware">
+      <section class="lg-card is-inline-accordion" id="expertRamGpuFieldset" data-tab-panel="hardware">
         <div class="lg-card-head">
-          <span class="lg-card-title" title="Что делает: задаёт адрес локального сервера Ollama, таймауты хранения весов в VRAM, размер контекста и папки программы/моделей.
-Зачем: позволяет указать нестандартный порт, размер окна контекста и отдельные диски для GGUF-весов.">Сервер и папки Ollama</span>
+          <button type="button" class="tune-section-head is-rubric-accordion-btn" data-action="toggleInlineSection" data-arg="expertRamGpuFieldset" aria-expanded="false" title="Что делает: задаёт адрес локального сервера Ollama, таймауты хранения весов в VRAM, размер контекста и папки программы/моделей.
+Зачем: позволяет указать нестандартный порт, размер окна контекста и отдельные диски для GGUF-весов.">
+            <span class="lg-card-title tune-summary-label">Сервер и папки Ollama</span>
+            <svg class="tune-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
         </div>
+        <div class="inline-accordion-body">
         <div class="expert-gpu-grid">
           <label style="display:flex; flex-direction:column; gap:3px;" title="Локальный адрес API Ollama (разрешены только адреса loopback: 127.0.0.1 / localhost)">
             <span>Ollama Endpoint (loopback):</span>
@@ -1097,6 +1104,7 @@
         </div>
         <div class="expert-gpu-actions">
           <button type="button" class="win-btn" data-action="saveExpertGpuConfig" title="Сохранить изменённые параметры Ollama, моделей и лимита In-RAM в настройки плагина">Применить параметры Ollama / RAM</button>
+        </div>
         </div>
       </section>
 
@@ -1154,11 +1162,12 @@
                     </div>
                   </div>
 
-                  <div class="tune-section-box" id="sentinelEnginesSection">
-                    <div class="tune-section-head" title="Тонкое управление подсистемами Фонового Дозора, LSP и Wiretap">
+                  <div class="tune-section-box is-inline-accordion" id="sentinelEnginesSection">
+                    <button type="button" class="tune-section-head" data-action="toggleInlineSection" data-arg="sentinelEnginesSection" aria-expanded="false" title="Тонкое управление подсистемами Фонового Дозора, LSP и Wiretap">
                       <span class="tune-summary-label">Тонкая настройка Дозора и LSP</span>
                       <span class="tune-count-pill" id="sentinelEnginesCountBadge">7/8</span>
-                    </div>
+                      <svg class="tune-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </button>
                     <div class="toggle-chip-grid">
                       <label class="toggle-chip" title="Что делает: главный рубильник Фонового Дозора — проверяет проект только когда вы не печатаете и чат свободен.
 Зачем: поддерживает карту и проверки в актуальном состоянии без тормозов.">
@@ -1287,7 +1296,7 @@
             Автомат замкнут. Защита от зацикливания правок активна.
           </div>
         </div>
-        <div class="sunken-box">
+        <div class="sunken-box ui-hint-collapsed">
           <div style="display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 11.5px; color: var(--status-ok);">
             <span id="autopilotHealthTitle">Глубокое мышление без урезания и разведка файлов активны</span>
           </div>
@@ -1309,7 +1318,7 @@
               </div>
             </div>
           </div>
-          <div id="bayesianDomainsLine" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px;">Домены: нет накопленных запусков</div>
+          <div id="bayesianDomainsLine" class="ui-hint-collapsed" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px;">Домены: нет накопленных запусков</div>
           <div id="bayesianFragileList" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px; line-height: 1.4;"></div>
         </div>
         <div class="settings-group-list" style="margin-top: 8px;">
@@ -1376,11 +1385,12 @@
             <button type="button" class="win-btn" data-val="raw" data-action="applyTogglePreset" data-arg="intel:raw" title="Только карта проекта; срезы, триаж и экономия токенов выключены">Без экономии</button>
           </div>
         </div>
-        <div class="tune-section-box" id="intelBudgetSection">
-          <div class="tune-section-head" title="Отдельные контуры разведки проекта, памяти сессий и экономии токенов">
+        <div class="tune-section-box is-inline-accordion" id="intelBudgetSection">
+          <button type="button" class="tune-section-head" data-action="toggleInlineSection" data-arg="intelBudgetSection" aria-expanded="false" title="Отдельные контуры разведки проекта, памяти сессий и экономии токенов">
             <span class="tune-summary-label">Модули разведки и бюджета</span>
             <span class="tune-count-pill" id="intelBudgetCountBadge">12/12</span>
-          </div>
+            <svg class="tune-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
           <div class="toggle-chip-grid">
             <label class="toggle-chip" title="Что делает: строит структурную карту файлов, импортов, классов и функций проекта в RAM.
 Зачем: агент сразу видит архитектуру, а не ищет файлы наугад.">
@@ -1484,7 +1494,7 @@
 
       <!-- ХАБ ЗНАНИЙ SQLITE (вкладка Память) -->
       <section class="lg-card" id="expertKnowledgeBox" data-tab-panel="memory">
-        <div id="expertKnowledgeHeadRow" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; gap: 6px; flex-wrap: wrap;">
+        <div id="expertKnowledgeHeadRow" class="lg-card-head" style="gap: 6px;">
           <span class="lg-card-title" style="margin-right: auto;" title="Что делает: локальная база знаний проекта на SQLite WAL — хранит удачные починки багов («рецепты побед»), эпизоды прошлых чатов и связи с соседними репозиториями.
 Зачем: позволяет мгновенно находить проверенные решения и искать код по смежным проектам.">Рецепты побед и Кросс-репо (SQLite)</span>
           <span id="knowledgeStatsBadge" style="font-size: 10px; color: var(--text-sub);" title="Количество сохранённых рецептов починки и проиндексированных AST-файлов в SQLite">0 рец.</span>
@@ -1494,9 +1504,9 @@
         <label class="toggle-row" style="margin-bottom: 4px;" title="Что делает: хранит на диске в SQLite эпизоды чатов, рецепты побед, сжатые блоки вывода (CCR) и кэш RepairKV.
 Зачем: память и найденные решения не пропадают после перезапуска IDE.">
           <input type="checkbox" id="chk-sqliteKnowledgeEnabled" data-action="toggleOption" data-key="sqliteKnowledgeEnabled" />
-          <span><strong>NVMe-память (<code>node:sqlite</code>)</strong> — персистентный RepairKV, рецепты побед и кросс-репо поиск</span>
+          <span><strong>NVMe-память (<code>node:sqlite</code>)</strong><span class="ui-hint-collapsed"> — персистентный RepairKV, рецепты побед и кросс-репо поиск</span></span>
         </label>
-        <div id="knowledgeExtendedStats" style="font-size: 10px; color: var(--text-sub); margin-bottom: 4px;" title="Сводка записей в базе SQLite: эпизоды прошлых сессий, сжатые CCR-блоки, кэш RepairKV и накопленные инстинкты">Эпизоды: 0 · CCR-блобы: 0 · RepairKV: 0 · Инстинкты: 0</div>
+        <div id="knowledgeExtendedStats" class="ui-hint-collapsed" style="font-size: 10px; color: var(--text-sub); margin-bottom: 4px;" title="Сводка записей в базе SQLite: эпизоды прошлых сессий, сжатые CCR-блоки, кэш RepairKV и накопленные инстинкты">Эпизоды: 0 · CCR-блобы: 0 · RepairKV: 0 · Инстинкты: 0</div>
         <div class="pitfalls-scroll" id="victoryRecipesContainer" style="margin-bottom: 6px;">
           <div style="color: var(--text-sub); font-size: 10.5px; padding: 2px;">Пока нет сохранённых рецептов побед</div>
         </div>
@@ -1510,7 +1520,7 @@
 
       <!-- РЕЕСТР ГРАБЛЕЙ И ИНСТИНКТЫ ПРОЕКТА (вкладка Память) -->
       <section class="lg-card" id="expertPitfallsBox" data-tab-panel="memory">
-        <div id="expertPitfallsHeadRow" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; gap: 6px;">
+        <div id="expertPitfallsHeadRow" class="lg-card-head" style="gap: 6px;">
           <span class="lg-card-title" style="margin-right: auto;" title="Что делает: записывает ошибки тестов, откаты и опасные места проекта, затем автоматически подкладывает их в начало новых сессий.
 Зачем: агент помнит прошлые «грабли» и не наступает на те же ошибки повторно.">Реестр граблей (Pitfall Ledger)</span>
           <button type="button" class="win-btn" data-action="clearPitfalls" title="Удалить все накопленные записи об ошибках и откатах для текущего проекта">
@@ -1524,7 +1534,7 @@
         <label class="toggle-row" style="margin-bottom: 6px;" title="Что делает: выделяет повторяющиеся рабочие приёмы и ошибки в проекте и накапливает их как инстинкты для последующего превращения в навыки.
 Зачем: роутер адаптируется к правилам именно вашего репозитория.">
           <input type="checkbox" id="chk-skillCrystallizer" data-action="toggleOption" data-key="skillCrystallizer" />
-          <span><strong>Skill Crystallizer</strong> — превращение повторяющихся паттернов в навыки</span>
+          <span><strong>Skill Crystallizer</strong><span class="ui-hint-collapsed"> — превращение повторяющихся паттернов в навыки</span></span>
         </label>
         <div style="display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap;">
           <span style="font-weight: 600; font-size: 10.5px; color: var(--ui-subhead);" title="Повторяющиеся паттерны работы в проекте, готовые к превращению в постоянный навык SKILL.md">Инстинкты проекта</span>
@@ -1604,11 +1614,12 @@
             <button type="button" class="win-btn" data-val="strict" data-action="applyTogglePreset" data-arg="safety:strict" title="Максимум: все 12 контуров безопасности, включая Mutation Guard">Параноик</button>
           </div>
         </div>
-        <div class="tune-section-box" id="safetyContoursSection">
-          <div class="tune-section-head" title="Тонкая настройка контуров верификации, изоляции и защиты секретов">
+        <div class="tune-section-box is-inline-accordion" id="safetyContoursSection">
+          <button type="button" class="tune-section-head" data-action="toggleInlineSection" data-arg="safetyContoursSection" aria-expanded="false" title="Тонкая настройка контуров верификации, изоляции и защиты секретов">
             <span class="tune-summary-label">Контуры безопасности и проверок</span>
             <span class="tune-count-pill" id="safetyContoursCountBadge">11/12</span>
-          </div>
+            <svg class="tune-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
           <div class="toggle-chip-grid">
             <label class="toggle-chip" title="Что делает: требует точечных замен через edit_file вместо полной перезаписи больших файлов.
 Зачем: защищает от случайного затирания чужого кода и сокращает объём генерации.">

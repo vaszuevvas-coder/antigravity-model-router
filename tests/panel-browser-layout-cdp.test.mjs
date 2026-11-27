@@ -501,6 +501,8 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
         hwTabBtn.click();
         await new Promise((r) => setTimeout(r, 80));
       }
+      document.querySelectorAll('#gpuRamCard .is-inline-accordion:not(.is-open) [data-action="toggleInlineSection"], #expertRamGpuFieldset.is-inline-accordion:not(.is-open) [data-action="toggleInlineSection"]').forEach((btn) => btn.click());
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
       if (typeof flushVisibleBlockRenders === 'function') {
         flushVisibleBlockRenders();
@@ -625,6 +627,11 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
       const items = measureIds(['btnSendSmartComposer']);
       document.getElementById('fullTabBtn-hardware')?.click();
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const ollamaCard = document.getElementById('expertRamGpuFieldset');
+      if (ollamaCard && !ollamaCard.classList.contains('is-open')) {
+        ollamaCard.querySelector('[data-action="toggleInlineSection"]')?.click();
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      }
       items.push(...measureIds([
         'inp-gpuEndpoint',
         'inp-gpuKeepAlive',
@@ -934,6 +941,11 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
     const hwInitial = await cdp.evaluate(async () => {
       document.getElementById('fullTabBtn-hardware')?.click();
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const ollamaCard = document.getElementById('expertRamGpuFieldset');
+      if (ollamaCard && !ollamaCard.classList.contains('is-open')) {
+        ollamaCard.querySelector('[data-action="toggleInlineSection"]')?.click();
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      }
       if (typeof ensurePanelSectionsLoaded === 'function') {
         await ensurePanelSectionsLoaded(['hw']);
       }
@@ -1130,9 +1142,15 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
         const settingsBtn = document.getElementById('fullTabBtn-settings');
         if (settingsBtn) settingsBtn.click();
         await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const safetyAcc = document.getElementById('safetyContoursSection');
+        if (safetyAcc && !safetyAcc.classList.contains('is-open')) {
+          safetyAcc.querySelector('[data-action="toggleInlineSection"]')?.click();
+        }
         await new Promise((r) => setTimeout(r, 60));
 
         const scroller = document.querySelector('.full-workspace-shell > .window-body') || document.scrollingElement;
+        const guardCard = document.getElementById('expertGuardrailsCard');
+        const guardCardBorderTop = guardCard ? getComputedStyle(guardCard).borderTopWidth : '';
         const hudBefore = document.getElementById('lgStickyHud').getBoundingClientRect();
         const railBefore = document.getElementById('fullTabsBar').getBoundingClientRect();
 
@@ -1156,6 +1174,7 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
           cockpitTop: Math.round(cockpitRect.top),
           shellBottom: Math.round(shellRect.bottom),
           innerHeight: window.innerHeight,
+          guardCardBorderTop,
         });
         scroller.scrollTop = 0;
       }
@@ -1163,6 +1182,7 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
     });
 
     for (const r of stickyRailScrollAudit) {
+      assert.equal(r.guardCardBorderTop, '0px', `Embedded category rubrics must have 0px border at scale=${r.scaleVal}`);
       assert.equal(r.windowScrollY, 0, `Outer window must stay fixed (scrollY=0) at scale=${r.scaleVal}, got ${r.windowScrollY}`);
       assert.ok(r.bodyScrollTop > 100, `Expected .window-body to scroll at scale=${r.scaleVal}, got scrollTop=${r.bodyScrollTop}`);
       assert.ok(r.hudHeight > 160, `Expected tall sticky HUD (>160px) with 2 active chats at scale=${r.scaleVal}, got ${r.hudHeight}`);
