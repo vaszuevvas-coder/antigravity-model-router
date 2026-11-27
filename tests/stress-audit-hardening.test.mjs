@@ -588,3 +588,138 @@ test('7. open-window reads ANTIGRAVITY_SIDECAR_* env vars & launchStandaloneGrap
     fs.rmSync(tmpParent, { recursive: true, force: true });
   }
 });
+
+test('8. Hardening wave: router-cli decoupling, 1-arg ALS origin enforcement, headless app queue survival & JSON 400 errors', async () => {
+  const routerCliSrc = fs.readFileSync(path.join(ROOT_DIR, 'core', 'router-cli.mjs'), 'utf8');
+  assert.equal(
+    routerCliSrc.includes('../sidecars/panel/server.mjs'),
+    false,
+    'core/router-cli.mjs must import panel-state-skills.mjs directly instead of server.mjs'
+  );
+  assert.equal(
+    routerCliSrc.includes('../sidecars/panel/lib/panel-state-skills.mjs'),
+    true,
+    'core/router-cli.mjs must import sanitizeStatePatch from panel-state-skills.mjs'
+  );
+  assert.equal(typeof sanitizeStatePatch, 'function', 'server.mjs must keep sanitizeStatePatch barrel re-export');
+
+  const tmpParent = makeTempDir('amr-hardening-8-');
+  const tmpWs = path.join(tmpParent, 'ws');
+  const tmpPanel = path.join(tmpParent, 'panel');
+  fs.mkdirSync(path.join(tmpWs, 'src'), { recursive: true });
+  fs.mkdirSync(tmpPanel, { recursive: true });
+  fs.writeFileSync(path.join(tmpWs, 'package.json'), '{"name":"ws-8"}\n', 'utf8');
+  fs.writeFileSync(path.join(tmpWs, 'src', 'index.mjs'), 'export const ok = true;\n', 'utf8');
+  fs.writeFileSync(
+    path.join(tmpPanel, 'router-state.json'),
+    JSON.stringify({ onboardingCompleted: true, gpuEnabled: false }, null, 2),
+    'utf8'
+  );
+
+  const prevIsolate = process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+  const prevStatePath = process.env.TUNNEL_TEST_STATE_PATH;
+  const prevCacheDir = process.env.TUNNEL_CACHE_DIR;
+  process.env.TUNNEL_TEST_ISOLATE_INSTALLED = '1';
+  process.env.TUNNEL_TEST_STATE_PATH = path.join(tmpPanel, 'router-state.json');
+  process.env.TUNNEL_CACHE_DIR = path.join(tmpPanel, '.cache');
+
+  let oneArgApp = null;
+  let headlessApp = null;
+  try {
+    // 1. 1-arg sidecar_sdk ALS origin enforcement on GET /api/state and POST /api/debug/mode
+    oneArgApp = await startSidecarPanel({ SidecarAppClass: createOneArgSidecarAppClass(), pluginRoot: tmpPanel });
+    const baseUrl = `http://127.0.0.1:${oneArgApp.port}`;
+    const evilPost = await fetch(`${baseUrl}/api/debug/mode`, {
+      method: 'POST',
+      headers: {
+        Origin: 'https://evil.example',
+        'Content-Type': 'application/json',
+        'x-router-panel': '',
+      },
+      body: JSON.stringify({ mode: 'verbose' }),
+    });
+    assert.equal(evilPost.status, 403, 'Cross-origin POST /api/debug/mode must be rejected with 403');
+
+    const evilGet = await fetch(`${baseUrl}/api/state`, {
+      method: 'GET',
+      headers: {
+        Origin: 'https://evil.example',
+        'x-router-panel': '',
+      },
+    });
+    assert.equal(evilGet.status, 403, 'Cross-origin GET /api/state must be rejected with 403');
+
+    await oneArgApp.close();
+    oneArgApp = null;
+
+    // 2. Headless SidecarApp (run() returns undefined) keeps queues alive until app.close()
+    class HeadlessSidecarApp {
+      constructor() {
+        this._routes = new Map();
+        this.closed = false;
+      }
+      page() {}
+      api(p, handler, method = 'POST') {
+        if (!this._routes.has(p)) this._routes.set(p, new Map());
+        this._routes.get(p).set(String(method || 'POST').toUpperCase(), handler);
+      }
+      run() {
+        return undefined;
+      }
+      close() {
+        this.closed = true;
+        return Promise.resolve();
+      }
+    }
+
+    headlessApp = await startSidecarPanel({ SidecarAppClass: HeadlessSidecarApp, pluginRoot: tmpPanel });
+    const acHandler = headlessApp._routes.get('/api/autocomplete')?.get('POST');
+    const queueHandler = headlessApp._routes.get('/api/chat-queue')?.get('GET');
+    const repomapHandler = headlessApp._routes.get('/api/repomap')?.get('POST');
+    const chatSendHandler = headlessApp._routes.get('/api/chat-send')?.get('POST');
+    const authReq = {
+      method: 'POST',
+      headers: {
+        host: '127.0.0.1:41234',
+        origin: 'http://127.0.0.1:41234',
+        'x-router-panel': 'antigravity-v38',
+      },
+    };
+    const authGetReq = {
+      method: 'GET',
+      headers: {
+        host: '127.0.0.1:41234',
+        origin: 'http://127.0.0.1:41234',
+      },
+    };
+
+    const acCtx = await acHandler({ mode: 'context', rootDir: tmpWs }, authReq);
+    assert.equal(acCtx.ok, true, 'Headless app must not dispose autocompleteGpuQueue on startup');
+    assert.equal(acCtx.queue.disposed, false);
+
+    // 3. /api/repomap invalid workspace returns plain JSON error object (not FallbackResponse wrapper)
+    const badRepoRes = await repomapHandler({ rootDir: 'Z:\\nonexistent-999999' }, authReq);
+    assert.deepEqual(badRepoRes, { ok: false, status: 400, error: 'Invalid workspace directory' });
+
+    await headlessApp.close();
+    assert.equal(headlessApp.closed, true);
+    const queueAfterClose = await queueHandler({}, authGetReq);
+    assert.equal(queueAfterClose.chatQueue.disposed, true, 'app.close() must dispose chatMessageQueue');
+    assert.equal(queueAfterClose.autocompleteQueue.disposed, true, 'app.close() must dispose autocompleteGpuQueue');
+
+    const sendAfterClose = await chatSendHandler({ message: 'hello' }, authReq);
+    assert.equal(sendAfterClose.ok, false);
+    assert.equal(sendAfterClose.code, 'QUEUE_DISPOSED');
+  } finally {
+    await oneArgApp?.close?.().catch(() => {});
+    await headlessApp?.close?.().catch(() => {});
+    try { knowledgeHub.close(); } catch {}
+    if (prevIsolate === undefined) delete process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+    else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIsolate;
+    if (prevStatePath === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
+    else process.env.TUNNEL_TEST_STATE_PATH = prevStatePath;
+    if (prevCacheDir === undefined) delete process.env.TUNNEL_CACHE_DIR;
+    else process.env.TUNNEL_CACHE_DIR = prevCacheDir;
+    try { fs.rmSync(tmpParent, { recursive: true, force: true, maxRetries: 4, retryDelay: 60 }); } catch {}
+  }
+});

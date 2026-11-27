@@ -11,7 +11,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { atomicWriteJsonSync, safeReadJsonSync } from './safe-json.mjs';
-import { sanitizeStatePatch } from '../sidecars/panel/server.mjs';
+import { sanitizeStatePatch } from '../sidecars/panel/lib/panel-state-skills.mjs';
 import { diffRepoChronos, findDeadExports, findSymbolUsagesAcrossRepo } from './repo-mapper.mjs';
 import {
   appendLearnedPattern,
