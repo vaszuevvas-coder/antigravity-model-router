@@ -25,6 +25,18 @@ const UNSAFE_KEYS = new Set([
 const DEFAULT_MAX_ENTRIES = 64;
 const DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
+function isPlainObject(val) {
+  if (!val || typeof val !== 'object' || Array.isArray(val) || ArrayBuffer.isView(val)) return false;
+  const proto = Object.getPrototypeOf(val);
+  return proto === Object.prototype || proto === null;
+}
+
+function parsePositiveNumber(raw) {
+  if (typeof raw !== 'number' && (typeof raw !== 'string' || !raw.trim())) return null;
+  const num = Number(raw);
+  return Number.isFinite(num) && num > 0 ? num : null;
+}
+
 /**
  * Resolves the `.cache` directory for a plugin root, respecting `process.env.TUNNEL_CACHE_DIR`
  * so isolated tests never pollute production `.cache/*.json`.
@@ -34,7 +46,10 @@ const DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 export function resolveTunnelCacheDir(pluginRoot = process.cwd()) {
   const override = typeof process.env.TUNNEL_CACHE_DIR === 'string' ? process.env.TUNNEL_CACHE_DIR.trim() : '';
   if (override) return resolve(override);
-  const root = typeof pluginRoot === 'string' && pluginRoot.trim() ? pluginRoot : process.cwd();
+  const trimmedRoot = typeof pluginRoot === 'string' ? pluginRoot.trim() : '';
+  const root = trimmedRoot
+    ? (process.platform === 'win32' && /^[A-Za-z]:$/.test(trimmedRoot) ? `${trimmedRoot}\\` : trimmedRoot)
+    : process.cwd();
   return join(root, '.cache');
 }
 
@@ -44,9 +59,10 @@ export function resolveTunnelCacheDir(pluginRoot = process.cwd()) {
  * @returns {string}
  */
 export function ensureTunnelCacheDir(cacheDir) {
-  if (typeof cacheDir !== 'string' || !cacheDir.trim()) return '';
-  mkdirSync(cacheDir, { recursive: true });
-  return cacheDir;
+  const trimmed = typeof cacheDir === 'string' ? cacheDir.trim() : '';
+  if (!trimmed) return '';
+  mkdirSync(trimmed, { recursive: true });
+  return trimmed;
 }
 
 /**
@@ -63,30 +79,19 @@ export function ensureTunnelCacheDir(cacheDir) {
  * @returns {Record<string, T>}
  */
 export function pruneObjectMapByTimestamp(mapObj, options = {}) {
-  if (!mapObj || typeof mapObj !== 'object' || Array.isArray(mapObj)) return {};
+  if (!isPlainObject(mapObj)) return {};
 
   const opts = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
-  const defaultGetTs = (val) => Number(val?.ts || val?.updatedAtMs || 0) || 0;
+  const defaultGetTs = (val) => parsePositiveNumber(val?.ts) ?? parsePositiveNumber(val?.updatedAtMs) ?? 0;
   const getTs = typeof opts.getTs === 'function' ? opts.getTs : defaultGetTs;
   const keepPredicate = typeof opts.keepPredicate === 'function' ? opts.keepPredicate : null;
 
   const rawNow = opts.now;
   const now = typeof rawNow === 'number' && Number.isFinite(rawNow) ? rawNow : Date.now();
 
-  const rawMaxAge = opts.maxAgeMs;
-  const maxAgeMs =
-    rawMaxAge !== null && rawMaxAge !== '' && typeof rawMaxAge !== 'boolean' && Number.isFinite(Number(rawMaxAge))
-      ? Number(rawMaxAge)
-      : DEFAULT_MAX_AGE_MS;
-
-  const rawMaxEntries = opts.maxEntries;
-  const limit =
-    rawMaxEntries !== null &&
-    rawMaxEntries !== '' &&
-    typeof rawMaxEntries !== 'boolean' &&
-    Number.isFinite(Number(rawMaxEntries))
-      ? Math.max(1, Math.round(Number(rawMaxEntries)))
-      : DEFAULT_MAX_ENTRIES;
+  const maxAgeMs = parsePositiveNumber(opts.maxAgeMs) ?? DEFAULT_MAX_AGE_MS;
+  const parsedMaxEntries = parsePositiveNumber(opts.maxEntries);
+  const limit = parsedMaxEntries !== null ? Math.max(1, Math.round(parsedMaxEntries)) : DEFAULT_MAX_ENTRIES;
 
   const pinned = [];
   const regular = [];
@@ -112,7 +117,7 @@ export function pruneObjectMapByTimestamp(mapObj, options = {}) {
     }
 
     if (isPinned) {
-      pinned.push({ k, v, ts: ts || now });
+      pinned.push({ k, v, ts });
       continue;
     }
 
@@ -168,7 +173,7 @@ export function isPidAlive(pid, options = {}) {
  * @returns {Record<string, unknown>}
  */
 export function createBaseLiveActivityState(extra = {}) {
-  const safeExtra = extra && typeof extra === 'object' && !Array.isArray(extra) ? extra : {};
+  const safeExtra = isPlainObject(extra) ? extra : {};
   return {
     opSeq: 0,
     inFlight: [],

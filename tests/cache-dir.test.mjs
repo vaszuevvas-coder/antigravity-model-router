@@ -120,4 +120,85 @@ test('createBaseLiveActivityState ignores arrays and null extra', () => {
 
   const fromObj = createBaseLiveActivityState({ lastModel: 'qwen3' });
   assert.equal(fromObj.lastModel, 'qwen3');
+
+  const fromBuf = createBaseLiveActivityState(Buffer.from('abc'));
+  assert.equal(Object.hasOwn(fromBuf, '0'), false);
+  assert.equal(fromBuf.opSeq, 0);
+
+  const fromTyped = createBaseLiveActivityState(new Uint8Array([1, 2]));
+  assert.equal(Object.hasOwn(fromTyped, '0'), false);
+});
+
+test('resolveTunnelCacheDir and ensureTunnelCacheDir trim paths and guard Windows drive-only roots', () => {
+  const prev = process.env.TUNNEL_CACHE_DIR;
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cache-dir-trim-'));
+  try {
+    delete process.env.TUNNEL_CACHE_DIR;
+    assert.equal(resolveTunnelCacheDir('  /tmp/plugin-root  '), path.join('/tmp/plugin-root', '.cache'));
+    if (process.platform === 'win32') {
+      assert.equal(resolveTunnelCacheDir('C:'), 'C:\\.cache');
+    }
+
+    const nested = path.join(tmpRoot, 'trimmed-dir');
+    assert.equal(ensureTunnelCacheDir(`  ${nested}  `), nested);
+    assert.equal(fs.existsSync(nested), true);
+  } finally {
+    if (prev === undefined) delete process.env.TUNNEL_CACHE_DIR;
+    else process.env.TUNNEL_CACHE_DIR = prev;
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('pruneObjectMapByTimestamp rejects whitespace/array/non-positive limits, prioritizes valid pinned ts, falls back to updatedAtMs, and ignores non-plain maps', () => {
+  const now = 2_000_000;
+
+  // 1. Whitespace, empty array, 0, and negative maxEntries/maxAgeMs fallback to defaults (no truncation to 1, no disabled TTL)
+  const many = {
+    a: { ts: now - 10 },
+    b: { ts: now - 20 },
+    c: { ts: now - 30 },
+    expired: { ts: now - 48 * 60 * 60 * 1000 },
+    missingTs: { ts: 0 },
+  };
+  for (const badLimit of ['   ', [], 0, -5]) {
+    const res = pruneObjectMapByTimestamp(many, { maxEntries: badLimit, maxAgeMs: 1000, now });
+    assert.deepEqual(Object.keys(res), ['a', 'b', 'c']);
+  }
+  for (const badAge of ['   ', [], 0, -100]) {
+    const res = pruneObjectMapByTimestamp(many, { maxEntries: 10, maxAgeMs: badAge, now });
+    assert.equal(Object.hasOwn(res, 'expired'), false);
+    assert.equal(Object.hasOwn(res, 'missingTs'), false);
+    assert.deepEqual(Object.keys(res), ['a', 'b', 'c']);
+  }
+
+  // 2. Pinned entries without ts (ts === 0) must not evict valid pinned entries with ts < now
+  const pinnedMap = {
+    corruptPinned: { pinned: true },
+    validOldPinned: { ts: now - 5000, pinned: true },
+    validNewPinned: { ts: now - 1000, pinned: true },
+  };
+  const keptPinned = pruneObjectMapByTimestamp(pinnedMap, {
+    maxEntries: 2,
+    maxAgeMs: 1000,
+    now,
+    keepPredicate: (_k, v) => Boolean(v.pinned),
+  });
+  assert.deepEqual(Object.keys(keptPinned), ['validNewPinned', 'validOldPinned']);
+
+  // 3. defaultGetTs falls back to updatedAtMs when ts is invalid or non-positive
+  const fallbackRes = pruneObjectMapByTimestamp(
+    {
+      badStrTs: { ts: 'not-a-ts', updatedAtMs: now - 50 },
+      negTs: { ts: -1, updatedAtMs: now - 20 },
+      bothBad: { ts: 'nope', updatedAtMs: -5 },
+    },
+    { maxEntries: 10, maxAgeMs: 1000, now }
+  );
+  assert.deepEqual(Object.keys(fallbackRes), ['badStrTs', 'negTs']);
+
+  // 4. Non-plain objects (Map, Set, Buffer) return {} while Object.create(null) is supported
+  assert.deepEqual(pruneObjectMapByTimestamp(new Map([['a', { ts: now }]]), { now }), {});
+  assert.deepEqual(pruneObjectMapByTimestamp(Buffer.from('abc'), { now }), {});
+  const nullProto = Object.assign(Object.create(null), { ok: { ts: now } });
+  assert.deepEqual(Object.keys(pruneObjectMapByTimestamp(nullProto, { now })), ['ok']);
 });
