@@ -236,6 +236,20 @@ export async function runSandboxedPropertyFuzz(fileResults, { maxModules = 80, t
         });
         continue;
       }
+      if (!resp.ok) {
+        findings.push({
+          tier: 'T6',
+          ruleId: 'FUZZ_WORKER_CRASH',
+          severity: 'HIGH',
+          cwe: 'CWE-755',
+          confidence: 0.9,
+          file: item.relPath,
+          line: 1,
+          message: `Fuzz worker crashed unexpectedly: ${String(resp.error || 'unknown worker error').slice(0, 140)}`,
+          evidence: item.fuzzMeta.fuzzCandidates.join(', '),
+        });
+        continue;
+      }
 
       const issues = resp?.res?.issues || [];
       for (const iss of issues) {

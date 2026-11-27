@@ -26,7 +26,7 @@ const VERIFY_MENTION_RE = /(?:verify|validation|--check|--dry-run|--test|npm\s+t
  * @returns {{ hasFrontmatter: boolean, name: string, description: string, body: string, bodyLinesCount: number, totalLinesCount: number }}
  */
 export function parseYamlFrontmatter(content = '') {
-  const text = String(content || '');
+  const text = String(content || '').replace(/^\uFEFF/, '');
   const totalLinesCount = text ? text.split(/\r?\n/).length : 0;
   const fmMatch = text.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!fmMatch) {
@@ -434,12 +434,14 @@ export function evaluateSkillTriggers({
   positivePrompts = [],
   negativePrompts = [],
 } = {}) {
-  const targetDescTokens = new Set(tokenizeBilingual(`${targetSkill?.name || ''} ${targetSkill?.description || ''}`));
-  const targetTrigrams = charTrigrams(targetSkill?.description || '');
+  const safeTarget = targetSkill && typeof targetSkill === 'object' ? targetSkill : {};
+  const safeSiblings = Array.isArray(siblingSkills) ? siblingSkills.filter(Boolean) : [];
+  const targetDescTokens = new Set(tokenizeBilingual(`${safeTarget.name || ''} ${safeTarget.description || ''}`));
+  const targetTrigrams = charTrigrams(safeTarget.description || '');
 
   const collisions = [];
-  for (const sib of siblingSkills) {
-    if (!sib || sib.slug === targetSkill?.slug) continue;
+  for (const sib of safeSiblings) {
+    if (sib.slug === safeTarget.slug) continue;
     const sibTokens = new Set(tokenizeBilingual(`${sib.name || ''} ${sib.description || ''}`));
     const sibTrigrams = charTrigrams(sib.description || '');
     const sim = Number((0.6 * jaccardSets(targetDescTokens, sibTokens) + 0.4 * jaccardSets(targetTrigrams, sibTrigrams)).toFixed(3));
@@ -450,15 +452,15 @@ export function evaluateSkillTriggers({
   collisions.sort((a, b) => b.similarity - a.similarity);
 
   const syntheticProbesUsed = !Array.isArray(positivePrompts) || positivePrompts.length === 0;
-  const posList = syntheticProbesUsed ? buildSyntheticProbes(targetSkill || {}) : positivePrompts;
+  const posList = syntheticProbesUsed ? buildSyntheticProbes(safeTarget) : positivePrompts;
   const negList = Array.isArray(negativePrompts) ? negativePrompts : [];
 
   const falseNegatives = [];
   for (const prompt of posList) {
-    const targetScore = computeBm25fSkillScore(prompt, targetSkill);
+    const targetScore = computeBm25fSkillScore(prompt, safeTarget);
     let topSibScore = 0;
-    for (const sib of siblingSkills) {
-      if (sib.slug === targetSkill?.slug) continue;
+    for (const sib of safeSiblings) {
+      if (sib.slug === safeTarget.slug) continue;
       const s = computeBm25fSkillScore(prompt, sib);
       if (s > topSibScore) topSibScore = s;
     }
@@ -469,10 +471,10 @@ export function evaluateSkillTriggers({
 
   const falsePositives = [];
   for (const prompt of negList) {
-    const targetScore = computeBm25fSkillScore(prompt, targetSkill);
+    const targetScore = computeBm25fSkillScore(prompt, safeTarget);
     let topSibScore = 0;
-    for (const sib of siblingSkills) {
-      if (sib.slug === targetSkill?.slug) continue;
+    for (const sib of safeSiblings) {
+      if (sib.slug === safeTarget.slug) continue;
       const s = computeBm25fSkillScore(prompt, sib);
       if (s > topSibScore) topSibScore = s;
     }
@@ -664,7 +666,9 @@ export function auditAllSkills(skillsRoot = DEFAULT_SKILLS_ROOT) {
 function isExecutedDirectly() {
   try {
     if (!process.argv[1]) return false;
-    return resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
+    const self = resolve(fileURLToPath(import.meta.url));
+    const arg = resolve(process.argv[1]);
+    return process.platform === 'win32' ? self.toLowerCase() === arg.toLowerCase() : self === arg;
   } catch {
     return false;
   }

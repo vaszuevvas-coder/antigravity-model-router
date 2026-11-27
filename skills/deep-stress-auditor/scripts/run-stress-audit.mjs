@@ -75,7 +75,7 @@ export function evaluateComplexityRatchet(fileResults = [], baselinePath = '', {
   const currentMap = {};
   for (const fr of Array.isArray(fileResults) ? fileResults : []) {
     const rel = String(fr?.relPath || '').replace(/\\/g, '/');
-    const cc = Number(fr?.cyclomaticComplexity || 0);
+    const cc = Number(fr?.cyclomaticComplexity ?? fr?.cyclomatic ?? 0);
     if (rel && cc > 0) currentMap[rel] = cc;
   }
 

@@ -446,7 +446,7 @@ function checkJsTsSyntax(file, ext, code, findings, relPath = file) {
         severity: 'CRITICAL',
         cwe: 'CWE-1006',
         confidence: 0.99,
-        file,
+        file: relPath,
         line: 1,
         message: 'JavaScript syntax error',
         evidence: String(err?.message || err).slice(0, 180),
@@ -466,6 +466,19 @@ function checkJsTsSyntax(file, ext, code, findings, relPath = file) {
         if (!/\b(?:import|export)\b/.test(stripped)) {
           new vm.Script(stripped, { filename: file });
         }
+      } else if (stripped !== code) {
+        findings.push({
+          tier: 'T1',
+          ruleId: 'SYNTAX_ERROR',
+          severity: 'CRITICAL',
+          cwe: 'CWE-1006',
+          confidence: 0.98,
+          file: relPath,
+          line: 1,
+          message: 'TypeScript syntax used inside JavaScript/ESM file',
+          evidence: 'Unexpected TypeScript type annotations in JS/ESM',
+        });
+        return { syntaxOk: false, needsSubprocessCheck: false };
       }
       return { syntaxOk: true, needsSubprocessCheck: false };
     } catch (err) {
@@ -478,7 +491,7 @@ function checkJsTsSyntax(file, ext, code, findings, relPath = file) {
         severity: 'CRITICAL',
         cwe: 'CWE-1006',
         confidence: 0.98,
-        file,
+        file: relPath,
         line: 1,
         message: `${ext === '.ts' || ext === '.mts' ? 'TypeScript' : 'ESM'} syntax error`,
         evidence: String(err?.message || err).slice(0, 180),
@@ -606,8 +619,9 @@ function checkBracketBalance(file, strippedCode, findings) {
 }
 
 function checkConfigAndEncoding(item, findings) {
-  const { relPath, ext, baseName, text, hasUtf8Bom, hasUtf16Bom, hasNullBytes } = item;
-  const lowerBase = baseName.toLowerCase();
+  const { relPath = '', ext = '', baseName, text = '', hasUtf8Bom, hasUtf16Bom, hasNullBytes } = item;
+  const resolvedBase = baseName || String(relPath || '').split(/[\\/]/).pop() || '';
+  const lowerBase = String(resolvedBase).toLowerCase();
 
   if (hasNullBytes || hasUtf16Bom) {
     findings.push({

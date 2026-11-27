@@ -200,7 +200,8 @@ export function generateDesignMdFromCode(targetDir = process.cwd(), { outPath = 
   const extracted = extractDesignTokensFromWorkspace(absRoot);
   if (!extracted.ok) return extracted;
 
-  const targetFile = outPath ? path.resolve(outPath) : path.join(absRoot, 'DESIGN.md');
+  const baseOutDir = fs.statSync(absRoot).isFile() ? path.dirname(absRoot) : absRoot;
+  const targetFile = outPath ? path.resolve(outPath) : path.join(baseOutDir, 'DESIGN.md');
   if (write && fs.existsSync(targetFile) && !overwrite) {
     return { ok: false, exists: true, outPath: targetFile, reason: 'DESIGN.md already exists' };
   }
@@ -248,7 +249,12 @@ export function generateDesignMdFromCode(targetDir = process.cwd(), { outPath = 
   };
 }
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === __filename;
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  const self = path.resolve(__filename);
+  const arg = path.resolve(process.argv[1]);
+  return process.platform === 'win32' ? self.toLowerCase() === arg.toLowerCase() : self === arg;
+})();
 if (isMain) {
   const args = process.argv.slice(2);
   const doWrite = args.includes('--write');

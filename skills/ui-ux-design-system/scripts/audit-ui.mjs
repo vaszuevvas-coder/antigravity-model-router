@@ -305,21 +305,45 @@ export function formatUiAuditReport(report = {}) {
 
 function sendCdpCommand(ws, id, method, params = {}) {
   return new Promise((resolvePromise, rejectPromise) => {
-    const timer = setTimeout(() => {
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timer);
       ws.removeEventListener('message', onMsg);
+      ws.removeEventListener('close', onClose);
+      ws.removeEventListener('error', onErr);
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       rejectPromise(new Error(`CDP timeout: ${method}`));
     }, 5000);
+    function onClose() {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      rejectPromise(new Error(`CDP socket closed: ${method}`));
+    }
+    function onErr(ev) {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      rejectPromise(ev?.error || new Error(`CDP socket error: ${method}`));
+    }
     function onMsg(ev) {
       let msg;
       try { msg = JSON.parse(String(ev.data || '')); } catch { return; }
       if (msg.id === id) {
-        clearTimeout(timer);
-        ws.removeEventListener('message', onMsg);
+        if (settled) return;
+        settled = true;
+        cleanup();
         if (msg.error) rejectPromise(new Error(msg.error.message || method));
         else resolvePromise(msg.result || {});
       }
     }
     ws.addEventListener('message', onMsg);
+    ws.addEventListener('close', onClose);
+    ws.addEventListener('error', onErr);
     ws.send(JSON.stringify({ id, method, params }));
   });
 }
@@ -367,20 +391,47 @@ export async function auditUiViewports(targetUrlOrHtmlPath = '', { widths = [144
 
     const wsBaseUrl = await new Promise((resolveUrl, rejectUrl) => {
       let buf = '';
-      const t = setTimeout(() => rejectUrl(new Error('devtools_listen_timeout')), Math.min(6000, timeoutMs));
-      proc.stderr?.on('data', (chunk) => {
+      let settled = false;
+      const cleanupProc = () => {
+        clearTimeout(t);
+        proc.stderr?.off('data', onData);
+        proc.off('exit', onExit);
+        proc.off('error', onErr);
+      };
+      const t = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanupProc();
+        rejectUrl(new Error('devtools_listen_timeout'));
+      }, Math.min(6000, timeoutMs));
+      const onData = (chunk) => {
+        if (settled) return;
         buf += chunk.toString('utf8');
+        if (buf.length > 65536) buf = buf.slice(-16384);
         const m = /DevTools listening on (ws:\/\/[^\s]+)/i.exec(buf);
         if (m) {
-          clearTimeout(t);
+          settled = true;
+          cleanupProc();
           resolveUrl(m[1]);
         }
-      });
-      proc.once('exit', (code) => {
-        clearTimeout(t);
+      };
+      const onExit = (code) => {
+        if (settled) return;
+        settled = true;
+        cleanupProc();
         rejectUrl(new Error(`browser_exited_${code}`));
-      });
+      };
+      const onErr = (err) => {
+        if (settled) return;
+        settled = true;
+        cleanupProc();
+        rejectUrl(err || new Error('browser_spawn_error'));
+      };
+      proc.stderr?.on('data', onData);
+      proc.once('exit', onExit);
+      proc.once('error', onErr);
     });
+    proc.on('error', () => {});
 
     const httpBase = wsBaseUrl.replace(/^ws:/i, 'http:').replace(/\/devtools\/browser\/.*$/, '');
     const targetsRes = await fetch(`${httpBase}/json/list`, { signal: AbortSignal.timeout(3000) });
@@ -446,12 +497,27 @@ export async function auditUiViewports(targetUrlOrHtmlPath = '', { widths = [144
     };
   } finally {
     try { ws?.close(); } catch {}
-    try { proc?.kill(); } catch {}
-    try { fs.rmSync(tmpProfile, { recursive: true, force: true }); } catch {}
+    if (proc) {
+      try { proc.kill(); } catch {}
+      await new Promise((res) => {
+        const timer = setTimeout(res, 250);
+        if (typeof timer.unref === 'function') timer.unref();
+        proc.once('exit', () => {
+          clearTimeout(timer);
+          res();
+        });
+      });
+    }
+    try { fs.rmSync(tmpProfile, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch {}
   }
 }
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === __filename;
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  const self = path.resolve(__filename);
+  const arg = path.resolve(process.argv[1]);
+  return process.platform === 'win32' ? self.toLowerCase() === arg.toLowerCase() : self === arg;
+})();
 if (isMain) {
   const args = process.argv.slice(2);
   const asJson = args.includes('--json');

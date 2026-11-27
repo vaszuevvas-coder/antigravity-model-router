@@ -1297,7 +1297,7 @@ export function generateShowroomVisualPreviews(spec = {}, outputDir, options = {
     }
 
     if (!capturedByBrowser) {
-      const pngBuf = renderVariantPreviewPngBuffer(v, i, 600, 340);
+      const pngBuf = renderVariantPreviewPngBuffer(v, i, 600, 340, prevLang);
       fs.writeFileSync(pngPath, pngBuf);
     }
     screenshots.push(pngPath);
@@ -1308,7 +1308,7 @@ export function generateShowroomVisualPreviews(spec = {}, outputDir, options = {
   if (browserExe && tmpProfileDir) {
     try {
       const overviewSnapHtml = res.html
-        .replace(/--anim-scale:\s*1;/g, '--anim-scale: 0.0001; } *, *::before, *::after { animation-delay: -60s !important; animation-duration: 0.001s !important; transition-duration: 0.001s !important;')
+        .replace(/--anim-scale:\s*1;/g, '--anim-scale: 0.0001;')
         .replace(
           '<style>',
           '<style>*, *::before, *::after { animation-delay: -60s !important; animation-duration: 0.001s !important; transition-duration: 0.001s !important; } .grid { grid-template-columns: repeat(3, 1fr) !important; }'
@@ -1384,14 +1384,19 @@ export function generateShowroomVisualPreviews(spec = {}, outputDir, options = {
 
 export function openFileInDefaultBrowser(filePath) {
   try {
+    const target = String(filePath || '').trim();
+    if (!target) return false;
     if (process.platform === 'win32') {
-      const child = spawn('cmd', ['/c', 'start', '""', filePath], { detached: false, windowsHide: true, stdio: 'ignore' });
+      const child = spawn('rundll32.exe', ['url.dll,FileProtocolHandler', target], { detached: true, windowsHide: true, stdio: 'ignore' });
+      child.on('error', () => {});
       child.unref();
     } else if (process.platform === 'darwin') {
-      const child = spawn('open', [filePath], { detached: true, stdio: 'ignore' });
+      const child = spawn('open', [target], { detached: true, stdio: 'ignore' });
+      child.on('error', () => {});
       child.unref();
     } else {
-      const child = spawn('xdg-open', [filePath], { detached: true, stdio: 'ignore' });
+      const child = spawn('xdg-open', [target], { detached: true, stdio: 'ignore' });
+      child.on('error', () => {});
       child.unref();
     }
     return true;
@@ -1449,6 +1454,9 @@ if (isMain) {
       process.exit(1);
     }
     if (positional[1]) outPath = path.resolve(positional[1]);
+  } else if (positional[0] && /\.json$/i.test(positional[0])) {
+    console.error(JSON.stringify({ ok: false, error: `Spec file not found: ${path.resolve(positional[0])}` }));
+    process.exit(1);
   } else if (positional[0]) {
     outPath = path.resolve(positional[0]);
   }

@@ -110,7 +110,7 @@ export function extractCompactInteractiveRefTree(html = '') {
     if (tag === 'input' && typeAttr === 'hidden') {
       continue;
     }
-    if (/\bhidden\b/i.test(attrs) && !/\btype\s*=\s*["']?hidden/i.test(attrs)) {
+    if (/(?:^|\s)hidden(?:\s*=\s*(?:""|''|"hidden"|'hidden'|hidden)|(?=\s|$))/i.test(attrs) && !/\btype\s*=\s*["']?hidden/i.test(attrs)) {
       continue;
     }
 
@@ -221,9 +221,18 @@ function isAllowedDogfoodUrl(raw = '') {
   try {
     const u = new URL(raw);
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
-    const h = u.hostname.toLowerCase();
-    // Block cloud metadata SSRF IPs while explicitly allowing localhost/127.0.0.1 for local QA
-    if (h === '169.254.169.254' || h.startsWith('169.254.')) return false;
+    const h = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    // Block cloud metadata SSRF IPs/hosts while explicitly allowing localhost/127.0.0.1 for local QA
+    if (
+      h === '169.254.169.254' ||
+      h.startsWith('169.254.') ||
+      h.startsWith('::ffff:169.254.') ||
+      h.startsWith('::ffff:a9fe:') ||
+      h === 'metadata.google.internal' ||
+      h === 'metadata.goog'
+    ) {
+      return false;
+    }
     return true;
   } catch {
     return false;
@@ -308,9 +317,30 @@ export async function runWebappDogfoodAudit(opts = {}) {
         return { ok: false, error: 'fetch_unavailable', engine, interactiveCount: 0, refs: [], issues: [] };
       }
       try {
-        const resp = await fetchImpl(rawTarget, { signal: AbortSignal.timeout(8000) });
-        if (!resp.ok) {
-          return { ok: false, error: `http_${resp.status}`, engine, interactiveCount: 0, refs: [], issues: [] };
+        let curUrl = rawTarget;
+        let resp = null;
+        for (let hop = 0; hop <= 3; hop++) {
+          if (!isAllowedDogfoodUrl(curUrl)) {
+            return { ok: false, error: 'blocked_target_url', engine, interactiveCount: 0, refs: [], issues: [] };
+          }
+          resp = await fetchImpl(curUrl, { redirect: 'manual', signal: AbortSignal.timeout(8000) });
+          const status = Number(resp?.status ?? (resp?.ok ? 200 : 0));
+          if (status >= 300 && status < 400) {
+            const loc = resp?.headers?.get?.('location') || '';
+            await resp?.body?.cancel?.().catch(() => {});
+            if (!loc || hop >= 3) {
+              return { ok: false, error: 'redirect_blocked', engine, interactiveCount: 0, refs: [], issues: [] };
+            }
+            curUrl = new URL(loc, curUrl).href;
+            continue;
+          }
+          if (resp?.url && !isAllowedDogfoodUrl(String(resp.url))) {
+            return { ok: false, error: 'blocked_target_url', engine, interactiveCount: 0, refs: [], issues: [] };
+          }
+          break;
+        }
+        if (!resp?.ok) {
+          return { ok: false, error: `http_${resp?.status || 'failed'}`, engine, interactiveCount: 0, refs: [], issues: [] };
         }
         html = await resp.text();
       } catch (err) {
@@ -362,7 +392,12 @@ export async function runWebappDogfoodAudit(opts = {}) {
   };
 }
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === __filename;
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  const self = path.resolve(__filename);
+  const arg = path.resolve(process.argv[1]);
+  return process.platform === 'win32' ? self.toLowerCase() === arg.toLowerCase() : self === arg;
+})();
 if (isMain) {
   const args = process.argv.slice(2);
   const asJson = args.includes('--json');

@@ -285,7 +285,12 @@ export function initDesignMd(targetDir = process.cwd(), rawOpts = {}) {
   return { ok: true, outPath, surfaceMode: res.surfaceModeKey };
 }
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === __filename;
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  const self = path.resolve(__filename);
+  const arg = path.resolve(process.argv[1]);
+  return process.platform === 'win32' ? self.toLowerCase() === arg.toLowerCase() : self === arg;
+})();
 if (isMain) {
   const args = process.argv.slice(2);
   let domain = '';

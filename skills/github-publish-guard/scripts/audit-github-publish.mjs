@@ -350,7 +350,13 @@ export function checkMarkdownLinks(text, relPath, rootDir) {
       ) {
         continue;
       }
-      const cleanPath = decodeURIComponent(target.split('#')[0].split('?')[0]);
+      const rawPath = target.split('#')[0].split('?')[0];
+      let cleanPath = rawPath;
+      try {
+        cleanPath = decodeURIComponent(rawPath);
+      } catch {
+        cleanPath = rawPath;
+      }
       if (!cleanPath) continue;
       const absTarget = path.resolve(baseDir, cleanPath);
       if (!fs.existsSync(absTarget)) {
@@ -825,7 +831,7 @@ export function auditGithubPublish({
         message: `Sensitive/secret file should not be published to GitHub: ${relPath}`,
       });
     }
-    if (FORBIDDEN_CACHE_PREFIXES.some((prefix) => relPath.startsWith(prefix))) {
+    if (FORBIDDEN_CACHE_PREFIXES.some((prefix) => relPath.startsWith(prefix) || relPath.includes(`/${prefix}`))) {
       allFindings.push({
         severity: 'error',
         category: 'github_rules',
@@ -956,7 +962,12 @@ function parseCliArgs(argv) {
   return opts;
 }
 
-const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename);
+const isDirectRun = (() => {
+  if (!process.argv[1]) return false;
+  const self = path.resolve(__filename);
+  const arg = path.resolve(process.argv[1]);
+  return process.platform === 'win32' ? self.toLowerCase() === arg.toLowerCase() : self === arg;
+})();
 if (isDirectRun) {
   const opts = parseCliArgs(process.argv.slice(2));
   if (opts.help) {

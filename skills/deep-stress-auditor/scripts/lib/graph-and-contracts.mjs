@@ -168,33 +168,39 @@ function collectPackageJsonTargets(pkg, pkgDir) {
   return refs;
 }
 
-function computeTransitiveExports(relPath, relMap, resolvedEdges, visited = new Set(), memoCache = null) {
+function computeTransitiveExports(relPath, relMap, resolvedEdges, visiting = new Set(), memoCache = null) {
   if (memoCache && memoCache.has(relPath)) return memoCache.get(relPath);
-  if (visited.has(relPath)) return { named: new Set(), hasDefault: false, isDynamic: false };
-  visited.add(relPath);
+  if (visiting.has(relPath)) return { named: new Set(), hasDefault: false, isDynamic: false, _cycle: true };
   const info = relMap.get(relPath);
   if (!info || !info.exports) return { named: new Set(), hasDefault: false, isDynamic: false };
 
-  const named = new Set(info.exports.namedExports || []);
-  let hasDefault = Boolean(info.exports.hasDefaultExport);
-  let isDynamic = Boolean(info.exports.isDynamicCjsExports);
+  visiting.add(relPath);
+  try {
+    const named = new Set(info.exports.namedExports || []);
+    const hasDefault = Boolean(info.exports.hasDefaultExport);
+    let isDynamic = Boolean(info.exports.isDynamicCjsExports);
+    let hitCycle = false;
 
-  if (info.exports.hasStarReExport && Array.isArray(info.exports.reExportSpecifiers)) {
-    const outMap = resolvedEdges.get(relPath);
-    for (const spec of info.exports.reExportSpecifiers) {
-      const targetRel = outMap?.get(spec);
-      if (targetRel) {
-        const sub = computeTransitiveExports(targetRel, relMap, resolvedEdges, visited, memoCache);
-        for (const s of sub.named) named.add(s);
-        if (sub.isDynamic) isDynamic = true;
-      } else {
-        isDynamic = true;
+    if (info.exports.hasStarReExport && Array.isArray(info.exports.reExportSpecifiers)) {
+      const outMap = resolvedEdges.get(relPath);
+      for (const spec of info.exports.reExportSpecifiers) {
+        const targetRel = outMap?.get(spec);
+        if (targetRel) {
+          const sub = computeTransitiveExports(targetRel, relMap, resolvedEdges, visiting, memoCache);
+          for (const s of sub.named) named.add(s);
+          if (sub.isDynamic) isDynamic = true;
+          if (sub._cycle) hitCycle = true;
+        } else {
+          isDynamic = true;
+        }
       }
     }
+    const res = { named, hasDefault, isDynamic };
+    if (memoCache && !hitCycle) memoCache.set(relPath, res);
+    return res;
+  } finally {
+    visiting.delete(relPath);
   }
-  const res = { named, hasDefault, isDynamic };
-  if (memoCache && visited.size === 1) memoCache.set(relPath, res);
-  return res;
 }
 
 function findCircularDependencies(adjMap) {

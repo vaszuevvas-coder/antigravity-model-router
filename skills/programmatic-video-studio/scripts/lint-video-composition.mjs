@@ -108,9 +108,22 @@ export function lintVideoCompositionContent(content = '', filePath = 'compositio
     if (rafOrTimer) {
       add('high', 'remotion-async-timer', rafOrTimer.index, 'requestAnimationFrame/setInterval/setTimeout desyncs Remotion parallel renders; use frame-driven math.');
     }
-    const interp = /\binterpolate\s*\([^;]+?\)/s.exec(text);
-    if (interp && !/extrapolate(?:Left|Right)/.test(interp[0])) {
-      add('low', 'remotion-unclamped-interpolate', interp.index, 'Consider extrapolateLeft/Right: "clamp" on interpolate() to prevent out-of-range overshoot.');
+    const interpRe = /\binterpolate\s*\(/g;
+    let im;
+    while ((im = interpRe.exec(text)) !== null) {
+      let depth = 1;
+      let idx = im.index + im[0].length;
+      while (idx < text.length && depth > 0) {
+        const ch = text[idx];
+        if (ch === '(') depth += 1;
+        else if (ch === ')') depth -= 1;
+        idx += 1;
+      }
+      const callBody = text.slice(im.index, idx);
+      if (!/extrapolate(?:Left|Right)/.test(callBody)) {
+        add('low', 'remotion-unclamped-interpolate', im.index, 'Consider extrapolateLeft/Right: "clamp" on interpolate() to prevent out-of-range overshoot.');
+        break;
+      }
     }
   }
 
@@ -175,8 +188,9 @@ export function captureHtmlTimelineSnapshots(
         ? rawHtml.replace(/<head[^>]*>/i, (m) => `${m}${baseTag}`)
         : `${baseTag}\n${rawHtml}`;
       const inject = `<script>window.addEventListener('DOMContentLoaded',function(){try{var map=window.__timelines||{};for(var k in map){if(map[k]&&typeof map[k].seek==='function'){map[k].pause(${t});map[k].seek(${t});}}}catch(e){}});</script>`;
-      const injectedHtml = withBaseHtml.includes('</body>')
-        ? withBaseHtml.replace('</body>', `${inject}</body>`)
+      const bodyCloseIdx = withBaseHtml.toLowerCase().lastIndexOf('</body>');
+      const injectedHtml = bodyCloseIdx !== -1
+        ? `${withBaseHtml.slice(0, bodyCloseIdx)}${inject}${withBaseHtml.slice(bodyCloseIdx)}`
         : `${withBaseHtml}\n${inject}`;
       const snapHtml = path.join(tmpRoot, `frame-${i}.html`);
       fs.writeFileSync(snapHtml, injectedHtml, 'utf8');
@@ -224,7 +238,12 @@ function resolveOutDir(absHtml, outDir) {
   return outDir ? path.resolve(outDir) : path.join(path.dirname(absHtml), 'snapshots');
 }
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === __filename;
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  const self = path.resolve(__filename);
+  const arg = path.resolve(process.argv[1]);
+  return process.platform === 'win32' ? self.toLowerCase() === arg.toLowerCase() : self === arg;
+})();
 if (isMain) {
   const args = process.argv.slice(2);
   let asJson = false;

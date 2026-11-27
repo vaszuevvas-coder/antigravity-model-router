@@ -86,9 +86,10 @@ export function runCodemod(options = {}) {
     let searchPattern;
     try {
       const rawFind = find instanceof RegExp ? find.source : String(find);
+      const extraFlags = find instanceof RegExp ? find.flags.replace(/[gy]/g, '') : '';
       if (isRegex || find instanceof RegExp) {
         const patternStr = wordBoundary ? `(?<![A-Za-z0-9_$])(?:${rawFind})(?![A-Za-z0-9_$])` : rawFind;
-        searchPattern = new RegExp(patternStr, 'g');
+        searchPattern = new RegExp(patternStr, `g${extraFlags}`);
       } else {
         const escaped = escapeRegex(rawFind);
         const patternStr = wordBoundary ? `(?<![A-Za-z0-9_$])${escaped}(?![A-Za-z0-9_$])` : escaped;
@@ -101,6 +102,7 @@ export function runCodemod(options = {}) {
     const allFiles = collectFiles(targetDir, validExts);
     const modifiedFiles = [];
     const rolledBack = [];
+    const rollbackFailed = [];
     const backupSnapshot = {};
     let syntaxVerified = 0;
 
@@ -144,10 +146,13 @@ export function runCodemod(options = {}) {
           delete backupSnapshot[filePath];
           try {
             fs.writeFileSync(filePath, content, 'utf8');
-          } catch {
-            // Best effort
+            rolledBack.push({ path: filePath, reason: (verdict.error || 'Syntax check failed').trim() });
+          } catch (rbErr) {
+            rollbackFailed.push({
+              path: filePath,
+              reason: `Syntax check failed (${(verdict.error || 'invalid').trim()}); rollback write failed: ${rbErr.message}`,
+            });
           }
-          rolledBack.push({ path: filePath, reason: (verdict.error || 'Syntax check failed').trim() });
           continue;
         }
         if (verdict.checked) syntaxVerified++;
@@ -159,7 +164,8 @@ export function runCodemod(options = {}) {
     // Persist backup for rollback safety
     if (!dryRun && Object.keys(backupSnapshot).length > 0) {
       try {
-        const cacheDir = path.join(targetDir, '.cache');
+        const baseBackupDir = fs.statSync(targetDir).isFile() ? path.dirname(targetDir) : targetDir;
+        const cacheDir = path.join(baseBackupDir, '.cache');
         fs.mkdirSync(cacheDir, { recursive: true });
         atomicWriteJsonSync(path.join(cacheDir, 'codemod-backup.json'), backupSnapshot);
       } catch {
@@ -168,11 +174,12 @@ export function runCodemod(options = {}) {
     }
 
     return {
-      ok: true,
+      ok: rollbackFailed.length === 0,
       scannedFiles: allFiles.length,
       modifiedFiles,
       syntaxVerified,
-      rolledBack
+      rolledBack,
+      ...(rollbackFailed.length > 0 ? { rollbackFailed } : {}),
     };
   } catch (err) {
     return {

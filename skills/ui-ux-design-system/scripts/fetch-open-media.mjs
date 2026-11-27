@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { validatePublicRefUrl } from './fetch-web-refs.mjs';
+import { readResponseBufferLimited, safeFetchWithRedirectGuard, validatePublicRefUrl } from './fetch-web-refs.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const MAX_MEDIA_BYTES = 15 * 1024 * 1024;
@@ -70,7 +70,7 @@ export function normalizeOpenverseResults(payload = {}, mediaType = 'images') {
       title,
       creator,
       license,
-      licenseUrl: String(row.license_url || ''),
+      licenseUrl: validatePublicRefUrl(row.license_url || '').url || '',
       url: urlCheck.url,
       thumbnail: validatePublicRefUrl(row.thumbnail || '').url || '',
       durationMs: Number.isFinite(Number(row.duration)) ? Number(row.duration) : 0,
@@ -117,12 +117,9 @@ function inferMediaExt(rawUrl = '', contentType = '', mediaType = 'images') {
 
 async function fetchWikimediaFallbackImages({ query, limit = 6, fetchImpl, timeoutMs }) {
   const apiUrl = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(query)}&gsrlimit=${Math.max(1, Math.min(12, limit))}&prop=imageinfo&iiprop=url|size|extmetadata&format=json`;
-  const resp = await fetchImpl(apiUrl, {
-    headers: { 'User-Agent': 'antigravity-model-router/3.28' },
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  if (!resp.ok) return [];
-  const data = await resp.json();
+  const guard = await safeFetchWithRedirectGuard(apiUrl, { fetchImpl, timeoutMs, accept: 'application/json' });
+  if (!guard.ok || !guard.res?.ok) return [];
+  const data = await guard.res.json();
   const pages = Object.values(data?.query?.pages || {});
   const out = [];
   for (const p of pages) {
@@ -139,7 +136,7 @@ async function fetchWikimediaFallbackImages({ query, limit = 6, fetchImpl, timeo
       title,
       creator,
       license,
-      licenseUrl: String(meta.LicenseUrl?.value || ''),
+      licenseUrl: validatePublicRefUrl(meta.LicenseUrl?.value || '').url || '',
       url: urlCheck.url,
       thumbnail: '',
       durationMs: 0,
@@ -180,12 +177,13 @@ export async function searchOpenMedia(opts = {}) {
   let source = 'openverse';
 
   try {
-    const resp = await fetchImpl(searchUrl, {
-      headers: { 'User-Agent': 'antigravity-model-router/3.28', Accept: 'application/json' },
-      signal: AbortSignal.timeout(timeoutMs),
+    const guard = await safeFetchWithRedirectGuard(searchUrl, {
+      fetchImpl,
+      timeoutMs,
+      accept: 'application/json',
     });
-    if (resp.ok) {
-      const json = await resp.json();
+    if (guard.ok && guard.res?.ok) {
+      const json = await guard.res.json();
       items = normalizeOpenverseResults(json, mediaType).slice(0, limit);
     }
   } catch {}
@@ -203,17 +201,15 @@ export async function searchOpenMedia(opts = {}) {
     fs.mkdirSync(absOut, { recursive: true });
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      const safe = validatePublicRefUrl(item.url);
-      if (!safe.ok) continue;
       try {
-        const assetResp = await fetchImpl(safe.url, { signal: AbortSignal.timeout(timeoutMs) });
-        if (!assetResp.ok) continue;
-        const ab = await assetResp.arrayBuffer();
-        if (ab.byteLength === 0 || ab.byteLength > MAX_MEDIA_BYTES) continue;
-        const ext = inferMediaExt(safe.url, assetResp.headers?.get?.('content-type') || '', mediaType);
+        const assetGuard = await safeFetchWithRedirectGuard(item.url, { fetchImpl, timeoutMs });
+        if (!assetGuard.ok || !assetGuard.res?.ok) continue;
+        const buf = await readResponseBufferLimited(assetGuard.res, MAX_MEDIA_BYTES + 1);
+        if (buf.length === 0 || buf.length > MAX_MEDIA_BYTES) continue;
+        const ext = inferMediaExt(assetGuard.finalUrl || item.url, assetGuard.res.headers?.get?.('content-type') || '', mediaType);
         const fileName = `${String(i + 1).padStart(2, '0')}-${slugifyFilePart(item.title, 'asset')}${ext}`;
         const destPath = path.join(absOut, fileName);
-        fs.writeFileSync(destPath, Buffer.from(ab));
+        fs.writeFileSync(destPath, buf);
         item.localPath = destPath;
         downloadedFiles.push(destPath);
       } catch {}
@@ -236,7 +232,12 @@ export async function searchOpenMedia(opts = {}) {
   };
 }
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === __filename;
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  const self = path.resolve(__filename);
+  const arg = path.resolve(process.argv[1]);
+  return process.platform === 'win32' ? self.toLowerCase() === arg.toLowerCase() : self === arg;
+})();
 if (isMain) {
   const args = process.argv.slice(2);
   let query = '';

@@ -55,6 +55,26 @@ function findEnclosingScopeLine(lines, matchIdx) {
       if (ch === '/' && next === '/') {
         break;
       }
+      if (ch === '/') {
+        const before = rawLine.slice(0, j).replace(/[ \t]+$/, '');
+        const prevCh = before.slice(-1);
+        if (!prevCh || '=(,:!&|?+~^;{}['.includes(prevCh) || /\b(?:return|throw|case|in|of|typeof|delete|void|await|yield|else)\s*$/.test(before)) {
+          j++;
+          let inClass = false;
+          while (j < rawLine.length) {
+            const rc = rawLine[j];
+            if (rc === '\\' && j + 1 < rawLine.length) {
+              j += 2;
+              continue;
+            }
+            if (rc === '[') inClass = true;
+            else if (rc === ']') inClass = false;
+            else if (rc === '/' && !inClass) break;
+            j++;
+          }
+          continue;
+        }
+      }
       if (ch === '\'' || ch === '"' || ch === '`') {
         inQuote = ch;
         continue;
@@ -79,7 +99,7 @@ function findEnclosingScopeLine(lines, matchIdx) {
       const top = scopeStack.length > 0 ? scopeStack[scopeStack.length - 1] : scopeAtMatch;
       return top ? { lineNum: top.lineNum, code: top.code } : null;
     }
-    if (pendingScope && !/[,(\\]\s*$/.test(rawLine.trim()) && i > pendingScope.lineNum) {
+    if (pendingScope && !/[,(\\]\s*$/.test(rawLine.trim()) && i > pendingScope.lineNum - 1) {
       pendingScope = null;
     }
   }
@@ -208,7 +228,14 @@ export function sliceSourceCode(sourceText, symbolName, options = {}) {
 
   let sliceLines = Array.from(sliceMap.values()).sort((a, b) => a.line - b.line);
   if (sliceLines.length > maxLines) {
-    sliceLines = sliceLines.slice(0, maxLines);
+    if (focusLine > 0) {
+      sliceLines = [...sliceLines]
+        .sort((a, b) => Math.abs(a.line - focusLine) - Math.abs(b.line - focusLine))
+        .slice(0, maxLines)
+        .sort((a, b) => a.line - b.line);
+    } else {
+      sliceLines = sliceLines.slice(0, maxLines);
+    }
   }
 
   // Phase 4: Format output

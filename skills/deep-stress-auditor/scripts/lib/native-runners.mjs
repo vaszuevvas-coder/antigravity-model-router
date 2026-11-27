@@ -6,7 +6,7 @@
 
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -18,6 +18,7 @@ async function runToolSafe(cmd, args, cwd, timeoutMs = 6000) {
       timeout: timeoutMs,
       encoding: 'utf8',
       windowsHide: true,
+      shell: process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(String(cmd || '')),
       maxBuffer: 2 * 1024 * 1024,
     });
     return { available: true, code: 0, stdout: res.stdout || '', stderr: res.stderr || '' };
@@ -36,15 +37,27 @@ async function runToolSafe(cmd, args, cwd, timeoutMs = 6000) {
 
 function normRel(rootDir, filePath) {
   if (!filePath) return '';
-  if (filePath.startsWith(rootDir)) return relative(rootDir, filePath).replace(/\\/g, '/');
-  return String(filePath).replace(/\\/g, '/');
+  const str = String(filePath);
+  const absRoot = resolve(rootDir || '.');
+  if (isAbsolute(str)) {
+    const absFile = resolve(str);
+    const sameRoot = process.platform === 'win32'
+      ? absFile.toLowerCase().startsWith(absRoot.toLowerCase())
+      : absFile.startsWith(absRoot);
+    if (sameRoot) {
+      return relative(absRoot, absFile).replace(/\\/g, '/');
+    }
+  }
+  return str.replace(/\\/g, '/');
 }
 
 /**
  * Runs detected Contour B native tools matching repository stack.
  */
 export async function runNativeCheckers(opts = {}) {
-  const { rootDir = process.cwd(), stack, manifests, files } = opts && typeof opts === 'object' ? opts : {};
+  const { rootDir = process.cwd(), stack = {}, manifests = {}, files = [] } = opts && typeof opts === 'object' ? opts : {};
+  const safeManifests = manifests && typeof manifests === 'object' ? manifests : {};
+  const safeFiles = Array.isArray(files) ? files : [];
   const findings = [];
   const tools = [];
   const langs = new Set(stack?.languages || []);
@@ -77,7 +90,7 @@ export async function runNativeCheckers(opts = {}) {
       } catch {}
     })());
 
-    if (manifests.biomeJsonPaths.length > 0) {
+    if (safeManifests.biomeJsonPaths?.length > 0) {
       tasks.push((async () => {
         const localBiome = join(rootDir, 'node_modules', '.bin', process.platform === 'win32' ? 'biome.cmd' : 'biome');
         const bin = existsSync(localBiome) ? localBiome : 'biome';
@@ -103,7 +116,7 @@ export async function runNativeCheckers(opts = {}) {
       })());
     }
 
-    if (manifests.tsconfigPaths.length > 0) {
+    if (safeManifests.tsconfigPaths?.length > 0) {
       tasks.push((async () => {
         const localTsc = join(rootDir, 'node_modules', '.bin', process.platform === 'win32' ? 'tsc.cmd' : 'tsc');
         const bin = existsSync(localTsc) ? localTsc : 'tsc';
@@ -156,7 +169,7 @@ export async function runNativeCheckers(opts = {}) {
       } catch {}
     })());
 
-    const pyFiles = files.filter((f) => f.language === 'python' && !f.readError).slice(0, 80).map((f) => f.relPath);
+    const pyFiles = safeFiles.filter((f) => f.language === 'python' && !f.readError).slice(0, 80).map((f) => f.relPath);
     if (pyFiles.length > 0) {
       tasks.push((async () => {
         const pyScript = [
@@ -194,7 +207,7 @@ export async function runNativeCheckers(opts = {}) {
   }
 
   // 3. Go: go vet
-  if (langs.has('go') && manifests.goModPaths.length > 0) {
+  if (langs.has('go') && safeManifests.goModPaths?.length > 0) {
     tasks.push((async () => {
       const r = await runToolSafe('go', ['vet', './...'], rootDir, 7000);
       if (!r.available) return;
@@ -221,7 +234,7 @@ export async function runNativeCheckers(opts = {}) {
   }
 
   // 4. Rust: cargo check
-  if (langs.has('rust') && manifests.cargoTomlPaths.length > 0) {
+  if (langs.has('rust') && safeManifests.cargoTomlPaths?.length > 0) {
     tasks.push((async () => {
       const r = await runToolSafe('cargo', ['check', '--message-format=json', '-q'], rootDir, 8000);
       if (!r.available) return;

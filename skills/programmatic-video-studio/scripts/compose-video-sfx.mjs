@@ -350,11 +350,21 @@ export function resolveCueAudioAsset(cue = {}, { outDir = process.cwd(), preferE
 
   if (preferEarshot && typeof spawnSyncImpl === 'function') {
     try {
-      const probe = spawnSyncImpl('earshot', ['--version'], { windowsHide: true, timeout: 1500, encoding: 'utf8' });
-      if (probe.status === 0) {
+      let useShell = false;
+      let probe = spawnSyncImpl('earshot', ['--version'], { windowsHide: true, timeout: 1500, encoding: 'utf8' });
+      if (process.platform === 'win32' && probe?.error?.code === 'EINVAL') {
+        useShell = true;
+        probe = spawnSyncImpl('earshot', ['--version'], { windowsHide: true, timeout: 1500, encoding: 'utf8', shell: true });
+      }
+      if (probe?.status === 0) {
         const prompt = String(cue.label || kind).replace(/[_-]+/g, ' ');
-        const gen = spawnSyncImpl('earshot', ['make', prompt, '-o', outWav], { windowsHide: true, timeout: 15000, encoding: 'utf8' });
-        if (gen.status === 0 && fs.existsSync(outWav)) {
+        const gen = spawnSyncImpl('earshot', ['make', prompt, '-o', outWav], {
+          windowsHide: true,
+          timeout: 15000,
+          encoding: 'utf8',
+          ...(useShell ? { shell: true } : {}),
+        });
+        if (gen?.status === 0 && fs.existsSync(outWav)) {
           return { ok: true, engine: 'earshot_cli', kind, timeSec: Number(cue.timeSec) || 0, filePath: outWav };
         }
       }
@@ -402,7 +412,12 @@ export function buildFfmpegMixArgs(opts = {}) {
   return { ok: mixLabels.length > 0, args, cueCount: mixLabels.length };
 }
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === __filename;
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  const self = path.resolve(__filename);
+  const arg = path.resolve(process.argv[1]);
+  return process.platform === 'win32' ? self.toLowerCase() === arg.toLowerCase() : self === arg;
+})();
 if (isMain) {
   const args = process.argv.slice(2);
   const asJson = args.includes('--json');

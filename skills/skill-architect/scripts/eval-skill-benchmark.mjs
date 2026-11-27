@@ -224,12 +224,16 @@ export function aggregateEvalIteration(iterationDir, { writeBenchmark = true } =
       return Number((p / g.assertion_results.length).toFixed(3));
     };
 
+    const toFinite = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : 0;
+    };
     const wRate = calcRate(withGrading);
     const bRate = calcRate(baseGrading);
-    const wTok = Number(withTiming?.total_tokens || 0);
-    const bTok = Number(baseTiming?.total_tokens || 0);
-    const wMs = Number(withTiming?.duration_ms || 0);
-    const bMs = Number(baseTiming?.duration_ms || 0);
+    const wTok = toFinite(withTiming?.total_tokens);
+    const bTok = toFinite(baseTiming?.total_tokens);
+    const wMs = toFinite(withTiming?.duration_ms);
+    const bMs = toFinite(baseTiming?.duration_ms);
 
     if (wRate !== null && bRate !== null) {
       pairedCount++;
@@ -268,7 +272,13 @@ export function aggregateEvalIteration(iterationDir, { writeBenchmark = true } =
   return benchmark;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  const self = resolve(fileURLToPath(import.meta.url));
+  const arg = resolve(process.argv[1]);
+  return process.platform === 'win32' ? self.toLowerCase() === arg.toLowerCase() : self === arg;
+})();
+if (isMain) {
   const mode = process.argv[2] || '';
   const target = process.argv[3] || '';
   if (mode === '--init' && target) {

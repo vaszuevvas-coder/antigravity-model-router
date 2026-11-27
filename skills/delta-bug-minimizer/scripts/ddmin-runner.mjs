@@ -332,7 +332,7 @@ async function runCli() {
       slotTmpFiles.set(slot, tmpFile);
       try {
         writeFileSync(tmpFile, subset.join('\n'), 'utf8');
-        const cmd = cmdTemplate.replace(/\{file\}/gi, `"${tmpFile}"`);
+        const cmd = cmdTemplate.replace(/(["']?)\{file\}\1/gi, (_m, q) => (q ? `${q}${tmpFile}${q}` : `"${tmpFile}"`));
         const execOpts = { shell: true, windowsHide: true };
         if (signal) execOpts.signal = signal;
         await execFileAsync(cmd, execOpts);
@@ -347,14 +347,14 @@ async function runCli() {
       const initialFails = await testFn(lines, undefined, 0);
       if (!initialFails) {
         emitOutput({ ok: false, error: 'Initial input did not reproduce failure (oracle exited 0)' });
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
-      if (lines.length > 1) {
-        const emptyFails = await testFn([], undefined, 0);
-        if (emptyFails) {
-          emitOutput({ ok: false, error: 'Oracle command fails even on empty input; check --cmd syntax and executable paths' });
-          process.exit(1);
-        }
+      const emptyFails = await testFn([], undefined, 0);
+      if (emptyFails) {
+        emitOutput({ ok: false, error: 'Oracle command fails even on empty input; check --cmd syntax and executable paths' });
+        process.exitCode = 1;
+        return;
       }
       const minimized = await minimizeChunksParallel(lines, testFn, { concurrency: threadsUsed });
       emitOutput({ ok: true, minimized, steps, threadsUsed });

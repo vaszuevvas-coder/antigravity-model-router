@@ -507,7 +507,35 @@ function detectImageExtensionFromBuffer(buf) {
   return '';
 }
 
-async function readResponseBufferLimited(res, maxBytes) {
+export async function readResponseBufferLimited(res, maxBytes) {
+  if (res?.body && typeof res.body.getReader === 'function') {
+    const reader = res.body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value || value.byteLength === 0) continue;
+        const remaining = maxBytes - total;
+        if (remaining <= 0) {
+          await reader.cancel().catch(() => {});
+          break;
+        }
+        if (value.byteLength > remaining) {
+          chunks.push(Buffer.from(value.subarray(0, remaining)));
+          total += remaining;
+          await reader.cancel().catch(() => {});
+          break;
+        }
+        chunks.push(Buffer.from(value));
+        total += value.byteLength;
+      }
+    } finally {
+      try { reader.releaseLock?.(); } catch {}
+    }
+    return Buffer.concat(chunks, total);
+  }
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.length > maxBytes) {
     return buf.subarray(0, maxBytes);
@@ -515,7 +543,7 @@ async function readResponseBufferLimited(res, maxBytes) {
   return buf;
 }
 
-async function safeFetchWithRedirectGuard(rawUrl, { fetchImpl, timeoutMs, accept = '*/*', maxRedirects = 3 } = {}) {
+export async function safeFetchWithRedirectGuard(rawUrl, { fetchImpl, timeoutMs, accept = '*/*', maxRedirects = 3 } = {}) {
   let currentUrl = rawUrl;
   for (let hop = 0; hop <= maxRedirects; hop++) {
     const v = validatePublicRefUrl(currentUrl);
@@ -544,6 +572,7 @@ async function safeFetchWithRedirectGuard(rawUrl, { fetchImpl, timeoutMs, accept
     const status = Number(res?.status || 0);
     if (status >= 300 && status < 400) {
       const loc = res?.headers?.get?.('location') || '';
+      await res?.body?.cancel?.().catch(() => {});
       if (!loc || hop >= maxRedirects) {
         return { ok: false, blocked: true, reason: 'redirect_limit_or_empty', status, finalUrl: v.url, res: null };
       }
@@ -853,7 +882,8 @@ export async function fetchWebReferencesBatch(urls = [], options = {}) {
           },
           idx - 1,
           600,
-          340
+          340,
+          batchLang
         );
         fs.writeFileSync(pngTarget, swatchBuf);
         savedImgPath = pngTarget;
