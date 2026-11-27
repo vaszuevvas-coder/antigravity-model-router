@@ -351,6 +351,60 @@ test('Suite B: Adversarial core/security-guard.mjs (Win32 prefixes, NTFS ADS, .a
     assert.doesNotMatch(redacted, /s3cr3tPass/);
     assert.match(redacted, /https:\/\/alice:\[REDACTED_SECRET\]@example\.com\/api/);
     assert.equal(redactSecretsInText(''), '');
+
+    // 5. Hardened secret redaction edge cases (DB URIs, PEM, JWT, hf/pplx/fc, case-insensitive/base64 Bearer, Windows paths, query emails, Buffer/Error)
+    const fakeJwt = [
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',
+      'eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IlRlc3QifQ',
+      'SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c',
+    ].join('.');
+    const fakePem = [
+      '-----BEGIN RSA PRIVATE KEY-----',
+      'MIIEowIBAAKCAQEAnFakeKeyBody1234567890',
+      '-----END RSA PRIVATE KEY-----',
+    ].join('\n');
+    const extendedSecrets = [
+      `Authorization: bearer ${['AbCd+EfGh/IjKl+MnOp/QrSt+UvWx', '=='].join('')}`,
+      `DB1=postgres://app:mySecretPass@db.internal:5432/prod`,
+      `DB2=mongodb+srv://user:p12@cluster.example.net/app`,
+      `GIT=https://:myToken12345@github.com/org/repo.git`,
+      `SHORT=https://admin:123@example.com/panel`,
+      `HF=${['hf', 'abcdefghijklmnopqrstuvwxyz1234'].join('_')}`,
+      `PPLX=${['pplx', 'abcdefghijklmnopqrstuvwxyz1234'].join('-')}`,
+      `FC=${['fc', '0123456789abcdef0123456789abcdef'].join('-')}`,
+      `JWT=${fakeJwt}`,
+      fakePem,
+    ].join('\n');
+    const redactedExt = redactSecretsInText(extendedSecrets);
+    assert.doesNotMatch(redactedExt, /AbCd\+EfGh/);
+    assert.doesNotMatch(redactedExt, /mySecretPass/);
+    assert.match(redactedExt, /postgres:\/\/app:\[REDACTED_SECRET\]@db\.internal:5432\/prod/);
+    assert.match(redactedExt, /mongodb\+srv:\/\/user:\[REDACTED_SECRET\]@cluster\.example\.net\/app/);
+    assert.match(redactedExt, /https:\/\/:\[REDACTED_SECRET\]@github\.com\/org\/repo\.git/);
+    assert.match(redactedExt, /https:\/\/admin:\[REDACTED_SECRET\]@example\.com\/panel/);
+    assert.doesNotMatch(redactedExt, /hf_abcdef/);
+    assert.doesNotMatch(redactedExt, /pplx-abcdef/);
+    assert.doesNotMatch(redactedExt, /fc-012345/);
+    assert.doesNotMatch(redactedExt, /eyJhbGciOi/);
+    assert.doesNotMatch(redactedExt, /BEGIN RSA PRIVATE KEY/);
+    assert.doesNotMatch(redactedExt, /MIIEowIBAAK/);
+
+    // False-positive guards: Windows paths containing "sk-" inside words, port+query email URLs, and multiline "Bearer\n..."
+    const safeText = [
+      'C:\\projects\\task-management-service-v2\\src\\app.mjs',
+      'D:\\work\\disk-cleanup-utility-tool\\log.txt',
+      'https://api.example.com:8443?email=alice@corp.local',
+      'Bearer\nsome_long_multiline_identifier_not_a_token',
+    ].join('\n');
+    assert.equal(redactSecretsInText(safeText), safeText);
+
+    // Non-string inputs: Buffer and Error redact cleanly, null/undefined stay empty
+    const bufRes = redactSecretsInText(Buffer.from(`DB=redis://u:secret123@127.0.0.1:6379`, 'utf8'));
+    assert.match(bufRes, /redis:\/\/u:\[REDACTED_SECRET\]@127\.0\.0\.1:6379/);
+    const errRes = redactSecretsInText(new Error(`Auth failed: ${fakeJwt}`));
+    assert.doesNotMatch(errRes, /eyJhbGciOi/);
+    assert.equal(redactSecretsInText(null), '');
+    assert.equal(redactSecretsInText(undefined), '');
   } finally {
     fs.rmSync(ws, { recursive: true, force: true });
   }

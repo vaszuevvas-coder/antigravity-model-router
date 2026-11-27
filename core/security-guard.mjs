@@ -639,37 +639,62 @@ function checkCommandSecurityImpl(opts = {}, positionalWorkspaceRoot = '') {
 }
 
 /**
- * Redacts common API keys and secret tokens from text.
+ * Redacts common API keys, private keys, JWTs, and URI credentials from text.
  *
- * @param {string} text
+ * @param {string|Buffer|Error} text
  * @returns {string}
  */
 export function redactSecretsInText(text = '') {
-  if (typeof text !== 'string' || !text) {
+  let result = '';
+  if (typeof text === 'string') {
+    result = text;
+  } else if (Buffer.isBuffer(text)) {
+    result = text.toString('utf8');
+  } else if (text instanceof Error) {
+    result = text.stack || text.message || String(text);
+  } else {
     return '';
   }
 
-  let result = text;
+  if (!result) {
+    return '';
+  }
 
-  // Bearer tokens
-  result = result.replace(/Bearer\s+[A-Za-z0-9._-]{25,}/g, 'Bearer [REDACTED_SECRET]');
+  // PEM private key blocks and standalone headers
+  result = result.replace(
+    /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,
+    '[REDACTED_SECRET]'
+  );
+  result = result.replace(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/g, '[REDACTED_SECRET]');
 
-  // OpenAI / Anthropic / standard sk- keys
-  result = result.replace(/sk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}/g, '[REDACTED_SECRET]');
+  // Bearer tokens (case-insensitive scheme, RFC 6750 b64token charset, single-line whitespace)
+  result = result.replace(/\bBearer[ \t]+[A-Za-z0-9._~+/-]{25,}=*/gi, 'Bearer [REDACTED_SECRET]');
+
+  // OpenAI / Anthropic / standard sk- keys (word-bounded to avoid corrupting Windows paths like task-management-service-v2)
+  result = result.replace(/\bsk-(?:ant-|proj-|svcacct-)?[A-Za-z0-9_-]{20,}\b/g, '[REDACTED_SECRET]');
 
   // Google AIza & OAuth ya29 tokens
-  result = result.replace(/AIza[0-9A-Za-z_-]{30,}/g, '[REDACTED_SECRET]');
-  result = result.replace(/\bya29\.[A-Za-z0-9._-]{30,}/g, '[REDACTED_SECRET]');
+  result = result.replace(/\bAIza[0-9A-Za-z_-]{25,}\b/g, '[REDACTED_SECRET]');
+  result = result.replace(/\bya29\.[A-Za-z0-9._-]{30,}\b/g, '[REDACTED_SECRET]');
 
-  // GitHub classic & fine-grained PATs, GitLab PATs, Slack tokens, AWS Access Keys
-  result = result.replace(/gh[pousr]_[A-Za-z0-9]{25,}/g, '[REDACTED_SECRET]');
-  result = result.replace(/github_pat_[A-Za-z0-9_]{30,}/g, '[REDACTED_SECRET]');
-  result = result.replace(/glpat-[A-Za-z0-9_-]{20,}/g, '[REDACTED_SECRET]');
-  result = result.replace(/xox[baprs]-[A-Za-z0-9-]{20,}/g, '[REDACTED_SECRET]');
+  // GitHub classic & fine-grained PATs, GitLab PATs, Slack, HuggingFace, Perplexity, Firecrawl, AWS Access Keys
+  result = result.replace(/\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, '[REDACTED_SECRET]');
+  result = result.replace(/\bgithub_pat_[A-Za-z0-9_]{24,}\b/g, '[REDACTED_SECRET]');
+  result = result.replace(/\bglpat-[A-Za-z0-9_-]{20,}\b/g, '[REDACTED_SECRET]');
+  result = result.replace(/\bxox[baprs]-[A-Za-z0-9-]{16,}\b/g, '[REDACTED_SECRET]');
+  result = result.replace(/\bhf_[A-Za-z0-9]{24,}\b/g, '[REDACTED_SECRET]');
+  result = result.replace(/\bpplx-[A-Za-z0-9]{24,}\b/g, '[REDACTED_SECRET]');
+  result = result.replace(/\bfc-[a-f0-9]{24,}\b/gi, '[REDACTED_SECRET]');
   result = result.replace(/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED_SECRET]');
 
-  // Basic-auth credentials embedded in URLs (https://user:secret@host)
-  result = result.replace(/(https?:\/\/[^/\s:@]+):([^/\s@]{4,})@/gi, '$1:[REDACTED_SECRET]@');
+  // Standalone JWT tokens
+  result = result.replace(/\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[REDACTED_SECRET]');
+
+  // Basic-auth / DB credentials embedded in URIs (http(s), postgres, mysql, mongodb, redis, amqp, ftp, ssh)
+  result = result.replace(
+    /\b((?:https?|postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqps?|ftp|ssh):\/\/[^/\s:@?#]*):([^/\s@?#]+)@/gi,
+    '$1:[REDACTED_SECRET]@'
+  );
 
   return result;
 }
