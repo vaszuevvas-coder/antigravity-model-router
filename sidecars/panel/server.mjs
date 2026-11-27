@@ -10,7 +10,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { safeReadJsonSync } from '../../core/safe-json.mjs';
+import { safeReadJsonSync, withFileLockSync } from '../../core/safe-json.mjs';
 import { normalizeLang, pickLang } from '../../core/i18n.mjs';
 import { getPricingPhaseStatus } from '../../core/model-profile.mjs';
 import {
@@ -1558,12 +1558,18 @@ export async function startSidecarPanel(options = {}) {
       } else if (kind === 'agentignore') {
         const outPath = join(activeWs, '.agentignore');
         try {
-          if (existsSync(outPath) && lstatSync(outPath).isSymbolicLink()) {
-            throw new Error(pickLang(lang, 'Отказ перезаписи символической ссылки .agentignore', 'Refusing symlink overwrite for .agentignore'));
-          }
-          writeFileSync(outPath, '.env*\nsecrets/\n*.pem\n*.key\n', {
-            encoding: 'utf8',
-            flag: data?.overwrite ? 'w' : 'wx',
+          withFileLockSync(outPath, () => {
+            try {
+              if (lstatSync(outPath).isSymbolicLink()) {
+                throw new Error(pickLang(lang, 'Отказ перезаписи символической ссылки .agentignore', 'Refusing symlink overwrite for .agentignore'));
+              }
+            } catch (statErr) {
+              if (statErr?.code !== 'ENOENT') throw statErr;
+            }
+            writeFileSync(outPath, '.env*\nsecrets/\n*.pem\n*.key\n', {
+              encoding: 'utf8',
+              flag: data?.overwrite ? 'w' : 'wx',
+            });
           });
         } catch (wErr) {
           if (wErr?.code !== 'EEXIST') throw wErr;

@@ -389,7 +389,7 @@ async function main() {
         '</div>';
 
       const cleanLivePanelForShowcase = () => {
-        const convoPill = document.getElementById('agProgressProjectBadge') || document.getElementById('convoShortId');
+        const convoPill = document.getElementById('agProgressProjectBadge');
         if (convoPill) convoPill.textContent = 'Все чаты · Автопилот';
         const heading = document.getElementById('agProgressHeadingText');
         if (heading) heading.textContent = 'ПРОГРЕСС ЗАДАЧ (1)';

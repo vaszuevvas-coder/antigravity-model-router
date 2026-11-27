@@ -488,7 +488,7 @@ async function main() {
         '<div style="height:4px;background:#1a1c22;border-radius:2px;margin-top:6px;overflow:hidden;"><div style="width:74%;height:100%;background:#f04848;"></div></div>' +
         '</div>';
       const cleanLivePanelForShowcase = () => {
-        const convoPill = document.getElementById('agProgressProjectBadge') || document.getElementById('convoShortId');
+        const convoPill = document.getElementById('agProgressProjectBadge');
         if (convoPill) convoPill.textContent = 'All Chats · Autopilot';
         const heading = document.getElementById('agProgressHeadingText');
         if (heading) heading.textContent = 'TASK PROGRESS (1)';
