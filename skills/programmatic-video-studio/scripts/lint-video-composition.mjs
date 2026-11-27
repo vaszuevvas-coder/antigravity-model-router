@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { findHeadlessBrowserExecutable } from '../../ui-ux-design-system/scripts/build-showroom.mjs';
+import { collectFilesByExt, findHeadlessBrowserExecutable } from '../../ui-ux-design-system/scripts/build-showroom.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const VIDEO_EXT_RE = /\.(?:html?|tsx?|jsx?|mjs)$/i;
@@ -122,28 +122,12 @@ export function lintVideoCompositionContent(content = '', filePath = 'compositio
   };
 }
 
-function collectCompositionFiles(targetAbs, acc = [], depth = 0) {
-  if (depth > 5 || acc.length >= 60) return acc;
-  const st = fs.statSync(targetAbs);
-  if (st.isFile()) {
-    if (VIDEO_EXT_RE.test(targetAbs)) acc.push(targetAbs);
-    return acc;
-  }
-  for (const ent of fs.readdirSync(targetAbs, { withFileTypes: true })) {
-    if (IGNORE_DIRS.has(ent.name)) continue;
-    const full = path.join(targetAbs, ent.name);
-    if (ent.isDirectory()) collectCompositionFiles(full, acc, depth + 1);
-    else if (ent.isFile() && VIDEO_EXT_RE.test(ent.name)) acc.push(full);
-  }
-  return acc;
-}
-
 export function lintVideoCompositionPath(targetPath = process.cwd()) {
   const abs = path.resolve(targetPath);
   if (!fs.existsSync(abs)) {
     return { ok: false, error: 'path_not_found', target: abs, filesScanned: 0, results: [], findings: [] };
   }
-  const files = collectCompositionFiles(abs);
+  const files = collectFilesByExt(abs, VIDEO_EXT_RE, IGNORE_DIRS);
   const results = files
     .map((f) => lintVideoCompositionContent(fs.readFileSync(f, 'utf8'), path.relative(abs, f) || path.basename(f)))
     .filter((r) => r.mode !== 'unknown' || files.length === 1);

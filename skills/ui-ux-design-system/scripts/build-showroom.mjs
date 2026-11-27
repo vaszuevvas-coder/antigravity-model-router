@@ -1141,6 +1141,28 @@ export function findHeadlessBrowserExecutable() {
   return null;
 }
 
+export function collectFilesByExt(
+  targetAbs,
+  extRe,
+  ignoreDirs = new Set(['node_modules', '.git', '.cache', 'dist', 'build', 'coverage']),
+  acc = [],
+  depth = 0
+) {
+  if (depth > 5 || acc.length >= 60) return acc;
+  const st = fs.statSync(targetAbs);
+  if (st.isFile()) {
+    if (extRe.test(targetAbs)) acc.push(targetAbs);
+    return acc;
+  }
+  for (const entry of fs.readdirSync(targetAbs, { withFileTypes: true })) {
+    if (ignoreDirs.has(entry.name)) continue;
+    const full = path.join(targetAbs, entry.name);
+    if (entry.isDirectory()) collectFilesByExt(full, extRe, ignoreDirs, acc, depth + 1);
+    else if (entry.isFile() && extRe.test(entry.name)) acc.push(full);
+  }
+  return acc;
+}
+
 function buildSnapshotStandaloneHtml(variant = {}, idx = 0, lang = '') {
   const isEnSnap = normalizeLang(lang || variant?.lang || readActiveUiLanguage(), 'en') === 'en';
   const theme = inferVariantVisualTheme(variant, idx);

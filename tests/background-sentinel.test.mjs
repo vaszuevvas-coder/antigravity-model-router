@@ -1162,3 +1162,46 @@ test('11. Shadow Guard surfaces structured clonePairs details for SimHash duplic
     try { fs.rmSync(tmpCache, { recursive: true, force: true, maxRetries: 10, retryDelay: 60 }); } catch {}
   }
 });
+
+test('12. Engine A: Co-Change alerts fire only for uncommitted git files and stay clean after commit', async () => {
+  const tmpWs = makeTempDir('amr-sentinel-cochange-');
+  const tmpCache = makeTempDir('amr-sentinel-cochange-cache-');
+
+  try {
+    execFileSync('git', ['init'], { cwd: tmpWs, windowsHide: true });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: tmpWs, windowsHide: true });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: tmpWs, windowsHide: true });
+
+    const fileA = path.join(tmpWs, 'module-a.mjs');
+    const fileB = path.join(tmpWs, 'module-b.mjs');
+    for (let i = 1; i <= 3; i += 1) {
+      fs.writeFileSync(fileA, `export const verA = ${i};\n`, 'utf8');
+      fs.writeFileSync(fileB, `export const verB = ${i};\n`, 'utf8');
+      execFileSync('git', ['add', '.'], { cwd: tmpWs, windowsHide: true });
+      execFileSync('git', ['commit', '-m', `pair commit ${i}`], { cwd: tmpWs, windowsHide: true });
+    }
+
+    // Uncommitted edit to module-a.mjs without module-b.mjs MUST trigger a Co-Change alert
+    fs.writeFileSync(fileA, 'export const verA = 4;\n', 'utf8');
+    const s = new BackgroundSentinel({ cacheDir: tmpCache });
+    s.notifyFileChanged(tmpWs, 'module-a.mjs');
+    const dirtyRes = await s.runShadowGuardPass(tmpWs);
+    assert.equal(dirtyRes.coChangeAlerts.length, 1);
+    assert.equal(dirtyRes.coChangeAlerts[0].file, 'module-a.mjs');
+    assert.equal(dirtyRes.coChangeAlerts[0].partnerFile, 'module-b.mjs');
+
+    // Once both files are committed cleanly, even a stale notifyFileChanged MUST NOT produce false Co-Change alerts
+    fs.writeFileSync(fileB, 'export const verB = 4;\n', 'utf8');
+    execFileSync('git', ['add', '.'], { cwd: tmpWs, windowsHide: true });
+    execFileSync('git', ['commit', '-m', 'pair commit 4'], { cwd: tmpWs, windowsHide: true });
+
+    s.notifyFileChanged(tmpWs, 'module-a.mjs');
+    const cleanRes = await s.runShadowGuardPass(tmpWs);
+    assert.equal(cleanRes.coChangeAlerts.length, 0);
+    assert.equal(cleanRes.warnCount, 0);
+    assert.equal(cleanRes.status, 'clean');
+  } finally {
+    try { fs.rmSync(tmpWs, { recursive: true, force: true, maxRetries: 10, retryDelay: 60 }); } catch {}
+    try { fs.rmSync(tmpCache, { recursive: true, force: true, maxRetries: 10, retryDelay: 60 }); } catch {}
+  }
+});

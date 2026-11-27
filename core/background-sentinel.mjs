@@ -1163,21 +1163,36 @@ export class BackgroundSentinel {
 
     // 3. Git Evolutionary Co-Change Partner Alerts (>= 0.75 confidence)
     if (dirtySet.size > 0 && existsSync(join(absRoot, '.git'))) {
-      let gitDirtySet = new Set(dirtySet);
+      let gitStatusOk = false;
+      const actualGitDirtySet = new Set();
       try {
-        const stOut = execFileSync('git', ['status', '--porcelain'], {
+        const stOut = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], {
           cwd: absRoot,
           encoding: 'utf8',
           timeout: 1200,
           windowsHide: true,
         });
-        for (const line of stOut.split(/\r?\n/)) {
-          const f = line.slice(3).trim().replace(/\\/g, '/');
-          if (f) gitDirtySet.add(f);
+        gitStatusOk = true;
+        for (const rawLine of stOut.split(/\r?\n/)) {
+          if (!rawLine || rawLine.length < 4) continue;
+          let f = rawLine.slice(3).trim();
+          const arrowIdx = f.indexOf(' -> ');
+          if (arrowIdx >= 0) f = f.slice(arrowIdx + 4).trim();
+          if (f.startsWith('"') && f.endsWith('"') && f.length >= 2) {
+            f = f.slice(1, -1);
+          }
+          f = f.replace(/\\/g, '/').replace(/^\.\//, '');
+          if (f) actualGitDirtySet.add(f);
         }
       } catch {}
 
-      for (const dirtyFile of dirtySet) {
+      // Only emit co-change alerts for files that still have uncommitted changes in Git
+      const coChangeTargets = gitStatusOk
+        ? Array.from(dirtySet).filter((f) => actualGitDirtySet.has(f))
+        : Array.from(dirtySet);
+      const gitDirtySet = new Set([...coChangeTargets, ...actualGitDirtySet]);
+
+      for (const dirtyFile of coChangeTargets) {
         const coRes = queryCoChangePartners(absRoot, dirtyFile, {
           minConfidence: 0.75,
           minSupport: 2,

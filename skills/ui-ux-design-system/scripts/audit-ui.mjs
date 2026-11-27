@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { findHeadlessBrowserExecutable } from './build-showroom.mjs';
+import { collectFilesByExt, findHeadlessBrowserExecutable } from './build-showroom.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const UI_EXT_RE = /\.(?:html?|css|scss|jsx|tsx|vue|svelte)$/i;
@@ -266,28 +266,12 @@ export function auditUiContent(content = '', filePath = 'ui.html') {
   };
 }
 
-function collectUiFiles(targetAbs, acc = [], depth = 0) {
-  if (depth > 5 || acc.length >= 60) return acc;
-  const st = fs.statSync(targetAbs);
-  if (st.isFile()) {
-    if (UI_EXT_RE.test(targetAbs)) acc.push(targetAbs);
-    return acc;
-  }
-  for (const entry of fs.readdirSync(targetAbs, { withFileTypes: true })) {
-    if (IGNORE_DIRS.has(entry.name)) continue;
-    const full = path.join(targetAbs, entry.name);
-    if (entry.isDirectory()) collectUiFiles(full, acc, depth + 1);
-    else if (entry.isFile() && UI_EXT_RE.test(entry.name)) acc.push(full);
-  }
-  return acc;
-}
-
 export function auditUiPath(targetPath = process.cwd()) {
   const abs = path.resolve(targetPath);
   if (!fs.existsSync(abs)) {
     return { ok: false, error: 'path_not_found', target: abs, filesScanned: 0, averageScore: 0, results: [], findings: [] };
   }
-  const files = collectUiFiles(abs);
+  const files = collectFilesByExt(abs, UI_EXT_RE, IGNORE_DIRS);
   const results = files.map((f) => auditUiContent(fs.readFileSync(f, 'utf8'), path.relative(abs, f) || path.basename(f)));
   const allFindings = results.flatMap((r) => r.findings);
   const avg = results.length > 0
