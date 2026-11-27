@@ -1269,6 +1269,8 @@
         case 'jumpToPanelSection': if (typeof jumpToPanelSection === 'function') jumpToPanelSection(arg); break;
         case 'toggleInlineSection': if (typeof toggleInlineSection === 'function') toggleInlineSection(arg); break;
         case 'setPanelFullTab': if (typeof setPanelFullTab === 'function') setPanelFullTab(arg); break;
+        case 'setBugsSubTab': if (typeof setBugsSubTab === 'function') setBugsSubTab(arg); break;
+        case 'setMemorySubTab': if (typeof setMemorySubTab === 'function') setMemorySubTab(arg); break;
         case 'applyUnifiedPreset': if (typeof applyUnifiedPreset === 'function') applyUnifiedPreset(arg); break;
         case 'toggleSentinelFindingExpand': {
           const bodyEl = actionEl.parentElement;
@@ -2095,15 +2097,15 @@
       'gpuRamCard',
       'expertRamGpuFieldset',
       'sentinelSectionCard',
-      'checkpointsCard',
       'intelligenceBayesianCard',
       'expertCircuitBox',
+      'checkpointsCard',
+      'expertPitfallsBox',
       'memoryContextCard',
       'expertKnowledgeBox',
-      'expertPitfallsBox',
-      'skillsSectionCard',
+      'expertProfileCard',
       'expertGuardrailsCard',
-      'expertProfileCard'
+      'skillsSectionCard'
     ];
     const BLOCK_ORDER_STORAGE_KEY = 'ag_tunnel_panel_block_order_v1';
     let _suppressSummaryClickUntil = 0;

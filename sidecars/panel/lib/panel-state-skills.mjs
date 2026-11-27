@@ -235,7 +235,7 @@ export function resolvePanelFetchSections(queryData = {}, state = {}, options = 
       flags.bayesian = activeTab === 'bugs';
       flags.circuit = activeTab === 'behavior' || activeTab === 'bugs';
       flags.compaction = activeTab === 'memory' || activeTab === 'settings';
-      flags.pitfalls = activeTab === 'memory';
+      flags.pitfalls = activeTab === 'bugs' || activeTab === 'memory';
     }
   } else if (!defaultNone) {
     flags.all = true;

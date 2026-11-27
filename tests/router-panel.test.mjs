@@ -221,6 +221,9 @@ test('1. Sidecar Panel: validateRequestOrigin, sanitizeSkillModesPatch, CSP UI H
   assert.match(uiHtml, /id="swarmTelemetryCard"[^>]*data-tab-panel="economy"/);
   assert.match(uiHtml, /id="gpuRamCard"[^>]*data-tab-panel="hardware"/);
   assert.match(uiHtml, /id="sentinelSectionCard"[^>]*data-tab-panel="bugs"/);
+  assert.match(uiHtml, /id="expertPitfallsBox"[^>]*data-tab-panel="bugs"/);
+  assert.match(uiHtml, /id="bugsSubTabsBar"/);
+  assert.match(uiHtml, /id="memorySubTabsBar"/);
   assert.match(uiHtml, /id="memoryContextCard"[^>]*data-tab-panel="memory"/);
   assert.match(uiHtml, /id="skillsSectionCard"[^>]*data-tab-panel="settings"/);
   assert.equal(/id="telemetrySwarmSpoiler"|id="hardwareResourcesSpoiler"|<details class="expert-spoiler"|<details class="tune-spoiler"/.test(uiHtml), false);

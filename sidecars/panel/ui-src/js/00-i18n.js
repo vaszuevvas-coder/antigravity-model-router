@@ -683,7 +683,37 @@
       'Единый профиль': 'Unified Profile',
       'Турбо': 'Turbo',
       'Аудит': 'Audit',
-      'Ускорение: Баланс · Дозор: Полный · Хуки: Стандарт · Разведка: Полный · Защита: Стандарт': 'Accel: Balanced · Sentinel: Full · Hooks: Standard · Intel: Full · Safety: Standard'
+      'Ускорение: Баланс · Дозор: Полный · Хуки: Стандарт · Разведка: Полный · Защита: Стандарт': 'Accel: Balanced · Sentinel: Full · Hooks: Standard · Intel: Full · Safety: Standard',
+      'План и развилки до кода': 'Plan & forks before code',
+      'Сразу в работу по шаблону': 'Execute immediately by preset',
+      'Тариф подписки': 'Subscription Tier',
+      'Без опросов на S/M': 'Skip S/M prompts',
+      'Модель и скиллы на M+': 'Model & skills on M+',
+      'Проверка диффов и тестов': 'Checks diffs & tests',
+      'Пересадка без сброса памяти': 'Failover keeping memory',
+      'Барьеры сбоев и диагностика': 'Fault Barriers & Diagnostics',
+      'Стоп-кран': 'Circuit Breaker',
+      'Надёжность ИИ': 'AI Reliability',
+      'Приёмка GATES': 'GATES Acceptance',
+      'Граф и Техдолг': 'Graph & Tech Debt',
+      'Карта': 'Map',
+      'Graphify v2 · Готов': 'Graphify v2 · Ready',
+      'Снимки и откат': 'Snapshots & Rollback',
+      'Хрупкие файлы': 'Fragile Files',
+      'Грабли сбоев': 'Failure Pitfalls',
+      'Бюджет эпохи': 'Epoch Budget',
+      'Порог сжатия:': 'Compaction threshold:',
+      'База опыта и память проекта': 'Experience Hub & Project Memory',
+      'Постоянная база на диске': 'Persistent disk DB',
+      'Авто-навыки из паттернов': 'Auto-skills from patterns',
+      'Рецепты побед': 'Win Recipes',
+      'Кросс-репо': 'Cross-Repo',
+      'Нажмите «Обновить» для просмотра накопленных паттернов.': 'Click "Refresh" to view learned patterns.',
+      'Профиль хуков': 'Hook Profile',
+      'Защита правок': 'Edit Safety',
+      'Язык и профиль': 'Language & Profile',
+      'Язык интерфейса': 'Interface language',
+      'Резервная копия': 'Backup'
     };
 
     const UI_RU_TO_EN_ATTR = {
@@ -1283,7 +1313,16 @@
       '120k токенов (рекомендуется): оптимальный баланс глубины памяти и стоимости кэша': '120k tokens (recommended): optimal balance of memory depth and cache cost',
       '180k токенов: длинная эпоха для масштабных многофайловых сессий': '180k tokens: long epoch for large multi-file sessions',
       '250k токенов: максимальный буфер истории до сборки дайджеста': '250k tokens: maximum history buffer before building a digest',
-      'Язык интерфейса боковой панели и уведомлений': 'Sidecar panel and notification language'
+      'Язык интерфейса боковой панели и уведомлений': 'Sidecar panel and notification language',
+      'Списки диагностики': 'Diagnostic lists',
+      'Резервные снимки файлов, откат ходов и Git-песочницы': 'File rollback snapshots, turn rollbacks, and Git sandboxes',
+      'Рейтинг файлов с повторными сбоями и отказами тестов (Bayesian v2)': 'Ranking of files with repeat failures and test breaks (Bayesian v2)',
+      'Журнал зафиксированных падений тестов и откатов (Pitfall Ledger)': 'Log of recorded test failures and rollbacks (Pitfall Ledger)',
+      'Что делает: локальная база знаний проекта на SQLite WAL — хранит удачные починки багов («рецепты побед»), эпизоды прошлых чатов, инстинкты и связи с соседними репозиториями. Зачем: позволяет мгновенно находить проверенные решения и адаптировать навыки под проект.': 'What it does: local SQLite WAL knowledge base storing bug-fix win recipes, session episodes, instincts, and linked sibling repos.\nWhy: finds proven fixes fast and adapts skills to your project.',
+      'Разделы базы опыта': 'Experience hub sections',
+      'Успешные починки багов и прошлые эпизоды сессий': 'Successful bug fixes and past session episodes',
+      'Связанные соседние репозитории для кросс-проектного поиска': 'Linked sibling repositories for cross-project search',
+      'Автоматический прогрев памяти и управление процессом Ollama': 'Automatic RAM warmup and Ollama process management'
     };
 
     function translateUiString(raw, dict) {

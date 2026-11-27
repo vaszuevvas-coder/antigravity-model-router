@@ -3311,6 +3311,22 @@
       overflow-y: auto;
       overflow-x: hidden;
       overscroll-behavior: contain;
+      --ag-stack-fade-size: 28px;
+    }
+
+    .ag-chats-stack.has-fade-bottom {
+      -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 calc(100% - var(--ag-stack-fade-size, 28px)), transparent 100%);
+      mask-image: linear-gradient(to bottom, #000 0%, #000 calc(100% - var(--ag-stack-fade-size, 28px)), transparent 100%);
+    }
+
+    .ag-chats-stack.has-fade-top {
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 var(--ag-stack-fade-size, 28px), #000 100%);
+      mask-image: linear-gradient(to bottom, transparent 0%, #000 var(--ag-stack-fade-size, 28px), #000 100%);
+    }
+
+    .ag-chats-stack.has-fade-top.has-fade-bottom {
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 var(--ag-stack-fade-size, 28px), #000 calc(100% - var(--ag-stack-fade-size, 28px)), transparent 100%);
+      mask-image: linear-gradient(to bottom, transparent 0%, #000 var(--ag-stack-fade-size, 28px), #000 calc(100% - var(--ag-stack-fade-size, 28px)), transparent 100%);
     }
 
     .ag-chat-task-item {
@@ -11126,6 +11142,430 @@
       box-shadow: none !important;
     }
 
+    /* =========================================================================
+       Modular Bento Grids, Tiles & Sub-Tabs (Behavior, Bugs, Memory, Settings)
+       ========================================================================= */
+    .full-workspace-shell > .window-body .bento-mode-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .full-workspace-shell > .window-body .bento-mode-grid > .mode-card {
+      background: rgba(255, 255, 255, 0.022) !important;
+      border: 1px solid rgba(255, 255, 255, 0.075) !important;
+      border-radius: var(--r-md, 10px) !important;
+      padding: 9px 10px !important;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 4px;
+      min-width: 0;
+      transition: background 150ms var(--ease-enter), border-color 150ms var(--ease-enter), transform 110ms var(--ease-enter);
+    }
+
+    .full-workspace-shell > .window-body .bento-mode-grid > .mode-card:hover {
+      background: rgba(255, 255, 255, 0.04) !important;
+      border-color: rgba(255, 255, 255, 0.14) !important;
+    }
+
+    .full-workspace-shell > .window-body .bento-mode-grid > .mode-card:active {
+      transform: scale(0.99);
+    }
+
+    .full-workspace-shell > .window-body .bento-mode-grid > .mode-card.active-card {
+      background: rgba(240, 72, 72, 0.088) !important;
+      border-color: rgba(240, 72, 72, 0.5) !important;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+    }
+
+    .full-workspace-shell > .window-body .bento-mode-grid > .mode-card > .card-head {
+      padding: 0 !important;
+      margin-bottom: 0 !important;
+      background: transparent !important;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .bento-mode-sub {
+      font-size: 10.5px;
+      color: var(--text-sub);
+      line-height: 1.3;
+      padding-left: 18px;
+    }
+
+    .full-workspace-shell > .window-body .bento-tile {
+      background: rgba(255, 255, 255, 0.025) !important;
+      border: 1px solid rgba(255, 255, 255, 0.07) !important;
+      border-radius: var(--r-md, 10px) !important;
+      padding: 9px 11px !important;
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    .full-workspace-shell > .window-body .bento-mode-params {
+      margin-bottom: 8px;
+    }
+
+    .full-workspace-shell > .window-body .bento-mode-params #advisorBox,
+    .full-workspace-shell > .window-body .bento-mode-params #autopilotBox {
+      margin-left: 0;
+      padding-left: 0;
+      border-left: none;
+      margin-top: 0;
+      padding-top: 0;
+    }
+
+    .full-workspace-shell > .window-body .bento-mode-params .settings-group-list > .control-row {
+      border-top: 1px solid rgba(255, 255, 255, 0.045) !important;
+      padding: 5px 2px;
+      border-radius: 0;
+    }
+
+    .full-workspace-shell > .window-body .bento-mode-params .settings-group-list > .control-row:first-child {
+      border-top: none !important;
+      padding-top: 1px;
+    }
+
+    .bento-grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .bento-grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .bento-quick-toggles {
+      margin-top: 8px;
+    }
+
+    .full-workspace-shell > .window-body .bento-toggle-tile {
+      display: flex !important;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      cursor: pointer;
+      min-height: 44px;
+      margin: 0 !important;
+      padding: 8px 10px !important;
+      transition: background 140ms var(--ease-enter), border-color 140ms var(--ease-enter);
+    }
+
+    .full-workspace-shell > .window-body .bento-toggle-tile:hover {
+      background: rgba(255, 255, 255, 0.042) !important;
+      border-color: rgba(255, 255, 255, 0.13) !important;
+    }
+
+    .bento-toggle-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .bento-toggle-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-main);
+      line-height: 1.25;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .bento-toggle-sub {
+      font-size: 10px;
+      color: var(--text-sub);
+      line-height: 1.25;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .bento-tier-tile {
+      cursor: default !important;
+      flex-wrap: wrap;
+    }
+
+    .bento-control-tile {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      justify-content: space-between;
+    }
+
+    .bento-health-tile {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .bento-tile-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+
+    .bento-tile-title-row {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .bento-tile-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--ui-subhead, var(--text-main));
+      line-height: 1.25;
+    }
+
+    .bento-tile-value {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-main);
+      line-height: 1.3;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .bento-tile-sub {
+      font-size: 10px;
+      color: var(--text-sub);
+      line-height: 1.3;
+    }
+
+    .bento-mini-btn {
+      padding: 2px 7px !important;
+      font-size: 10px !important;
+      line-height: 1.25 !important;
+    }
+
+    .bento-swarm-box {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .bento-subtabs-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 10px;
+      padding: 4px;
+      border-radius: var(--r-md, 10px);
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .bento-subtabs-bar > .win-btn {
+      flex: 1 1 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      padding: 4px 8px;
+      font-size: 11px;
+    }
+
+    .bento-tab-count:empty {
+      display: none;
+    }
+
+    .bento-tab-count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 16px;
+      height: 16px;
+      padding: 0 5px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-main);
+    }
+
+    .bento-subtabs-head {
+      margin-bottom: 8px;
+    }
+
+    .bento-subtabs-head .bento-subtabs-bar {
+      margin-top: 0;
+    }
+
+    .bento-subpanel-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 5px;
+      margin-bottom: 6px;
+    }
+
+    .memory-hub-tile {
+      margin-top: 8px;
+    }
+
+    .bento-list-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 4px 0;
+      border-top: 1px solid rgba(255, 255, 255, 0.045);
+      min-width: 0;
+    }
+
+    .bento-list-row:first-child {
+      border-top: none;
+      padding-top: 0;
+    }
+
+    .bento-file-path {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 10.5px;
+      color: var(--text-main);
+    }
+
+    .bento-risk-pill {
+      flex-shrink: 0;
+      padding: 1px 6px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .bento-risk-pill.is-warn {
+      background: rgba(224, 159, 62, 0.14);
+      color: var(--status-warn);
+    }
+
+    .bento-risk-pill.is-err {
+      background: rgba(240, 72, 72, 0.15);
+      color: var(--status-err);
+    }
+
+    .bento-pitfall-row {
+      align-items: flex-start !important;
+      gap: 6px;
+    }
+
+    .bento-pitfall-body {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .bento-file-tag {
+      display: inline-block;
+      align-self: flex-start;
+      padding: 0 5px;
+      border-radius: var(--r-sm);
+      font-size: 9.5px;
+      font-weight: 600;
+      font-family: ui-monospace, Consolas, monospace;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-main);
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .bento-clamp-2 {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      word-break: break-word;
+    }
+
+    .bento-guard-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.055);
+    }
+
+    .bento-shield-inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-left: auto;
+    }
+
+    /* Section visual order inside Bugs / Memory / Settings */
+    .full-workspace-shell > .window-body #sentinelSectionCard { order: 10; }
+    .full-workspace-shell > .window-body #intelligenceBayesianCard { order: 20; }
+    .full-workspace-shell > .window-body #checkpointsCard { order: 30; }
+    .full-workspace-shell > .window-body #expertPitfallsBox { order: 31; }
+    .full-workspace-shell > .window-body #memoryContextCard { order: 10; }
+    .full-workspace-shell > .window-body #expertKnowledgeBox { order: 20; }
+    .full-workspace-shell > .window-body #expertProfileCard { order: 10; }
+    .full-workspace-shell > .window-body #expertGuardrailsCard { order: 20; }
+    .full-workspace-shell > .window-body #skillsSectionCard { order: 30; }
+
+    /* Bugs subtab visibility */
+    body[data-panel-view="full"][data-full-tab="bugs"]:not([data-bugs-subtab="fragile"]) #bayesianWidget {
+      display: none !important;
+    }
+    body[data-panel-view="full"][data-full-tab="bugs"]:not([data-bugs-subtab="pitfalls"]) #expertPitfallsBox {
+      display: none !important;
+    }
+    body[data-panel-view="full"][data-full-tab="bugs"][data-bugs-subtab="fragile"] #checkpointsCard,
+    body[data-panel-view="full"][data-full-tab="bugs"][data-bugs-subtab="pitfalls"] #checkpointsCard {
+      display: none !important;
+    }
+
+    /* Memory subtab visibility */
+    body[data-panel-view="full"][data-full-tab="memory"][data-memory-subtab="instincts"] [data-memory-panel]:not([data-memory-panel="instincts"]),
+    body[data-panel-view="full"][data-full-tab="memory"][data-memory-subtab="peers"] [data-memory-panel]:not([data-memory-panel="peers"]),
+    body[data-panel-view="full"][data-full-tab="memory"]:not([data-memory-subtab="instincts"]):not([data-memory-subtab="peers"]) [data-memory-panel]:not([data-memory-panel="recipes"]) {
+      display: none !important;
+    }
+
+    @media (max-width: 440px) {
+      .bento-grid-3 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .bento-grid-3 > :last-child {
+        grid-column: 1 / -1;
+      }
+      .full-workspace-shell > .window-body .bento-mode-grid,
+      .bento-grid-2 {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    @media (max-width: 360px) {
+      .bento-grid-3 {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
     @media (max-width: 420px) {
       .full-workspace-shell > .window-body .toggle-chip-grid {
         grid-template-columns: minmax(0, 1fr);
@@ -11517,24 +11957,9 @@
           <span class="lg-card-title" title="Что делает: задаёт политику диалога и выбора моделей (спрашивать ли план перед правками, глубина интервью, стиль кода и лаконичность).
 Зачем: балансирует между скоростью работы и жёстким контролем над изменениями.">Режим работы агента</span>
         </div>
-        <div class="sunken-box" style="margin-bottom: 8px; padding: 8px 10px;">
-          <div class="control-row" style="margin: 0;">
-            <span title="Что делает: сообщает роутеру ваш уровень подписки Antigravity (Pro или Ultra).
-Зачем: в Pro бережёт лимиты и опирается на Hydrogen/Neon, в Ultra открывает Orchestrator (Carbon) и Carbon.">Тариф подписки:</span>
-            <div class="win-btn-group" id="subscriptionTierGroup">
-              <button type="button" class="win-btn" data-val="pro" data-action="setSubscriptionTier" data-arg="pro" title="Тариф Pro: экономия квоты — Hydrogen для S/M и типовых задач, Orchestrator (Neon) / Neon для сложных L/XL">Pro</button>
-              <button type="button" class="win-btn" data-val="ultra" data-action="setSubscriptionTier" data-arg="ultra" title="Тариф Ultra: повышенный лимит — раннее подключение Orchestrator (Carbon) и Carbon на сложных задачах">Ultra</button>
-            </div>
-          </div>
-          <div id="subscriptionTierHint" class="ui-hint-collapsed" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px; line-height: 1.35;">
-            Подписка Pro: бережёт квоту — Hydrogen на S/M и Orchestrator (Neon) на сложных задачах.
-          </div>
-          <div id="subscriptionTierGateNote" class="ui-hint-collapsed" style="font-size: 10px; color: var(--accent-cyan); margin-top: 3px; line-height: 1.35;">
-            Режим Pro: скрыты настройки моделей Ultra (Carbon).
-          </div>
-        </div>
-        <div class="mode-list">
-          <!-- Режим 1: Интерактивный советник -->
+
+        <!-- Выбор режима 50/50 -->
+        <div class="bento-mode-grid">
           <div id="mode-advisor" class="mode-card" data-action="setAdvisorMode" data-arg="true">
             <div class="card-head">
               <div class="card-name" title="Что делает: перед началом правок оценивает масштаб задачи (S/M/L/XL), подбирает модель и при необходимости задаёт уточняющие вопросы.
@@ -11544,86 +11969,9 @@
               </div>
               <span class="badge">Рекомендуется</span>
             </div>
-            <div class="sunken-box">
-              <div class="card-desc ui-hint-collapsed">
-                Агент оценивает задачу и предлагает оптимальную связку моделей и навыков перед стартом.
-              </div>
-
-              <div id="advisorBox" class="sub-settings settings-group-list">
-                <div class="control-row">
-                  <span title="Что делает: выбирает, начиная с какого масштаба задачи показывать окно подтверждения плана (Pre-Task Gate).
-Зачем: позволяет делать мелкие правки без пауз, но спрашивать перед крупными.">Спрашивать в чате:</span>
-                  <div class="win-btn-group" id="confirmThresholdGroup">
-                    <button type="button" class="win-btn" data-val="ALL" data-action="setConfirmThreshold" data-arg="ALL" title="Перед любой задачей (S, M, L, XL)">Всегда</button>
-                    <button type="button" class="win-btn" data-val="M" data-action="setConfirmThreshold" data-arg="M" title="Мелкие задачи S делать сразу, спрашивать начиная со средних M">От M+</button>
-                    <button type="button" class="win-btn" data-val="L" data-action="setConfirmThreshold" data-arg="L" title="Задачи S и M делать сразу, спрашивать только на крупных L/XL">Только L/XL</button>
-                  </div>
-                </div>
-                <label class="toggle-row" id="orchestratorSmartSynergyLabel" style="margin-top: 6px;" title="Когда выбран Orchestrator (Neon / Argon), штатный движок сам передаёт правки на Hydrogen (-24% квоты), поэтому на S/M лишние опросы не показываются">
-                  <input type="checkbox" id="chk-orchestratorSmartSynergy" data-action="toggleOption" data-key="orchestratorSmartSynergy" />
-                  <span><strong>Умная связка Orchestrator</strong><span class="ui-hint-collapsed"> — без лишних опросов на <code>S/M</code></span></span>
-                </label>
-                <div class="control-row" style="margin-top: 8px;">
-                  <span title="Что делает: перед написанием кода проводит короткое интервью по развилкам архитектуры и крайним случаям (метод Grill-Me).
-Зачем: проясняет спорные места до редактирования файлов и снижает риск переделок.">Детальный опрос (Grill-Me):</span>
-                  <div class="win-btn-group" id="grillModeGroup">
-                    <button type="button" class="win-btn" data-val="off" data-action="setGrillMode" data-arg="off" title="Не предлагать углублённый опрос по дереву решений">Выкл</button>
-                    <button type="button" class="win-btn active" data-val="auto" data-action="setGrillMode" data-arg="auto" title="Предлагать выбор детального опроса в окне Pre-Task Gate для сложных и размытых задач">Авто M+</button>
-                    <button type="button" class="win-btn" data-val="always" data-action="setGrillMode" data-arg="always" title="Всегда проводить детальный опрос по развилкам перед реализацией">Всегда</button>
-                  </div>
-                </div>
-                <div id="grillModeHint" class="ui-hint-collapsed" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px; line-height: 1.35;">
-                  Режим «Авто M+»: предлагает детальный опрос по развилкам в стартовом окне на крупных или новых задачах.
-                </div>
-                <div class="control-row" style="margin-top: 8px;">
-                  <span title="Что делает: перед планом и правками агент сам изучает файлы, строки и зависимости и скрытно собирает для себя подробное внутреннее ТЗ-промпт в размышлениях.
-Зачем: даёт глубину ручной команды «напиши промпт» автоматически, без вывода лишнего текста в чат.">Внутреннее ТЗ (Auto-Spec):</span>
-                  <div class="win-btn-group" id="autoSpecModeGroup">
-                    <button type="button" class="win-btn" data-val="off" data-action="setAutoSpecMode" data-arg="off" title="Отключить автоматическую компиляцию внутреннего ТЗ-промпта">Выкл</button>
-                    <button type="button" class="win-btn active" data-val="auto" data-action="setAutoSpecMode" data-arg="auto" title="Скрытно собирать внутренний ТЗ-промпт для задач M/L/XL и сложной архитектуры">Авто M+</button>
-                    <button type="button" class="win-btn" data-val="always" data-action="setAutoSpecMode" data-arg="always" title="Всегда скрытно собирать внутренний ТЗ-промпт перед любыми правками кода">Всегда</button>
-                  </div>
-                </div>
-                <div id="autoSpecModeHint" class="ui-hint-collapsed" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px; line-height: 1.35;">
-                  Режим «Авто M+»: на задачах M/L/XL агент сам собирает внутренний промпт по файлам, строкам и контрактам и сразу идёт по нему.
-                </div>
-                <div class="control-row" style="margin-top: 6px;">
-                  <span title="Где показывать собранный ТЗ-промпт перед выполнением: скрытно в размышлениях или компактным блоком в чате.">Вывод ТЗ-промпта:</span>
-                  <div class="win-btn-group" id="autoSpecOutputGroup">
-                    <button type="button" class="win-btn active" data-val="thinking" data-action="setAutoSpecOutput" data-arg="thinking" title="Скрытно в размышлениях, не засоряя чат">Скрыто</button>
-                    <button type="button" class="win-btn" data-val="chat" data-action="setAutoSpecOutput" data-arg="chat" title="Выводить компактный детальный ТЗ-промпт в чат перед выполнением">В чат</button>
-                  </div>
-                </div>
-                <div class="control-row" style="margin-top: 8px;">
-                  <span title="Что делает: заставляет агента сначала искать готовые функции в проекте и стандартной библиотеке, прежде чем писать новый код с нуля.
-Зачем: предотвращает раздувание кодовой базы, дубликаты и лишние зависимости.">Лестница лени (Ponytail):</span>
-                  <div class="win-btn-group" id="leanModeGroup">
-                    <button type="button" class="win-btn" data-val="off" data-action="setLeanMode" data-arg="off" title="Отключить правила экономии нового кода Ponytail">Выкл</button>
-                    <button type="button" class="win-btn" data-val="lite" data-action="setLeanMode" data-arg="lite" title="Мягкий режим: подсказывать компактные альтернативы на базе существующих функций">Lite</button>
-                    <button type="button" class="win-btn active" data-val="full" data-action="setLeanMode" data-arg="full" title="Полная 7-ступенчатая лестница переиспользования кода и метки shortcut:">Full</button>
-                    <button type="button" class="win-btn" data-val="ultra" data-action="setLeanMode" data-arg="ultra" title="Максимальная строгость: оспаривать избыточные требования до написания кода">Ultra</button>
-                  </div>
-                </div>
-                <div id="leanModeHint" class="control-hint ui-hint-collapsed">
-                  Режим «Full»: 7-ступенчатая лестница переиспользования кода и метки shortcut:.
-                </div>
-                <div class="control-row" style="margin-top: 6px;">
-                  <span title="Что делает: ограничивает «воду» во внутренних рассуждениях и формулировках ответов по стандарту ASD-STE100 (код не сокращается).
-Зачем: ускоряет генерацию и экономит выходные токены квоты.">Плотность ответа (Caveman):</span>
-                  <div class="win-btn-group" id="terseModeGroup">
-                    <button type="button" class="win-btn active" data-val="off" data-action="setTerseMode" data-arg="off" title="Стандартный лаконичный стиль ответов">Выкл</button>
-                    <button type="button" class="win-btn" data-val="caveman" data-action="setTerseMode" data-arg="caveman" title="Стандарт ASD-STE100: до 20 слов в предложении без вводных фраз, код без сокращений">Caveman</button>
-                    <button type="button" class="win-btn" data-val="ultracave" data-action="setTerseMode" data-arg="ultracave" title="Сверхплотный телеграфный ответ до 12 слов в предложении">Ultra</button>
-                  </div>
-                </div>
-                <div id="terseModeHint" class="control-hint ui-hint-collapsed">
-                  Режим «Выкл»: стандартный лаконичный стиль ответов без жёсткого лимита слов.
-                </div>
-              </div>
-            </div>
+            <div class="bento-mode-sub">План и развилки до кода</div>
           </div>
 
-          <!-- Режим 2: Тихий автопилот -->
           <div id="mode-autopilot" class="mode-card" data-action="setAdvisorMode" data-arg="false">
             <div class="card-head">
               <div class="card-name" title="Что делает: агент сразу приступает к выполнению по выбранному профилю маршрутизации без стартовых вопросов.
@@ -11633,41 +11981,142 @@
               </div>
               <span class="badge badge-autopilot">Без вопросов</span>
             </div>
-            <div class="sunken-box">
-              <div class="card-desc ui-hint-collapsed">
-                Агент сразу выполняет задачу по выбранному шаблону без промежуточных подтверждений.
-              </div>
+            <div class="bento-mode-sub">Сразу в работу по шаблону</div>
+          </div>
+        </div>
 
-              <div id="autopilotBox" class="sub-settings settings-group-list">
-                <div class="control-row">
-                  <span title="Что делает: определяет приоритет скорости/экономии против максимальной глубины рассуждений в автопилоте.
+        <!-- Параметры выбранного режима (100% ширины) -->
+        <div class="bento-tile bento-mode-params">
+          <div class="card-desc ui-hint-collapsed">
+            Агент оценивает задачу и предлагает оптимальную связку моделей и навыков перед стартом.
+          </div>
+          <div id="advisorBox" class="sub-settings settings-group-list">
+            <div class="control-row">
+              <span title="Что делает: выбирает, начиная с какого масштаба задачи показывать окно подтверждения плана (Pre-Task Gate).
+Зачем: позволяет делать мелкие правки без пауз, но спрашивать перед крупными.">Спрашивать в чате:</span>
+              <div class="win-btn-group" id="confirmThresholdGroup">
+                <button type="button" class="win-btn" data-val="ALL" data-action="setConfirmThreshold" data-arg="ALL" title="Перед любой задачей (S, M, L, XL)">Всегда</button>
+                <button type="button" class="win-btn" data-val="M" data-action="setConfirmThreshold" data-arg="M" title="Мелкие задачи S делать сразу, спрашивать начиная со средних M">От M+</button>
+                <button type="button" class="win-btn" data-val="L" data-action="setConfirmThreshold" data-arg="L" title="Задачи S и M делать сразу, спрашивать только на крупных L/XL">Только L/XL</button>
+              </div>
+            </div>
+            <div class="control-row">
+              <span title="Что делает: перед написанием кода проводит короткое интервью по развилкам архитектуры и крайним случаям (метод Grill-Me).
+Зачем: проясняет спорные места до редактирования файлов и снижает риск переделок.">Детальный опрос (Grill-Me):</span>
+              <div class="win-btn-group" id="grillModeGroup">
+                <button type="button" class="win-btn" data-val="off" data-action="setGrillMode" data-arg="off" title="Не предлагать углублённый опрос по дереву решений">Выкл</button>
+                <button type="button" class="win-btn active" data-val="auto" data-action="setGrillMode" data-arg="auto" title="Предлагать выбор детального опроса в окне Pre-Task Gate для сложных и размытых задач">Авто M+</button>
+                <button type="button" class="win-btn" data-val="always" data-action="setGrillMode" data-arg="always" title="Всегда проводить детальный опрос по развилкам перед реализацией">Всегда</button>
+              </div>
+            </div>
+            <div id="grillModeHint" class="ui-hint-collapsed" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px; line-height: 1.35;">
+              Режим «Авто M+»: предлагает детальный опрос по развилкам в стартовом окне на крупных или новых задачах.
+            </div>
+            <div class="control-row">
+              <span title="Что делает: перед планом и правками агент сам изучает файлы, строки и зависимости и скрытно собирает для себя подробное внутреннее ТЗ-промпт в размышлениях.
+Зачем: даёт глубину ручной команды «напиши промпт» автоматически, без вывода лишнего текста в чат.">Внутреннее ТЗ (Auto-Spec):</span>
+              <div class="win-btn-group" id="autoSpecModeGroup">
+                <button type="button" class="win-btn" data-val="off" data-action="setAutoSpecMode" data-arg="off" title="Отключить автоматическую компиляцию внутреннего ТЗ-промпта">Выкл</button>
+                <button type="button" class="win-btn active" data-val="auto" data-action="setAutoSpecMode" data-arg="auto" title="Скрытно собирать внутренний ТЗ-промпт для задач M/L/XL и сложной архитектуры">Авто M+</button>
+                <button type="button" class="win-btn" data-val="always" data-action="setAutoSpecMode" data-arg="always" title="Всегда скрытно собирать внутренний ТЗ-промпт перед любыми правками кода">Всегда</button>
+              </div>
+            </div>
+            <div id="autoSpecModeHint" class="ui-hint-collapsed" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px; line-height: 1.35;">
+              Режим «Авто M+»: на задачах M/L/XL агент сам собирает внутренний промпт по файлам, строкам и контрактам и сразу идёт по нему.
+            </div>
+            <div class="control-row" id="autoSpecOutputRow">
+              <span title="Где показывать собранный ТЗ-промпт перед выполнением: скрытно в размышлениях или компактным блоком в чате.">Вывод ТЗ-промпта:</span>
+              <div class="win-btn-group" id="autoSpecOutputGroup">
+                <button type="button" class="win-btn active" data-val="thinking" data-action="setAutoSpecOutput" data-arg="thinking" title="Скрытно в размышлениях, не засоряя чат">Скрыто</button>
+                <button type="button" class="win-btn" data-val="chat" data-action="setAutoSpecOutput" data-arg="chat" title="Выводить компактный детальный ТЗ-промпт в чат перед выполнением">В чат</button>
+              </div>
+            </div>
+            <div class="control-row">
+              <span title="Что делает: заставляет агента сначала искать готовые функции в проекте и стандартной библиотеке, прежде чем писать новый код с нуля.
+Зачем: предотвращает раздувание кодовой базы, дубликаты и лишние зависимости.">Лестница лени (Ponytail):</span>
+              <div class="win-btn-group" id="leanModeGroup">
+                <button type="button" class="win-btn" data-val="off" data-action="setLeanMode" data-arg="off" title="Отключить правила экономии нового кода Ponytail">Выкл</button>
+                <button type="button" class="win-btn" data-val="lite" data-action="setLeanMode" data-arg="lite" title="Мягкий режим: подсказывать компактные альтернативы на базе существующих функций">Lite</button>
+                <button type="button" class="win-btn active" data-val="full" data-action="setLeanMode" data-arg="full" title="Полная 7-ступенчатая лестница переиспользования кода и метки shortcut:">Full</button>
+                <button type="button" class="win-btn" data-val="ultra" data-action="setLeanMode" data-arg="ultra" title="Максимальная строгость: оспаривать избыточные требования до написания кода">Ultra</button>
+              </div>
+            </div>
+            <div id="leanModeHint" class="control-hint ui-hint-collapsed">
+              Режим «Full»: 7-ступенчатая лестница переиспользования кода и метки shortcut:.
+            </div>
+            <div class="control-row">
+              <span title="Что делает: ограничивает «воду» во внутренних рассуждениях и формулировках ответов по стандарту ASD-STE100 (код не сокращается).
+Зачем: ускоряет генерацию и экономит выходные токены квоты.">Плотность ответа (Caveman):</span>
+              <div class="win-btn-group" id="terseModeGroup">
+                <button type="button" class="win-btn active" data-val="off" data-action="setTerseMode" data-arg="off" title="Стандартный лаконичный стиль ответов">Выкл</button>
+                <button type="button" class="win-btn" data-val="caveman" data-action="setTerseMode" data-arg="caveman" title="Стандарт ASD-STE100: до 20 слов в предложении без вводных фраз, код без сокращений">Caveman</button>
+                <button type="button" class="win-btn" data-val="ultracave" data-action="setTerseMode" data-arg="ultracave" title="Сверхплотный телеграфный ответ до 12 слов в предложении">Ultra</button>
+              </div>
+            </div>
+            <div id="terseModeHint" class="control-hint ui-hint-collapsed">
+              Режим «Выкл»: стандартный лаконичный стиль ответов без жёсткого лимита слов.
+            </div>
+          </div>
+
+          <div id="autopilotBox" class="sub-settings settings-group-list">
+            <div class="control-row">
+              <span title="Что делает: определяет приоритет скорости/экономии против максимальной глубины рассуждений в автопилоте.
 Зачем: позволяет выбрать жёсткую экономию квоты (Hydrogen), баланс или старшие модели (Neon).">Шаблон:</span>
-                  <div class="win-btn-group" id="strategyGroup">
-                    <button type="button" class="win-btn" data-val="flash_dispatcher" data-action="selectStrategy" data-arg="flash_dispatcher" title="Что делает: направляет большинство задач на быстрый Gemini 4 Hydrogen, оставляя старшие модели лишь для критичных случаев.
+              <div class="win-btn-group" id="strategyGroup">
+                <button type="button" class="win-btn" data-val="flash_dispatcher" data-action="selectStrategy" data-arg="flash_dispatcher" title="Что делает: направляет большинство задач на быстрый Gemini 4 Hydrogen, оставляя старшие модели лишь для критичных случаев.
 Зачем: максимальная скорость отклика и минимальный расход квоты.">Hydrogen</button>
-                    <button type="button" class="win-btn" data-val="auto_balance" data-action="selectStrategy" data-arg="auto_balance" title="Что делает: автоматически подбирает модель по матрице 3D-триажа (Hydrogen для S/M, Orchestrator/Neon для сложных L/XL).
+                <button type="button" class="win-btn" data-val="auto_balance" data-action="selectStrategy" data-arg="auto_balance" title="Что делает: автоматически подбирает модель по матрице 3D-триажа (Hydrogen для S/M, Orchestrator/Neon для сложных L/XL).
 Зачем: оптимальный баланс качества и квоты.">Авто-баланс</button>
-                    <button type="button" class="win-btn" id="btnStrategyProArchitect" data-val="pro_architect" data-action="selectStrategy" data-arg="pro_architect" title="Максимальная точность и архитектурный контроль через Orchestrator (Neon) / Neon">Neon</button>
-                  </div>
-                </div>
-                <div class="control-row">
-                  <span id="heavyThresholdLabel" title="Что делает: задаёт порог сложности задачи, с которого автопилот переключается на старшую модель (Neon/Carbon).
+                <button type="button" class="win-btn" id="btnStrategyProArchitect" data-val="pro_architect" data-action="selectStrategy" data-arg="pro_architect" title="Максимальная точность и архитектурный контроль через Orchestrator (Neon) / Neon">Neon</button>
+              </div>
+            </div>
+            <div class="control-row">
+              <span id="heavyThresholdLabel" title="Что делает: задаёт порог сложности задачи, с которого автопилот переключается на старшую модель (Neon/Carbon).
 Зачем: не тратить тяжёлую модель на мелкие правки.">Порог Neon:</span>
-                  <div class="win-btn-group" id="thresholdGroup">
-                    <button type="button" class="win-btn" data-val="M" data-action="setThreshold" data-arg="M" title="Подключать старшую модель уже со средних задач M и выше">M+</button>
-                    <button type="button" class="win-btn" data-val="L" data-action="setThreshold" data-arg="L" title="Подключать старшую модель на многофайловых/сложных задачах L и XL (рекомендуется)">L+</button>
-                    <button type="button" class="win-btn" data-val="XL" data-action="setThreshold" data-arg="XL" title="Подключать старшую модель только на самых масштабных задачах XL">XL</button>
-                  </div>
-                </div>
+              <div class="win-btn-group" id="thresholdGroup">
+                <button type="button" class="win-btn" data-val="M" data-action="setThreshold" data-arg="M" title="Подключать старшую модель уже со средних задач M и выше">M+</button>
+                <button type="button" class="win-btn" data-val="L" data-action="setThreshold" data-arg="L" title="Подключать старшую модель на многофайловых/сложных задачах L и XL (рекомендуется)">L+</button>
+                <button type="button" class="win-btn" data-val="XL" data-action="setThreshold" data-arg="XL" title="Подключать старшую модель только на самых масштабных задачах XL">XL</button>
               </div>
             </div>
           </div>
         </div>
-        <div class="sunken-box" style="margin-top: 8px; padding: 6px 10px;">
-          <label class="toggle-row" title="Что делает: добавляет компактную итоговую строку о режиме, сложности, модели и подключённых навыках на крупных задачах M/L/XL.
+
+        <!-- Отдельный ряд Bento-квадратиков: Тариф, Умная связка, Плашка в ответе -->
+        <div class="bento-grid-3 bento-quick-toggles">
+          <div class="bento-tile bento-toggle-tile bento-tier-tile">
+            <div class="bento-toggle-meta">
+              <span class="bento-toggle-title" title="Что делает: сообщает роутеру ваш уровень подписки Antigravity (Pro или Ultra).
+Зачем: в Pro бережёт лимиты и опирается на Hydrogen/Neon, в Ultra открывает Orchestrator (Carbon) и Carbon.">Тариф подписки</span>
+              <span class="bento-toggle-sub">Pro / Ultra</span>
+            </div>
+            <div class="win-btn-group" id="subscriptionTierGroup">
+              <button type="button" class="win-btn" data-val="pro" data-action="setSubscriptionTier" data-arg="pro" title="Тариф Pro: экономия квоты — Hydrogen для S/M и типовых задач, Orchestrator (Neon) / Neon для сложных L/XL">Pro</button>
+              <button type="button" class="win-btn" data-val="ultra" data-action="setSubscriptionTier" data-arg="ultra" title="Тариф Ultra: повышенный лимит — раннее подключение Orchestrator (Carbon) и Carbon на сложных задачах">Ultra</button>
+            </div>
+            <div id="subscriptionTierHint" class="ui-hint-collapsed">
+              Подписка Pro: бережёт квоту — Hydrogen на S/M и Orchestrator (Neon) на сложных задачах.
+            </div>
+            <div id="subscriptionTierGateNote" class="ui-hint-collapsed">
+              Режим Pro: скрыты настройки моделей Ultra (Carbon).
+            </div>
+          </div>
+
+          <label class="toggle-row bento-tile bento-toggle-tile" id="orchestratorSmartSynergyLabel" title="Когда выбран Orchestrator (Neon / Argon), штатный движок сам передаёт правки на Hydrogen (-24% квоты), поэтому на S/M лишние опросы не показываются">
+            <span class="bento-toggle-meta">
+              <span class="bento-toggle-title">Умная связка Orchestrator</span>
+              <span class="bento-toggle-sub">Без опросов на S/M</span>
+            </span>
+            <input type="checkbox" id="chk-orchestratorSmartSynergy" data-action="toggleOption" data-key="orchestratorSmartSynergy" />
+          </label>
+
+          <label class="toggle-row bento-tile bento-toggle-tile" title="Что делает: добавляет компактную итоговую строку о режиме, сложности, модели и подключённых навыках на крупных задачах M/L/XL.
 Зачем: вы всегда видите, какая модель реально выполняла работу.">
+            <span class="bento-toggle-meta">
+              <span class="bento-toggle-title">Плашка в ответе</span>
+              <span class="bento-toggle-sub">Модель и скиллы на M+</span>
+            </span>
             <input type="checkbox" id="chk-showBadge" data-action="toggleOption" data-key="showBadge" />
-            <span><strong>Плашка в ответе</strong><span class="ui-hint-collapsed"> — модель и скиллы на <code>M/L/XL</code></span></span>
           </label>
         </div>
       </section>
@@ -11678,7 +12127,7 @@
           <span class="lg-card-title" title="Что делает: управляет обязательным показом 3 интерактивных концептов (A/B/C) и поиском референсов до правки CSS/HTML/VFX.
 Зачем: исключает шаблонные интерфейсы и экономит попытки за счёт согласования стиля до кода.">Дизайн-витрина и превью UI</span>
         </div>
-        <div class="sunken-box settings-group-list">
+        <div class="bento-tile settings-group-list">
           <div class="control-row">
             <span title="Перед обновлением UI агент уточняет визуальное направление и готовит 3 интерактивных примера (A/B/C).">Превью дизайна и анимаций (A/B/C):</span>
             <div class="win-btn-group" id="uiDesignGateGroup">
@@ -11713,52 +12162,60 @@
             <span class="swarm-pill idle" id="swarmStatusBadge" title="Текущий режим срабатывания Командного Роя (Авто XL, L+, Спрашивать и др.)">Авто XL</span>
           </div>
         </div>
-        <div class="swarm-status-banner" title="Что делает: отображает состояние параллельной команды агентов (/swarm) и активных воркеров с их ролями и моделями.
+        <div class="bento-tile bento-swarm-box">
+          <div class="swarm-status-banner" title="Что делает: отображает состояние параллельной команды агентов (/swarm) и активных воркеров с их ролями и моделями.
 Зачем: позволяет следить за распределённым выполнением крупных задач.">
-          <div class="swarm-status-head">
-            <div class="swarm-status-title">
-              <span class="swarm-dot" id="swarmStatusDot"></span>
-              <span id="swarmStatusHeadline">Рой в дежурном режиме</span>
+            <div class="swarm-status-head">
+              <div class="swarm-status-title">
+                <span class="swarm-dot" id="swarmStatusDot"></span>
+                <span id="swarmStatusHeadline">Рой в дежурном режиме</span>
+              </div>
+              <button type="button" class="win-btn" data-action="refreshAll" title="Обновить статус Роя">↻</button>
             </div>
-            <button type="button" class="win-btn" data-action="refreshAll" title="Обновить статус Роя">↻</button>
+            <div class="swarm-meta-row">
+              <span id="swarmStatusDetails">На S/M/L работает Hydrogen · На XL (4+ модулей) включается параллельный Рой</span>
+            </div>
+            <div class="swarm-member-chips" id="swarmMembersBar" style="display: none;"></div>
           </div>
-          <div class="swarm-meta-row">
-            <span id="swarmStatusDetails">На S/M/L работает Hydrogen · На XL (4+ модулей) включается параллельный Рой</span>
+          <div class="sub-settings visible settings-group-list">
+            <div class="control-row">
+              <span title="Задаёт масштаб задачи, при котором агент предлагает или автоматически запускает параллельный Рой воркеров">Когда включать Рой:</span>
+              <div class="win-btn-group" id="swarmModeGroup">
+                <button type="button" class="win-btn" data-val="auto_xl" data-action="setSwarmMode" data-arg="auto_xl" title="Бережёт квоту на мелких и средних задачах; предлагает Рой только на масштабных XL-задачах (4+ независимых модулей)">Авто XL</button>
+                <button type="button" class="win-btn" data-val="aggressive_l" data-action="setSwarmMode" data-arg="aggressive_l" title="Разрешить командный Рой начиная со средних многофайловых задач L (3+ независимых файлов)">L+</button>
+                <button type="button" class="win-btn" data-val="auto_all" data-action="setSwarmMode" data-arg="auto_all" title="Разрешить адаптивный Рой на любой многомодульной задаче (кроме простых вопросов)">Авто все</button>
+                <button type="button" class="win-btn" data-val="always_ask" data-action="setSwarmMode" data-arg="always_ask" title="На крупных задачах L/XL предлагает Рой и ждёт подтверждения перед запуском воркеров">Спрашивать</button>
+                <button type="button" class="win-btn" data-val="manual_only" data-action="setSwarmMode" data-arg="manual_only" title="Сам не предлагает Рой, но включает защиту воркеров и квот, когда вы сами пишете /swarm">По /swarm</button>
+                <button type="button" class="win-btn" data-val="off" data-action="setSwarmMode" data-arg="off" title="Работать только одиночным агентом или штатным Оркестратором">Выкл</button>
+              </div>
+            </div>
+            <div class="control-row">
+              <span title="Выбирает модель, на которой запускаются рабочие воркеры-авторы в изолированных ветках share при работе Роя">Модель воркеров:</span>
+              <div class="win-btn-group" id="swarmWorkerTierGroup">
+                <button type="button" class="win-btn" id="btnSwarmTierHydrogen" data-val="hydrogen_auto" data-action="setSwarmWorkerTier" data-arg="hydrogen_auto" title="Координатор планирует на вашей основной модели (Neon), а рабочие авторы пишут код на быстром Gemini 4 Hydrogen в изолированных ветках share">Hydrogen</button>
+                <button type="button" class="win-btn" data-val="neon_auto" data-action="setSwarmWorkerTier" data-arg="neon_auto" title="Авторы правок работают на кодинг-модели Gemini 4 Neon (Medium/High, Индекс 61) в изолированных ветках share">Neon</button>
+                <button type="button" class="win-btn" data-min-tier="ultra" data-val="argon_auto" data-action="setSwarmWorkerTier" data-arg="argon_auto" title="Авторы правок работают на сбалансированной модели Gemini 4 Argon (Medium) в изолированных ветках share">Argon</button>
+                <button type="button" class="win-btn" data-min-tier="ultra" data-val="carbon_auto" data-action="setSwarmWorkerTier" data-arg="carbon_auto" title="Авторы правок работают на старшей модели Gemini 4 Carbon (Medium) в изолированных ветках share">Carbon</button>
+                <button type="button" class="win-btn" data-val="inherit" data-action="setSwarmWorkerTier" data-arg="inherit" title="Все воркеры запускаются на той же модели, что выбрана у вас в чате">Как в чате</button>
+              </div>
+            </div>
           </div>
-          <div class="swarm-member-chips" id="swarmMembersBar" style="display: none;"></div>
         </div>
-        <div class="sub-settings visible" style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-hairline);">
-          <div class="control-row">
-            <span title="Задаёт масштаб задачи, при котором агент предлагает или автоматически запускает параллельный Рой воркеров">Когда включать Рой:</span>
-            <div class="win-btn-group" id="swarmModeGroup">
-              <button type="button" class="win-btn" data-val="auto_xl" data-action="setSwarmMode" data-arg="auto_xl" title="Бережёт квоту на мелких и средних задачах; предлагает Рой только на масштабных XL-задачах (4+ независимых модулей)">Авто XL</button>
-              <button type="button" class="win-btn" data-val="aggressive_l" data-action="setSwarmMode" data-arg="aggressive_l" title="Разрешить командный Рой начиная со средних многофайловых задач L (3+ независимых файлов)">L+</button>
-              <button type="button" class="win-btn" data-val="auto_all" data-action="setSwarmMode" data-arg="auto_all" title="Разрешить адаптивный Рой на любой многомодульной задаче (кроме простых вопросов)">Авто все</button>
-              <button type="button" class="win-btn" data-val="always_ask" data-action="setSwarmMode" data-arg="always_ask" title="На крупных задачах L/XL предлагает Рой и ждёт подтверждения перед запуском воркеров">Спрашивать</button>
-              <button type="button" class="win-btn" data-val="manual_only" data-action="setSwarmMode" data-arg="manual_only" title="Сам не предлагает Рой, но включает защиту воркеров и квот, когда вы сами пишете /swarm">По /swarm</button>
-              <button type="button" class="win-btn" data-val="off" data-action="setSwarmMode" data-arg="off" title="Работать только одиночным агентом или штатным Оркестратором">Выкл</button>
-            </div>
-          </div>
-          <div class="control-row" style="margin-top: 6px;">
-            <span title="Выбирает модель, на которой запускаются рабочие воркеры-авторы в изолированных ветках share при работе Роя">Модель воркеров:</span>
-            <div class="win-btn-group" id="swarmWorkerTierGroup">
-              <button type="button" class="win-btn" id="btnSwarmTierHydrogen" data-val="hydrogen_auto" data-action="setSwarmWorkerTier" data-arg="hydrogen_auto" title="Координатор планирует на вашей основной модели (Neon), а рабочие авторы пишут код на быстром Gemini 4 Hydrogen в изолированных ветках share">Hydrogen</button>
-              <button type="button" class="win-btn" data-val="neon_auto" data-action="setSwarmWorkerTier" data-arg="neon_auto" title="Авторы правок работают на кодинг-модели Gemini 4 Neon (Medium/High, Индекс 61) в изолированных ветках share">Neon</button>
-              <button type="button" class="win-btn" data-min-tier="ultra" data-val="argon_auto" data-action="setSwarmWorkerTier" data-arg="argon_auto" title="Авторы правок работают на сбалансированной модели Gemini 4 Argon (Medium) в изолированных ветках share">Argon</button>
-              <button type="button" class="win-btn" data-min-tier="ultra" data-val="carbon_auto" data-action="setSwarmWorkerTier" data-arg="carbon_auto" title="Авторы правок работают на старшей модели Gemini 4 Carbon (Medium) в изолированных ветках share">Carbon</button>
-              <button type="button" class="win-btn" data-val="inherit" data-action="setSwarmWorkerTier" data-arg="inherit" title="Все воркеры запускаются на той же модели, что выбрана у вас в чате">Как в чате</button>
-            </div>
-          </div>
-          <div style="margin-top: 6px; padding-top: 4px; border-top: 1px solid var(--border-hairline);">
-            <label class="toggle-row" title="Добавлять независимого проверочного агента @verifier на каждые 2–4 автора для проверки кода и тестов перед сдачей">
-              <input type="checkbox" id="chk-swarmAutoVerifier" data-action="toggleOption" data-key="swarmAutoVerifier" />
-              <span><strong>Авто-Ревизор (<code>@verifier</code>)</strong><span class="ui-hint-collapsed"> — проверка диффов и тестов</span></span>
-            </label>
-            <label class="toggle-row" title="Если у воркера Роя закончилась квота модели, автоматически переключать его на доступную модель без потери памяти диалога">
-              <input type="checkbox" id="chk-swarmQuotaFailover" data-action="toggleOption" data-key="swarmQuotaFailover" />
-              <span><strong>Страховка квоты</strong><span class="ui-hint-collapsed"> — авто-пересадка воркера без сброса памяти</span></span>
-            </label>
-          </div>
+        <div class="bento-grid-2 bento-quick-toggles">
+          <label class="toggle-row bento-tile bento-toggle-tile" title="Добавлять независимого проверочного агента @verifier на каждые 2–4 автора для проверки кода и тестов перед сдачей">
+            <span class="bento-toggle-meta">
+              <span class="bento-toggle-title">Авто-Ревизор (<code>@verifier</code>)</span>
+              <span class="bento-toggle-sub">Проверка диффов и тестов</span>
+            </span>
+            <input type="checkbox" id="chk-swarmAutoVerifier" data-action="toggleOption" data-key="swarmAutoVerifier" />
+          </label>
+          <label class="toggle-row bento-tile bento-toggle-tile" title="Если у воркера Роя закончилась квота модели, автоматически переключать его на доступную модель без потери памяти диалога">
+            <span class="bento-toggle-meta">
+              <span class="bento-toggle-title">Страховка квоты</span>
+              <span class="bento-toggle-sub">Пересадка без сброса памяти</span>
+            </span>
+            <input type="checkbox" id="chk-swarmQuotaFailover" data-action="toggleOption" data-key="swarmQuotaFailover" />
+          </label>
         </div>
       </section>
 
@@ -12238,132 +12695,227 @@
 Зачем: ловит сломанные импорты, несовпадения аргументов и баги в git diff ещё до запуска тестов.">Фоновый Дозор · P0 Auto-Yield</span>
           <div class="lg-card-head-actions">
             <span class="sentinel-live-badge is-idle" id="sentinelLiveBadge" title="Показывает фазу Дозора: ожидание простоя, сканирование контрактов или уступку ресурса активному чату">Ожидание простоя</span>
+            <button type="button" class="win-btn sentinel-action-btn" id="btnRunSentinelNow" data-action="runSentinelNow" title="Запустить мгновенную фоновую проверку контрактов и индексацию">Проверить сейчас</button>
+            <button type="button" class="win-btn sentinel-action-btn" id="btnClearSentinelFindings" data-action="clearSentinelFindings" style="display: none;" disabled title="Сбросить накопленные предупреждения и находки Фонового Дозора">Сброс</button>
           </div>
         </div>
 
         <div class="sentinel-status-box sentinel-card-body" id="sentinelStatusBox">
-          <div class="sentinel-head-row">
+          <div class="sentinel-head-row ui-hint-collapsed">
             <span class="lg-card-sub ui-hint-collapsed">Тихая проверка контрактов, паспортов и git diff в паузах</span>
-            <div class="sentinel-actions">
-              <button type="button" class="win-btn sentinel-action-btn" id="btnRunSentinelNow" data-action="runSentinelNow" title="Запустить мгновенную фоновую проверку контрактов и индексацию">Проверить сейчас</button>
-              <button type="button" class="win-btn sentinel-action-btn" id="btnClearSentinelFindings" data-action="clearSentinelFindings" style="display: none;" disabled title="Сбросить накопленные предупреждения и находки Фонового Дозора">Сброс</button>
+          </div>
+
+          <div class="sentinel-metrics-grid">
+            <div class="sentinel-metric-cell bento-tile" title="Статус статической проверки импортов, экспорта и сигнатур функций (Shadow Guard на CPU)">
+              <div class="sentinel-metric-lbl">Контракты (CPU)</div>
+              <div class="sentinel-metric-val is-ok" id="sentinelHealthVal">Чисто</div>
+            </div>
+            <div class="sentinel-metric-cell bento-tile" title="Сколько модулей уже получили краткий смысловой паспорт от локальной GPU для точного поиска">
+              <div class="sentinel-metric-lbl">Паспорта (GPU)</div>
+              <div class="sentinel-metric-val" id="sentinelCardsVal">0 / 0 (0%)</div>
+            </div>
+            <div class="sentinel-metric-cell bento-tile" title="Результат локального ИИ-аудита текущих незакоммиченных изменений (git diff) через Ollama">
+              <div class="sentinel-metric-lbl">Локальный BugBot</div>
+              <div class="sentinel-metric-val is-ok" id="sentinelBugBotVal">Чисто</div>
+            </div>
+            <div class="sentinel-metric-cell bento-tile" title="Счётчик упреждающих прогревов контекста пока вы печатаете и сколько раз Дозор уступил CPU/GPU активному чату">
+              <div class="sentinel-metric-lbl">Упреждение / P0</div>
+              <div class="sentinel-metric-val" id="sentinelSpecVal">Преф: 0 · P0: 0</div>
             </div>
           </div>
 
-                <div class="sentinel-metrics-grid">
-                  <div class="sentinel-metric-cell" title="Статус статической проверки импортов, экспорта и сигнатур функций (Shadow Guard на CPU)">
-                    <div class="sentinel-metric-lbl">Контракты (CPU)</div>
-                    <div class="sentinel-metric-val is-ok" id="sentinelHealthVal">Чисто</div>
-                  </div>
-                  <div class="sentinel-metric-cell" title="Сколько модулей уже получили краткий смысловой паспорт от локальной GPU для точного поиска">
-                    <div class="sentinel-metric-lbl">Паспорта (GPU)</div>
-                    <div class="sentinel-metric-val" id="sentinelCardsVal">0 / 0 (0%)</div>
-                  </div>
-                  <div class="sentinel-metric-cell" title="Результат локального ИИ-аудита текущих незакоммиченных изменений (git diff) через Ollama">
-                    <div class="sentinel-metric-lbl">Локальный BugBot</div>
-                    <div class="sentinel-metric-val is-ok" id="sentinelBugBotVal">Чисто</div>
-                  </div>
-                  <div class="sentinel-metric-cell" title="Счётчик упреждающих прогревов контекста пока вы печатаете и сколько раз Дозор уступил CPU/GPU активному чату">
-                    <div class="sentinel-metric-lbl">Упреждение / P0</div>
-                    <div class="sentinel-metric-val" id="sentinelSpecVal">Преф: 0 · P0: 0</div>
-                  </div>
-                </div>
+          <div class="sentinel-findings-list" id="sentinelFindingsList" style="display: none;"></div>
 
-                <div class="sentinel-findings-list" id="sentinelFindingsList" style="display: none;"></div>
-
-                <div class="sentinel-toggles-wrap">
-                  <div class="preset-row">
-                    <div class="preset-label-wrap">
-                      <span class="preset-label" title="Готовые профили активности Фонового Дозора в паузах работы">Режим Дозора:</span>
-                      <span class="preset-custom-pill" id="sentinelPresetCustomPill" style="display: none;" title="Выбрана ручная комбинация модулей Дозора">Свой</span>
-                    </div>
-                    <div class="win-btn-group" id="sentinelPresetGroup">
-                      <button type="button" class="win-btn" data-val="off" data-action="applyTogglePreset" data-arg="sentinel:off" title="Полностью выключить фоновый Дозор">Выкл</button>
-                      <button type="button" class="win-btn" data-val="quiet" data-action="applyTogglePreset" data-arg="sentinel:quiet" title="Только быстрые проверки CPU+RAM и LSP без запуска GPU-моделей">Тихий</button>
-                      <button type="button" class="win-btn" data-val="full" data-action="applyTogglePreset" data-arg="sentinel:full" title="Стандартный баланс: CPU-контракты, LSP, GPU BugBot и паспорта модулей">Полный</button>
-                      <button type="button" class="win-btn" data-val="max" data-action="applyTogglePreset" data-arg="sentinel:max" title="Полный Дозор + фоновый автопрогон микро-тестов в песочнице">Максимум</button>
-                    </div>
-                  </div>
-
-                  <div class="tune-section-box is-inline-accordion" id="sentinelEnginesSection">
-                    <button type="button" class="tune-section-head" data-action="toggleInlineSection" data-arg="sentinelEnginesSection" aria-expanded="false" title="Тонкое управление подсистемами Фонового Дозора, LSP и Wiretap">
-                      <span class="tune-summary-label">Тонкая настройка Дозора и LSP</span>
-                      <span class="tune-count-pill" id="sentinelEnginesCountBadge">7/8</span>
-                      <svg class="tune-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    </button>
-                    <div class="toggle-chip-grid">
-                      <label class="toggle-chip" title="Что делает: главный рубильник Фонового Дозора — проверяет проект только когда вы не печатаете и чат свободен.
-Зачем: поддерживает карту и проверки в актуальном состоянии без тормозов.">
-                        <input type="checkbox" id="chk-sentinelEnabled" data-action="toggleOption" data-key="sentinelEnabled" />
-                        <span class="toggle-chip-text">
-                          <span class="toggle-chip-title">Idle Sentinel</span>
-                          <span class="toggle-chip-sub">P0-вытеснение</span>
-                        </span>
-                      </label>
-                      <label class="toggle-chip" title="Что делает: проверяет соответствие числа аргументов при вызовах, битые импорты, забытые связанные файлы (Git Co-Change) и похожие клоны кода.
-Зачем: находит поломки контрактов за миллисекунды на CPU без LLM.">
-                        <input type="checkbox" id="chk-sentinelShadowGuard" data-action="toggleOption" data-key="sentinelShadowGuard" />
-                        <span class="toggle-chip-text">
-                          <span class="toggle-chip-title">Теневой Дозор</span>
-                          <span class="toggle-chip-sub">контракты и клоны</span>
-                        </span>
-                      </label>
-                      <label class="toggle-chip" title="Что делает: в глубоком простое прогоняет свежий git diff через локальную GPU-модель Ollama.
-Зачем: ловит логические баги, гонки и забытые проверки до коммита с 0% траты облачной квоты.">
-                        <input type="checkbox" id="chk-sentinelLocalBugBot" data-action="toggleOption" data-key="sentinelLocalBugBot" />
-                        <span class="toggle-chip-text">
-                          <span class="toggle-chip-title">Локальный BugBot</span>
-                          <span class="toggle-chip-sub">ревью diff на GPU</span>
-                        </span>
-                      </label>
-                      <label class="toggle-chip" title="Что делает: генерирует краткие карточки назначения каждого файла (кэшируются по SHA-256).
-Зачем: улучшает качество смыслового поиска и ответов в Умном Композере.">
-                        <input type="checkbox" id="chk-sentinelSymbolCards" data-action="toggleOption" data-key="sentinelSymbolCards" />
-                        <span class="toggle-chip-text">
-                          <span class="toggle-chip-title">Паспорта модулей</span>
-                          <span class="toggle-chip-sub">карточки SHA-256</span>
-                        </span>
-                      </label>
-                      <label class="toggle-chip" title="Что делает: пока вы набираете запрос в Композере, заранее собирает нужные срезы кода в RAM.
-Зачем: к моменту отправки промпта контекст уже готов без задержки.">
-                        <input type="checkbox" id="chk-sentinelSpeculativeWarm" data-action="toggleOption" data-key="sentinelSpeculativeWarm" />
-                        <span class="toggle-chip-text">
-                          <span class="toggle-chip-title">Прогрев контекста</span>
-                          <span class="toggle-chip-sub">срезы при вводе</span>
-                        </span>
-                      </label>
-                      <label class="toggle-chip" title="Что делает: в длинной паузе прогоняет быстрые тесты проекта в изолированном режиме.
-Зачем: заранее сигнализирует, если последние правки сломали тестовый сценарий.">
-                        <input type="checkbox" id="chk-sentinelShadowTests" data-action="toggleOption" data-key="sentinelShadowTests" />
-                        <span class="toggle-chip-text">
-                          <span class="toggle-chip-title">Микро-тесты</span>
-                          <span class="toggle-chip-sub">в длинной паузе</span>
-                        </span>
-                      </label>
-                      <label class="toggle-chip" title="Что делает: подключает языковые серверы (TypeScript/Python/Go/Rust) для проверки типов и поиска всех мест использования символа.
-Зачем: агент сразу видит ошибки компиляции и все точки вызова до окончания хода.">
-                        <input type="checkbox" id="chk-lspBridgeEnabled" data-action="toggleOption" data-key="lspBridgeEnabled" />
-                        <span class="toggle-chip-text">
-                          <span class="toggle-chip-title">Живой LSP-мост</span>
-                          <span class="toggle-chip-sub">типы &lt;50 мс</span>
-                        </span>
-                      </label>
-                      <label class="toggle-chip" title="Что делает: при запуске программ через ag watch перехватывает падения и стектрейсы и выводит плашку с кнопкой «В Композер».
-Зачем: позволяет в 1 клик отправить живую ошибку процесса агенту на починку.">
-                        <input type="checkbox" id="chk-runtimeWiretapEnabled" data-action="toggleOption" data-key="runtimeWiretapEnabled" />
-                        <span class="toggle-chip-text">
-                          <span class="toggle-chip-title">Wiretap рантайма</span>
-                          <span class="toggle-chip-sub">сбои ag watch</span>
-                        </span>
-                      </label>
-                    </div>
-                  </div>
-                </div>
+          <div class="bento-tile sentinel-toggles-wrap">
+            <div class="preset-row">
+              <div class="preset-label-wrap">
+                <span class="preset-label" title="Готовые профили активности Фонового Дозора в паузах работы">Режим Дозора:</span>
+                <span class="preset-custom-pill" id="sentinelPresetCustomPill" style="display: none;" title="Выбрана ручная комбинация модулей Дозора">Свой</span>
               </div>
+              <div class="win-btn-group" id="sentinelPresetGroup">
+                <button type="button" class="win-btn" data-val="off" data-action="applyTogglePreset" data-arg="sentinel:off" title="Полностью выключить фоновый Дозор">Выкл</button>
+                <button type="button" class="win-btn" data-val="quiet" data-action="applyTogglePreset" data-arg="sentinel:quiet" title="Только быстрые проверки CPU+RAM и LSP без запуска GPU-моделей">Тихий</button>
+                <button type="button" class="win-btn" data-val="full" data-action="applyTogglePreset" data-arg="sentinel:full" title="Стандартный баланс: CPU-контракты, LSP, GPU BugBot и паспорта модулей">Полный</button>
+                <button type="button" class="win-btn" data-val="max" data-action="applyTogglePreset" data-arg="sentinel:max" title="Полный Дозор + фоновый автопрогон микро-тестов в песочнице">Максимум</button>
+              </div>
+            </div>
+
+            <div class="tune-section-box is-inline-accordion" id="sentinelEnginesSection">
+              <button type="button" class="tune-section-head" data-action="toggleInlineSection" data-arg="sentinelEnginesSection" aria-expanded="false" title="Тонкое управление подсистемами Фонового Дозора, LSP и Wiretap">
+                <span class="tune-summary-label">Тонкая настройка Дозора и LSP</span>
+                <span class="tune-count-pill" id="sentinelEnginesCountBadge">7/8</span>
+                <svg class="tune-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <div class="toggle-chip-grid">
+                <label class="toggle-chip" title="Что делает: главный рубильник Фонового Дозора — проверяет проект только когда вы не печатаете и чат свободен.
+Зачем: поддерживает карту и проверки в актуальном состоянии без тормозов.">
+                  <input type="checkbox" id="chk-sentinelEnabled" data-action="toggleOption" data-key="sentinelEnabled" />
+                  <span class="toggle-chip-text">
+                    <span class="toggle-chip-title">Idle Sentinel</span>
+                    <span class="toggle-chip-sub">P0-вытеснение</span>
+                  </span>
+                </label>
+                <label class="toggle-chip" title="Что делает: проверяет соответствие числа аргументов при вызовах, битые импорты, забытые связанные файлы (Git Co-Change) и похожие клоны кода.
+Зачем: находит поломки контрактов за миллисекунды на CPU без LLM.">
+                  <input type="checkbox" id="chk-sentinelShadowGuard" data-action="toggleOption" data-key="sentinelShadowGuard" />
+                  <span class="toggle-chip-text">
+                    <span class="toggle-chip-title">Теневой Дозор</span>
+                    <span class="toggle-chip-sub">контракты и клоны</span>
+                  </span>
+                </label>
+                <label class="toggle-chip" title="Что делает: в глубоком простое прогоняет свежий git diff через локальную GPU-модель Ollama.
+Зачем: ловит логические баги, гонки и забытые проверки до коммита с 0% траты облачной квоты.">
+                  <input type="checkbox" id="chk-sentinelLocalBugBot" data-action="toggleOption" data-key="sentinelLocalBugBot" />
+                  <span class="toggle-chip-text">
+                    <span class="toggle-chip-title">Локальный BugBot</span>
+                    <span class="toggle-chip-sub">ревью diff на GPU</span>
+                  </span>
+                </label>
+                <label class="toggle-chip" title="Что делает: генерирует краткие карточки назначения каждого файла (кэшируются по SHA-256).
+Зачем: улучшает качество смыслового поиска и ответов в Умном Композере.">
+                  <input type="checkbox" id="chk-sentinelSymbolCards" data-action="toggleOption" data-key="sentinelSymbolCards" />
+                  <span class="toggle-chip-text">
+                    <span class="toggle-chip-title">Паспорта модулей</span>
+                    <span class="toggle-chip-sub">карточки SHA-256</span>
+                  </span>
+                </label>
+                <label class="toggle-chip" title="Что делает: пока вы набираете запрос в Композере, заранее собирает нужные срезы кода в RAM.
+Зачем: к моменту отправки промпта контекст уже готов без задержки.">
+                  <input type="checkbox" id="chk-sentinelSpeculativeWarm" data-action="toggleOption" data-key="sentinelSpeculativeWarm" />
+                  <span class="toggle-chip-text">
+                    <span class="toggle-chip-title">Прогрев контекста</span>
+                    <span class="toggle-chip-sub">срезы при вводе</span>
+                  </span>
+                </label>
+                <label class="toggle-chip" title="Что делает: в длинной паузе прогоняет быстрые тесты проекта в изолированном режиме.
+Зачем: заранее сигнализирует, если последние правки сломали тестовый сценарий.">
+                  <input type="checkbox" id="chk-sentinelShadowTests" data-action="toggleOption" data-key="sentinelShadowTests" />
+                  <span class="toggle-chip-text">
+                    <span class="toggle-chip-title">Микро-тесты</span>
+                    <span class="toggle-chip-sub">в длинной паузе</span>
+                  </span>
+                </label>
+                <label class="toggle-chip" title="Что делает: подключает языковые серверы (TypeScript/Python/Go/Rust) для проверки типов и поиска всех мест использования символа.
+Зачем: агент сразу видит ошибки компиляции и все точки вызова до окончания хода.">
+                  <input type="checkbox" id="chk-lspBridgeEnabled" data-action="toggleOption" data-key="lspBridgeEnabled" />
+                  <span class="toggle-chip-text">
+                    <span class="toggle-chip-title">Живой LSP-мост</span>
+                    <span class="toggle-chip-sub">типы &lt;50 мс</span>
+                  </span>
+                </label>
+                <label class="toggle-chip" title="Что делает: при запуске программ через ag watch перехватывает падения и стектрейсы и выводит плашку с кнопкой «В Композер».
+Зачем: позволяет в 1 клик отправить живую ошибку процесса агенту на починку.">
+                  <input type="checkbox" id="chk-runtimeWiretapEnabled" data-action="toggleOption" data-key="runtimeWiretapEnabled" />
+                  <span class="toggle-chip-text">
+                    <span class="toggle-chip-title">Wiretap рантайма</span>
+                    <span class="toggle-chip-sub">сбои ag watch</span>
+                  </span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
 
-      <!-- СНИМКИ И ОТКАТ ПРАВОК (вкладка Баги) -->
-      <section class="lg-card" id="checkpointsCard" data-tab-panel="bugs">
+      <!-- БАРЬЕРЫ СБОЕВ, ХРУПКОСТЬ И ТЕХДОЛГ (вкладка Баги) -->
+      <section class="lg-card" id="intelligenceBayesianCard" data-tab-panel="bugs">
+        <div class="lg-card-head">
+          <span class="lg-card-title" title="Что делает: объединяет автомат Circuit Breaker, статус автопилота, рейтинг хрупких файлов Bayesian v2, чеклист GATES.md и техдолг shortcut:.
+Зачем: останавливает зацикливания, подсвечивает проблемные файлы и следит за приёмкой задач.">Барьеры сбоев и диагностика</span>
+          <span class="lg-card-sub" style="color: var(--status-ok); font-weight: 600;">Активно ✓</span>
+        </div>
+
+        <!-- 2x2 Bento-плитки здоровья -->
+        <div class="bento-grid-2 bugs-health-bento">
+          <!-- Плитка 1: Circuit Breaker -->
+          <div class="bento-tile bento-health-tile" id="expertCircuitBox">
+            <div class="bento-tile-head" id="expertCircuitHeadRow">
+              <div class="bento-tile-title-row" title="Что делает: отслеживает повторяющиеся ошибки и «карусель» правок туда-обратно в одном файле; при 3 сбоях подряд размыкает цепь и останавливает цикл.
+Зачем: не даёт агенту вслепую портить код и сжигать квоту на зацикленных попытках.">
+                <span id="circuitDot" class="circuit-dot closed"></span>
+                <span class="bento-tile-title">Стоп-кран</span>
+              </div>
+              <button type="button" class="win-btn bento-mini-btn" data-action="resetCircuitBreaker" title="Сбросить счётчик срабатываний Circuit Breaker и вернуть автомат в режим НОРМА (0/3)">Сбросить</button>
+            </div>
+            <div class="bento-tile-value" id="circuitBadgeText" style="color: var(--status-ok);">НОРМА (0/3)</div>
+            <div id="circuitReason" hidden class="bento-tile-sub">Автомат замкнут. Защита от зацикливания правок активна.</div>
+          </div>
+
+          <!-- Плитка 2: Надёжность ИИ -->
+          <div class="bento-tile bento-health-tile">
+            <div class="bento-tile-head">
+              <span class="bento-tile-title" title="Что делает: вычисляет вероятность сбоя по доменам и помечает «хрупкие» файлы, где чаще всего возникали откаты или ошибки тестов.
+Зачем: к хрупким файлам роутер автоматически назначает более глубокую проверку и старшую модель.">Надёжность ИИ</span>
+              <div class="win-btn-group">
+                <button type="button" class="win-btn bento-mini-btn" data-action="resetWorkspaceFragility" title="Сбросить список хрупких файлов только для выбранного проекта">↺ Хрупкость</button>
+                <button type="button" class="win-btn bento-mini-btn" data-action="resetBayesianPriors" title="Полный сброс глобальных весов и хрупкости">↺</button>
+              </div>
+            </div>
+            <div class="bento-tile-value" id="bayesianSummaryMeta" title="Средняя оценка доверия модели по накопленной статистике успешных правок с 1-го прохода">Доверие: —</div>
+            <div id="bayesianDomainsLine" class="ui-hint-collapsed">Домены: нет накопленных запусков</div>
+          </div>
+
+          <!-- Плитка 3: Приёмка GATES -->
+          <div class="bento-tile bento-health-tile">
+            <div class="bento-tile-head">
+              <span class="bento-tile-title" title="Файл GATES.md хранит обязательные критерии приёмки (тесты, билд, линт), которые проверяет Unlazy Gate">Приёмка GATES</span>
+              <div class="win-btn-group">
+                <button type="button" class="win-btn bento-mini-btn" data-action="refreshGatesStatus" title="Проверить статус выполнения обязательных условий в файле GATES.md">Проверить</button>
+                <button type="button" class="win-btn bento-mini-btn" data-action="initGatesMd" title="Создать шаблон файла GATES.md в корне проекта для автоматического контроля приёмки">+ GATES</button>
+              </div>
+            </div>
+            <div class="bento-tile-value" id="gatesStatusBadge" style="color: var(--text-sub);">GATES.md: не проверен</div>
+          </div>
+
+          <!-- Плитка 4: Граф и Техдолг -->
+          <div class="bento-tile bento-health-tile">
+            <div class="bento-tile-head">
+              <span class="bento-tile-title" title="Что делает: показывает архитектурные кластеры графа кода и реестр сознательных компромиссов с метками shortcut: в комментариях.
+Зачем: помогает вовремя возвращаться к отложенным упрощениям и видеть перегруженные хабы.">Граф и Техдолг</span>
+              <div class="win-btn-group">
+                <button type="button" class="win-btn bento-mini-btn" data-action="loadGraphifyOverview" title="Построить интерактивную карту кластеров, God Nodes, мостов и теплоты кэша">Карта</button>
+                <button type="button" class="win-btn bento-mini-btn" data-action="loadShortcutDebt" title="Собрать реестр меток осознанного техдолга shortcut: и проверить риски no-trigger">Техдолг</button>
+              </div>
+            </div>
+            <div class="bento-tile-value" id="graphDebtStatusBadge" style="color: var(--text-sub);">Graphify v2 · Готов</div>
+          </div>
+        </div>
+
+        <div class="sunken-box ui-hint-collapsed">
+          <div style="display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 11.5px; color: var(--status-ok);">
+            <span id="autopilotHealthTitle">Глубокое мышление без урезания и разведка файлов активны</span>
+          </div>
+          <div id="autopilotLiveTelemetry" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px; line-height: 1.4;">
+            Память диалога: в норме · Зацикливаний: нет
+          </div>
+        </div>
+
+        <div id="graphDebtDrawer" class="sunken-box" style="display: none;"></div>
+
+        <!-- Внутренний переключатель списков Багов -->
+        <div class="bento-subtabs-bar" id="bugsSubTabsBar" role="tablist" aria-label="Списки диагностики">
+          <button type="button" class="win-btn active" data-bugs-tab="snaps" data-action="setBugsSubTab" data-arg="snaps" title="Резервные снимки файлов, откат ходов и Git-песочницы">
+            <span>Снимки и откат</span>
+            <span class="bento-tab-count" id="bugsTabCountSnaps"></span>
+          </button>
+          <button type="button" class="win-btn" data-bugs-tab="fragile" data-action="setBugsSubTab" data-arg="fragile" title="Рейтинг файлов с повторными сбоями и отказами тестов (Bayesian v2)">
+            <span>Хрупкие файлы</span>
+            <span class="bento-tab-count" id="bugsTabCountFragile"></span>
+          </button>
+          <button type="button" class="win-btn" data-bugs-tab="pitfalls" data-action="setBugsSubTab" data-arg="pitfalls" title="Журнал зафиксированных падений тестов и откатов (Pitfall Ledger)">
+            <span>Грабли сбоев</span>
+            <span class="bento-tab-count" id="bugsTabCountPitfalls"></span>
+          </button>
+        </div>
+
+        <!-- Подвкладка: Хрупкие файлы -->
+        <div class="bento-tile bento-subpanel" id="bayesianWidget" data-bugs-panel="fragile">
+          <div id="bayesianFragileList" style="font-size: 10.5px; color: var(--text-sub); line-height: 1.4;"></div>
+        </div>
+      </section>
+
+      <!-- СНИМКИ И ОТКАТ ПРАВОК (вкладка Баги / подвкладка Снимки) -->
+      <section class="lg-card bento-tile bento-subpanel" id="checkpointsCard" data-tab-panel="bugs" data-bugs-panel="snaps">
         <div class="lg-card-head">
           <div style="display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap;">
             <span class="lg-card-title" title="Что делает: хранит локальные резервные копии каждого изменённого агентом файла и группирует их по ходам диалога.
@@ -12396,253 +12948,8 @@
         </div>
       </section>
 
-      <!-- БАРЬЕРЫ СБОЕВ, ХРУПКОСТЬ И ТЕХДОЛГ (вкладка Баги) -->
-      <section class="lg-card" id="intelligenceBayesianCard" data-tab-panel="bugs">
-        <div class="lg-card-head">
-          <span class="lg-card-title" title="Что делает: объединяет автомат Circuit Breaker, статус автопилота, рейтинг хрупких файлов Bayesian v2, чеклист GATES.md и техдолг shortcut:.
-Зачем: останавливает зацикливания, подсвечивает проблемные файлы и следит за приёмкой задач.">Барьеры сбоев, Хрупкость и Техдолг</span>
-          <span class="lg-card-sub" style="color: var(--status-ok); font-weight: 600;">Активно ✓</span>
-        </div>
-        <div class="sunken-box" id="expertCircuitBox" style="margin-bottom: 8px;">
-          <div id="expertCircuitHeadRow" style="display: flex; justify-content: space-between; align-items: center; gap: 6px;">
-            <div style="display: flex; align-items: center; gap: 7px; margin-right: auto;" title="Что делает: отслеживает повторяющиеся ошибки и «карусель» правок туда-обратно в одном файле; при 3 сбоях подряд размыкает цепь и останавливает цикл.
-Зачем: не даёт агенту вслепую портить код и сжигать квоту на зацикленных попытках.">
-              <span id="circuitDot" class="circuit-dot closed"></span>
-              <span style="font-weight: 600; font-size: 11.5px;">Circuit Breaker:</span>
-              <span id="circuitBadgeText" style="font-size: 11px; font-weight: 700; color: var(--status-ok);">НОРМА (0/3)</span>
-            </div>
-            <button type="button" class="win-btn" data-action="resetCircuitBreaker" title="Сбросить счётчик срабатываний Circuit Breaker и вернуть автомат в режим НОРМА (0/3)">
-              Сбросить
-            </button>
-          </div>
-          <div id="circuitReason" hidden style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px;">
-            Автомат замкнут. Защита от зацикливания правок активна.
-          </div>
-        </div>
-        <div class="sunken-box ui-hint-collapsed">
-          <div style="display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 11.5px; color: var(--status-ok);">
-            <span id="autopilotHealthTitle">Глубокое мышление без урезания и разведка файлов активны</span>
-          </div>
-          <div id="autopilotLiveTelemetry" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px; line-height: 1.4;">
-            Память диалога: в норме · Зацикливаний: нет
-          </div>
-        </div>
-        <div class="sunken-box" id="bayesianWidget" style="margin-top: 8px;">
-          <div class="bayesian-head-row">
-            <div style="font-weight: 600; font-size: 11px; color: var(--ui-subhead);" title="Что делает: вычисляет вероятность сбоя по доменам и помечает «хрупкие» файлы, где чаще всего возникали откаты или ошибки тестов.
-Зачем: к хрупким файлам роутер автоматически назначает более глубокую проверку и старшую модель.">
-              Bayesian v2 · Хрупкость файлов
-            </div>
-            <div class="bayesian-head-right">
-              <span id="bayesianSummaryMeta" style="font-size: 10.5px; color: var(--text-sub);" title="Средняя оценка доверия модели по накопленной статистике успешных правок с 1-го прохода">Доверие: —</span>
-              <div class="bayesian-btn-pair">
-                <button type="button" class="win-btn" data-action="resetWorkspaceFragility" title="Сбросить список хрупких файлов только для выбранного проекта">↺ Хрупкость</button>
-                <button type="button" class="win-btn" data-action="resetBayesianPriors" title="Полный сброс глобальных весов и хрупкости">↺ Сбросить</button>
-              </div>
-            </div>
-          </div>
-          <div id="bayesianDomainsLine" class="ui-hint-collapsed" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px;">Домены: нет накопленных запусков</div>
-          <div id="bayesianFragileList" style="font-size: 10.5px; color: var(--text-sub); margin-top: 4px; line-height: 1.4;"></div>
-        </div>
-        <div class="settings-group-list" style="margin-top: 8px;">
-          <div class="control-row">
-            <span id="gatesStatusBadge" style="color: var(--text-sub);" title="Файл GATES.md хранит обязательные критерии приёмки (тесты, билд, линт), которые проверяет Unlazy Gate">GATES.md: не проверен</span>
-            <div class="win-btn-group">
-              <button type="button" class="win-btn" data-action="refreshGatesStatus" title="Проверить статус выполнения обязательных условий в файле GATES.md">Проверить</button>
-              <button type="button" class="win-btn" data-action="initGatesMd" title="Создать шаблон файла GATES.md в корне проекта для автоматического контроля приёмки">Создать GATES.md</button>
-            </div>
-          </div>
-          <div class="control-row">
-            <span id="graphDebtStatusBadge" style="color: var(--text-sub);" title="Что делает: показывает архитектурные кластеры графа кода и реестр сознательных компромиссов с метками shortcut: в комментариях.
-Зачем: помогает вовремя возвращаться к отложенным упрощениям и видеть перегруженные хабы.">Graphify v2 · Техдолг shortcut:</span>
-            <div class="win-btn-group">
-              <button type="button" class="win-btn" data-action="loadGraphifyOverview" title="Построить интерактивную карту кластеров, God Nodes, мостов и теплоты кэша">Карта графа</button>
-              <button type="button" class="win-btn" data-action="loadShortcutDebt" title="Собрать реестр меток осознанного техдолга shortcut: и проверить риски no-trigger">Техдолг</button>
-            </div>
-          </div>
-          <div id="graphDebtDrawer" class="sunken-box" style="display: none;"></div>
-        </div>
-      </section>
-
-      <!-- 6. ПАМЯТЬ: КОНТЕКСТ ЭПОХИ И РАЗВЕДКА КОДА -->
-      <section class="lg-card" id="memoryContextCard" data-tab-panel="memory">
-        <div class="lg-card-head">
-          <span class="lg-card-title" title="Что делает: отслеживает заполнение эпохи диалога, сжимает контекст и управляет 12 модулями разведки кода и памяти.
-Зачем: экономит 60–80% входных токенов и удерживает фокус в длинных сессиях.">Контекст эпохи и разведка кода</span>
-        </div>
-        <div style="margin: 2px 2px 6px 2px;">
-          <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-sub); margin-bottom: 2px;">
-            <span title="Показывает, насколько заполнен текущий бюджет токенов до автоматической сборки дайджеста эпохи">Заполнение контекста эпохи:</span>
-            <span id="compactionLabel">Эпоха #0 · 0% от 120k</span>
-          </div>
-          <div class="compaction-meter">
-            <div class="compaction-bar" id="compactionBar" style="width: 0%;"></div>
-          </div>
-          <div class="compaction-threshold-row">
-            <span class="compaction-threshold-label" title="Объём контекста, при достижении которого роутер формирует компактный дайджест для продолжения без потери памяти">Порог сжатия эпохи:</span>
-            <div class="win-btn-group compaction-threshold-group" id="compactionThresholdGroup" role="group" aria-label="Порог сжатия эпохи">
-              <button type="button" class="win-btn" data-val="80000" data-action="setCompactionThreshold" data-arg="80000" title="80k токенов: раннее сжатие контекста для экономии входных токенов">80k</button>
-              <button type="button" class="win-btn active" data-val="120000" data-action="setCompactionThreshold" data-arg="120000" title="120k токенов (рекомендуется): оптимальный баланс глубины памяти и стоимости кэша">120k</button>
-              <button type="button" class="win-btn" data-val="180000" data-action="setCompactionThreshold" data-arg="180000" title="180k токенов: длинная эпоха для масштабных многофайловых сессий">180k</button>
-              <button type="button" class="win-btn" data-val="250000" data-action="setCompactionThreshold" data-arg="250000" title="250k токенов: максимальный буфер истории до сборки дайджеста">250k</button>
-            </div>
-          </div>
-        </div>
-        <div class="settings-group-list" style="margin-bottom: 6px;">
-          <div class="control-row">
-            <span>Контекст и карта кода:</span>
-            <div class="win-btn-group">
-              <button type="button" class="win-btn" data-action="compactDigest" title="Принудительно собрать компактный дайджест истории диалога">Сжать дайджест</button>
-              <button type="button" class="win-btn" data-action="refreshRepoMap" title="Пересобрать AST-карту символов текущего проекта">Обновить карту</button>
-            </div>
-          </div>
-        </div>
-        <div class="preset-row" style="margin-top: 2px;">
-          <div class="preset-label-wrap">
-            <span class="preset-label" title="Набор модулей разведки кода, памяти между чатами и экономии токенов">Разведка и токены:</span>
-            <span class="preset-custom-pill" id="intelPresetCustomPill" style="display: none;" title="Выбрана ручная комбинация модулей разведки и бюджета">Свой</span>
-          </div>
-          <div class="win-btn-group" id="intelPresetGroup">
-            <button type="button" class="win-btn" data-val="base" data-action="applyTogglePreset" data-arg="intel:base" title="Основная карта, срезы, триаж и сжатие без Bayesian/PageRank">Базовый</button>
-            <button type="button" class="win-btn" data-val="full" data-action="applyTogglePreset" data-arg="intel:full" title="Включены все 12 контуров разведки, памяти и экономии токенов">Полный</button>
-            <button type="button" class="win-btn" data-val="raw" data-action="applyTogglePreset" data-arg="intel:raw" title="Только карта проекта; срезы, триаж и экономия токенов выключены">Без экономии</button>
-          </div>
-        </div>
-        <div class="tune-section-box is-inline-accordion" id="intelBudgetSection">
-          <button type="button" class="tune-section-head" data-action="toggleInlineSection" data-arg="intelBudgetSection" aria-expanded="false" title="Отдельные контуры разведки проекта, памяти сессий и экономии токенов">
-            <span class="tune-summary-label">Модули разведки и бюджета</span>
-            <span class="tune-count-pill" id="intelBudgetCountBadge">12/12</span>
-            <svg class="tune-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button>
-          <div class="toggle-chip-grid">
-            <label class="toggle-chip" title="Что делает: строит структурную карту файлов, импортов, классов и функций проекта в RAM.
-Зачем: агент сразу видит архитектуру, а не ищет файлы наугад.">
-              <input type="checkbox" id="chk-repoMap" data-action="toggleOption" data-key="repoMap" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Карта проекта</span>
-                <span class="toggle-chip-sub">RepoGraph в RAM</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: ранжирует модули по количеству входящих связей (PageRank) и выделяет ключевые хабы.
-Зачем: в первую очередь подаёт агенту самые важные файлы проекта.">
-              <input type="checkbox" id="chk-pageRankGraph" data-action="toggleOption" data-key="pageRankGraph" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Граф PageRank</span>
-                <span class="toggle-chip-sub">приоритет хабов</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: перед началом хода собирает точные AST-срезы нужных функций, граф вызовов и контракты соседей за 1 шаг.
-Зачем: экономит 60–80% токенов и убирает лишние чтения файлов целиком.">
-              <input type="checkbox" id="chk-zeroTurnSlices" data-action="toggleOption" data-key="zeroTurnSlices" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Нарезка SWE-Pruner</span>
-                <span class="toggle-chip-sub">срезы и 2-Hop</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: сохраняет краткую сводку цели, принятых решений и изменённых файлов при завершении или переносе чата.
-Зачем: в новом чате агент сразу продолжает работу с того же места.">
-              <input type="checkbox" id="chk-sessionHandoff" data-action="toggleOption" data-key="sessionHandoff" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Session Handoff</span>
-                <span class="toggle-chip-sub">память между чатами</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: автоматически фиксирует причины проваленных тестов и откатов в реестр проекта.
-Зачем: напоминает агенту о прошлых ловушках перед следующими правками.">
-              <input type="checkbox" id="chk-pitfallLedger" data-action="toggleOption" data-key="pitfallLedger" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Память граблей</span>
-                <span class="toggle-chip-sub">реестр откатов</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: оценивает задачу по 3 осям (Ширина × Глубина × Риск) и переводит в масштаб S/M/L/XL.
-Зачем: подбирает оптимальную модель и глубину размышления без перерасхода квоты.">
-              <input type="checkbox" id="chk-thinkingLimiter" data-action="toggleOption" data-key="thinkingLimiter" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">3D-Триаж S/M/L/XL</span>
-                <span class="toggle-chip-sub">подбор глубины</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: ведёт байесовскую статистику успешных правок по доменам и помечает хрупкие файлы.
-Зачем: автоматически усиливает модель и проверки там, где код чаще всего ломается.">
-              <input type="checkbox" id="chk-bayesianRouter" data-action="toggleOption" data-key="bayesianRouter" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">CoDyn Bayesian v2</span>
-                <span class="toggle-chip-sub">хрупкость файлов</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: подсказывает агенту использовать быстрые целевые инструменты (RAM-срезы, пакетные вызовы) вместо тяжёлых обходов.
-Зачем: уменьшает число ходов и время выполнения.">
-              <input type="checkbox" id="chk-toolPruning" data-action="toggleOption" data-key="toolPruning" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Фильтр инструментов</span>
-                <span class="toggle-chip-sub">Tool Pruning</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: отслеживает уже прочитанные в этом диалоге диапазоны строк и блокирует повторное чтение неизменённых файлов.
-Зачем: не тратит токены на перечитывание того, что уже есть в контексте.">
-              <input type="checkbox" id="chk-readDedup" data-action="toggleOption" data-key="readDedup" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Read-Once Guard</span>
-                <span class="toggle-chip-sub">анти-дубли чтения</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: сжимает длинные повторяющиеся строки в логах тестов и сборок (алгоритм Drain3), сохраняя строки с ошибками.
-Зачем: в контекст попадает суть сбоя, а не тысячи однотипных строк прогресса.">
-              <input type="checkbox" id="chk-obsMasking" data-action="toggleOption" data-key="obsMasking" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Сжатие логов RTK</span>
-                <span class="toggle-chip-sub">Fault Pinning</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: следит за размером контекста диалога и готовит компактный дайджест при приближении к порогу.
-Зачем: предотвращает деградацию внимания модели и потерю цели в длинных чатах.">
-              <input type="checkbox" id="chk-historyCompaction" data-action="toggleOption" data-key="historyCompaction" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Защита от перегруза</span>
-                <span class="toggle-chip-sub">AgentDiet и эпохи</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: считает скорость сжигания квоты за 30 и 60 минут и отслеживает попадания в префиксный кэш.
-Зачем: предупреждает о высоком расходе на главной карточке телеметрии.">
-              <input type="checkbox" id="chk-quotaPacerEnabled" data-action="toggleOption" data-key="quotaPacerEnabled" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Quota Pacer</span>
-                <span class="toggle-chip-sub">темп квоты 30/60м</span>
-              </span>
-            </label>
-          </div>
-        </div>
-      </section>
-
-      <!-- ХАБ ЗНАНИЙ SQLITE (вкладка Память) -->
-      <section class="lg-card" id="expertKnowledgeBox" data-tab-panel="memory">
-        <div id="expertKnowledgeHeadRow" class="lg-card-head" style="gap: 6px;">
-          <span class="lg-card-title" style="margin-right: auto;" title="Что делает: локальная база знаний проекта на SQLite WAL — хранит удачные починки багов («рецепты побед»), эпизоды прошлых чатов и связи с соседними репозиториями.
-Зачем: позволяет мгновенно находить проверенные решения и искать код по смежным проектам.">Рецепты побед и Кросс-репо (SQLite)</span>
-          <span id="knowledgeStatsBadge" style="font-size: 10px; color: var(--text-sub);" title="Количество сохранённых рецептов починки и проиндексированных AST-файлов в SQLite">0 рец.</span>
-          <button type="button" class="win-btn" data-action="loadSessionEpisodes" title="Показать сохранённые эпизоды прошлых сессий (SQLite FTS5)">Эпизоды</button>
-          <button type="button" class="win-btn" data-action="clearVictoryRecipes" title="Очистить сохранённые рецепты успешных починок">Очистить</button>
-        </div>
-        <label class="toggle-row" style="margin-bottom: 4px;" title="Что делает: хранит на диске в SQLite эпизоды чатов, рецепты побед, сжатые блоки вывода (CCR) и кэш RepairKV.
-Зачем: память и найденные решения не пропадают после перезапуска IDE.">
-          <input type="checkbox" id="chk-sqliteKnowledgeEnabled" data-action="toggleOption" data-key="sqliteKnowledgeEnabled" />
-          <span><strong>NVMe-память (<code>node:sqlite</code>)</strong><span class="ui-hint-collapsed"> — персистентный RepairKV, рецепты побед и кросс-репо поиск</span></span>
-        </label>
-        <div id="knowledgeExtendedStats" class="ui-hint-collapsed" style="font-size: 10px; color: var(--text-sub); margin-bottom: 4px;" title="Сводка записей в базе SQLite: эпизоды прошлых сессий, сжатые CCR-блоки, кэш RepairKV и накопленные инстинкты">Эпизоды: 0 · CCR-блобы: 0 · RepairKV: 0 · Инстинкты: 0</div>
-        <div class="pitfalls-scroll" id="victoryRecipesContainer" style="margin-bottom: 6px;">
-          <div style="color: var(--text-sub); font-size: 10.5px; padding: 2px;">Пока нет сохранённых рецептов побед</div>
-        </div>
-        <div class="pitfalls-scroll" id="sessionEpisodesContainer" style="display: none; margin-bottom: 6px; font-size: 10.5px;"></div>
-        <div style="display: flex; gap: 4px; align-items: center; margin-bottom: 4px;">
-          <input type="text" id="federatedPeerInput" class="win-input" placeholder="Путь к связанному репозиторию (напр. ../api)" style="flex: 1; font-size: 11px; padding: 3px 6px;" />
-          <button type="button" class="win-btn" data-action="addFederatedPeer" title="Привязать смежный репозиторий для кросс-проектного поиска">Связать</button>
-        </div>
-        <div id="federatedPeersContainer" style="font-size: 10.5px; color: var(--text-sub);"></div>
-      </section>
-
-      <!-- РЕЕСТР ГРАБЛЕЙ И ИНСТИНКТЫ ПРОЕКТА (вкладка Память) -->
-      <section class="lg-card" id="expertPitfallsBox" data-tab-panel="memory">
+      <!-- РЕЕСТР ГРАБЛЕЙ (вкладка Баги / подвкладка Грабли сбоев) -->
+      <section class="lg-card bento-tile bento-subpanel" id="expertPitfallsBox" data-tab-panel="bugs" data-bugs-panel="pitfalls">
         <div id="expertPitfallsHeadRow" class="lg-card-head" style="gap: 6px;">
           <span class="lg-card-title" style="margin-right: auto;" title="Что делает: записывает ошибки тестов, откаты и опасные места проекта, затем автоматически подкладывает их в начало новых сессий.
 Зачем: агент помнит прошлые «грабли» и не наступает на те же ошибки повторно.">Реестр граблей (Pitfall Ledger)</span>
@@ -12653,19 +12960,229 @@
         <div class="pitfalls-scroll" id="pitfallsContainer">
           <div style="color: var(--text-sub); font-size: 10.5px; padding: 2px;">Пока нет зафиксированных сбоев/откатов</div>
         </div>
-        <div class="divider"></div>
-        <label class="toggle-row" style="margin-bottom: 6px;" title="Что делает: выделяет повторяющиеся рабочие приёмы и ошибки в проекте и накапливает их как инстинкты для последующего превращения в навыки.
-Зачем: роутер адаптируется к правилам именно вашего репозитория.">
-          <input type="checkbox" id="chk-skillCrystallizer" data-action="toggleOption" data-key="skillCrystallizer" />
-          <span><strong>Skill Crystallizer</strong><span class="ui-hint-collapsed"> — превращение повторяющихся паттернов в навыки</span></span>
-        </label>
-        <div style="display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap;">
-          <span style="font-weight: 600; font-size: 10.5px; color: var(--ui-subhead);" title="Повторяющиеся паттерны работы в проекте, готовые к превращению в постоянный навык SKILL.md">Инстинкты проекта</span>
-          <button type="button" class="win-btn" style="padding: 2px 8px; font-size: 10.5px;" data-action="loadProjectInstincts" title="Что делает: загружает список паттернов, которые агент регулярно применяет в этом проекте (уверенность в % и число повторов xN).
-Зачем: зрелые инстинкты можно кнопкой Promote превратить в постоянный навык SKILL.md.">Инстинкты проекта</button>
+      </section>
+
+      <!-- 6. ПАМЯТЬ: КОНТЕКСТ ЭПОХИ И РАЗВЕДКА КОДА -->
+      <section class="lg-card" id="memoryContextCard" data-tab-panel="memory">
+        <div class="lg-card-head">
+          <span class="lg-card-title" title="Что делает: отслеживает заполнение эпохи диалога, сжимает контекст и управляет 12 модулями разведки кода и памяти.
+Зачем: экономит 60–80% входных токенов и удерживает фокус в длинных сессиях.">Контекст эпохи и разведка кода</span>
         </div>
-        <div id="projectInstinctsList" class="pitfalls-scroll" style="font-size: 10.5px; color: var(--text-sub);">
-          <div>Нажмите «Инстинкты проекта» для просмотра накопленных паттернов.</div>
+
+        <div class="bento-grid-2">
+          <div class="bento-tile">
+            <div class="bento-tile-head">
+              <span class="bento-tile-title" title="Показывает, насколько заполнен текущий бюджет токенов до автоматической сборки дайджеста эпохи">Бюджет эпохи</span>
+              <span class="bento-tile-sub" id="compactionLabel">Эпоха #0 · 0% от 120k</span>
+            </div>
+            <div class="compaction-meter" style="margin: 6px 0;">
+              <div class="compaction-bar" id="compactionBar" style="width: 0%;"></div>
+            </div>
+            <div class="compaction-threshold-row" style="margin-top: 6px;">
+              <span class="compaction-threshold-label" title="Объём контекста, при достижении которого роутер формирует компактный дайджест для продолжения без потери памяти">Порог сжатия:</span>
+              <div class="win-btn-group compaction-threshold-group" id="compactionThresholdGroup" role="group" aria-label="Порог сжатия эпохи">
+                <button type="button" class="win-btn" data-val="80000" data-action="setCompactionThreshold" data-arg="80000" title="80k токенов: раннее сжатие контекста для экономии входных токенов">80k</button>
+                <button type="button" class="win-btn active" data-val="120000" data-action="setCompactionThreshold" data-arg="120000" title="120k токенов (рекомендуется): оптимальный баланс глубины памяти и стоимости кэша">120k</button>
+                <button type="button" class="win-btn" data-val="180000" data-action="setCompactionThreshold" data-arg="180000" title="180k токенов: длинная эпоха для масштабных многофайловых сессий">180k</button>
+                <button type="button" class="win-btn" data-val="250000" data-action="setCompactionThreshold" data-arg="250000" title="250k токенов: максимальный буфер истории до сборки дайджеста">250k</button>
+              </div>
+            </div>
+            <div class="control-row" style="margin-top: 6px;">
+              <span>Контекст и карта кода:</span>
+              <div class="win-btn-group">
+                <button type="button" class="win-btn" data-action="compactDigest" title="Принудительно собрать компактный дайджест истории диалога">Сжать дайджест</button>
+                <button type="button" class="win-btn" data-action="refreshRepoMap" title="Пересобрать AST-карту символов текущего проекта">Обновить карту</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="bento-tile">
+            <div class="preset-row" style="margin-top: 0;">
+              <div class="preset-label-wrap">
+                <span class="preset-label" title="Набор модулей разведки кода, памяти между чатами и экономии токенов">Разведка и токены:</span>
+                <span class="preset-custom-pill" id="intelPresetCustomPill" style="display: none;" title="Выбрана ручная комбинация модулей разведки и бюджета">Свой</span>
+              </div>
+              <div class="win-btn-group" id="intelPresetGroup">
+                <button type="button" class="win-btn" data-val="base" data-action="applyTogglePreset" data-arg="intel:base" title="Основная карта, срезы, триаж и сжатие без Bayesian/PageRank">Базовый</button>
+                <button type="button" class="win-btn" data-val="full" data-action="applyTogglePreset" data-arg="intel:full" title="Включены все 12 контуров разведки, памяти и экономии токенов">Полный</button>
+                <button type="button" class="win-btn" data-val="raw" data-action="applyTogglePreset" data-arg="intel:raw" title="Только карта проекта; срезы, триаж и экономия токенов выключены">Без экономии</button>
+              </div>
+            </div>
+            <div class="tune-section-box is-inline-accordion" id="intelBudgetSection" style="margin-top: 6px;">
+              <button type="button" class="tune-section-head" data-action="toggleInlineSection" data-arg="intelBudgetSection" aria-expanded="false" title="Отдельные контуры разведки проекта, памяти сессий и экономии токенов">
+                <span class="tune-summary-label">Модули разведки и бюджета</span>
+                <span class="tune-count-pill" id="intelBudgetCountBadge">12/12</span>
+                <svg class="tune-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <div class="toggle-chip-grid">
+                <label class="toggle-chip" title="Что делает: строит структурную карту файлов, импортов, классов и функций проекта в RAM.
+Зачем: агент сразу видит архитектуру, а не ищет файлы наугад.">
+                  <input type="checkbox" id="chk-repoMap" data-action="toggleOption" data-key="repoMap" />
+                  <span class="toggle-chip-text">
+                    <span class="toggle-chip-title">Карта проекта</span>
+                    <span class="toggle-chip-sub">RepoGraph в RAM</span>
+                  </span>
+                </label>
+                <label class="toggle-chip" title="Что делает: ранжирует модули по количеству входящих связей (PageRank) и выделяет ключевые хабы.
+Зачем: в первую очередь подаёт агенту самые важные файлы проекта.">
+                  <input type="checkbox" id="chk-pageRankGraph" data-action="toggleOption" data-key="pageRankGraph" />
+                  <span class="toggle-chip-text">
+                    <span class="toggle-chip-title">Граф PageRank</span>
+                    <span class="toggle-chip-sub">приоритет хабов</span>
+                  </span>
+                </label>
+                <label class="toggle-chip" title="Что делает: перед началом хода собирает точные AST-срезы нужных функций, граф вызовов и контракты соседей за 1 шаг.
+Зачем: экономит 60–80% токенов и убирает лишние чтения файлов целиком.">
+                  <input type="checkbox" id="chk-zeroTurnSlices" data-action="toggleOption" data-key="zeroTurnSlices" />
+                  <span class="toggle-chip-text">
+                    <span class="toggle-chip-title">Нарезка SWE-Pruner</span>
+                    <span class="toggle-chip-sub">срезы и 2-Hop</span>
+                  </span>
+                </label>
+                <label class="toggle-chip" title="Что делает: сохраняет краткую сводку цели, принятых решений и изменённых файлов при завершении или переносе чата.
+Зачем: в новом чате агент сразу продолжает работу с того же места.">
+                  <input type="checkbox" id="chk-sessionHandoff" data-action="toggleOption" data-key="sessionHandoff" />
+                  <span class="toggle-chip-text">
+                    <span class="toggle-chip-title">Session Handoff</span>
+                    <span class="toggle-chip-sub">память между чатами</span>
+                  </span>
+                </label>
+                <label class="toggle-chip" title="Что делает: автоматически фиксирует причины проваленных тестов и откатов в реестр проекта.
+Зачем: напоминает агенту о прошлых ловушках перед следующими правками.">
+                  <input type="checkbox" id="chk-pitfallLedger" data-action="toggleOption" data-key="pitfallLedger" />
+                  <span class="toggle-chip-text">
+                    <span class="toggle-chip-title">Память граблей</span>
+                    <span class="toggle-chip-sub">реестр откатов</span>
+                  </span>
+                </label>
+                <label class="toggle-chip" title="Что делает: оценивает задачу по 3 осям (Ширина × Глубина × Риск) и переводит в масштаб S/M/L/XL.
+Зачем: подбирает оптимальную модель и глубину размышления без перерасхода квоты.">
+                  <input type="checkbox" id="chk-thinkingLimiter" data-action="toggleOption" data-key="thinkingLimiter" />
+                  <span class="toggle-chip-text">
+                    <span class="toggle-chip-title">3D-Триаж S/M/L/XL</span>
+                    <span class="toggle-chip-sub">подбор глубины</span>
+                  </span>
+                </label>
+                <label class="toggle-chip" title="Что делает: ведёт байесовскую статистику успешных правок по доменам и помечает хрупкие файлы.
+Зачем: автоматически усиливает модель и проверки там, где код чаще всего ломается.">
+                  <input type="checkbox" id="chk-bayesianRouter" data-action="toggleOption" data-key="bayesianRouter" />
+                  <span class="toggle-chip-text">
+                    <span class="toggle-chip-title">CoDyn Bayesian v2</span>
+                    <span class="toggle-chip-sub">хрупкость файлов</span>
+                  </span>
+                </label>
+                <label class="toggle-chip" title="Что делает: подсказывает агенту использовать быстрые целевые инструменты (RAM-срезы, пакетные вызовы) вместо тяжёлых обходов.
+Зачем: уменьшает число ходов и время выполнения.">
+                  <input type="checkbox" id="chk-toolPruning" data-action="toggleOption" data-key="toolPruning" />
+                  <span class="toggle-chip-text">
+                    <span class="toggle-chip-title">Фильтр инструментов</span>
+                    <span class="toggle-chip-sub">Tool Pruning</span>
+                  </span>
+                </label>
+                <label class="toggle-chip" title="Что делает: отслеживает уже прочитанные в этом диалоге диапазоны строк и блокирует повторное чтение неизменённых файлов.
+Зачем: не тратит токены на перечитывание того, что уже есть в контексте.">
+                  <input type="checkbox" id="chk-readDedup" data-action="toggleOption" data-key="readDedup" />
+                  <span class="toggle-chip-text">
+                    <span class="toggle-chip-title">Read-Once Guard</span>
+                    <span class="toggle-chip-sub">анти-дубли чтения</span>
+                  </span>
+                </label>
+                <label class="toggle-chip" title="Что делает: сжимает длинные повторяющиеся строки в логах тестов и сборок (алгоритм Drain3), сохраняя строки с ошибками.
+Зачем: в контекст попадает суть сбоя, а не тысячи однотипных строк прогресса.">
+                  <input type="checkbox" id="chk-obsMasking" data-action="toggleOption" data-key="obsMasking" />
+                  <span class="toggle-chip-text">
+                    <span class="toggle-chip-title">Сжатие логов RTK</span>
+                    <span class="toggle-chip-sub">Fault Pinning</span>
+                  </span>
+                </label>
+                <label class="toggle-chip" title="Что делает: следит за размером контекста диалога и готовит компактный дайджест при приближении к порогу.
+Зачем: предотвращает деградацию внимания модели и потерю цели в длинных чатах.">
+                  <input type="checkbox" id="chk-historyCompaction" data-action="toggleOption" data-key="historyCompaction" />
+                  <span class="toggle-chip-text">
+                    <span class="toggle-chip-title">Защита от перегруза</span>
+                    <span class="toggle-chip-sub">AgentDiet и эпохи</span>
+                  </span>
+                </label>
+                <label class="toggle-chip" title="Что делает: считает скорость сжигания квоты за 30 и 60 минут и отслеживает попадания в префиксный кэш.
+Зачем: предупреждает о высоком расходе на главной карточке телеметрии.">
+                  <input type="checkbox" id="chk-quotaPacerEnabled" data-action="toggleOption" data-key="quotaPacerEnabled" />
+                  <span class="toggle-chip-text">
+                    <span class="toggle-chip-title">Quota Pacer</span>
+                    <span class="toggle-chip-sub">темп квоты 30/60м</span>
+                  </span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- БАЗА ОПЫТА И ПАМЯТЬ ПРОЕКТА SQLITE (вкладка Память) -->
+      <section class="lg-card" id="expertKnowledgeBox" data-tab-panel="memory">
+        <div id="expertKnowledgeHeadRow" class="lg-card-head" style="gap: 6px;">
+          <span class="lg-card-title" style="margin-right: auto;" title="Что делает: локальная база знаний проекта на SQLite WAL — хранит удачные починки багов («рецепты побед»), эпизоды прошлых чатов, инстинкты и связи с соседними репозиториями.
+Зачем: позволяет мгновенно находить проверенные решения и адаптировать навыки под проект.">База опыта и память проекта</span>
+          <span id="knowledgeStatsBadge" style="font-size: 10px; color: var(--text-sub);" title="Количество сохранённых рецептов починки и проиндексированных AST-файлов в SQLite">0 рец.</span>
+        </div>
+
+        <div class="bento-grid-2 bento-quick-toggles">
+          <label class="toggle-row bento-tile bento-toggle-tile" title="Что делает: хранит на диске в SQLite эпизоды чатов, рецепты побед, сжатые блоки вывода (CCR) и кэш RepairKV.
+Зачем: память и найденные решения не пропадают после перезапуска IDE.">
+            <span class="bento-toggle-meta">
+              <span class="bento-toggle-title">NVMe-память (<code>node:sqlite</code>)</span>
+              <span class="bento-toggle-sub">Постоянная база на диске</span>
+            </span>
+            <input type="checkbox" id="chk-sqliteKnowledgeEnabled" data-action="toggleOption" data-key="sqliteKnowledgeEnabled" />
+          </label>
+          <label class="toggle-row bento-tile bento-toggle-tile" title="Что делает: выделяет повторяющиеся рабочие приёмы и ошибки в проекте и накапливает их как инстинкты для последующего превращения в навыки.
+Зачем: роутер адаптируется к правилам именно вашего репозитория.">
+            <span class="bento-toggle-meta">
+              <span class="bento-toggle-title">Skill Crystallizer</span>
+              <span class="bento-toggle-sub">Авто-навыки из паттернов</span>
+            </span>
+            <input type="checkbox" id="chk-skillCrystallizer" data-action="toggleOption" data-key="skillCrystallizer" />
+          </label>
+        </div>
+
+        <div id="knowledgeExtendedStats" class="ui-hint-collapsed" style="font-size: 10px; color: var(--text-sub); margin-bottom: 4px;" title="Сводка записей в базе SQLite: эпизоды прошлых сессий, сжатые CCR-блоки, кэш RepairKV и накопленные инстинкты">Эпизоды: 0 · CCR-блобы: 0 · RepairKV: 0 · Инстинкты: 0</div>
+
+        <div class="bento-tile memory-hub-tile">
+          <div class="bento-subtabs-head">
+            <div class="bento-subtabs-bar" id="memorySubTabsBar" role="tablist" aria-label="Разделы базы опыта">
+              <button type="button" class="win-btn active" data-memory-tab="recipes" data-action="setMemorySubTab" data-arg="recipes" title="Успешные починки багов и прошлые эпизоды сессий">Рецепты побед</button>
+              <button type="button" class="win-btn" data-memory-tab="instincts" data-action="setMemorySubTab" data-arg="instincts" title="Повторяющиеся паттерны работы в проекте, готовые к превращению в постоянный навык SKILL.md">Инстинкты проекта</button>
+              <button type="button" class="win-btn" data-memory-tab="peers" data-action="setMemorySubTab" data-arg="peers" title="Связанные соседние репозитории для кросс-проектного поиска">Кросс-репо</button>
+            </div>
+          </div>
+
+          <div class="bento-subpanel" data-memory-panel="recipes">
+            <div class="bento-subpanel-actions">
+              <button type="button" class="win-btn bento-mini-btn" data-action="loadSessionEpisodes" title="Показать сохранённые эпизоды прошлых сессий (SQLite FTS5)">Эпизоды</button>
+              <button type="button" class="win-btn bento-mini-btn" data-action="clearVictoryRecipes" title="Очистить сохранённые рецепты успешных починок">Очистить</button>
+            </div>
+            <div class="pitfalls-scroll" id="victoryRecipesContainer">
+              <div style="color: var(--text-sub); font-size: 10.5px; padding: 2px;">Пока нет сохранённых рецептов побед</div>
+            </div>
+            <div class="pitfalls-scroll" id="sessionEpisodesContainer" style="display: none; margin-top: 6px; font-size: 10.5px;"></div>
+          </div>
+
+          <div class="bento-subpanel" id="projectInstinctsWrap" data-memory-panel="instincts">
+            <div class="bento-subpanel-actions">
+              <button type="button" class="win-btn bento-mini-btn" data-action="loadProjectInstincts" title="Что делает: загружает список паттернов, которые агент регулярно применяет в этом проекте (уверенность в % и число повторов xN).
+Зачем: зрелые инстинкты можно кнопкой Promote превратить в постоянный навык SKILL.md.">Обновить</button>
+            </div>
+            <div id="projectInstinctsList" class="pitfalls-scroll" style="font-size: 10.5px; color: var(--text-sub);">
+              <div>Нажмите «Обновить» для просмотра накопленных паттернов.</div>
+            </div>
+          </div>
+
+          <div class="bento-subpanel" data-memory-panel="peers">
+            <div style="display: flex; gap: 4px; align-items: center; margin-bottom: 6px;">
+              <input type="text" id="federatedPeerInput" class="win-input" placeholder="Путь к связанному репозиторию (напр. ../api)" style="flex: 1; font-size: 11px; padding: 3px 6px;" />
+              <button type="button" class="win-btn" data-action="addFederatedPeer" title="Привязать смежный репозиторий для кросс-проектного поиска">Связать</button>
+            </div>
+            <div id="federatedPeersContainer" style="font-size: 10.5px; color: var(--text-sub);"></div>
+          </div>
         </div>
       </section>
 
@@ -12678,34 +13195,36 @@
             <span class="lg-card-sub" id="skillsSummaryLabel">Умный Авто-режим</span>
           </div>
         </div>
-        <div class="skill-search-bar">
-          <input type="text" id="skillSearchInput" class="skill-search-input" placeholder="Найти навык (дизайн, видео, баги, игра)..." data-input-action="filterSkillsView" />
-          <button type="button" class="win-btn" data-action="resetAllSkillsToAuto" title="Вернуть все навыки под управление ИИ-автопилота">Все в Авто</button>
-          <button type="button" class="win-btn" id="btnToggleSkillRegistry" data-action="toggleSkillRegistryDrawer" title="Поиск по каталогу и безопасный карантинный импорт внешних навыков">Импорт</button>
-        </div>
-        <div class="sunken-box" id="skillRegistryDrawer" style="display: none; margin-bottom: 8px; padding: 8px;">
-          <div style="display: flex; gap: 4px; flex-wrap: wrap; align-items: center; margin-bottom: 6px;">
-            <span style="font-size: 10px; color: var(--text-sub);">Пресеты:</span>
-            <button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px;" data-action="selectCuratedSkillPreset" data-repo="mattpocock/skills" data-slug="grilling" title="Дерево вопросов перед задачей (Matt Pocock)">mattpocock/grilling</button>
-            <button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px;" data-action="selectCuratedSkillPreset" data-repo="vercel-labs/agent-skills" data-slug="react-best-practices" title="Правила React 19 и Next.js от Vercel">vercel/react</button>
-            <button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px;" data-action="selectCuratedSkillPreset" data-repo="Clipwing/skills" data-slug="real-sfx" title="Авто-звукорежиссура видео и таймлайна">clipwing/real-sfx</button>
-            <button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px;" data-action="selectCuratedSkillPreset" data-repo="addyosmani/agent-skills" data-slug="api-and-interface-design" title="Инженерный стандарт API от Addy Osmani">addyosmani/api</button>
-            <button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px;" data-action="selectCuratedSkillPreset" data-repo="forrestchang/andrej-karpathy-skills" data-slug="karpathy-guidelines" title="Хирургические правки без раздувания кода">karpathy</button>
+        <div class="bento-tile">
+          <div class="skill-search-bar">
+            <input type="text" id="skillSearchInput" class="skill-search-input" placeholder="Найти навык (дизайн, видео, баги, игра)..." data-input-action="filterSkillsView" />
+            <button type="button" class="win-btn" data-action="resetAllSkillsToAuto" title="Вернуть все навыки под управление ИИ-автопилота">Все в Авто</button>
+            <button type="button" class="win-btn" id="btnToggleSkillRegistry" data-action="toggleSkillRegistryDrawer" title="Поиск по каталогу и безопасный карантинный импорт внешних навыков">Импорт</button>
           </div>
-          <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px;">
-            <input type="text" id="extSkillSourceInput" class="win-input" placeholder="Поиск или owner/repo (GitHub / ClawHub)" style="flex: 1 1 140px; min-width: 0; font-size: 11px; padding: 4px 6px;" />
-            <input type="text" id="extSkillSlugInput" class="win-input" placeholder="slug (опц.)" style="flex: 0 1 88px; min-width: 0; font-size: 11px; padding: 4px 6px;" />
+          <div class="sunken-box" id="skillRegistryDrawer" style="display: none; margin-bottom: 8px; padding: 8px;">
+            <div style="display: flex; gap: 4px; flex-wrap: wrap; align-items: center; margin-bottom: 6px;">
+              <span style="font-size: 10px; color: var(--text-sub);">Пресеты:</span>
+              <button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px;" data-action="selectCuratedSkillPreset" data-repo="mattpocock/skills" data-slug="grilling" title="Дерево вопросов перед задачей (Matt Pocock)">mattpocock/grilling</button>
+              <button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px;" data-action="selectCuratedSkillPreset" data-repo="vercel-labs/agent-skills" data-slug="react-best-practices" title="Правила React 19 и Next.js от Vercel">vercel/react</button>
+              <button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px;" data-action="selectCuratedSkillPreset" data-repo="Clipwing/skills" data-slug="real-sfx" title="Авто-звукорежиссура видео и таймлайна">clipwing/real-sfx</button>
+              <button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px;" data-action="selectCuratedSkillPreset" data-repo="addyosmani/agent-skills" data-slug="api-and-interface-design" title="Инженерный стандарт API от Addy Osmani">addyosmani/api</button>
+              <button type="button" class="win-btn" style="padding: 1px 6px; font-size: 10px;" data-action="selectCuratedSkillPreset" data-repo="forrestchang/andrej-karpathy-skills" data-slug="karpathy-guidelines" title="Хирургические правки без раздувания кода">karpathy</button>
+            </div>
+            <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px;">
+              <input type="text" id="extSkillSourceInput" class="win-input" placeholder="Поиск или owner/repo (GitHub / ClawHub)" style="flex: 1 1 140px; min-width: 0; font-size: 11px; padding: 4px 6px;" />
+              <input type="text" id="extSkillSlugInput" class="win-input" placeholder="slug (опц.)" style="flex: 0 1 88px; min-width: 0; font-size: 11px; padding: 4px 6px;" />
+            </div>
+            <div style="display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; margin-bottom: 4px;">
+              <button type="button" class="win-btn" data-action="searchExternalSkills" title="Ищет подходящие навыки среди установленных и в публичном реестре по ключевым словам">Найти в каталоге</button>
+              <button type="button" class="win-btn active" data-action="importExternalSkill" title="Скачивает навык во временный карантин, прогоняет проверку AgentShield на вредоносные команды/инъекции и только потом устанавливает">Проверить и импортировать</button>
+            </div>
+            <div id="skillRegistryResults" class="pitfalls-scroll" style="font-size: 10.5px; color: var(--text-sub);">
+              Введите запрос для поиска навыков или адрес репозитория для карантинной проверки AgentShield.
+            </div>
           </div>
-          <div style="display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; margin-bottom: 4px;">
-            <button type="button" class="win-btn" data-action="searchExternalSkills" title="Ищет подходящие навыки среди установленных и в публичном реестре по ключевым словам">Найти в каталоге</button>
-            <button type="button" class="win-btn active" data-action="importExternalSkill" title="Скачивает навык во временный карантин, прогоняет проверку AgentShield на вредоносные команды/инъекции и только потом устанавливает">Проверить и импортировать</button>
+          <div class="sunken-box skills-scroll" id="skillsContainer">
+            <div style="color: var(--text-sub); font-size: 11px; padding: 4px;">Загрузка возможностей ИИ-пилота...</div>
           </div>
-          <div id="skillRegistryResults" class="pitfalls-scroll" style="font-size: 10.5px; color: var(--text-sub);">
-            Введите запрос для поиска навыков или адрес репозитория для карантинной проверки AgentShield.
-          </div>
-        </div>
-        <div class="sunken-box skills-scroll" id="skillsContainer">
-          <div style="color: var(--text-sub); font-size: 11px; padding: 4px;">Загрузка возможностей ИИ-пилота...</div>
         </div>
       </section>
 
@@ -12715,173 +13234,175 @@
           <span class="lg-card-title" title="Что делает: настраивает строгость хуков, 12 контуров безопасности, Unlazy Gate и сканер AgentShield.
 Зачем: предотвращает поломки, утечки секретов и ошибки без проверки.">Профиль хуков и контуры безопасности</span>
         </div>
-        <div class="control-row" style="margin: 2px 0 4px;">
-          <span style="font-weight: 600; font-size: 10.5px; color: var(--text-main);" title="Быстрый пресет строгости проверок: Лёгкий (минимум задержек), Стандарт (по вашим галочкам) или Строгий (принудительно включает все щиты)">Профиль хуков (<code>Hook Profile</code>):</span>
-          <div class="win-btn-group" id="hookProfileGroup">
-            <button type="button" class="win-btn" data-val="minimal" data-action="setHookProfile" data-arg="minimal" title="Минимальные задержки для прототипов: отключает тяжёлые каскадные и мутационные проверки">Лёгкий</button>
-            <button type="button" class="win-btn active" data-val="standard" data-action="setHookProfile" data-arg="standard" title="Стандартный баланс: использует индивидуальные переключатели ниже">Стандарт</button>
-            <button type="button" class="win-btn" data-val="strict" data-action="setHookProfile" data-arg="strict" title="Строгий аудит: принудительно включает все ключевые щиты, LSP и защиту конфигов">Строгий</button>
+        <div class="bento-grid-2">
+          <div class="bento-tile bento-control-tile">
+            <span class="bento-tile-title" title="Быстрый пресет строгости проверок: Лёгкий (минимум задержек), Стандарт (по вашим галочкам) или Строгий (принудительно включает все щиты)">Профиль хуков</span>
+            <div class="win-btn-group" id="hookProfileGroup">
+              <button type="button" class="win-btn" data-val="minimal" data-action="setHookProfile" data-arg="minimal" title="Минимальные задержки для прототипов: отключает тяжёлые каскадные и мутационные проверки">Лёгкий</button>
+              <button type="button" class="win-btn active" data-val="standard" data-action="setHookProfile" data-arg="standard" title="Стандартный баланс: использует индивидуальные переключатели ниже">Стандарт</button>
+              <button type="button" class="win-btn" data-val="strict" data-action="setHookProfile" data-arg="strict" title="Строгий аудит: принудительно включает все ключевые щиты, LSP и защиту конфигов">Строгий</button>
+            </div>
+            <div id="hookProfileHint" class="ui-hint-collapsed" style="font-size: 10px; color: var(--text-sub);">
+              Профиль «Стандарт»: действуют ваши индивидуальные переключатели контуров.
+            </div>
+          </div>
+
+          <div class="bento-tile bento-control-tile">
+            <div class="preset-label-wrap">
+              <span class="bento-tile-title" title="Набор контуров безопасности, отката и автопроверки правок">Защита правок</span>
+              <span class="preset-custom-pill" id="safetyPresetCustomPill" style="display: none;" title="Выбрана ручная комбинация контуров безопасности">Свой</span>
+            </div>
+            <div class="win-btn-group" id="safetyPresetGroup">
+              <button type="button" class="win-btn" data-val="light" data-action="applyTogglePreset" data-arg="safety:light" title="Базовые патчи, снимки отката, синтаксис, стоп-кран и фаервол без тяжёлых каскадов">Лёгкий</button>
+              <button type="button" class="win-btn" data-val="standard" data-action="applyTogglePreset" data-arg="safety:standard" title="Все 11 штатных контуров защиты и тестов (без мутационного фаззинга)">Стандарт</button>
+              <button type="button" class="win-btn" data-val="strict" data-action="applyTogglePreset" data-arg="safety:strict" title="Максимум: все 12 контуров безопасности, включая Mutation Guard">Параноик</button>
+            </div>
           </div>
         </div>
-        <div id="hookProfileHint" class="ui-hint-collapsed" style="font-size: 10px; color: var(--text-sub); margin-bottom: 6px;">
-          Профиль «Стандарт»: действуют ваши индивидуальные переключатели контуров.
-        </div>
-        <div class="preset-row">
-          <div class="preset-label-wrap">
-            <span class="preset-label" title="Набор контуров безопасности, отката и автопроверки правок">Защита правок:</span>
-            <span class="preset-custom-pill" id="safetyPresetCustomPill" style="display: none;" title="Выбрана ручная комбинация контуров безопасности">Свой</span>
-          </div>
-          <div class="win-btn-group" id="safetyPresetGroup">
-            <button type="button" class="win-btn" data-val="light" data-action="applyTogglePreset" data-arg="safety:light" title="Базовые патчи, снимки отката, синтаксис, стоп-кран и фаервол без тяжёлых каскадов">Лёгкий</button>
-            <button type="button" class="win-btn" data-val="standard" data-action="applyTogglePreset" data-arg="safety:standard" title="Все 11 штатных контуров защиты и тестов (без мутационного фаззинга)">Стандарт</button>
-            <button type="button" class="win-btn" data-val="strict" data-action="applyTogglePreset" data-arg="safety:strict" title="Максимум: все 12 контуров безопасности, включая Mutation Guard">Параноик</button>
-          </div>
-        </div>
-        <div class="tune-section-box is-inline-accordion" id="safetyContoursSection">
-          <button type="button" class="tune-section-head" data-action="toggleInlineSection" data-arg="safetyContoursSection" aria-expanded="false" title="Тонкая настройка контуров верификации, изоляции и защиты секретов">
-            <span class="tune-summary-label">Контуры безопасности и проверок</span>
-            <span class="tune-count-pill" id="safetyContoursCountBadge">11/12</span>
-            <svg class="tune-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button>
-          <div class="toggle-chip-grid">
-            <label class="toggle-chip" title="Что делает: требует точечных замен через edit_file вместо полной перезаписи больших файлов.
+
+        <div class="bento-tile" style="margin-top: 8px;">
+          <div class="tune-section-box is-inline-accordion" id="safetyContoursSection">
+            <button type="button" class="tune-section-head" data-action="toggleInlineSection" data-arg="safetyContoursSection" aria-expanded="false" title="Тонкая настройка контуров верификации, изоляции и защиты секретов">
+              <span class="tune-summary-label">Контуры безопасности и проверок</span>
+              <span class="tune-count-pill" id="safetyContoursCountBadge">11/12</span>
+              <svg class="tune-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.25L6 7.75L9.5 4.25" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <div class="toggle-chip-grid">
+              <label class="toggle-chip" title="Что делает: требует точечных замен через edit_file вместо полной перезаписи больших файлов.
 Зачем: защищает от случайного затирания чужого кода и сокращает объём генерации.">
-              <input type="checkbox" id="chk-diffOnly" data-action="toggleOption" data-key="diffOnly" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Diff-патчи</span>
-                <span class="toggle-chip-sub">Fuzzy-AST</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: проверяет синтаксис итогового файла в оперативной памяти до его сохранения на диск.
+                <input type="checkbox" id="chk-diffOnly" data-action="toggleOption" data-key="diffOnly" />
+                <span class="toggle-chip-text">
+                  <span class="toggle-chip-title">Diff-патчи</span>
+                  <span class="toggle-chip-sub">Fuzzy-AST</span>
+                </span>
+              </label>
+              <label class="toggle-chip" title="Что делает: проверяет синтаксис итогового файла в оперативной памяти до его сохранения на диск.
 Зачем: отсекает опечатки со скобками и синтаксические поломки ещё до записи.">
-              <input type="checkbox" id="chk-transactionalPatch" data-action="toggleOption" data-key="transactionalPatch" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Проверка до записи</span>
-                <span class="toggle-chip-sub">синтаксис в RAM</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: автоматически делает резервный снимок файла перед каждой правкой агента.
+                <input type="checkbox" id="chk-transactionalPatch" data-action="toggleOption" data-key="transactionalPatch" />
+                <span class="toggle-chip-text">
+                  <span class="toggle-chip-title">Проверка до записи</span>
+                  <span class="toggle-chip-sub">синтаксис в RAM</span>
+                </span>
+              </label>
+              <label class="toggle-chip" title="Что делает: автоматически делает резервный снимок файла перед каждой правкой агента.
 Зачем: позволяет в 1 клик откатить изменения в разделе «Снимки и откат правок».">
-              <input type="checkbox" id="chk-shadowCheckpoints" data-action="toggleOption" data-key="shadowCheckpoints" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Резервные снимки</span>
-                <span class="toggle-chip-sub">быстрый откат</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: разрешает изолированные рабочие копии git worktree для параллельных агентов и экспериментов.
+                <input type="checkbox" id="chk-shadowCheckpoints" data-action="toggleOption" data-key="shadowCheckpoints" />
+                <span class="toggle-chip-text">
+                  <span class="toggle-chip-title">Резервные снимки</span>
+                  <span class="toggle-chip-sub">быстрый откат</span>
+                </span>
+              </label>
+              <label class="toggle-chip" title="Что делает: разрешает изолированные рабочие копии git worktree для параллельных агентов и экспериментов.
 Зачем: воркеры не конфликтуют друг с другом и не портят вашу основную папку.">
-              <input type="checkbox" id="chk-shadowWorktreeEnabled" data-action="toggleOption" data-key="shadowWorktreeEnabled" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Git-песочница</span>
-                <span class="toggle-chip-sub">Shadow Worktree</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: перед редактированием файла находит все модули, которые его импортируют или вызывают.
+                <input type="checkbox" id="chk-shadowWorktreeEnabled" data-action="toggleOption" data-key="shadowWorktreeEnabled" />
+                <span class="toggle-chip-text">
+                  <span class="toggle-chip-title">Git-песочница</span>
+                  <span class="toggle-chip-sub">Shadow Worktree</span>
+                </span>
+              </label>
+              <label class="toggle-chip" title="Что делает: перед редактированием файла находит все модули, которые его импортируют или вызывают.
 Зачем: агент заранее видит «радиус взрыва» и не ломает соседние файлы.">
-              <input type="checkbox" id="chk-blastRadius" data-action="toggleOption" data-key="blastRadius" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Контроль связей</span>
-                <span class="toggle-chip-sub">Blast Radius</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: сразу после правки запускает быструю проверку синтаксиса/типов и обновляет RAM-индекс.
+                <input type="checkbox" id="chk-blastRadius" data-action="toggleOption" data-key="blastRadius" />
+                <span class="toggle-chip-text">
+                  <span class="toggle-chip-title">Контроль связей</span>
+                  <span class="toggle-chip-sub">Blast Radius</span>
+                </span>
+              </label>
+              <label class="toggle-chip" title="Что делает: сразу после правки запускает быструю проверку синтаксиса/типов и обновляет RAM-индекс.
 Зачем: ловит ошибки компиляции в тот же момент, когда они появились.">
-              <input type="checkbox" id="chk-selfVerify" data-action="toggleOption" data-key="selfVerify" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Self-Verify AST/TS</span>
-                <span class="toggle-chip-sub">авто-проверка</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: следит за сериями последовательных правок и предупреждает, если фиксы вызывают новые ошибки.
+                <input type="checkbox" id="chk-selfVerify" data-action="toggleOption" data-key="selfVerify" />
+                <span class="toggle-chip-text">
+                  <span class="toggle-chip-title">Self-Verify AST/TS</span>
+                  <span class="toggle-chip-sub">авто-проверка</span>
+                </span>
+              </label>
+              <label class="toggle-chip" title="Что делает: следит за сериями последовательных правок и предупреждает, если фиксы вызывают новые ошибки.
 Зачем: вовремя тормозит лавинообразные поломки.">
-              <input type="checkbox" id="chk-cascadeVerify" data-action="toggleOption" data-key="cascadeVerify" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Каскадная проверка</span>
-                <span class="toggle-chip-sub">серии правок</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: автоматически находит и запускает именно те тесты, которые связаны с изменённым файлом.
+                <input type="checkbox" id="chk-cascadeVerify" data-action="toggleOption" data-key="cascadeVerify" />
+                <span class="toggle-chip-text">
+                  <span class="toggle-chip-title">Каскадная проверка</span>
+                  <span class="toggle-chip-sub">серии правок</span>
+                </span>
+              </label>
+              <label class="toggle-chip" title="Что делает: автоматически находит и запускает именно те тесты, которые связаны с изменённым файлом.
 Зачем: быстрая проверка регрессий без ожидания всего тестового прогона проекта.">
-              <input type="checkbox" id="chk-testImpactVerify" data-action="toggleOption" data-key="testImpactVerify" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Test-Impact Verify</span>
-                <span class="toggle-chip-sub">тесты по связям</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: срабатывает при 3 однотипных ошибках или правках туда-сюда и блокирует слепые попытки.
+                <input type="checkbox" id="chk-testImpactVerify" data-action="toggleOption" data-key="testImpactVerify" />
+                <span class="toggle-chip-text">
+                  <span class="toggle-chip-title">Test-Impact Verify</span>
+                  <span class="toggle-chip-sub">тесты по связям</span>
+                </span>
+              </label>
+              <label class="toggle-chip" title="Что делает: срабатывает при 3 однотипных ошибках или правках туда-сюда и блокирует слепые попытки.
 Зачем: заставляет агента остановиться и пересмотреть подход вместо траты квоты.">
-              <input type="checkbox" id="chk-circuitBreaker" data-action="toggleOption" data-key="circuitBreaker" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Circuit Breaker</span>
-                <span class="toggle-chip-sub">стоп на 3 сбоях</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: блокирует опасные команды терминала (удаление системных папок, утечка ключей) и чтение файлов с секретами (.env, *.pem, токены).
+                <input type="checkbox" id="chk-circuitBreaker" data-action="toggleOption" data-key="circuitBreaker" />
+                <span class="toggle-chip-text">
+                  <span class="toggle-chip-title">Circuit Breaker</span>
+                  <span class="toggle-chip-sub">стоп на 3 сбоях</span>
+                </span>
+              </label>
+              <label class="toggle-chip" title="Что делает: блокирует опасные команды терминала (удаление системных папок, утечка ключей) и чтение файлов с секретами (.env, *.pem, токены).
 Зачем: защищает ваш ПК и приватные ключи от случайного доступа агентом.">
-              <input type="checkbox" id="chk-securityGuard" data-action="toggleOption" data-key="securityGuard" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Фаервол секретов</span>
-                <span class="toggle-chip-sub">защита .env</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: запрещает агенту ослаблять правила ESLint/Prettier/TSConfig ради «прохождения» проверки и обходить хуки через --no-verify.
+                <input type="checkbox" id="chk-securityGuard" data-action="toggleOption" data-key="securityGuard" />
+                <span class="toggle-chip-text">
+                  <span class="toggle-chip-title">Фаервол секретов</span>
+                  <span class="toggle-chip-sub">защита .env</span>
+                </span>
+              </label>
+              <label class="toggle-chip" title="Что делает: запрещает агенту ослаблять правила ESLint/Prettier/TSConfig ради «прохождения» проверки и обходить хуки через --no-verify.
 Зачем: сохраняет честное качество кода вместо подгонки конфигов под ошибку.">
-              <input type="checkbox" id="chk-configProtection" data-action="toggleOption" data-key="configProtection" />
-              <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Защита линтеров</span>
-                <span class="toggle-chip-sub">без --no-verify</span>
-              </span>
-            </label>
-            <label class="toggle-chip" title="Что делает: вносит мелкие искусственные мутации в код (инверсия условий/констант) и проверяет, поймают ли их ваши тесты.
+                <input type="checkbox" id="chk-configProtection" data-action="toggleOption" data-key="configProtection" />
+                <span class="toggle-chip-text">
+                  <span class="toggle-chip-title">Защита линтеров</span>
+                  <span class="toggle-chip-sub">без --no-verify</span>
+                </span>
+              </label>
+              <label class="toggle-chip" title="Что делает: вносит мелкие искусственные мутации в код (инверсия условий/констант) и проверяет, поймают ли их ваши тесты.
 Зачем: выявляет «бутафорские» тесты, которые всегда зелёные и ничего не проверяют.">
-              <input type="checkbox" id="chk-mutationGuardEnabled" data-action="toggleOption" data-key="mutationGuardEnabled" />
+                <input type="checkbox" id="chk-mutationGuardEnabled" data-action="toggleOption" data-key="mutationGuardEnabled" />
+                <span class="toggle-chip-text">
+                  <span class="toggle-chip-title">Mutation Guard</span>
+                  <span class="toggle-chip-sub">стойкость тестов</span>
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <div class="bento-guard-footer">
+            <label class="toggle-chip toggle-chip-inline" title="Что делает: проверяет перед завершением ответа, что не оставлены TODO/FIXME-заглушки, пересобрана панель ui.html и выполнены условия GATES.md.
+Зачем: не даёт агенту бросить задачу на полпути.">
+              <input type="checkbox" id="chk-completionGates" data-action="toggleOption" data-key="completionGates" />
               <span class="toggle-chip-text">
-                <span class="toggle-chip-title">Mutation Guard</span>
-                <span class="toggle-chip-sub">стойкость тестов</span>
+                <span class="toggle-chip-title">Unlazy Gate</span>
+                <span class="toggle-chip-sub">заглушки и GATES</span>
               </span>
             </label>
-          </div>
-        </div>
-        <div style="margin-top: 8px;">
-          <label class="toggle-chip toggle-chip-inline" title="Что делает: проверяет перед завершением ответа, что не оставлены TODO/FIXME-заглушки, пересобрана панель ui.html и выполнены условия GATES.md.
-Зачем: не даёт агенту бросить задачу на полпути.">
-            <input type="checkbox" id="chk-completionGates" data-action="toggleOption" data-key="completionGates" />
-            <span class="toggle-chip-text">
-              <span class="toggle-chip-title">Unlazy Gate</span>
-              <span class="toggle-chip-sub">заглушки и GATES</span>
-            </span>
-          </label>
-        </div>
-        <div class="divider"></div>
-        <div style="display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap;">
-          <span style="font-weight: 600; font-size: 10.5px; color: var(--ui-subhead);" title="Что делает: сканер безопасности AgentShield проверяет MCP, хуки и SKILL.md на секреты и prompt-injection.
-Зачем: страхует конфиги от опасных примеров и утечек до их срабатывания.">Безопасность AgentShield</span>
-          <div style="display: flex; gap: 4px; align-items: center; flex-wrap: wrap;">
-            <span class="swarm-pill idle" id="agentShieldBadge" title="Оценка безопасности конфигов, хуков и навыков проекта от 0 до 100 (A–F)">Не проверено</span>
-            <button type="button" class="win-btn" style="padding: 2px 8px; font-size: 10.5px;" data-action="runAgentShield" title="Что делает: сканирует конфиги MCP, хуки, переменные окружения и файлы SKILL.md на утечки секретов, опасные команды (curl|sh) и prompt-injection.
+            <div class="bento-shield-inline">
+              <span class="swarm-pill idle" id="agentShieldBadge" title="Оценка безопасности конфигов, хуков и навыков проекта от 0 до 100 (A–F)">Не проверено</span>
+              <button type="button" class="win-btn" style="padding: 2px 8px; font-size: 10.5px;" data-action="runAgentShield" title="Что делает: сканирует конфиги MCP, хуки, переменные окружения и файлы SKILL.md на утечки секретов, опасные команды (curl|sh) и prompt-injection.
 Зачем: находит уязвимости в окружении агента до их срабатывания.">Проверить AgentShield</button>
+            </div>
           </div>
-        </div>
-        <div id="agentShieldSummary" hidden style="font-size: 10.5px; color: var(--text-sub); margin-bottom: 4px;">
-          Аудит конфигов MCP, хуков и <code>SKILL.md</code> на секреты и prompt-injection.
+          <div id="agentShieldSummary" hidden style="font-size: 10.5px; color: var(--text-sub); margin-top: 6px;">
+            Аудит конфигов MCP, хуков и <code>SKILL.md</code> на секреты и prompt-injection.
+          </div>
         </div>
       </section>
 
-      <!-- РЕЗЕРВНАЯ КОПИЯ ПРОФИЛЯ (вкладка Настройки) -->
+      <!-- ЯЗЫК И ПРОФИЛЬ (вкладка Настройки) -->
       <section class="lg-card" id="expertProfileCard" data-tab-panel="settings">
         <div class="lg-card-head">
-          <span class="lg-card-title" title="Экспорт и восстановление файла router-state.json со всеми вашими настройками и лимитами">Резервная копия профиля</span>
+          <span class="lg-card-title" title="Экспорт и восстановление файла router-state.json со всеми вашими настройками и лимитами">Язык и профиль</span>
         </div>
-        <div class="settings-group-list">
-          <div class="control-row">
-            <span title="Язык интерфейса боковой панели и уведомлений">Язык интерфейса:</span>
+        <div class="bento-grid-2">
+          <div class="bento-tile bento-control-tile">
+            <span class="bento-tile-title" title="Язык интерфейса боковой панели и уведомлений">Язык интерфейса</span>
             <div class="win-btn-group" id="settingsLanguageGroup">
               <button type="button" class="win-btn lang-pill-btn" data-lang="ru" data-action="setUiLanguage" data-arg="ru" title="Русский">RU</button>
               <button type="button" class="win-btn lang-pill-btn" data-lang="en" data-action="setUiLanguage" data-arg="en" title="English">EN</button>
             </div>
           </div>
-          <div class="control-row">
-            <span title="Экспорт и восстановление файла router-state.json со всеми вашими настройками и лимитами">Резервная копия профиля:</span>
+          <div class="bento-tile bento-control-tile">
+            <span class="bento-tile-title" title="Экспорт и восстановление файла router-state.json со всеми вашими настройками и лимитами">Резервная копия</span>
             <div class="win-btn-group">
               <button type="button" class="win-btn" data-action="backupProfile" title="Сохранить копию текущих настроек роутера (router-state.json)">Сохранить</button>
               <button type="button" class="win-btn" data-action="restoreProfile" title="Восстановить ранее сохранённый профиль настроек роутера">Восстановить</button>
@@ -13918,7 +14439,37 @@
       'Единый профиль': 'Unified Profile',
       'Турбо': 'Turbo',
       'Аудит': 'Audit',
-      'Ускорение: Баланс · Дозор: Полный · Хуки: Стандарт · Разведка: Полный · Защита: Стандарт': 'Accel: Balanced · Sentinel: Full · Hooks: Standard · Intel: Full · Safety: Standard'
+      'Ускорение: Баланс · Дозор: Полный · Хуки: Стандарт · Разведка: Полный · Защита: Стандарт': 'Accel: Balanced · Sentinel: Full · Hooks: Standard · Intel: Full · Safety: Standard',
+      'План и развилки до кода': 'Plan & forks before code',
+      'Сразу в работу по шаблону': 'Execute immediately by preset',
+      'Тариф подписки': 'Subscription Tier',
+      'Без опросов на S/M': 'Skip S/M prompts',
+      'Модель и скиллы на M+': 'Model & skills on M+',
+      'Проверка диффов и тестов': 'Checks diffs & tests',
+      'Пересадка без сброса памяти': 'Failover keeping memory',
+      'Барьеры сбоев и диагностика': 'Fault Barriers & Diagnostics',
+      'Стоп-кран': 'Circuit Breaker',
+      'Надёжность ИИ': 'AI Reliability',
+      'Приёмка GATES': 'GATES Acceptance',
+      'Граф и Техдолг': 'Graph & Tech Debt',
+      'Карта': 'Map',
+      'Graphify v2 · Готов': 'Graphify v2 · Ready',
+      'Снимки и откат': 'Snapshots & Rollback',
+      'Хрупкие файлы': 'Fragile Files',
+      'Грабли сбоев': 'Failure Pitfalls',
+      'Бюджет эпохи': 'Epoch Budget',
+      'Порог сжатия:': 'Compaction threshold:',
+      'База опыта и память проекта': 'Experience Hub & Project Memory',
+      'Постоянная база на диске': 'Persistent disk DB',
+      'Авто-навыки из паттернов': 'Auto-skills from patterns',
+      'Рецепты побед': 'Win Recipes',
+      'Кросс-репо': 'Cross-Repo',
+      'Нажмите «Обновить» для просмотра накопленных паттернов.': 'Click "Refresh" to view learned patterns.',
+      'Профиль хуков': 'Hook Profile',
+      'Защита правок': 'Edit Safety',
+      'Язык и профиль': 'Language & Profile',
+      'Язык интерфейса': 'Interface language',
+      'Резервная копия': 'Backup'
     };
 
     const UI_RU_TO_EN_ATTR = {
@@ -14518,7 +15069,16 @@
       '120k токенов (рекомендуется): оптимальный баланс глубины памяти и стоимости кэша': '120k tokens (recommended): optimal balance of memory depth and cache cost',
       '180k токенов: длинная эпоха для масштабных многофайловых сессий': '180k tokens: long epoch for large multi-file sessions',
       '250k токенов: максимальный буфер истории до сборки дайджеста': '250k tokens: maximum history buffer before building a digest',
-      'Язык интерфейса боковой панели и уведомлений': 'Sidecar panel and notification language'
+      'Язык интерфейса боковой панели и уведомлений': 'Sidecar panel and notification language',
+      'Списки диагностики': 'Diagnostic lists',
+      'Резервные снимки файлов, откат ходов и Git-песочницы': 'File rollback snapshots, turn rollbacks, and Git sandboxes',
+      'Рейтинг файлов с повторными сбоями и отказами тестов (Bayesian v2)': 'Ranking of files with repeat failures and test breaks (Bayesian v2)',
+      'Журнал зафиксированных падений тестов и откатов (Pitfall Ledger)': 'Log of recorded test failures and rollbacks (Pitfall Ledger)',
+      'Что делает: локальная база знаний проекта на SQLite WAL — хранит удачные починки багов («рецепты побед»), эпизоды прошлых чатов, инстинкты и связи с соседними репозиториями. Зачем: позволяет мгновенно находить проверенные решения и адаптировать навыки под проект.': 'What it does: local SQLite WAL knowledge base storing bug-fix win recipes, session episodes, instincts, and linked sibling repos.\nWhy: finds proven fixes fast and adapts skills to your project.',
+      'Разделы базы опыта': 'Experience hub sections',
+      'Успешные починки багов и прошлые эпизоды сессий': 'Successful bug fixes and past session episodes',
+      'Связанные соседние репозитории для кросс-проектного поиска': 'Linked sibling repositories for cross-project search',
+      'Автоматический прогрев памяти и управление процессом Ollama': 'Automatic RAM warmup and Ollama process management'
     };
 
     function translateUiString(raw, dict) {
@@ -16579,6 +17139,14 @@
       if (Array.isArray(worktrees)) renderShadowWorktrees(worktrees);
       syncWorkspaceSwitcherBadge();
 
+      const snapsCountEl = document.getElementById('bugsTabCountSnaps');
+      if (snapsCountEl) {
+        const snapTotal = _checkpointsViewMode === 'turns' && _latestTurnCheckpointsList.length > 0
+          ? _latestTurnCheckpointsList.length
+          : _latestCheckpointsList.length;
+        snapsCountEl.textContent = snapTotal > 0 ? String(snapTotal) : '';
+      }
+
       document.querySelectorAll('#checkpointsViewGroup button').forEach((btn) => {
         btn.classList.toggle('active', btn.getAttribute('data-view') === _checkpointsViewMode);
       });
@@ -16847,23 +17415,46 @@
       if (el) el.textContent = 'The Tunnel v' + cleanVer;
     }
 
+    let _latestPitfallsList = [];
+
     function renderPitfalls(pitfalls) {
+      if (Array.isArray(pitfalls)) _latestPitfallsList = pitfalls;
+      const list = Array.isArray(pitfalls) ? pitfalls : _latestPitfallsList;
+      const tabCountEl = document.getElementById('bugsTabCountPitfalls');
+      if (tabCountEl) {
+        tabCountEl.textContent = list.length > 0 ? String(list.length) : '';
+      }
       const container = document.getElementById('pitfallsContainer');
       if (!container) return;
 
-      if (!pitfalls || !Array.isArray(pitfalls) || pitfalls.length === 0) {
+      if (!list || list.length === 0) {
         container.innerHTML = '<div style="color: var(--text-sub); font-size: 10.5px; padding: 2px;">' + L('Пока нет зафиксированных сбоев/откатов', 'No recorded failures or rollbacks yet') + '</div>';
         return;
       }
 
       let html = '';
-      for (let i = 0; i < pitfalls.length; i++) {
-        const item = pitfalls[i];
-        const text = typeof item === 'string' ? item : (item.rule || item.message || JSON.stringify(item));
+      for (let i = 0; i < list.length; i++) {
+        const item = list[i];
+        const rawText = typeof item === 'string' ? item : (item.rule || item.message || JSON.stringify(item));
+        const cleanText = String(rawText || '').replace(/\s+/g, ' ').trim();
+        const tagMatch = cleanText.match(/^\[([^\]]+)\]\s*(.+)$/);
+        let fileBadge = '';
+        let bodyText = cleanText;
+        if (tagMatch) {
+          fileBadge = '<span class="bento-file-tag">' + escapeHtml(tagMatch[1]) + '</span>';
+          bodyText = tagMatch[2];
+        }
+        bodyText = bodyText.replace(/\\\\\?\\([A-Za-z]:\\[^\s|]+)/g, function (_, p) {
+          const parts = p.split(/[\\/]/).filter(Boolean);
+          return parts.length > 2 ? ('…\\' + parts.slice(-2).join('\\')) : p;
+        });
         html +=
-          '<div class="pitfall-item">' +
+          '<div class="pitfall-item bento-pitfall-row" title="' + escapeHtml(cleanText) + '">' +
             '<span class="pitfall-bullet">!</span>' +
-            '<span class="pitfall-text">' + escapeHtml(text) + '</span>' +
+            '<div class="bento-pitfall-body">' +
+              fileBadge +
+              '<span class="pitfall-text bento-clamp-2">' + escapeHtml(bodyText) + '</span>' +
+            '</div>' +
           '</div>';
       }
       container.innerHTML = html;
@@ -16946,9 +17537,21 @@
                 fixDisplay = 'Проверка (' + m[1] + ') закрыла граблей: ' + m[2];
               }
             }
-            const label = (r.errorExcerpt ? r.errorExcerpt + ' → ' : '') + fixDisplay;
+            const fullLabel = (r.errorExcerpt ? r.errorExcerpt + ' → ' : '') + fixDisplay;
+            let shortExcerpt = r.errorExcerpt;
+            if (shortExcerpt && shortExcerpt.indexOf(',') !== -1) {
+              const parts = shortExcerpt.split(',').map(function (p) { return p.trim(); }).filter(Boolean);
+              if (parts.length > 2) {
+                shortExcerpt = parts.slice(0, 2).join(', ') + ' +' + (parts.length - 2) + L(' ф.', ' f.');
+              }
+            }
+            let shortFix = fixDisplay;
+            if (shortFix.length > 96) {
+              shortFix = shortFix.slice(0, 93).trim() + '…';
+            }
+            const label = (shortExcerpt ? shortExcerpt + ' → ' : '') + shortFix;
             const hitsBadge = r.hits > 1 ? '<span class="recipe-hits-badge">×' + r.hits + '</span>' : '';
-            return '<div class="pitfall-item"><span class="pitfall-bullet is-win">✓</span><span class="pitfall-text">' + escapeHtml(label) + hitsBadge + '</span></div>';
+            return '<div class="pitfall-item bento-recipe-row" title="' + escapeHtml(fullLabel) + '"><span class="pitfall-bullet is-win">✓</span><span class="pitfall-text bento-clamp-2">' + escapeHtml(label) + hitsBadge + '</span></div>';
           }).join('');
         }
       }
@@ -17630,9 +18233,7 @@
         });
       }
       if (payload && payload.pitfalls !== undefined) {
-        scheduleBlockRender('expertPitfallsBox', function () {
-          renderPitfalls(payload.pitfalls);
-        });
+        renderPitfalls(payload.pitfalls);
         scheduleBlockRender('expertKnowledgeBox', function () {
           renderKnowledgeHub(payload.victoryRecipes, payload.federatedPeers, payload.knowledgeStats);
         });
@@ -18580,10 +19181,54 @@
       behavior: ['agentModeCard', 'skillProfilesFieldset', 'swarmBehaviorCard'],
       economy: ['swarmTelemetryCard'],
       hardware: ['gpuRamCard', 'expertRamGpuFieldset'],
-      bugs: ['sentinelSectionCard', 'checkpointsCard', 'intelligenceBayesianCard', 'expertCircuitBox'],
-      memory: ['memoryContextCard', 'expertKnowledgeBox', 'expertPitfallsBox'],
+      bugs: ['sentinelSectionCard', 'checkpointsCard', 'intelligenceBayesianCard', 'expertCircuitBox', 'expertPitfallsBox'],
+      memory: ['memoryContextCard', 'expertKnowledgeBox'],
       settings: ['skillsSectionCard', 'expertGuardrailsCard', 'expertProfileCard'],
     };
+
+    let _bugsSubTabActive = 'snaps';
+    let _memorySubTabActive = 'recipes';
+
+    function setBugsSubTab(sub) {
+      const valid = (sub === 'fragile' || sub === 'pitfalls') ? sub : 'snaps';
+      _bugsSubTabActive = valid;
+      if (document.body) {
+        document.body.setAttribute('data-bugs-subtab', valid);
+      }
+      document.querySelectorAll('#bugsSubTabsBar [data-bugs-tab]').forEach(function (btn) {
+        const on = btn.getAttribute('data-bugs-tab') === valid;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      if (typeof refreshBlockVisibilityObserver === 'function') refreshBlockVisibilityObserver();
+      if (typeof flushVisibleBlockRenders === 'function') flushVisibleBlockRenders();
+      if (valid === 'pitfalls') {
+        if (typeof maybeLoadMissingSectionsForBlock === 'function') maybeLoadMissingSectionsForBlock('expertPitfallsBox');
+        renderPitfalls();
+      } else if (valid === 'fragile') {
+        if (typeof maybeLoadMissingSectionsForBlock === 'function') maybeLoadMissingSectionsForBlock('intelligenceBayesianCard');
+      } else {
+        if (typeof maybeLoadMissingSectionsForBlock === 'function') maybeLoadMissingSectionsForBlock('checkpointsCard');
+      }
+      if (typeof scheduleSyncAllSlidingPills === 'function') scheduleSyncAllSlidingPills();
+    }
+
+    function setMemorySubTab(sub) {
+      const valid = (sub === 'instincts' || sub === 'peers') ? sub : 'recipes';
+      _memorySubTabActive = valid;
+      if (document.body) {
+        document.body.setAttribute('data-memory-subtab', valid);
+      }
+      document.querySelectorAll('#memorySubTabsBar [data-memory-tab]').forEach(function (btn) {
+        const on = btn.getAttribute('data-memory-tab') === valid;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      if (valid === 'instincts' && typeof loadProjectInstincts === 'function') {
+        void loadProjectInstincts({ silent: true });
+      }
+      if (typeof scheduleSyncAllSlidingPills === 'function') scheduleSyncAllSlidingPills();
+    }
 
     function normalizePanelFullTab(rawTab) {
       const s = typeof rawTab === 'string' ? rawTab.trim().toLowerCase() : '';
@@ -18631,6 +19276,12 @@
       _panelFullTabActiveLocal = valid;
       if (document.body) {
         document.body.setAttribute('data-full-tab', valid);
+        if (!document.body.getAttribute('data-bugs-subtab')) {
+          document.body.setAttribute('data-bugs-subtab', _bugsSubTabActive);
+        }
+        if (!document.body.getAttribute('data-memory-subtab')) {
+          document.body.setAttribute('data-memory-subtab', _memorySubTabActive);
+        }
       }
       document.querySelectorAll('#fullTabsBar [data-full-tab]').forEach(function (btn) {
         const active = btn.getAttribute('data-full-tab') === valid;
@@ -19104,13 +19755,12 @@
       const runs = Number(bayesian.totalRuns ?? 0);
       const fpPct = bayesian.overallFirstPassPercent !== undefined ? Number(bayesian.overallFirstPassPercent) : null;
       const expTurns = bayesian.overallExpectedTurns !== undefined ? Number(bayesian.overallExpectedTurns) : null;
-      const codynTag = fpPct !== null && expTurns !== null
-        ? (L(' · 1-й проход: ', ' · 1st-pass: ') + fpPct + '% (~' + expTurns.toFixed(1) + L(' итер.)', ' iter.)'))
-        : '';
-      const ctxTag = Number(bayesian.contextualUpdates || 0) > 0
-        ? (L(' · конт. модель: ', ' · ctx model: ') + Number(bayesian.contextualUpdates))
-        : '';
-      metaEl.textContent = L('Доверие: ', 'Confidence: ') + conf + L('% · Запусков: ', '% · Runs: ') + runs + codynTag + ctxTag;
+      const shortFp = fpPct !== null ? (L(' · 1-й проход: ', ' · 1st-pass: ') + fpPct + '%') : '';
+      metaEl.textContent = L('Доверие: ', 'Trust: ') + conf + '%' + shortFp;
+      const detailParts = [L('Запусков: ', 'Runs: ') + runs];
+      if (expTurns !== null) detailParts.push('~' + expTurns.toFixed(1) + L(' итер.', ' iter.'));
+      if (Number(bayesian.contextualUpdates || 0) > 0) detailParts.push(L('конт. модель: ', 'ctx model: ') + Number(bayesian.contextualUpdates));
+      metaEl.title = detailParts.join(' · ');
 
       const domainsRaw = Array.isArray(bayesian.domains)
         ? bayesian.domains
@@ -19128,19 +19778,24 @@
         : (L('Домены: базовый априорный профиль (', 'Domains: baseline prior profile (') + conf + '%)');
 
       const fragile = Array.isArray(bayesian.fragileFiles) ? bayesian.fragileFiles : [];
+      const fragileCountEl = document.getElementById('bugsTabCountFragile');
+      if (fragileCountEl) {
+        fragileCountEl.textContent = fragile.length > 0 ? String(fragile.length) : '';
+      }
       if (fragile.length === 0) {
         fragileEl.innerHTML = '<span style="color: var(--status-ok); font-weight:600;">' + L('✓ Хрупких файлов с повторными сбоями не зафиксировано', '✓ No fragile files with repeat failures recorded') + '</span>';
       } else {
         fragileEl.innerHTML =
-          '<div style="color: var(--status-warn); font-weight:700; margin-bottom:2px;" title="' + L('Отсортировано от самых рискованных (меньше % надёжности — выше хрупкость)', 'Sorted riskiest first (lower reliability % = higher fragility)') + '">' + L('Матрица хрупкости (Топ-', 'Fragility Matrix (Top-') + fragile.length + '):</div>' +
           fragile
             .map((f) => {
-              const relColor = f.reliabilityPercent < 60 ? 'var(--status-err)' : 'var(--status-warn)';
-              const deps = f.dependentsCount > 0 ? (L(' · связей: ', ' · deps: ') + Number(f.dependentsCount)) : '';
+              const isCrit = f.reliabilityPercent < 60;
+              const pillCls = isCrit ? 'bento-risk-pill is-err' : 'bento-risk-pill is-warn';
+              const deps = f.dependentsCount > 0 ? (' · ' + Number(f.dependentsCount) + L(' св.', ' deps')) : '';
+              const fullTitle = L('Надёжность ', 'Reliability ') + Number(f.reliabilityPercent) + '% · ' + L('сбоев ', 'fails ') + Number(f.failures || 0) + '/' + Number(f.runs || 0) + (f.dependentsCount > 0 ? (L(' · связей: ', ' · deps: ') + Number(f.dependentsCount)) : '');
               return (
-                '<div style="display:flex; justify-content:space-between; gap:8px;">' +
-                  '<code style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + escHtml(f.file) + '</code>' +
-                  '<span style="color:' + relColor + '; white-space:nowrap;">' + L('надёжн. ', 'rel. ') + Number(f.reliabilityPercent) + '% · ' + L('сбоев ', 'fails ') + Number(f.failures || 0) + '/' + Number(f.runs || 0) + deps + '</span>' +
+                '<div class="bento-list-row" title="' + escHtml(fullTitle) + '">' +
+                  '<code class="bento-file-path">' + escHtml(f.file) + '</code>' +
+                  '<span class="' + pillCls + '">' + Number(f.reliabilityPercent) + '%' + deps + '</span>' +
                 '</div>'
               );
             })
@@ -20033,6 +20688,12 @@
           setPanelFullTab(ownerTab, { silent: true, skipAutoExpand: true, preserveScroll: true });
         }
       }
+      if (id === 'checkpointsCard') setBugsSubTab('snaps');
+      else if (id === 'bayesianWidget') setBugsSubTab('fragile');
+      else if (id === 'expertPitfallsBox' || id === 'pitfallsContainer') setBugsSubTab('pitfalls');
+      else if (id === 'projectInstinctsWrap' || id === 'projectInstinctsList') setMemorySubTab('instincts');
+      else if (id === 'victoryRecipesContainer' || id === 'sessionEpisodesContainer') setMemorySubTab('recipes');
+      else if (id === 'federatedPeersContainer' || id === 'federatedPeerInput') setMemorySubTab('peers');
       let cur = el.parentElement;
       while (cur) {
         if (cur.tagName === 'DETAILS' && !cur.open) {
@@ -24933,6 +25594,8 @@
         case 'jumpToPanelSection': if (typeof jumpToPanelSection === 'function') jumpToPanelSection(arg); break;
         case 'toggleInlineSection': if (typeof toggleInlineSection === 'function') toggleInlineSection(arg); break;
         case 'setPanelFullTab': if (typeof setPanelFullTab === 'function') setPanelFullTab(arg); break;
+        case 'setBugsSubTab': if (typeof setBugsSubTab === 'function') setBugsSubTab(arg); break;
+        case 'setMemorySubTab': if (typeof setMemorySubTab === 'function') setMemorySubTab(arg); break;
         case 'applyUnifiedPreset': if (typeof applyUnifiedPreset === 'function') applyUnifiedPreset(arg); break;
         case 'toggleSentinelFindingExpand': {
           const bodyEl = actionEl.parentElement;
@@ -25759,15 +26422,15 @@
       'gpuRamCard',
       'expertRamGpuFieldset',
       'sentinelSectionCard',
-      'checkpointsCard',
       'intelligenceBayesianCard',
       'expertCircuitBox',
+      'checkpointsCard',
+      'expertPitfallsBox',
       'memoryContextCard',
       'expertKnowledgeBox',
-      'expertPitfallsBox',
-      'skillsSectionCard',
+      'expertProfileCard',
       'expertGuardrailsCard',
-      'expertProfileCard'
+      'skillsSectionCard'
     ];
     const BLOCK_ORDER_STORAGE_KEY = 'ag_tunnel_panel_block_order_v1';
     let _suppressSummaryClickUntil = 0;
@@ -28189,7 +28852,7 @@
           primaryBtn = gdMakeActionBtn(L('Обновить', 'Refresh'), 'runGuardAudit', 'instincts', '', L('Обновить список накопленных инстинктов', 'Refresh learned project instincts'));
         }
         if (surf === 'full') {
-          extraBtn = gdMakeActionBtn(L('↓ Все', '↓ All'), 'jumpGuardFullSection', 'expertPitfallsBox', '', L('Перейти к полному списку инстинктов', 'Jump to full instincts list'));
+          extraBtn = gdMakeActionBtn(L('↓ Все', '↓ All'), 'jumpGuardFullSection', 'projectInstinctsWrap', '', L('Перейти к полному списку инстинктов', 'Jump to full instincts list'));
         }
         const items = Array.isArray(inst.items) ? inst.items : [];
         if (items.length === 0) {
@@ -29074,6 +29737,55 @@
       }
     }
 
+    let _agChatsStackFadeRaf = 0;
+
+    function syncActiveChatsStackFade(targetEl) {
+      const el = targetEl || document.getElementById('agActiveChatsStack');
+      if (!el) return;
+      const overflowPx = el.scrollHeight - el.clientHeight;
+      const hasOverflow = overflowPx > 2;
+      const showTop = hasOverflow && el.scrollTop > 2;
+      const showBottom = hasOverflow && (el.scrollTop + el.clientHeight < el.scrollHeight - 2);
+      el.classList.toggle('has-fade-top', showTop);
+      el.classList.toggle('has-fade-bottom', showBottom);
+    }
+
+    function scheduleActiveChatsStackFadeSync(targetEl) {
+      const el = targetEl || document.getElementById('agActiveChatsStack');
+      if (!el) return;
+      if (typeof requestAnimationFrame !== 'function') {
+        syncActiveChatsStackFade(el);
+        return;
+      }
+      if (_agChatsStackFadeRaf) return;
+      _agChatsStackFadeRaf = requestAnimationFrame(function () {
+        _agChatsStackFadeRaf = 0;
+        syncActiveChatsStackFade(el);
+      });
+    }
+
+    function ensureActiveChatsStackFadeListeners(el) {
+      if (!el || el._agChatsStackFadeBound) return;
+      el._agChatsStackFadeBound = true;
+      el.addEventListener('scroll', function () {
+        syncActiveChatsStackFade(el);
+      }, { passive: true });
+      el.addEventListener('transitionend', function () {
+        scheduleActiveChatsStackFadeSync(el);
+      });
+      if (typeof ResizeObserver === 'function') {
+        const ro = new ResizeObserver(function () {
+          scheduleActiveChatsStackFadeSync(el);
+        });
+        ro.observe(el);
+      }
+      if (typeof window !== 'undefined' && window.addEventListener) {
+        window.addEventListener('resize', function () {
+          scheduleActiveChatsStackFadeSync(el);
+        }, { passive: true });
+      }
+    }
+
     function renderTaskProgressAndHud(progress, hud) {
       const p = progress || (hud && hud.progress) || null;
       if (!p) return;
@@ -29083,6 +29795,7 @@
       const recentBarEl = document.getElementById('agRecentProjectsBar');
       const stackEl = document.getElementById('agActiveChatsStack');
       if (!stackEl) return;
+      ensureActiveChatsStackFadeListeners(stackEl);
 
       function formatChatsWord(n) {
         return Lplural(n, 'чат', 'чата', 'чатов', 'chat', 'chats');
@@ -29974,6 +30687,8 @@
           } catch {}
         }
         if (typeof syncFullLeftRailStickyOffset === 'function') syncFullLeftRailStickyOffset();
+        syncActiveChatsStackFade(stackEl);
+        scheduleActiveChatsStackFadeSync(stackEl);
         return;
       }
 
@@ -30289,6 +31004,8 @@
           }
         });
       }
+      syncActiveChatsStackFade(stackEl);
+      scheduleActiveChatsStackFadeSync(stackEl);
     }
 
     document.addEventListener('pointerdown', function (ev) {

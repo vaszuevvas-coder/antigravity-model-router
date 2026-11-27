@@ -559,6 +559,14 @@
       if (Array.isArray(worktrees)) renderShadowWorktrees(worktrees);
       syncWorkspaceSwitcherBadge();
 
+      const snapsCountEl = document.getElementById('bugsTabCountSnaps');
+      if (snapsCountEl) {
+        const snapTotal = _checkpointsViewMode === 'turns' && _latestTurnCheckpointsList.length > 0
+          ? _latestTurnCheckpointsList.length
+          : _latestCheckpointsList.length;
+        snapsCountEl.textContent = snapTotal > 0 ? String(snapTotal) : '';
+      }
+
       document.querySelectorAll('#checkpointsViewGroup button').forEach((btn) => {
         btn.classList.toggle('active', btn.getAttribute('data-view') === _checkpointsViewMode);
       });
@@ -827,23 +835,46 @@
       if (el) el.textContent = 'The Tunnel v' + cleanVer;
     }
 
+    let _latestPitfallsList = [];
+
     function renderPitfalls(pitfalls) {
+      if (Array.isArray(pitfalls)) _latestPitfallsList = pitfalls;
+      const list = Array.isArray(pitfalls) ? pitfalls : _latestPitfallsList;
+      const tabCountEl = document.getElementById('bugsTabCountPitfalls');
+      if (tabCountEl) {
+        tabCountEl.textContent = list.length > 0 ? String(list.length) : '';
+      }
       const container = document.getElementById('pitfallsContainer');
       if (!container) return;
 
-      if (!pitfalls || !Array.isArray(pitfalls) || pitfalls.length === 0) {
+      if (!list || list.length === 0) {
         container.innerHTML = '<div style="color: var(--text-sub); font-size: 10.5px; padding: 2px;">' + L('Пока нет зафиксированных сбоев/откатов', 'No recorded failures or rollbacks yet') + '</div>';
         return;
       }
 
       let html = '';
-      for (let i = 0; i < pitfalls.length; i++) {
-        const item = pitfalls[i];
-        const text = typeof item === 'string' ? item : (item.rule || item.message || JSON.stringify(item));
+      for (let i = 0; i < list.length; i++) {
+        const item = list[i];
+        const rawText = typeof item === 'string' ? item : (item.rule || item.message || JSON.stringify(item));
+        const cleanText = String(rawText || '').replace(/\s+/g, ' ').trim();
+        const tagMatch = cleanText.match(/^\[([^\]]+)\]\s*(.+)$/);
+        let fileBadge = '';
+        let bodyText = cleanText;
+        if (tagMatch) {
+          fileBadge = '<span class="bento-file-tag">' + escapeHtml(tagMatch[1]) + '</span>';
+          bodyText = tagMatch[2];
+        }
+        bodyText = bodyText.replace(/\\\\\?\\([A-Za-z]:\\[^\s|]+)/g, function (_, p) {
+          const parts = p.split(/[\\/]/).filter(Boolean);
+          return parts.length > 2 ? ('…\\' + parts.slice(-2).join('\\')) : p;
+        });
         html +=
-          '<div class="pitfall-item">' +
+          '<div class="pitfall-item bento-pitfall-row" title="' + escapeHtml(cleanText) + '">' +
             '<span class="pitfall-bullet">!</span>' +
-            '<span class="pitfall-text">' + escapeHtml(text) + '</span>' +
+            '<div class="bento-pitfall-body">' +
+              fileBadge +
+              '<span class="pitfall-text bento-clamp-2">' + escapeHtml(bodyText) + '</span>' +
+            '</div>' +
           '</div>';
       }
       container.innerHTML = html;
@@ -926,9 +957,21 @@
                 fixDisplay = 'Проверка (' + m[1] + ') закрыла граблей: ' + m[2];
               }
             }
-            const label = (r.errorExcerpt ? r.errorExcerpt + ' → ' : '') + fixDisplay;
+            const fullLabel = (r.errorExcerpt ? r.errorExcerpt + ' → ' : '') + fixDisplay;
+            let shortExcerpt = r.errorExcerpt;
+            if (shortExcerpt && shortExcerpt.indexOf(',') !== -1) {
+              const parts = shortExcerpt.split(',').map(function (p) { return p.trim(); }).filter(Boolean);
+              if (parts.length > 2) {
+                shortExcerpt = parts.slice(0, 2).join(', ') + ' +' + (parts.length - 2) + L(' ф.', ' f.');
+              }
+            }
+            let shortFix = fixDisplay;
+            if (shortFix.length > 96) {
+              shortFix = shortFix.slice(0, 93).trim() + '…';
+            }
+            const label = (shortExcerpt ? shortExcerpt + ' → ' : '') + shortFix;
             const hitsBadge = r.hits > 1 ? '<span class="recipe-hits-badge">×' + r.hits + '</span>' : '';
-            return '<div class="pitfall-item"><span class="pitfall-bullet is-win">✓</span><span class="pitfall-text">' + escapeHtml(label) + hitsBadge + '</span></div>';
+            return '<div class="pitfall-item bento-recipe-row" title="' + escapeHtml(fullLabel) + '"><span class="pitfall-bullet is-win">✓</span><span class="pitfall-text bento-clamp-2">' + escapeHtml(label) + hitsBadge + '</span></div>';
           }).join('');
         }
       }
@@ -1610,9 +1653,7 @@
         });
       }
       if (payload && payload.pitfalls !== undefined) {
-        scheduleBlockRender('expertPitfallsBox', function () {
-          renderPitfalls(payload.pitfalls);
-        });
+        renderPitfalls(payload.pitfalls);
         scheduleBlockRender('expertKnowledgeBox', function () {
           renderKnowledgeHub(payload.victoryRecipes, payload.federatedPeers, payload.knowledgeStats);
         });
@@ -2560,10 +2601,54 @@
       behavior: ['agentModeCard', 'skillProfilesFieldset', 'swarmBehaviorCard'],
       economy: ['swarmTelemetryCard'],
       hardware: ['gpuRamCard', 'expertRamGpuFieldset'],
-      bugs: ['sentinelSectionCard', 'checkpointsCard', 'intelligenceBayesianCard', 'expertCircuitBox'],
-      memory: ['memoryContextCard', 'expertKnowledgeBox', 'expertPitfallsBox'],
+      bugs: ['sentinelSectionCard', 'checkpointsCard', 'intelligenceBayesianCard', 'expertCircuitBox', 'expertPitfallsBox'],
+      memory: ['memoryContextCard', 'expertKnowledgeBox'],
       settings: ['skillsSectionCard', 'expertGuardrailsCard', 'expertProfileCard'],
     };
+
+    let _bugsSubTabActive = 'snaps';
+    let _memorySubTabActive = 'recipes';
+
+    function setBugsSubTab(sub) {
+      const valid = (sub === 'fragile' || sub === 'pitfalls') ? sub : 'snaps';
+      _bugsSubTabActive = valid;
+      if (document.body) {
+        document.body.setAttribute('data-bugs-subtab', valid);
+      }
+      document.querySelectorAll('#bugsSubTabsBar [data-bugs-tab]').forEach(function (btn) {
+        const on = btn.getAttribute('data-bugs-tab') === valid;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      if (typeof refreshBlockVisibilityObserver === 'function') refreshBlockVisibilityObserver();
+      if (typeof flushVisibleBlockRenders === 'function') flushVisibleBlockRenders();
+      if (valid === 'pitfalls') {
+        if (typeof maybeLoadMissingSectionsForBlock === 'function') maybeLoadMissingSectionsForBlock('expertPitfallsBox');
+        renderPitfalls();
+      } else if (valid === 'fragile') {
+        if (typeof maybeLoadMissingSectionsForBlock === 'function') maybeLoadMissingSectionsForBlock('intelligenceBayesianCard');
+      } else {
+        if (typeof maybeLoadMissingSectionsForBlock === 'function') maybeLoadMissingSectionsForBlock('checkpointsCard');
+      }
+      if (typeof scheduleSyncAllSlidingPills === 'function') scheduleSyncAllSlidingPills();
+    }
+
+    function setMemorySubTab(sub) {
+      const valid = (sub === 'instincts' || sub === 'peers') ? sub : 'recipes';
+      _memorySubTabActive = valid;
+      if (document.body) {
+        document.body.setAttribute('data-memory-subtab', valid);
+      }
+      document.querySelectorAll('#memorySubTabsBar [data-memory-tab]').forEach(function (btn) {
+        const on = btn.getAttribute('data-memory-tab') === valid;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      if (valid === 'instincts' && typeof loadProjectInstincts === 'function') {
+        void loadProjectInstincts({ silent: true });
+      }
+      if (typeof scheduleSyncAllSlidingPills === 'function') scheduleSyncAllSlidingPills();
+    }
 
     function normalizePanelFullTab(rawTab) {
       const s = typeof rawTab === 'string' ? rawTab.trim().toLowerCase() : '';
@@ -2611,6 +2696,12 @@
       _panelFullTabActiveLocal = valid;
       if (document.body) {
         document.body.setAttribute('data-full-tab', valid);
+        if (!document.body.getAttribute('data-bugs-subtab')) {
+          document.body.setAttribute('data-bugs-subtab', _bugsSubTabActive);
+        }
+        if (!document.body.getAttribute('data-memory-subtab')) {
+          document.body.setAttribute('data-memory-subtab', _memorySubTabActive);
+        }
       }
       document.querySelectorAll('#fullTabsBar [data-full-tab]').forEach(function (btn) {
         const active = btn.getAttribute('data-full-tab') === valid;
@@ -3084,13 +3175,12 @@
       const runs = Number(bayesian.totalRuns ?? 0);
       const fpPct = bayesian.overallFirstPassPercent !== undefined ? Number(bayesian.overallFirstPassPercent) : null;
       const expTurns = bayesian.overallExpectedTurns !== undefined ? Number(bayesian.overallExpectedTurns) : null;
-      const codynTag = fpPct !== null && expTurns !== null
-        ? (L(' · 1-й проход: ', ' · 1st-pass: ') + fpPct + '% (~' + expTurns.toFixed(1) + L(' итер.)', ' iter.)'))
-        : '';
-      const ctxTag = Number(bayesian.contextualUpdates || 0) > 0
-        ? (L(' · конт. модель: ', ' · ctx model: ') + Number(bayesian.contextualUpdates))
-        : '';
-      metaEl.textContent = L('Доверие: ', 'Confidence: ') + conf + L('% · Запусков: ', '% · Runs: ') + runs + codynTag + ctxTag;
+      const shortFp = fpPct !== null ? (L(' · 1-й проход: ', ' · 1st-pass: ') + fpPct + '%') : '';
+      metaEl.textContent = L('Доверие: ', 'Trust: ') + conf + '%' + shortFp;
+      const detailParts = [L('Запусков: ', 'Runs: ') + runs];
+      if (expTurns !== null) detailParts.push('~' + expTurns.toFixed(1) + L(' итер.', ' iter.'));
+      if (Number(bayesian.contextualUpdates || 0) > 0) detailParts.push(L('конт. модель: ', 'ctx model: ') + Number(bayesian.contextualUpdates));
+      metaEl.title = detailParts.join(' · ');
 
       const domainsRaw = Array.isArray(bayesian.domains)
         ? bayesian.domains
@@ -3108,19 +3198,24 @@
         : (L('Домены: базовый априорный профиль (', 'Domains: baseline prior profile (') + conf + '%)');
 
       const fragile = Array.isArray(bayesian.fragileFiles) ? bayesian.fragileFiles : [];
+      const fragileCountEl = document.getElementById('bugsTabCountFragile');
+      if (fragileCountEl) {
+        fragileCountEl.textContent = fragile.length > 0 ? String(fragile.length) : '';
+      }
       if (fragile.length === 0) {
         fragileEl.innerHTML = '<span style="color: var(--status-ok); font-weight:600;">' + L('✓ Хрупких файлов с повторными сбоями не зафиксировано', '✓ No fragile files with repeat failures recorded') + '</span>';
       } else {
         fragileEl.innerHTML =
-          '<div style="color: var(--status-warn); font-weight:700; margin-bottom:2px;" title="' + L('Отсортировано от самых рискованных (меньше % надёжности — выше хрупкость)', 'Sorted riskiest first (lower reliability % = higher fragility)') + '">' + L('Матрица хрупкости (Топ-', 'Fragility Matrix (Top-') + fragile.length + '):</div>' +
           fragile
             .map((f) => {
-              const relColor = f.reliabilityPercent < 60 ? 'var(--status-err)' : 'var(--status-warn)';
-              const deps = f.dependentsCount > 0 ? (L(' · связей: ', ' · deps: ') + Number(f.dependentsCount)) : '';
+              const isCrit = f.reliabilityPercent < 60;
+              const pillCls = isCrit ? 'bento-risk-pill is-err' : 'bento-risk-pill is-warn';
+              const deps = f.dependentsCount > 0 ? (' · ' + Number(f.dependentsCount) + L(' св.', ' deps')) : '';
+              const fullTitle = L('Надёжность ', 'Reliability ') + Number(f.reliabilityPercent) + '% · ' + L('сбоев ', 'fails ') + Number(f.failures || 0) + '/' + Number(f.runs || 0) + (f.dependentsCount > 0 ? (L(' · связей: ', ' · deps: ') + Number(f.dependentsCount)) : '');
               return (
-                '<div style="display:flex; justify-content:space-between; gap:8px;">' +
-                  '<code style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + escHtml(f.file) + '</code>' +
-                  '<span style="color:' + relColor + '; white-space:nowrap;">' + L('надёжн. ', 'rel. ') + Number(f.reliabilityPercent) + '% · ' + L('сбоев ', 'fails ') + Number(f.failures || 0) + '/' + Number(f.runs || 0) + deps + '</span>' +
+                '<div class="bento-list-row" title="' + escHtml(fullTitle) + '">' +
+                  '<code class="bento-file-path">' + escHtml(f.file) + '</code>' +
+                  '<span class="' + pillCls + '">' + Number(f.reliabilityPercent) + '%' + deps + '</span>' +
                 '</div>'
               );
             })
@@ -4013,6 +4108,12 @@
           setPanelFullTab(ownerTab, { silent: true, skipAutoExpand: true, preserveScroll: true });
         }
       }
+      if (id === 'checkpointsCard') setBugsSubTab('snaps');
+      else if (id === 'bayesianWidget') setBugsSubTab('fragile');
+      else if (id === 'expertPitfallsBox' || id === 'pitfallsContainer') setBugsSubTab('pitfalls');
+      else if (id === 'projectInstinctsWrap' || id === 'projectInstinctsList') setMemorySubTab('instincts');
+      else if (id === 'victoryRecipesContainer' || id === 'sessionEpisodesContainer') setMemorySubTab('recipes');
+      else if (id === 'federatedPeersContainer' || id === 'federatedPeerInput') setMemorySubTab('peers');
       let cur = el.parentElement;
       while (cur) {
         if (cur.tagName === 'DETAILS' && !cur.open) {

@@ -452,7 +452,7 @@
           primaryBtn = gdMakeActionBtn(L('Обновить', 'Refresh'), 'runGuardAudit', 'instincts', '', L('Обновить список накопленных инстинктов', 'Refresh learned project instincts'));
         }
         if (surf === 'full') {
-          extraBtn = gdMakeActionBtn(L('↓ Все', '↓ All'), 'jumpGuardFullSection', 'expertPitfallsBox', '', L('Перейти к полному списку инстинктов', 'Jump to full instincts list'));
+          extraBtn = gdMakeActionBtn(L('↓ Все', '↓ All'), 'jumpGuardFullSection', 'projectInstinctsWrap', '', L('Перейти к полному списку инстинктов', 'Jump to full instincts list'));
         }
         const items = Array.isArray(inst.items) ? inst.items : [];
         if (items.length === 0) {
