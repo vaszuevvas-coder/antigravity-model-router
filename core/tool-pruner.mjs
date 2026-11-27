@@ -13,6 +13,27 @@ import {
 import { expandRuQueryToEnTerms } from './ru-en-lexicon.mjs';
 import { normalizeLang, resolveStateLanguage } from './i18n.mjs';
 
+function asObj(val) {
+  return val && typeof val === 'object' ? val : {};
+}
+
+function asPlainObj(val) {
+  return val && typeof val === 'object' && !Array.isArray(val) ? val : {};
+}
+
+function normalizeRelPath(rawPath = '') {
+  return String(rawPath || '').replace(/\\/g, '/').replace(/^\.\//, '');
+}
+
+function normalizeDepKey(rawPath = '') {
+  const norm = normalizeRelPath(rawPath);
+  return process.platform === 'win32' ? norm.toLowerCase() : norm;
+}
+
+function isProSubscription(state) {
+  return String(state?.subscriptionTier || '').trim().toLowerCase() === 'pro';
+}
+
 // Регулярные выражения и паттерны для классификации домена задачи
 const DOMAIN_PATTERNS = {
   algo_refactor: [
@@ -29,13 +50,20 @@ const DOMAIN_PATTERNS = {
   ],
   docs: [
     /\b(?:docs|documentation|readme(?:\.md)?|changelog(?:\.md)?|contributing(?:\.md)?|security\.md|jsdoc|tsdoc|@param|@returns|mermaid|sequenceDiagram|flowchart|adr|cheat\s*sheet|troubleshooting\s+guide|release\s+notes|style\s+guide|prompt\s+cookbook|release\s+checklist)\b/i,
-    /(?:документаци|ридми|справк[уиа]\s+(?:cli|--help)|руководств|чейнджлог|комментари[иев]\s+(?:jsdoc|с\s+типами)|архитектурн[а-яё]*\s+записк|шпаргал(?:к|ок)|глоссари|релиз[-\s]?ноутс|чек[-\s]?лист\s+готовност|стандарт\s+кодирования|обзорн[а-яё]*\s+стать|диаграмм[а-яё]*\s+последовательност|блок[-\s]?схем|(?:напиши|оформи|составь|переведи|обнови|добавь|опиши|сократи).*?(?:документаци|руководств|справочник|инструкци|гайд|мануал|стать[юя]|памятк|шпаргалк|глоссари|описани[ея]\s+(?:пакета|всех\s+метрик|параметров|ошибок\s+в\s+конфигурационн)|примеры\s+(?:использования\s+cli|интеграции\s+хуков)|раздел\s+faq|таблиц[уы]\s+сравнени|сравнение\s+трех\s+режимов|сценарий\s+миграции\s+со\s+старой|спецификаци[юя]\s+протокола|внутреннее\s+устройство\s+кэширования\s+ast|сообщения\s+об\s+ошибках\s+валидатора\s+на\s+русский|интерфейс\s+и\s+встроенные\s+подсказки\s+справки|понятную\s+справку\s+`?--help))/i
+    /(?:документаци|ридми|справк[уиа]\s+(?:cli|--help)|руководств|чейнджлог|комментари[иев]\s+(?:jsdoc|с\s+типами)|архитектурн[а-яё]*\s+записк|шпаргал(?:к|ок)|глоссари|релиз[-\s]?ноутс|чек[-\s]?лист\s+готовност|стандарт\s+кодирования|обзорн[а-яё]*\s+стать|диаграмм[а-яё]*\s+последовательност|блок[-\s]?схем|(?:напиши|оформи|составь|переведи|обнови|добавь|опиши|сократи)[^\r\n]{0,240}?(?:документаци|руководств|справочник|инструкци|гайд|мануал|стать[юя]|памятк|шпаргалк|глоссари|описани[ея]\s+(?:пакета|всех\s+метрик|параметров|ошибок\s+в\s+конфигурационн)|примеры\s+(?:использования\s+cli|интеграции\s+хуков)|раздел\s+faq|таблиц[уы]\s+сравнени|сравнение\s+трех\s+режимов|сценарий\s+миграции\s+со\s+старой|спецификаци[юя]\s+протокола|внутреннее\s+устройство\s+кэширования\s+ast|сообщения\s+об\s+ошибках\s+валидатора\s+на\s+русский|интерфейс\s+и\s+встроенные\s+подсказки\s+справки|понятную\s+справку\s+`?--help))/i
   ],
   devops: [
     /\b(?:docker(?:file|ignore|-compose)?|k8s|kubernetes|ci\/cd|github\s+(?:actions?|secrets|packages)|powershell|helm|nginx|reverse-proxy|systemd|oomkilled|sigterm|buildkit|SSL|TLS|HTTPS|Makefile|pre-commit|pm2|loki|promtail|trivy|readinessProbe|livenessProbe|HPA|zero-downtime|wait-for-it|crontab|cron|tmux|screen)\b/i,
     /(?:депло[йяю]|докер|кубер|(?<!(?:flex|grid|флекс|грид|dom)[-\s])контейнер|пайплайн|павершел|многоступенчат[а-яё]*.*dockerfile|ротац[а-яё]*\s+(?:и\s+архивац[а-яё]*\s+)?лог|юнит[-\s]?файл|предкоммитн[а-яё]*\s+хук|кроссплатформенн[а-яё]*\s+бинарник[а-яё]*\s+в\s+ci|свободн[а-яё]*\s+мест[ао]\s+на\s+диске|раздач[ау]\s+статики\s+напрямую\s+через\s+nginx|перевод[а-яё]*\s+трафика|canary\s+rollout|симлинк[а-яё]*\s+релиза|самоподписанн[а-яё]*\s+сертификат|профилирован[а-яё]*\s+времени\s+старта\s+всех\s+сервисов|диагностик[аи]\s+окружения|регистраци[ия]\s+хуков\s+в\s+конфигурационн|конфликт\s+портов\s+при\s+параллельном|зашифрованн[а-яё]*\s+архив[а-яё]*\s+бэкапа|переменн[а-яё]*\s+окружения\s+перед\s+запуском|воркфлоу\s+для\s+автоматической\s+проверки.*при\s+пуше|публикаци[юя]\s+npm-пакета.*git-тег|сесси[юя]\s+screen\s*\/\s*tmux|\.env\.example|\.gitattributes)/i
   ]
 };
+
+const DOMAIN_PATTERNS_GLOBAL = Object.fromEntries(
+  Object.entries(DOMAIN_PATTERNS).map(([domain, patterns]) => [
+    domain,
+    patterns.map((p) => new RegExp(p.source, p.flags.includes('g') ? p.flags : `${p.flags}g`)),
+  ])
+);
 
 const PLAIN_INTENT_SPECS = [
   { id: 'UI_DESIGN', rx: /(?:дизайн|редизайн|оформл(?:ени|ить)(?!\s+кода)|модалк|верстк)/i, spec: 'UI_DESIGN: Semantic CSS tokens (:root), contrast >=4.5:1, overflow-safe grid.' },
@@ -70,6 +98,7 @@ export function detectPromptIntentSignals(promptText = '') {
       isAnalogyOrClone: false,
       isFollowUpMultiTarget: false,
       isApprovalFollowUp: false,
+      isArtifactDocApproval: false,
       isPlanReview: false
     };
   }
@@ -116,13 +145,20 @@ export function detectPromptIntentSignals(promptText = '') {
     clean.length <= 64 &&
     !/\?/.test(clean) &&
     /^(?:(?:(?:да|давай|ок|ok|хорошо|отлично|супер|ага)[,\s]+)?(?:перейд[её]м\s+к\s+(?:меню|делу|реализации)\s+и\s+)?(?:делаем|делай|сделаем|погнали|запускай|запускаем|начинай|начинаем|поехали|внедряй|внедряем|приступай|приступаем|исправляем|исправляй|исправим|чиним|починим|фиксим|обновляем|подтверждаю|proceed)|да|давай|ок|ok|yes|go|го|ага|угу|хорошо|отлично|согласен|подтверждаю|первый\s+вариант|вариант\s*[123abcабв]|да[,\s]+(?:первый|давай|ок)|[123]|пуск|(?:(?:модель\s+)?(?:переключил(?:ся|ась)?|сменил(?:а)?|поменял(?:а)?|готово|switched|ready|resume|continue)(?:\s+(?:модель|model))?)(?:[,\s]+(?:пуск|запускай|запускаем|давай|делаем|go|proceed|1|2|3|вариант\s*[123]))?)[\s!.]*$/i.test(clean);
-  const isStructuredGateApproval =
-    /^A1\s*:\s*/i.test(clean) &&
-    clean.length <= 450 &&
-    !/(?:только\s+(?:read-only|диагностик|отч[её]т)|без\s+(?:изменен|записи|правок)|отмен[аи]|витрин[аеыу]|референс|прототип[аы]\s+a\/b\/c|пауз[аеыу].*модел|заверш(?:ить|и)\s+ход.*модел|смен[иыуть].*модел|переключ[иыуть].*модел|end\s+turn.*switch.*model|pause.*switch.*model)/i.test(clean);
+  const a1Match = /^A1\s*:\s*([^\r\n]*)/i.exec(clean);
+  const a2Match = /(?:^|\r?\n)A2\s*:\s*([^\r\n]*)/i.exec(clean);
+  const isGrillMeOptIn = Boolean(
+    a2Match &&
+    /(?:^(?:\(Recommended\)\s*)?(?:да|yes)\b|блиц[-\s]?опрос|полный\s+grill-me|blitz\s+interview|full\s+grill-me)/i.test(a2Match[1].trim())
+  );
+  const isStructuredGateApproval = Boolean(
+    a1Match &&
+    clean.length <= 2400 &&
+    !isGrillMeOptIn &&
+    !/(?:только\s+(?:read-only|диагностик|отч[её]т)|без\s+(?:изменен|записи|правок)|отмен[аи]|витрин[аеыу]|референс|прототип[аы]\s+a\/b\/c|пауз[аеыу].*модел|заверш(?:ить|и)\s+ход.*модел|смен[иыуть].*модел|переключ[иыуть].*модел|end\s+turn.*switch.*model|pause.*switch.*model)/i.test(a1Match[1])
+  );
   const isArtifactDocApproval =
-    /(?:^|\n)The user has approved this document\./i.test(clean) &&
-    !/\?/.test(clean);
+    /(?:^|\r?\n)The user has approved this document\.(?=\s*(?:\r?\n|$))/i.test(clean);
   const isApprovalFollowUp = !isPlanReview && (isShortApproval || isStructuredGateApproval || isArtifactDocApproval);
 
   return {
@@ -155,7 +191,8 @@ export function detectPromptIntentSignals(promptText = '') {
  *   scopeHint: string
  * }}
  */
-export function estimateCodebaseScope(userPrompt = '', { wsPath = '', repoMapper = null, semanticFiles = [] } = {}) {
+export function estimateCodebaseScope(userPrompt = '', rawOptions = {}) {
+  const { wsPath = '', repoMapper = null, semanticFiles = [] } = asObj(rawOptions);
   const promptText = typeof userPrompt === 'string' ? userPrompt.trim() : '';
   const signals = detectPromptIntentSignals(promptText);
 
@@ -180,48 +217,76 @@ export function estimateCodebaseScope(userPrompt = '', { wsPath = '', repoMapper
   }
 
   const matchedFiles = [];
-  const reverseDepsSet = new Set();
+  const reverseDepsKeySet = new Set();
   let totalLines = 0;
   let maxFileLines = 0;
 
   if (wsPath && repoMapper && typeof repoMapper.rankRepoByPageRank === 'function') {
     try {
-      const semMap = new Map(
-        (Array.isArray(semanticFiles) ? semanticFiles : [])
-          .filter((sf) => sf && sf.file && Number(sf.score || 0) >= 0.50)
-          .map((sf) => [String(sf.file).replace(/\\/g, '/'), Number(sf.score)])
-      );
+      const semMap = new Map();
+      const semLowerMap = new Map();
+      for (const sf of (Array.isArray(semanticFiles) ? semanticFiles : [])) {
+        if (!sf || typeof sf.file !== 'string' || !sf.file.trim()) continue;
+        const score = Number(sf.score);
+        if (!Number.isFinite(score) || score < 0.50) continue;
+        const normSem = normalizeRelPath(sf.file.trim());
+        const prev = semMap.get(normSem) ?? -1;
+        if (score > prev) semMap.set(normSem, score);
+        const lowKey = normSem.toLowerCase();
+        if (!semLowerMap.has(lowKey) || score > semLowerMap.get(lowKey)) {
+          semLowerMap.set(lowKey, score);
+        }
+      }
+      const getSemScore = (normPath) => {
+        if (semMap.has(normPath)) return semMap.get(normPath);
+        return process.platform === 'win32' ? semLowerMap.get(normPath.toLowerCase()) : undefined;
+      };
 
       const ranked = repoMapper.rankRepoByPageRank(wsPath, promptText, { topK: 8 });
       const cached = typeof repoMapper.getCachedRepoMap === 'function' ? repoMapper.getCachedRepoMap(wsPath) : null;
-      const fileMap = new Map((cached?.filesIndex || []).map((f) => [f.file.replace(/\\/g, '/'), f]));
+      const fileMap = new Map();
+      const fileLowerMap = new Map();
+      for (const f of (Array.isArray(cached?.filesIndex) ? cached.filesIndex : [])) {
+        if (!f || typeof f.file !== 'string' || !f.file.trim()) continue;
+        const normF = normalizeRelPath(f.file.trim());
+        fileMap.set(normF, f);
+        fileLowerMap.set(normF.toLowerCase(), f);
+      }
+      const getFileMeta = (normPath) => {
+        if (fileMap.has(normPath)) return fileMap.get(normPath);
+        return process.platform === 'win32' ? fileLowerMap.get(normPath.toLowerCase()) : undefined;
+      };
 
       // Проверяем, назвал ли пользователь конкретные файлы явно (например, safe-json.mjs) без мульти-файлового охвата
+      const explicitScan = promptText.length > 16000 ? promptText.slice(0, 16000) : promptText;
       const explicitFileNames = Array.from(
         new Set(
-          (promptText.match(/[\w./\\-]+\.(?:mjs|cjs|js|ts|tsx|jsx|py|go|rs|java|cs|cpp|c|h|json|css|scss|html|vue|svelte)\b/gi) || [])
-            .map((m) => m.replace(/\\/g, '/').split('/').pop().toLowerCase())
+          (explicitScan.match(/[\w./\\-]+\.(?:mjs|cjs|js|ts|tsx|jsx|py|go|rs|java|cs|cpp|c|h|json|css|scss|html|vue|svelte)\b/gi) || [])
+            .map((m) => normalizeRelPath(m).split('/').pop().toLowerCase())
         )
       );
       const hasMultiFilePhrase =
-        /\b(?:all\s+files|across\s+files|multi[- ]file|everywhere)\b|(?:во\s+всех|нескольких\s+файл|по\s+всему\s+проект|во\s+всех\s+модул|везде|несколько\s+модулей|всех\s+модул|всей\s+систем)/i.test(promptText);
+        /\b(?:all\s+files|across\s+files|multi[- ]file|everywhere)\b|(?:во\s+всех|нескольких\s+файл|по\s+всему\s+проект|во\s+всех\s+модул|везде|несколько\s+модулей|всех\s+модул|всей\s+систем)/i.test(explicitScan);
 
-      const rawCandidates = (ranked?.rankedFiles || []).filter((rf) => rf.seedHits > 0);
+      const rawCandidates = (Array.isArray(ranked?.rankedFiles) ? ranked.rankedFiles : []).filter(
+        (rf) => rf && typeof rf.file === 'string' && rf.file.trim() && rf.seedHits > 0
+      );
       const maxDirectScore = rawCandidates.reduce((mx, rf) => Math.max(mx, Number(rf.directScore || 0)), 0);
 
       // Отсекаем низкоуровневые утилитные хабы и слабый лексический «хвост», когда есть явный лидер совпадения
       const filteredLexical = rawCandidates.filter((rf) => {
-        const normF = rf.file.replace(/\\/g, '/');
+        const normF = normalizeRelPath(rf.file.trim());
         const baseLower = normF.split('/').pop().toLowerCase();
         const isExplicitlyNamed = explicitFileNames.includes(baseLower);
         if (isExplicitlyNamed) return true;
         if (explicitFileNames.length > 0 && !hasMultiFilePhrase) {
           return false;
         }
-        if (rf.isUtilityHub && !semMap.has(normF) && (rf.directScore || 0) <= 5) {
+        const hasSem = getSemScore(normF) !== undefined;
+        if (rf.isUtilityHub && !hasSem && (rf.directScore || 0) <= 5) {
           return false;
         }
-        if (maxDirectScore >= 8 && (rf.directScore || 0) < maxDirectScore * 0.45 && !semMap.has(normF)) {
+        if (maxDirectScore >= 8 && (rf.directScore || 0) < maxDirectScore * 0.45 && !hasSem) {
           return false;
         }
         return true;
@@ -229,25 +294,29 @@ export function estimateCodebaseScope(userPrompt = '', { wsPath = '', repoMapper
 
       const mergedMap = new Map();
       for (const rf of filteredLexical.slice(0, 4)) {
-        mergedMap.set(rf.file.replace(/\\/g, '/'), rf);
+        const normF = normalizeRelPath(rf.file.trim());
+        mergedMap.set(normF, { ...rf, file: normF });
       }
       // Гибридное обогащение целями от локального GPU-индекса: не раздуваем одиночную правку до 4 файлов (wide/XL) документацией, тестами и слабым семантическим хвостом
       if (explicitFileNames.length === 0 || hasMultiFilePhrase) {
-        const wantsDocsOrTests = /\b(?:tests?|spec|readme|changelog|docs?|skills?)\b|(?:тест|документац|ридми|чейнджлог|скилл|навык)/i.test(promptText);
-        const semEntries = Array.from(semMap.entries()).filter(([semFile]) => {
-          if (wantsDocsOrTests) return true;
-          if (/\.(?:md|txt)$/i.test(semFile)) return false;
-          if (/(?:^|\/)(?:tests?|__tests__)\//i.test(semFile) || /\.(?:test|spec)\.[mc]?[jt]sx?$/i.test(semFile)) return false;
-          return true;
-        });
+        const wantsDocsOrTests = /\b(?:tests?|spec|readme|changelog|docs?|skills?)\b|(?:тест|документац|ридми|чейнджлог|скилл|навык)/i.test(explicitScan);
+        const semEntries = Array.from(semMap.entries())
+          .filter(([semFile]) => {
+            if (wantsDocsOrTests) return true;
+            if (/\.(?:md|txt)$/i.test(semFile)) return false;
+            if (/(?:^|\/)(?:tests?|__tests__)\//i.test(semFile) || /\.(?:test|spec)\.[mc]?[jt]sx?$/i.test(semFile)) return false;
+            return true;
+          })
+          .sort((a, b) => b[1] - a[1]);
         const maxSemScore = semEntries.reduce((mx, [, sc]) => Math.max(mx, sc), 0);
         const hasLexicalLead = filteredLexical.length > 0 && !hasMultiFilePhrase;
         const semCap = hasMultiFilePhrase ? 4 : (hasLexicalLead ? Math.min(3, filteredLexical.length + 1) : 3);
         const minSemThreshold = hasLexicalLead ? Math.max(0.68, maxSemScore - 0.06) : Math.max(0.56, maxSemScore - 0.08);
+        const hasIndexFilter = fileMap.size > 0;
 
         for (const [semFile, semScore] of semEntries) {
           if (mergedMap.size >= semCap) break;
-          if (!mergedMap.has(semFile) && semScore >= minSemThreshold && fileMap.has(semFile)) {
+          if (!mergedMap.has(semFile) && semScore >= minSemThreshold && (!hasIndexFilter || Boolean(getFileMeta(semFile)))) {
             mergedMap.set(semFile, {
               file: semFile,
               score: semScore,
@@ -264,39 +333,53 @@ export function estimateCodebaseScope(userPrompt = '', { wsPath = '', repoMapper
       const topHits = Array.from(mergedMap.values()).slice(0, 4);
 
       for (const hit of topHits) {
-        const normFile = hit.file.replace(/\\/g, '/');
-        const meta = fileMap.get(normFile);
-        const ranges = meta?.symbolsWithRanges || [];
-        const fileMaxLine = ranges.reduce((acc, s) => Math.max(acc, Number(s.endLine || 0)), 0) || 60;
-        totalLines += fileMaxLine;
-        if (fileMaxLine > maxFileLines) maxFileLines = fileMaxLine;
+        try {
+          if (!hit || typeof hit.file !== 'string' || !hit.file.trim()) continue;
+          const normFile = normalizeRelPath(hit.file.trim());
+          const meta = getFileMeta(normFile);
+          const ranges = Array.isArray(meta?.symbolsWithRanges) ? meta.symbolsWithRanges : [];
+          const maxSymLine = ranges.reduce((acc, s) => {
+            const endL = Number(s?.endLine);
+            return Number.isFinite(endL) && endL > acc ? endL : acc;
+          }, 0);
+          const fileMaxLine = maxSymLine > 0 ? maxSymLine : 60;
+          totalLines += fileMaxLine;
+          if (fileMaxLine > maxFileLines) maxFileLines = fileMaxLine;
 
-        let depCount = 0;
-        if (typeof repoMapper.findReverseImporters === 'function') {
-          try {
-            const rev = repoMapper.findReverseImporters(wsPath, normFile, 25);
-            const deps = (rev?.dependents || []).map((d) => (typeof d === 'string' ? d : d.file)).filter(Boolean);
-            depCount = deps.length;
-            // Демпфирование раздувания reverseDeps для общих модулей без совпадения конкретных символов
-            const hasDirectTarget = (hit.matchedSymbols?.length || 0) > 0 || (hit.directScore || 0) >= 6 || semMap.has(normFile);
-            const cappedDeps = (!hasDirectTarget && deps.length > 2) ? deps.slice(0, 2) : deps;
-            for (const d of cappedDeps) reverseDepsSet.add(d);
-          } catch {}
-        }
+          let depCount = 0;
+          if (typeof repoMapper.findReverseImporters === 'function') {
+            try {
+              const rev = repoMapper.findReverseImporters(wsPath, normFile, 25);
+              const deps = (Array.isArray(rev?.dependents) ? rev.dependents : [])
+                .map((d) => (typeof d === 'string' ? d : d?.file))
+                .filter((d) => typeof d === 'string' && d.trim())
+                .map((d) => normalizeDepKey(d.trim()));
+              const uniqueDeps = Array.from(new Set(deps));
+              depCount = uniqueDeps.length;
+              // Демпфирование раздувания reverseDeps для общих модулей без совпадения конкретных символов
+              const hasDirectTarget = (hit.matchedSymbols?.length || 0) > 0 || (hit.directScore || 0) >= 6 || getSemScore(normFile) !== undefined;
+              const cappedDeps = (!hasDirectTarget && uniqueDeps.length > 2) ? uniqueDeps.slice(0, 2) : uniqueDeps;
+              for (const d of cappedDeps) reverseDepsKeySet.add(d);
+            } catch {}
+          }
 
-        const syms = (hit.matchedSymbols || []).slice(0, 3).map((s) => s.name).filter(Boolean);
-        matchedFiles.push({
-          file: normFile,
-          lines: fileMaxLine,
-          symbols: syms,
-          dependentsCount: depCount,
-          semanticScore: semMap.get(normFile) || 0,
-        });
+          const syms = (Array.isArray(hit.matchedSymbols) ? hit.matchedSymbols : [])
+            .slice(0, 3)
+            .map((s) => s?.name)
+            .filter((n) => typeof n === 'string' && n.length > 0);
+          matchedFiles.push({
+            file: normFile,
+            lines: fileMaxLine,
+            symbols: syms,
+            dependentsCount: depCount,
+            semanticScore: getSemScore(normFile) || 0,
+          });
+        } catch {}
       }
     } catch {}
   }
 
-  const totalReverseDependents = reverseDepsSet.size;
+  const totalReverseDependents = reverseDepsKeySet.size;
   let scopeTier = 'ISOLATED';
 
   if (signals.isReadOnlyQuestion && !signals.isModalAnalyticalQuestion) {
@@ -369,7 +452,8 @@ export function estimateCodebaseScope(userPrompt = '', { wsPath = '', repoMapper
  * @param {object} [options={}] Дополнительный контекст (wsPath, repoMapper, forceAlways)
  * @returns {{ matchedIds: string[], specs: string[], targetFiles: string[], contracts: string[], verifyHints: string[], formattedSpec: string, formatted: string }}
  */
-export function compileUserIntentToTechSpec(userPrompt = '', { wsPath = '', repoMapper = null, forceAlways = false } = {}) {
+export function compileUserIntentToTechSpec(userPrompt = '', rawOptions = {}) {
+  const { wsPath = '', repoMapper = null, forceAlways = false } = asObj(rawOptions);
   const promptText = typeof userPrompt === 'string' ? userPrompt.trim() : '';
   if (!promptText || (!forceAlways && promptText.length < 12) || detectPromptIntentSignals(promptText).isReadOnlyQuestion) {
     return { matchedIds: [], specs: [], targetFiles: [], contracts: [], verifyHints: [], formattedSpec: '', formatted: '' };
@@ -395,35 +479,50 @@ export function compileUserIntentToTechSpec(userPrompt = '', { wsPath = '', repo
   if (wsPath && repoMapper && typeof repoMapper.rankRepoByPageRank === 'function') {
     try {
       const ranked = repoMapper.rankRepoByPageRank(wsPath, promptText, { topK: 5 });
-      for (const hit of (ranked?.rankedFiles || []).filter((rf) => rf.seedHits > 0).slice(0, 4)) {
-        const syms = (hit.matchedSymbols || []).slice(0, 3).map((s) => s.name).filter(Boolean);
-        for (const sym of syms) {
-          if (!contractSet.has(sym) && contracts.length < 6) {
-            contractSet.add(sym);
-            contracts.push(sym);
+      const hits = (Array.isArray(ranked?.rankedFiles) ? ranked.rankedFiles : [])
+        .filter((rf) => rf && typeof rf.file === 'string' && rf.file.trim() && rf.seedHits > 0)
+        .slice(0, 4);
+      for (const hit of hits) {
+        try {
+          const normHitFile = normalizeRelPath(hit.file.trim());
+          const hitKey = normalizeDepKey(normHitFile);
+          const syms = (Array.isArray(hit.matchedSymbols) ? hit.matchedSymbols : [])
+            .slice(0, 3)
+            .map((s) => s?.name)
+            .filter((n) => typeof n === 'string' && n.length > 0);
+          for (const sym of syms) {
+            if (!contractSet.has(sym) && contracts.length < 6) {
+              contractSet.add(sym);
+              contracts.push(sym);
+            }
           }
-        }
-        if (hit.file && !targetFileSet.has(hit.file) && targetFiles.length < 3) {
-          targetFileSet.add(hit.file);
-          targetFiles.push(syms.length > 0 ? `${hit.file}(${syms.slice(0, 2).join(',')})` : hit.file);
-        }
-        if (hit.file && /(?:^|\/)tests?\/|\.test\.|\.spec\./i.test(hit.file) && !verifySet.has(hit.file)) {
-          verifySet.add(hit.file);
-          verifyHints.push(hit.file);
-        }
+          if (normHitFile && !targetFileSet.has(hitKey) && targetFiles.length < 3) {
+            targetFileSet.add(hitKey);
+            targetFiles.push(syms.length > 0 ? `${normHitFile}(${syms.slice(0, 2).join(',')})` : normHitFile);
+          }
+          if (normHitFile && /(?:^|\/)tests?\/|\.test\.|\.spec\./i.test(normHitFile) && !verifySet.has(hitKey)) {
+            verifySet.add(hitKey);
+            verifyHints.push(normHitFile);
+          }
+        } catch {}
       }
     } catch {}
   }
 
   if (targetFiles.length < 4) {
-    const explicitFiles = promptText.match(/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_./-]+\.[a-zA-Z]{1,6}/g) || [];
-    for (const fileRef of explicitFiles) {
-      if (!targetFileSet.has(fileRef) && targetFiles.length < 4) {
-        targetFileSet.add(fileRef);
+    const fileScanText = promptText.length > 12000 ? promptText.slice(0, 12000) : promptText;
+    const pathRefs = fileScanText.match(/[a-zA-Z0-9_.-]+[\\/][a-zA-Z0-9_.\\/-]+\.[a-zA-Z0-9]{1,6}/g) || [];
+    const rootRefs = fileScanText.match(/\b[a-zA-Z0-9_-]+\.(?:mjs|cjs|js|ts|tsx|jsx|py|go|rs|java|cs|cpp|c|h|json|css|scss|html|vue|svelte|md|ya?ml|toml)\b/gi) || [];
+    for (const rawRef of [...pathRefs, ...rootRefs]) {
+      const fileRef = normalizeRelPath(rawRef);
+      const refKey = normalizeDepKey(fileRef);
+      if (!fileRef) continue;
+      if (!targetFileSet.has(refKey) && targetFiles.length < 4) {
+        targetFileSet.add(refKey);
         targetFiles.push(fileRef);
       }
-      if (/(?:^|\/)tests?\/|\.test\.|\.spec\./i.test(fileRef) && !verifySet.has(fileRef)) {
-        verifySet.add(fileRef);
+      if (/(?:^|\/)tests?\/|\.test\.|\.spec\./i.test(fileRef) && !verifySet.has(refKey)) {
+        verifySet.add(refKey);
         verifyHints.push(fileRef);
       }
     }
@@ -480,7 +579,8 @@ const ENTITY_PIVOT_RULES = [
  * @param {{ wsPath?: string, repoMapper?: object|null, maxChars?: number, forceAlways?: boolean }} [options={}]
  * @returns {{ triggered: boolean, cyrillicChars: number, enTerms: string[], targetFiles: string[], contracts: string[], verifyHints: string[], anchoredEntities: string[], formattedPivot: string, formatted: string }}
  */
-export function compileVoiceOrLongRuPromptPivot(userPrompt = '', { wsPath = '', repoMapper = null, maxChars = 0, forceAlways = false } = {}) {
+export function compileVoiceOrLongRuPromptPivot(userPrompt = '', rawOptions = {}) {
+  const { wsPath = '', repoMapper = null, maxChars = 0, forceAlways = false } = asObj(rawOptions);
   const promptText = typeof userPrompt === 'string' ? userPrompt.trim() : '';
   const cyrMatches = promptText.match(/[а-яёА-ЯЁ]/g);
   const cyrillicChars = cyrMatches ? cyrMatches.length : 0;
@@ -560,7 +660,9 @@ export function compileVoiceOrLongRuPromptPivot(userPrompt = '', { wsPath = '', 
  * @param {object} [context={}] Дополнительный контекст (wsPath, repoMapper)
  * @returns {{ domain: string, prunedGroups: string[], allowedHint: string, compiledSpec?: object }}
  */
-export function classifyTaskAndPruneTools(userPrompt = '', state = {}, context = {}) {
+export function classifyTaskAndPruneTools(userPrompt = '', rawState = {}, rawContext = {}) {
+  const state = asPlainObj(rawState);
+  const context = asObj(rawContext);
   if (!userPrompt || typeof userPrompt !== 'string' || state.toolPruning === false) {
     return {
       domain: 'general',
@@ -573,6 +675,7 @@ export function classifyTaskAndPruneTools(userPrompt = '', state = {}, context =
   }
 
   const promptText = userPrompt.trim();
+  const domainScanText = promptText.length > 16000 ? promptText.slice(0, 16000) : promptText;
   const scores = {
     algo_refactor: 0,
     ui_browser: 0,
@@ -581,10 +684,10 @@ export function classifyTaskAndPruneTools(userPrompt = '', state = {}, context =
     devops: 0
   };
 
-  for (const [domain, patterns] of Object.entries(DOMAIN_PATTERNS)) {
+  for (const [domain, patterns] of Object.entries(DOMAIN_PATTERNS_GLOBAL)) {
     for (const pattern of patterns) {
-      const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
-      const matches = promptText.match(new RegExp(pattern.source, flags));
+      pattern.lastIndex = 0;
+      const matches = domainScanText.match(pattern);
       if (matches) {
         scores[domain] += matches.length;
       }
@@ -593,14 +696,14 @@ export function classifyTaskAndPruneTools(userPrompt = '', state = {}, context =
 
   // Приоритет явного целевого артефакта документации (README, CHANGELOG, CONTRIBUTING, JSDoc, Mermaid, Гайд/Справочник)
   if (
-    /(?:^\s*(?:напиши|оформи|составь|переведи|обнови|создай|добавь\s+в|опиши|нарисуй|сократи)(?:\s|$).*(?:readme|changelog|contributing|security\.md|jsdoc|mermaid|документаци|руководств|справочник|инструкци|гайд|мануал|шпаргал(?:к|ок)|глоссари|релиз[-\s]?ноутс|чек[-\s]?лист\s+готовност|стандарт\s+кодирования|обзорн[а-яё]*\s+стать|архитектурн[а-яё]*\s+записк|раздел\s+faq|таблиц[уы]\s+сравнени|сравнение\s+трех\s+режимов|сценарий\s+миграции\s+со\s+старой|спецификаци[юя]\s+протокола|внутреннее\s+устройство\s+кэширования\s+ast|описани[ея]\s+(?:пакета|всех\s+метрик|параметров|ошибок\s+в\s+конфигурационн)|примеры\s+(?:использования\s+cli|интеграции\s+хуков)|сообщения\s+об\s+ошибках\s+валидатора\s+на\s+русский|интерфейс\s+и\s+встроенные\s+подсказки\s+справки|понятную\s+справку\s+`?--help))/i.test(promptText)
+    /(?:^\s*(?:напиши|оформи|составь|переведи|обнови|создай|добавь\s+в|опиши|нарисуй|сократи)(?:\s|$)[^\r\n]{0,240}?(?:readme|changelog|contributing|security\.md|jsdoc|mermaid|документаци|руководств|справочник|инструкци|гайд|мануал|шпаргал(?:к|ок)|глоссари|релиз[-\s]?ноутс|чек[-\s]?лист\s+готовност|стандарт\s+кодирования|обзорн[а-яё]*\s+стать|архитектурн[а-яё]*\s+записк|раздел\s+faq|таблиц[уы]\s+сравнени|сравнение\s+трех\s+режимов|сценарий\s+миграции\s+со\s+старой|спецификаци[юя]\s+протокола|внутреннее\s+устройство\s+кэширования\s+ast|описани[ея]\s+(?:пакета|всех\s+метрик|параметров|ошибок\s+в\s+конфигурационн)|примеры\s+(?:использования\s+cli|интеграции\s+хуков)|сообщения\s+об\s+ошибках\s+валидатора\s+на\s+русский|интерфейс\s+и\s+встроенные\s+подсказки\s+справки|понятную\s+справку\s+`?--help))/i.test(domainScanText)
   ) {
     scores.docs += 4;
   }
 
   // Приоритет явного целевого артефакта DevOps (Dockerfile, docker-compose, GitHub Actions, Nginx, K8s, systemd, PM2, CI)
   if (
-    /(?:\b(?:dockerfile|docker-compose(?:\.yml)?|github\s+(?:actions?|secrets|packages)|kubernetes|k8s|helm|nginx|systemd|pm2|oomkilled|sigterm|buildkit|trivy|loki|promtail|wait-for-it|tmux|\.dockerignore|\.gitattributes|\.env\.example|makefile)\b|(?:кроссплатформенн[а-яё]*\s+бинарник[а-яё]*\s+в\s+ci|предкоммитн[а-яё]*\s+хук|ротац[а-яё]*\s+(?:и\s+архивац[а-яё]*\s+)?лог|перевод[а-яё]*\s+трафика|canary\s+rollout|симлинк[а-яё]*\s+релиза|самоподписанн[а-яё]*\s+сертификат|диагностик[аи]\s+окружения|регистраци[ия]\s+хуков\s+в\s+конфигурационн|профилирован[а-яё]*\s+времени\s+старта\s+всех\s+сервисов|конфликт\s+портов\s+при\s+параллельном|зашифрованн[а-яё]*\s+архив[а-яё]*\s+бэкапа|воркфлоу\s+для\s+автоматической\s+проверки.*при\s+пуше))/i.test(promptText)
+    /(?:\b(?:dockerfile|docker-compose(?:\.yml)?|github\s+(?:actions?|secrets|packages)|kubernetes|k8s|helm|nginx|systemd|pm2|oomkilled|sigterm|buildkit|trivy|loki|promtail|wait-for-it|tmux|\.dockerignore|\.gitattributes|\.env\.example|makefile)\b|(?:кроссплатформенн[а-яё]*\s+бинарник[а-яё]*\s+в\s+ci|предкоммитн[а-яё]*\s+хук|ротац[а-яё]*\s+(?:и\s+архивац[а-яё]*\s+)?лог|перевод[а-яё]*\s+трафика|canary\s+rollout|симлинк[а-яё]*\s+релиза|самоподписанн[а-яё]*\s+сертификат|диагностик[аи]\s+окружения|регистраци[ия]\s+хуков\s+в\s+конфигурационн|профилирован[а-яё]*\s+времени\s+старта\s+всех\s+сервисов|конфликт\s+портов\s+при\s+параллельном|зашифрованн[а-яё]*\s+архив[а-яё]*\s+бэкапа|воркфлоу\s+для\s+автоматической\s+проверки.*при\s+пуше))/i.test(domainScanText)
   ) {
     scores.devops += 3;
   }
@@ -612,7 +715,7 @@ export function classifyTaskAndPruneTools(userPrompt = '', state = {}, context =
     scores.backend_db === 0 &&
     scores.devops === 0 &&
     scores.docs === 0 &&
-    /(?:\b(?:bug|fix|test|tests|unit|leak|memory|optimiz(?:e|ation)|logic|race\s+condition|deadlock|stack\s+overflow)\b|(?:баг|ошибк|почини|исправь|тест|юнит|утечк|памят|оптимиз|гонк[аи]|логик|валидац|парсер|сериализац|буфер|строк|массив|объект|функц|модул|таймер|кэш|конфиг))/i.test(promptText)
+    /(?:\b(?:bug|fix|test|tests|unit|leak|memory|optimiz(?:e|ation)|logic|race\s+condition|deadlock|stack\s+overflow)\b|(?:баг|ошибк|почини|исправь|тест|юнит|утечк|памят|оптимиз|гонк[аи]|логик|валидац|парсер|сериализац|буфер|строк|массив|объект|функц|модул|таймер|кэш|конфиг))/i.test(domainScanText)
   ) {
     scores.algo_refactor += 2;
   }
@@ -633,11 +736,11 @@ export function classifyTaskAndPruneTools(userPrompt = '', state = {}, context =
   }
 
   const signals = detectPromptIntentSignals(promptText);
-  const skillModes = (state && typeof state.skillModes === 'object' && state.skillModes) ? state.skillModes : {};
+  const skillModes = asPlainObj(state.skillModes);
   const disabledSkills = Object.entries(skillModes)
     .filter(([, mode]) => mode === 'off')
     .map(([id]) => id);
-  const isSkillEnabled = (id) => skillModes[id] !== 'off';
+  const isSkillEnabled = (id) => !(Object.hasOwn(skillModes, id) && skillModes[id] === 'off');
 
   const LEXICAL_SKILL_RULES = [
     { slug: 'github-publish-guard', rx: /(?:\b(?:github|gh\s+release|git\s+push|git\s+tag|pre-publish)\b|(?:выгруз[а-яё]*\s+(?:на|в)\s+github|запуш[а-яё]*|опубликуй.*(?:релиз|github)|нумерац[а-яё]*\s+верси[ия]|актуальност[ьи]\s+верси|утечк[аи]\s+(?:секрет|путей)|перед\s+(?:пушем|публикац)))/i },
@@ -656,37 +759,56 @@ export function classifyTaskAndPruneTools(userPrompt = '', state = {}, context =
     { slug: 'playwright-cli', rx: /(?:\bplaywright[-\s]?cli\b|\bplaywright\b.*(?:e2e|тест|клик|снапшот|скриншот|мок)|(?:браузерн[а-яё]*\s+e2e|автотест[а-яё]*\s+в\s+браузере))/i },
   ];
 
-  const rawSemanticSkills = Array.isArray(context?.semanticSkills) ? context.semanticSkills : [];
-  const enabledSemanticSkills = rawSemanticSkills.filter((s) => s?.slug && isSkillEnabled(s.slug));
+  const rawSemanticSkills = Array.isArray(context.semanticSkills) ? context.semanticSkills : [];
+  const enabledSemanticSkills = rawSemanticSkills.filter(
+    (s) => s && typeof s.slug === 'string' && s.slug.trim() && isSkillEnabled(s.slug.trim())
+  );
+  const confidentSemanticSkills = enabledSemanticSkills.filter((s) => {
+    const score = Number(s.score ?? 0);
+    return s.confident !== false && Number.isFinite(score) && score >= 0.48;
+  });
   const lexicalSkills = [];
   for (const rule of LEXICAL_SKILL_RULES) {
     if (!isSkillEnabled(rule.slug)) continue;
-    if (rule.rx.test(promptText) && !(rule.excludeRx && rule.excludeRx.test(promptText))) {
+    if (rule.rx.test(domainScanText) && !(rule.excludeRx && rule.excludeRx.test(domainScanText))) {
       lexicalSkills.push({ slug: rule.slug, score: 0.55, deltaVsNone: 0.12, confident: true, source: 'lexical' });
     }
   }
-  const combinedSkills = enabledSemanticSkills.length > 0 ? enabledSemanticSkills : lexicalSkills;
+  const combinedSkills = [];
+  const seenSkillSlugs = new Set();
+  for (const sk of (confidentSemanticSkills.length > 0 ? [...confidentSemanticSkills, ...lexicalSkills] : lexicalSkills)) {
+    if (!seenSkillSlugs.has(sk.slug)) {
+      seenSkillSlugs.add(sk.slug);
+      combinedSkills.push(sk);
+    }
+  }
   const topSkill = combinedSkills[0] || null;
+  const topSem = confidentSemanticSkills[0] || enabledSemanticSkills[0] || null;
+  const topSemScore = Number(topSem?.score);
   const uiMatch = enabledSemanticSkills.find((s) => s.slug === 'ui-ux-design-system');
+  const uiScore = Number(uiMatch?.score);
+  const uiDelta = Number(uiMatch?.deltaVsNone ?? 0.1);
   const isSemanticUiDesign = Boolean(
     uiMatch &&
-    (uiMatch.score ?? 0) >= 0.47 &&
-    (uiMatch.deltaVsNone ?? 0.1) >= 0.04 &&
-    (!topSkill || topSkill.slug === 'ui-ux-design-system' || (topSkill.score - uiMatch.score) <= 0.025)
+    uiMatch.confident !== false &&
+    Number.isFinite(uiScore) &&
+    uiScore >= 0.47 &&
+    (!Number.isFinite(uiDelta) || uiDelta >= 0.04) &&
+    (!topSem || topSem.slug === 'ui-ux-design-system' || !Number.isFinite(topSemScore) || (topSemScore - uiScore) <= 0.025)
   );
   const isLexicalUiDesign = Boolean(
     !signals.isReadOnlyQuestion &&
-    (scores.ui_browser > 0 || /\.(?:css|scss|less|html|vue|svelte)\b/i.test(promptText)) &&
-    /(?:дизайн|стил[ьиейя]|цвета?|палитр|тем[ауы]|анимац|верстк|карточ|кнопк|макет|витрин|перекрас|оформ)/i.test(promptText) &&
-    (signals.hasMutationVerb || /(?:сверстай|оформи|обнови|добавь|сделай|создай|переделай|улучши|измени|поменяй)/i.test(promptText)) &&
-    !/(?:русифик|перевед[иу]|локализац|\b(?:remotion|hyperframes|ffmpeg|mp4|webm|glsl|resolume|openfx|davinci)\b|(?:промо[-\s]?ролик|видео[-\s]?ролик|шейдер))/i.test(promptText)
+    (scores.ui_browser > 0 || /\.(?:css|scss|less|html|vue|svelte)\b/i.test(domainScanText)) &&
+    /(?:дизайн|стил[ьиейя]|цвета?|палитр|тем[ауы]|анимац|верстк|карточ|кнопк|макет|витрин|перекрас|оформ)/i.test(domainScanText) &&
+    (signals.hasMutationVerb || /(?:сверстай|оформи|обнови|добавь|сделай|создай|переделай|улучши|измени|поменяй)/i.test(domainScanText)) &&
+    !/(?:русифик|перевед[иу]|локализац|\b(?:remotion|hyperframes|ffmpeg|mp4|webm|glsl|resolume|openfx|davinci)\b|(?:промо[-\s]?ролик|видео[-\s]?ролик|шейдер))/i.test(domainScanText)
   );
 
   const needsDesignPreviewGate =
     state.uiDesignPreviewGate !== false &&
     isSkillEnabled('ui-ux-design-system') &&
     !signals.isReadOnlyQuestion &&
-    (isSemanticUiDesign || (!context?.skillIndexWarm && isLexicalUiDesign));
+    (isSemanticUiDesign || (!context.skillIndexWarm && isLexicalUiDesign));
   const uiInspirationMode = (state.uiInspirationMode === 'showroom' || state.uiInspirationMode === 'web_refs')
     ? state.uiInspirationMode
     : 'ask';
@@ -709,16 +831,17 @@ export function classifyTaskAndPruneTools(userPrompt = '', state = {}, context =
     !signals.isReadOnlyQuestion &&
     topSkill &&
     topSkill.confident !== false &&
-    (topSkill.score ?? 0) >= 0.48 &&
+    Number(topSkill.score ?? 0) >= 0.48 &&
     !(needsDesignPreviewGate && topSkill.slug === 'ui-ux-design-system')
   ) {
     const skillRef = typeof topSkill.skillFile === 'string' && topSkill.skillFile.trim()
       ? `Read ${topSkill.skillFile.trim()} if its workflow applies.`
       : `Read the "${topSkill.slug}" SKILL.md if its workflow applies.`;
+    const pct = Math.round(Math.max(0, Math.min(1, Number(topSkill.score) || 0)) * 100);
     hints.push(
       topSkill.source === 'lexical'
         ? `🎯 [Skill Match: ${topSkill.slug}] ${skillRef}`
-        : `🎯 [Semantic Skill Match: ${topSkill.slug} (${Math.round(topSkill.score * 100)}%)] ${skillRef}`
+        : `🎯 [Semantic Skill Match: ${topSkill.slug} (${pct}%)] ${skillRef}`
     );
   }
 
@@ -753,25 +876,26 @@ export function computeStructuralComplexity(opts = {}) {
     isEditor = false,
     hasExplicitArchitectKeyword = false,
     isMultiFileScope = false
-  } = opts && typeof opts === 'object' ? opts : {};
-  const safeSignals = signals && typeof signals === 'object' ? signals : {};
+  } = asObj(opts);
+  const safeSignals = asObj(signals);
+  const safeSubHits = Math.max(0, Number(subsystemHits) || 0);
   if (safeSignals.isReadOnlyQuestion && !safeSignals.isModalAnalyticalQuestion && !hasExplicitArchitectKeyword) {
     return {
-      grade: subsystemHits >= 2 ? 'M' : 'S',
+      grade: safeSubHits >= 2 ? 'M' : 'S',
       phase: 'standard',
-      structuralScore: subsystemHits
+      structuralScore: safeSubHits
     };
   }
 
-  const filesCount = scope?.matchedFiles?.length || 0;
-  const reverseDeps = scope?.totalReverseDependents || 0;
-  const maxLines = scope?.maxFileLines || 0;
+  const filesCount = Math.max(0, Number(scope?.matchedFiles?.length) || 0);
+  const reverseDeps = Math.max(0, Number(scope?.totalReverseDependents) || 0);
+  const maxLines = Math.max(0, Number(scope?.maxFileLines) || 0);
 
   // Объективный структурный индекс (Code-Graph + Subsystem Breadth, 0 зависимости от длины текста!)
   const fileWeight = filesCount * 1.8;
   const depWeight = reverseDeps * 1.2;
   const sizeWeight = Math.min(3.0, maxLines / 180);
-  const subWeight = subsystemHits * 1.6;
+  const subWeight = safeSubHits * 1.6;
   const multiBoost = isMultiFileScope ? 3.0 : 0;
   const archBoost = hasExplicitArchitectKeyword ? 3.5 : 0;
 
@@ -779,13 +903,13 @@ export function computeStructuralComplexity(opts = {}) {
     (fileWeight + depWeight + sizeWeight + subWeight + multiBoost + archBoost).toFixed(2)
   );
 
-  if (isEditor && !hasExplicitArchitectKeyword && filesCount <= 1 && reverseDeps <= 1 && subsystemHits <= 1) {
+  if (isEditor && !hasExplicitArchitectKeyword && filesCount <= 1 && reverseDeps <= 1 && safeSubHits <= 1) {
     return { grade: 'S', phase: 'editor', structuralScore };
   }
 
   if (
     structuralScore >= 8.5 ||
-    (hasExplicitArchitectKeyword && (isMultiFileScope || filesCount >= 3 || reverseDeps >= 4 || subsystemHits >= 3))
+    (hasExplicitArchitectKeyword && (isMultiFileScope || filesCount >= 3 || reverseDeps >= 4 || safeSubHits >= 3))
   ) {
     return { grade: 'XL', phase: 'architect', structuralScore };
   }
@@ -794,7 +918,7 @@ export function computeStructuralComplexity(opts = {}) {
     structuralScore >= 4.2 ||
     scope?.scopeTier === 'ARCHITECTURAL' ||
     hasExplicitArchitectKeyword ||
-    subsystemHits >= 2 ||
+    safeSubHits >= 2 ||
     isMultiFileScope
   ) {
     return { grade: 'L', phase: 'architect', structuralScore };
@@ -802,10 +926,10 @@ export function computeStructuralComplexity(opts = {}) {
 
   if (
     structuralScore === 0 &&
-    !signals.hasMutationVerb &&
-    !signals.hasModalImplIntent &&
-    !signals.isExtendExisting &&
-    !signals.isAnalogyOrClone
+    !safeSignals.hasMutationVerb &&
+    !safeSignals.hasModalImplIntent &&
+    !safeSignals.isExtendExisting &&
+    !safeSignals.isAnalogyOrClone
   ) {
     return { grade: 'S', phase: 'standard', structuralScore };
   }
@@ -848,8 +972,11 @@ export function computeTask3DMatrix(rawOpts = {}) {
     hasExplicitArchitectKeyword = false,
     isMultiFileScope = false,
     fragilityDepthBoost = 0,
-  } = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
-  if (signals?.isReadOnlyQuestion && !signals?.isModalAnalyticalQuestion && !hasExplicitArchitectKeyword) {
+  } = asObj(rawOpts);
+  const safeSignals = asObj(signals);
+  const safeSubHits = Math.max(0, Number(subsystemHits) || 0);
+  const safeBoost = Math.max(0, Number(fragilityDepthBoost) || 0);
+  if (safeSignals.isReadOnlyQuestion && !safeSignals.isModalAnalyticalQuestion && !hasExplicitArchitectKeyword) {
     return {
       breadth: 'narrow',
       depth: 'routine',
@@ -864,30 +991,30 @@ export function computeTask3DMatrix(rawOpts = {}) {
       labelEn: 'Consultation (read-only)',
       label3DRu: 'Консультация (без правок кода)',
       label3DEn: 'Consultation (read-only)',
-      grade: subsystemHits >= 2 ? 'M' : 'S',
+      grade: safeSubHits >= 2 ? 'M' : 'S',
       phase: 'standard',
       isDeepAuditOrArch: false,
     };
   }
 
   const cleanIntentText = stripUiTitlesForIntentClassification(promptText);
-  const filesCount = scope?.matchedFiles?.length || 0;
-  const reverseDeps = scope?.totalReverseDependents || 0;
-  const maxLines = scope?.maxFileLines || 0;
+  const filesCount = Math.max(0, Number(scope?.matchedFiles?.length) || 0);
+  const reverseDeps = Math.max(0, Number(scope?.totalReverseDependents) || 0);
+  const maxLines = Math.max(0, Number(scope?.maxFileLines) || 0);
 
   // 1. Ось Ширины (Breadth: narrow | moderate | wide)
   let breadth = 'narrow';
   if (
     filesCount >= 4 ||
-    (isMultiFileScope && (filesCount >= 2 || subsystemHits >= 2)) ||
-    subsystemHits >= 3 ||
+    (isMultiFileScope && (filesCount >= 2 || safeSubHits >= 2)) ||
+    safeSubHits >= 3 ||
     (filesCount >= 3 && reverseDeps >= 5)
   ) {
     breadth = 'wide';
   } else if (
     filesCount >= 2 ||
     isMultiFileScope ||
-    subsystemHits === 2 ||
+    safeSubHits === 2 ||
     reverseDeps >= 3 ||
     maxLines >= 420
   ) {
@@ -905,18 +1032,18 @@ export function computeTask3DMatrix(rawOpts = {}) {
       /\b(?:codemod|rename\s+across|multi[- ]file\s+rename|bump\s+version)\b|(?:переименуй\s+.*во\s+всех|замени\s+.*во\s+всех|обнови\s+импорты\s+во\s+всех|однотипн[а-яё]*\s+правк|механическ[а-яё]*\s+правк|по\s+готовому\s+шаблону)/i.test(cleanIntentText));
 
   let depthRank = 0; // 0 = routine, 1 = integrated, 2 = deep_arch
-  if (hasDeepCognitiveSignal || hasExplicitArchitectKeyword || (subsystemHits >= 3 && !isMechanicalRoutine)) {
+  if (hasDeepCognitiveSignal || hasExplicitArchitectKeyword || (safeSubHits >= 3 && !isMechanicalRoutine)) {
     depthRank = 2;
   } else if (
     !isMechanicalRoutine &&
-    (breadth !== 'narrow' || subsystemHits >= 1 || signals.isExtendExisting || signals.isAnalogyOrClone || reverseDeps >= 2)
+    (breadth !== 'narrow' || safeSubHits >= 1 || safeSignals.isExtendExisting || safeSignals.isAnalogyOrClone || reverseDeps >= 2)
   ) {
     depthRank = 1;
   }
 
   // Эскалация от Bayesian v2 / File Fragility при накопленных сбоях на целевых файлах
-  if (fragilityDepthBoost > 0 && !isMechanicalRoutine) {
-    depthRank = Math.min(2, depthRank + Number(fragilityDepthBoost));
+  if (safeBoost > 0 && !isMechanicalRoutine) {
+    depthRank = Math.min(2, depthRank + safeBoost);
   }
 
   const depth = depthRank >= 2 ? 'deep_arch' : (depthRank === 1 ? 'integrated' : 'routine');
@@ -925,7 +1052,7 @@ export function computeTask3DMatrix(rawOpts = {}) {
   // 3. Ось Неопределённости и Риска (Z: clear | exploratory | critical_blast)
   const hasHighBlastSignal =
     /\b(?:migration|schema\s+change|breaking\s+change|security|auth|encryption|aes-256-gcm|sql\s+injection|xss|csrf|lock-free|atomic|state\s+format|hook-runner|safe-json)\b|(?:миграци|обратн[а-яё]*\s+совместимост|безопасност|авторизац|шифрован|критическ[а-яё]*\s+ядр|не\s+сломал|ничего\s+не\s+сломал|схем[ауы]\s+состоян|контракт[а-яё]*\s+между)/i.test(cleanIntentText);
-  const isHighBlast = Boolean(reverseDeps >= 4 || fragilityDepthBoost > 0 || hasHighBlastSignal);
+  const isHighBlast = Boolean(reverseDeps >= 4 || safeBoost > 0 || hasHighBlastSignal);
 
   const hasDiagnosticOrForkSignal =
     /\b(?:intermittent|flaky|mysterious|unknown\s+cause|root\s+cause|memory\s+leak|race\s+condition|deadlock|investigate|diagnose|ddmin|why\s+does\s+it|design|redesign|variants?|options?|trade-?offs?|architecture|from\s+scratch|best\s+way)\b|(?:плавающ[а-яё]*\s+баг|то\s+работает\s+то\s+нет|периодически\s+(?:падает|отваливается|зависает)|непонятно\s+почему|найди\s+(?:узкие\s+места|причину|утечку)|локализовать\s+баг|стресс[-\s]?аудит|дизайн|редизайн|вариант[ыаов]|с\s+нуля|спроектируй|перепроектируй|архитектур|какой\s+способ|несколько\s+вариантов)/i.test(cleanIntentText);
@@ -970,7 +1097,7 @@ export function computeTask3DMatrix(rawOpts = {}) {
   } else if (breadth === 'moderate' && depth === 'integrated') {
     grade = 'L';
     phase = 'architect';
-  } else if (breadth === 'narrow' && depth === 'routine' && (isEditor || (filesCount <= 1 && subsystemHits === 0 && !signals.hasMutationVerb && !signals.hasModalImplIntent))) {
+  } else if (breadth === 'narrow' && depth === 'routine' && (isEditor || (filesCount <= 1 && safeSubHits === 0 && !safeSignals.hasMutationVerb && !safeSignals.hasModalImplIntent))) {
     grade = 'S';
     phase = isEditor ? 'editor' : 'standard';
   } else {
@@ -1015,18 +1142,20 @@ export function computeTask2DMatrix(options = {}) {
  * Генерирует контекстный 3D-рецепт адаптивных вариантов для ask_question
  * на основе координат 3D-матрицы, реально найденных файлов и обратных зависимостей.
  */
-export function buildAdaptive3DOptionsBlueprint({
-  matrix3D = null,
-  scope = {},
-  state = {},
-  recModelRu = '',
-  recModelEn = '',
-  compiledSpec = null,
-  grillSignal = null,
-  hasSelectorMismatch = false,
-  lang = '',
-} = {}) {
-  const uiLang = lang ? normalizeLang(lang, 'ru') : resolveStateLanguage(state, 'ru');
+export function buildAdaptive3DOptionsBlueprint(rawOpts = {}) {
+  const {
+    matrix3D = null,
+    scope = {},
+    state = {},
+    recModelRu = '',
+    recModelEn = '',
+    compiledSpec = null,
+    grillSignal = null,
+    hasSelectorMismatch = false,
+    lang = '',
+  } = asObj(rawOpts);
+  const safeState = asPlainObj(state);
+  const uiLang = lang ? normalizeLang(lang, 'ru') : resolveStateLanguage(safeState, 'ru');
   const isEn = uiLang === 'en';
   const m = matrix3D || {};
   const tensorId = m.tensorId || m.matrixId || 'standard';
@@ -1038,8 +1167,8 @@ export function buildAdaptive3DOptionsBlueprint({
     ? rawTargets.join(', ')
     : (isEn ? '<target files after slice>' : '<целевые файлы после среза>');
   const reverseDeps = Number(scope?.totalReverseDependents || 0);
-  const swarmAllowed = m.breadth === 'wide' && state?.swarmMode !== 'off';
-  const isProSub = state.subscriptionTier !== 'ultra';
+  const swarmAllowed = m.breadth === 'wide' && safeState.swarmMode !== 'off';
+  const isProSub = isProSubscription(safeState);
   const modelTag = isEn
     ? (recModelEn || recModelRu || (isProSub
         ? 'Orchestrator (Neon · High)'
@@ -1142,10 +1271,16 @@ export function buildAdaptive3DOptionsBlueprint({
  * @param {object} [state={}]
  * @returns {{ active: boolean, mode: 'off'|'explicit'|'always'|'offer_in_gate'|'none', reason: string }}
  */
-export function detectGrillMeSignals(promptText = '', matrix3D = null, state = {}) {
+export function detectGrillMeSignals(promptText = '', matrix3D = null, rawState = {}) {
   const text = typeof promptText === 'string' ? promptText.trim() : '';
-  const grillMode = state?.grillMode === 'off' || state?.grillMode === 'always' ? state.grillMode : 'auto';
-  const explicitHit = /\[grill-me[^\]]*\]|(?:^|\s)\/grill-me\b|детальн\w+\s+опрос|подробн\w+\s+интервью|расспроси\s+меня|задай\s+уточняющ/i.test(text);
+  const state = asPlainObj(rawState);
+  const grillMode = state.grillMode === 'off' || state.grillMode === 'always' ? state.grillMode : 'auto';
+  const a2Match = /(?:^|\r?\n)A2\s*:\s*([^\r\n]*)/i.exec(text);
+  const a2GrillHit = Boolean(
+    a2Match &&
+    /(?:^(?:\(Recommended\)\s*)?(?:да|yes)\b|блиц[-\s]?опрос|полный\s+grill-me|blitz\s+interview|full\s+grill-me)/i.test(a2Match[1].trim())
+  );
+  const explicitHit = a2GrillHit || /\[grill-me[^\]]*\]|(?:^|\s)\/grill-me\b|детальн\w+\s+опрос|подробн\w+\s+интервью|расспроси\s+меня|задай\s+уточняющ/i.test(text);
   if (explicitHit) {
     return { active: true, mode: 'explicit', reason: 'explicit_prompt_trigger' };
   }
@@ -1173,7 +1308,8 @@ export function detectGrillMeSignals(promptText = '', matrix3D = null, state = {
  * @param {{ grillSignal?: object, grade?: string, matrix3D?: object }} [opts={}]
  * @returns {string}
  */
-export function buildGrillMeDirective({ grillSignal = null, grade = 'M', lang = 'ru' } = {}) {
+export function buildGrillMeDirective(rawOpts = {}) {
+  const { grillSignal = null, grade = 'M', lang = 'ru' } = asObj(rawOpts);
   const mode = grillSignal?.mode || 'none';
   const langLabel = normalizeLang(lang, 'ru') === 'en' ? 'EN' : 'RU';
   if (mode === 'explicit' || mode === 'always') {
@@ -1220,14 +1356,33 @@ export function buildAdaptiveReasoningDirective(matrix3D = {}, modelProfile = nu
   return '🔗 [Contract CoD] Trace signature -> callers -> edge-cases concisely in EN.';
 }
 
-export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, context = {}) {
+export function estimateTaskGradeAndThinkingBudget(userPrompt = '', rawState = {}, rawContext = {}) {
+  const state = asPlainObj(rawState);
+  const context = asObj(rawContext);
   if (state.thinkingLimiter === false || !userPrompt || typeof userPrompt !== 'string' || !userPrompt.trim()) {
-    return { grade: 'M', phase: 'standard', budgetHint: '', maxSteps: 0 };
+    return {
+      grade: 'M',
+      phase: 'standard',
+      budgetHint: '',
+      maxSteps: 0,
+      scope: estimateCodebaseScope(''),
+      structuralScore: 0,
+      subsystemHits: 0,
+      matrix2D: null,
+      matrix3D: null,
+      optionsBlueprint: null,
+      selectorEval: { match: 'optimal', tipRu: '', tipEn: '' },
+      compiledSpec: { matchedIds: [], specs: [], targetFiles: [], contracts: [], verifyHints: [], formattedSpec: '', formatted: '' },
+      isReadOnlyQuestion: false,
+      isModalAnalyticalQuestion: false,
+      isApprovalFollowUp: false,
+      modelSwitchSplitTurn: false,
+    };
   }
 
   const promptText = userPrompt.trim();
   const cleanIntentText = stripUiTitlesForIntentClassification(promptText);
-  const scope = context?.precomputedScope || estimateCodebaseScope(promptText, context);
+  const scope = context.precomputedScope || estimateCodebaseScope(promptText, context);
   const { signals } = scope;
 
   // Паттерны фазы Редактора (точечные правки, коммиты, опечатки, применение готового плана)
@@ -1275,12 +1430,12 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
     isEditor,
     hasExplicitArchitectKeyword,
     isMultiFileScope,
-    fragilityDepthBoost: Number(context?.fragilityDepthBoost || 0),
+    fragilityDepthBoost: Number(context.fragilityDepthBoost || 0),
   });
 
   if (signals.isPlanReview) {
-    const prevGrade = context?.prevTurnGrade || 'M';
-    const prevMatrix = context?.prevTurnMatrix || matrix3D;
+    const prevGrade = context.prevTurnGrade || 'M';
+    const prevMatrix = context.prevTurnMatrix || matrix3D;
     return {
       grade: prevGrade,
       phase: 'standard',
@@ -1292,33 +1447,38 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
       matrix2D: prevMatrix,
       matrix3D: prevMatrix,
       optionsBlueprint: null,
-      selectorEval: { match: 'optimal', tipRu: '' },
-      compiledSpec: { matchedIds: [], specs: [], targetFiles: [], formattedSpec: '', formatted: '' },
+      selectorEval: { match: 'optimal', tipRu: '', tipEn: '' },
+      compiledSpec: { matchedIds: [], specs: [], targetFiles: [], contracts: [], verifyHints: [], formattedSpec: '', formatted: '' },
       isReadOnlyQuestion: true,
       isPlanReview: true,
       isApprovalFollowUp: false,
     };
   }
 
+  const resolveFollowGrade = () =>
+    context.prevProposedGrade ||
+    (context.prevTurnGrade && context.prevTurnGrade !== 'S' ? context.prevTurnGrade : null) ||
+    context.prevTurnGrade ||
+    (context.prevWasReadOnly ? 'M' : matrix3D.grade) ||
+    'M';
+
+  const isExplicitStructuredReply = /^A1\s*:/i.test(promptText);
+  let bypassTwoPhaseGate = false;
   if (
     signals.isApprovalFollowUp &&
     !signals.isArtifactDocApproval &&
-    !/^A1\s*:/i.test(promptText) &&
-    context?.prevAskQuestionCalled === false &&
-    !context?.prevModelSwitchPending &&
+    !isExplicitStructuredReply &&
+    context.prevAskQuestionCalled === false &&
+    !context.prevModelSwitchPending &&
     state.confirmBeforeRun !== false
   ) {
-    const effectiveFollowGrade =
-      context?.prevProposedGrade ||
-      (context?.prevTurnGrade && context.prevTurnGrade !== 'S' ? context.prevTurnGrade : null) ||
-      (context?.prevWasReadOnly ? 'M' : matrix3D.grade) ||
-      'M';
+    const effectiveFollowGrade = resolveFollowGrade();
     const followGatePolicy = resolveEffectivePreTaskGatePolicy({
       state,
-      modelProfile: context?.modelProfile || null,
+      modelProfile: context.modelProfile || null,
       grade: effectiveFollowGrade,
     });
-    const prevMatrix = context?.prevTurnMatrix || matrix3D;
+    const prevMatrix = context.prevTurnMatrix || matrix3D;
     if (followGatePolicy.shouldAskModelGate) {
       return {
         grade: effectiveFollowGrade,
@@ -1331,32 +1491,30 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
         matrix2D: prevMatrix,
         matrix3D: prevMatrix,
         optionsBlueprint: null,
-        selectorEval: { match: 'optimal', tipRu: '' },
-        compiledSpec: { matchedIds: [], specs: [], targetFiles: [], formattedSpec: '', formatted: '' },
+        selectorEval: { match: 'optimal', tipRu: '', tipEn: '' },
+        compiledSpec: { matchedIds: [], specs: [], targetFiles: [], contracts: [], verifyHints: [], formattedSpec: '', formatted: '' },
         isReadOnlyQuestion: false,
         isApprovalFollowUp: false,
         requiresTwoPhaseGate: true,
       };
     }
+    bypassTwoPhaseGate = true;
   }
 
+  const hasPriorTurnContext = Boolean(context.prevTurnGrade || context.prevProposedGrade || context.prevTurnMatrix || context.prevWasReadOnly);
   if (
     signals.isApprovalFollowUp &&
     (signals.isArtifactDocApproval ||
-      /^A1\s*:/i.test(promptText) ||
-      context?.prevModelSwitchPending === true ||
-      context?.prevAskQuestionCalled === true ||
-      (context?.prevAskQuestionCalled === undefined &&
-        (context?.prevTurnGrade === 'L' || context?.prevTurnGrade === 'XL')))
+      isExplicitStructuredReply ||
+      context.prevModelSwitchPending === true ||
+      context.prevAskQuestionCalled === true ||
+      bypassTwoPhaseGate ||
+      (context.prevAskQuestionCalled === false && state.confirmBeforeRun === false) ||
+      (context.prevAskQuestionCalled === undefined && hasPriorTurnContext))
   ) {
-    const prevGrade =
-      (context?.prevTurnGrade && context.prevTurnGrade !== 'S' ? context.prevTurnGrade : null) ||
-      context?.prevProposedGrade ||
-      context?.prevTurnGrade ||
-      matrix3D.grade ||
-      'M';
-    const prevMatrix = context?.prevTurnMatrix || matrix3D;
-    const isModelSwitchResume = Boolean(context?.prevModelSwitchPending);
+    const prevGrade = resolveFollowGrade();
+    const prevMatrix = context.prevTurnMatrix || matrix3D;
+    const isModelSwitchResume = Boolean(context.prevModelSwitchPending);
     return {
       grade: prevGrade,
       phase: 'standard',
@@ -1370,8 +1528,8 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
       matrix2D: prevMatrix,
       matrix3D: prevMatrix,
       optionsBlueprint: null,
-      selectorEval: { match: 'optimal', tipRu: '' },
-      compiledSpec: { matchedIds: [], specs: [], targetFiles: [], formattedSpec: '', formatted: '' },
+      selectorEval: { match: 'optimal', tipRu: '', tipEn: '' },
+      compiledSpec: { matchedIds: [], specs: [], targetFiles: [], contracts: [], verifyHints: [], formattedSpec: '', formatted: '' },
       isReadOnlyQuestion: false,
       isApprovalFollowUp: true,
       modelSwitchSplitTurn: false,
@@ -1381,7 +1539,7 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
   const uiLang = resolveStateLanguage(state, 'ru');
   const isEnUi = uiLang === 'en';
   const { grade, phase, isDeepAuditOrArch } = matrix3D;
-  const modelProfile = context?.modelProfile || null;
+  const modelProfile = context.modelProfile || null;
   const evalComplexity = !signals.isReadOnlyQuestion || Boolean(signals.isModalAnalyticalQuestion);
   const selectorSnapshot = evalComplexity ? formatSelectorSnapshotForPrompt(modelProfile, uiLang) : '';
   const selectorEval = evaluateSelectorMatchForTask({ modelProfile, grade, isDeepAuditOrArch, matrix2D: matrix3D, state });
@@ -1397,8 +1555,8 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
   const autoSpecOutput = resolveAutoSpecOutput(promptText, state);
   const compiledSpec = !signals.isReadOnlyQuestion
     ? compileUserIntentToTechSpec(promptText, {
-        wsPath: context?.wsPath || '',
-        repoMapper: context?.repoMapper || null,
+        wsPath: context.wsPath || '',
+        repoMapper: context.repoMapper || null,
         forceAlways: autoSpecMode === 'always',
       })
     : { matchedIds: [], specs: [], targetFiles: [], contracts: [], verifyHints: [], formattedSpec: '', formatted: '' };
@@ -1416,7 +1574,7 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
   let budgetHint = '';
   let optionsBlueprint = null;
   let modelSwitchSplitTurn = false;
-  const isProSub = String(state?.subscriptionTier || '').trim().toLowerCase() === 'pro';
+  const isProSub = isProSubscription(state);
   const subTag = isProSub ? 'Sub: Pro (max: Neon, no Carbon)' : 'Sub: Ultra';
   const modelExamples = isEnUi
     ? (isProSub
@@ -1628,7 +1786,8 @@ export function resolveAutoSpecOutput(promptText = '', state = {}) {
  * @param {{ mode?: 'off'|'auto'|'always', output?: 'thinking'|'chat', grade?: string, isReadOnlyQuestion?: boolean, isDeepAuditOrArch?: boolean }} [opts={}]
  * @returns {string}
  */
-export function buildAutoSpecDirective({ mode = 'auto', output = 'thinking', grade = 'M', isReadOnlyQuestion = false, isDeepAuditOrArch = false } = {}) {
+export function buildAutoSpecDirective(rawOpts = {}) {
+  const { mode = 'auto', output = 'thinking', grade = 'M', isReadOnlyQuestion = false, isDeepAuditOrArch = false } = asObj(rawOpts);
   if (isReadOnlyQuestion) return '';
   const clean = (mode === 'off' || mode === 'always') ? mode : 'auto';
   if (clean === 'off') return '';
