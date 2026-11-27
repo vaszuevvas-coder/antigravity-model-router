@@ -6,6 +6,7 @@
 
 import { basename, dirname } from 'node:path';
 import { buildSymbolCallGraph } from './cpu-ast-graph-compressor.mjs';
+import { ensureSymbolGraph } from './ram/ram-graph-queries.mjs';
 
 const TEST_FILE_RE = /(?:^|\/)(?:tests?|__tests__|fixtures|scratch)\/|\.(?:test|spec)\./i;
 const ENTRYPOINT_FILE_RE = /(?:^|\/)(?:index|main|cli|server|install|hook-runner|app)\.[^/]+$/i;
@@ -301,7 +302,10 @@ export function buildProjectGraphPayload(engine, workspaceRoot, options = {}) {
     }
   }
 
-  const resolvedFocus = focusRaw && ws.files.has(focusRaw) ? focusRaw : '';
+  const canonicalFocus = focusRaw && typeof engine?._resolveCanonicalRel === 'function'
+    ? engine._resolveCanonicalRel(ws, focusRaw)
+    : focusRaw;
+  const resolvedFocus = canonicalFocus && ws.files.has(canonicalFocus) ? canonicalFocus : '';
   const selectedHopMap = new Map();
 
   if (resolvedFocus) {
@@ -590,16 +594,28 @@ export function buildFileSymbolGraphPayload(engine, workspaceRoot, fileRel, opti
     };
   }
 
-  let targetFile = ws.files.has(normReq) ? normReq : '';
+  const canonicalReq = typeof engine?._resolveCanonicalRel === 'function'
+    ? engine._resolveCanonicalRel(ws, normReq)
+    : normReq;
+  let targetFile = ws.files.has(canonicalReq) ? canonicalReq : '';
   if (!targetFile) {
+    const reqLower = normReq.toLowerCase();
     const suffixMatches = [];
+    const ciSuffixMatches = [];
     for (const rel of ws.files.keys()) {
       if (rel === normReq || rel.endsWith(`/${normReq}`)) {
         suffixMatches.push(rel);
+      } else if (process.platform === 'win32') {
+        const relLower = rel.toLowerCase();
+        if (relLower === reqLower || relLower.endsWith(`/${reqLower}`)) {
+          ciSuffixMatches.push(rel);
+        }
       }
     }
     if (suffixMatches.length === 1) {
       targetFile = suffixMatches[0];
+    } else if (suffixMatches.length === 0 && ciSuffixMatches.length === 1) {
+      targetFile = ciSuffixMatches[0];
     }
   }
   if (!targetFile) {
@@ -615,10 +631,11 @@ export function buildFileSymbolGraphPayload(engine, workspaceRoot, fileRel, opti
     };
   }
 
-  if (!ws.symbolGraph) {
-    ws.symbolGraph = buildSymbolCallGraph(ws.files);
-  }
-  const symGraph = ws.symbolGraph;
+  const symGraph = ensureSymbolGraph(ws, {
+    seedFiles: [targetFile],
+    maxFullFiles: 2500,
+    localCap: 120,
+  }) || buildSymbolCallGraph(ws.files);
   const definedSymbols = symGraph?.definedSymbols instanceof Map ? symGraph.definedSymbols : new Map();
   const calleesOf = symGraph?.calleesOf instanceof Map ? symGraph.calleesOf : new Map();
   const callersOf = symGraph?.callersOf instanceof Map ? symGraph.callersOf : new Map();

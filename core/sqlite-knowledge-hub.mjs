@@ -821,8 +821,12 @@ export class SqliteKnowledgeHub {
 
     for (const peer of peers) {
       try {
-        const peerKey = normWsKey(peer.path);
-        const alreadyLoaded = Boolean(ramEngine.workspaces?.has?.(peerKey));
+        const alreadyLoaded = typeof ramEngine.hasWarmWorkspace === 'function'
+          ? ramEngine.hasWarmWorkspace(peer.path)
+          : Boolean(
+              ramEngine.workspaces?.has?.(normWsKey(peer.path)) ||
+              ramEngine.workspaces?.has?.(process.platform === 'win32' ? resolve(peer.path).toLowerCase() : resolve(peer.path))
+            );
         if (!alreadyLoaded && typeof ramEngine.warmWorkspace === 'function') {
           ramEngine.warmWorkspace(peer.path, { startWatcher: false });
         } else if (!alreadyLoaded && typeof ramEngine.ensureWarm === 'function') {

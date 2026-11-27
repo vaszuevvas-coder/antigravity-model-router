@@ -5,6 +5,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { RamMemoryEngine } from '../core/ram-memory-engine.mjs';
+import { dispatchIpcRoute, executeMcpTool } from '../core/ram-memory-mcp.mjs';
+import { BackgroundSentinel } from '../core/background-sentinel.mjs';
+import { buildFileSymbolGraphPayload, buildProjectGraphPayload } from '../core/project-graph-builder.mjs';
+import { SqliteKnowledgeHub } from '../core/sqlite-knowledge-hub.mjs';
 import {
   augmentJsMethodSymbols,
   buildFileSearchStructures,
@@ -406,5 +410,174 @@ test('8. Null-safety on evicted buffers, bounded repoMapCache, simHashIndex clea
   } finally {
     engine.close();
     fs.rmSync(tmpWs, { recursive: true, force: true });
+  }
+});
+
+test('9. Cross-subsystem contracts: maxBudgetMb/startWatcher, resolveWorkspaceEntry, symbolGraphDirty in project-graph-builder & speculative prefetch', async () => {
+  const tmpWs = makeTempDir('ram-cross-graph-');
+  const engine = new RamMemoryEngine({
+    maxBudgetMb: 512,
+    startWatcher: false,
+    sqliteKnowledgeEnabled: false,
+  });
+  try {
+    assert.equal(engine.budgetMb, 512, 'maxBudgetMb constructor alias must set budgetMb');
+    assert.equal(engine.defaultStartWatcher, false);
+    assert.equal(engine.hasWarmWorkspace(tmpWs), false);
+
+    fs.mkdirSync(path.join(tmpWs, 'src'), { recursive: true });
+    const alphaFile = path.join(tmpWs, 'src', 'AlphaItem.mjs');
+    const betaFile = path.join(tmpWs, 'src', 'BetaConsumer.mjs');
+    fs.writeFileSync(alphaFile, 'export function initialSym() { return 1; }\n', 'utf8');
+    fs.writeFileSync(
+      betaFile,
+      "import { initialSym } from './AlphaItem.mjs';\nexport function runBeta() { return initialSym(); }\n",
+      'utf8'
+    );
+
+    // getOrCreateWorkspace before warming must still report hasWarmWorkspace=false
+    const coldWs = engine.getOrCreateWorkspace(tmpWs);
+    assert.ok(coldWs);
+    assert.equal(engine.hasWarmWorkspace(tmpWs), false);
+
+    engine.warmWorkspace(tmpWs);
+    assert.equal(engine.hasWarmWorkspace(tmpWs), true);
+    assert.equal(coldWs.watcher, null, 'defaultStartWatcher=false must skip fs.watch');
+
+    // Slash & ./ normalization in resolveWorkspaceEntry (+ Win32 case insensitivity)
+    const resolvedDotSlash = engine.resolveWorkspaceEntry(coldWs, './src\\AlphaItem.mjs');
+    assert.ok(resolvedDotSlash);
+    assert.equal(resolvedDotSlash.relPath, 'src/AlphaItem.mjs');
+    if (process.platform === 'win32') {
+      const resolvedCase = engine.resolveWorkspaceEntry(tmpWs, 'SRC/alphaitem.mjs');
+      assert.ok(resolvedCase);
+      assert.equal(resolvedCase.relPath, 'src/AlphaItem.mjs');
+    }
+
+    // Build initial symbol graph via buildFileSymbolGraphPayload
+    const symGraph1 = buildFileSymbolGraphPayload(engine, tmpWs, 'src/AlphaItem.mjs');
+    assert.equal(symGraph1.ok, true);
+    assert.ok(symGraph1.nodes.some((n) => n.label === 'initialSym'));
+
+    // Simulate >800-file dirty tracking: mutate file in RAM, keep stale ws.symbolGraph, mark symbolGraphDirty
+    const staleGraphSnapshot = coldWs.symbolGraph;
+    assert.ok(staleGraphSnapshot);
+    const futureMtime = new Date(Date.now() + 5000);
+    fs.writeFileSync(
+      alphaFile,
+      'export function initialSym() { return freshGraphSym(); }\nexport function freshGraphSym() { return 42; }\n',
+      'utf8'
+    );
+    fs.utimesSync(alphaFile, futureMtime, futureMtime);
+    engine.upsertFile(tmpWs, alphaFile);
+    coldWs.symbolGraph = staleGraphSnapshot;
+    coldWs.symbolGraphDirty = new Set(['src/AlphaItem.mjs']);
+
+    // project-graph-builder must honor symbolGraphDirty and rebuild symbolGraph so freshGraphSym appears
+    const symGraph2 = buildFileSymbolGraphPayload(engine, tmpWs, './src\\AlphaItem.mjs');
+    assert.equal(symGraph2.ok, true);
+    assert.ok(symGraph2.nodes.some((n) => n.label === 'freshGraphSym'), 'buildFileSymbolGraphPayload must refresh dirty symbolGraph');
+    assert.equal(coldWs.symbolGraphDirty.size, 0);
+
+    // project-graph focus path canonicalization
+    const projGraph = buildProjectGraphPayload(engine, tmpWs, {
+      focus: process.platform === 'win32' ? 'SRC\\alphaitem.mjs' : './src/AlphaItem.mjs',
+      depth: 1,
+    });
+    assert.equal(projGraph.ok, true);
+    assert.equal(projGraph.focus, 'src/AlphaItem.mjs');
+
+    // scheduleSpeculativePrefetch must also refresh dirty symbolGraph when <=1500 files
+    coldWs.symbolGraph = staleGraphSnapshot;
+    coldWs.symbolGraphDirty = new Set(['src/AlphaItem.mjs']);
+    engine.scheduleSpeculativePrefetch(tmpWs, './src\\AlphaItem.mjs');
+    await new Promise((r) => setTimeout(r, 70));
+    assert.equal(coldWs.symbolGraphDirty.size, 0);
+    assert.ok(coldWs.symbolGraph?.definedSymbols?.has('freshGraphSym'));
+  } finally {
+    engine.close();
+    fs.rmSync(tmpWs, { recursive: true, force: true });
+  }
+});
+
+test('10. Cross-subsystem contracts: warmWorkspaceAsync in MCP (/gpu/warm, gpu_status), BackgroundSentinel & SQLite federated peer cache hit', async () => {
+  const tmpRoot = makeTempDir('ram-cross-mcp-');
+  const mainWs = path.join(tmpRoot, 'main-app');
+  const peerWs = path.join(tmpRoot, 'peer-lib');
+  const cacheDir = path.join(tmpRoot, 'cache');
+  const prevTestState = process.env.TUNNEL_TEST_STATE_PATH;
+
+  fs.mkdirSync(mainWs, { recursive: true });
+  fs.mkdirSync(peerWs, { recursive: true });
+  fs.mkdirSync(cacheDir, { recursive: true });
+  fs.writeFileSync(path.join(mainWs, 'app.mjs'), 'export function runMainApp() { return "ok"; }\n', 'utf8');
+  fs.writeFileSync(path.join(peerWs, 'shared.mjs'), 'export function federatedSharedHelperToken() { return 777; }\n', 'utf8');
+
+  const testStatePath = path.join(cacheDir, 'state.json');
+  fs.writeFileSync(
+    testStatePath,
+    JSON.stringify({ ramCacheEnabled: true, gpuEnabled: false, gpuSemanticSearch: false, sqliteKnowledgeEnabled: false }),
+    'utf8'
+  );
+  process.env.TUNNEL_TEST_STATE_PATH = testStatePath;
+
+  const engine = new RamMemoryEngine({ budgetMb: 128, startWatcher: false, sqliteKnowledgeEnabled: false });
+  const sentinel = new BackgroundSentinel({
+    cacheDir,
+    stateOverride: { sentinelEnabled: true, sentinelShadowGuard: true },
+  });
+  const hub = new SqliteKnowledgeHub({ dbPath: path.join(cacheDir, 'hub.sqlite') });
+
+  try {
+    // 1) BackgroundSentinel._resolveWorkspaceFiles on cold RamMemoryEngine must resolve live ws.files after warmWorkspaceAsync
+    const resolvedBySentinel = await sentinel._resolveWorkspaceFiles(mainWs, engine);
+    assert.ok(resolvedBySentinel.ws, 'Sentinel must receive live workspace object, not null fallback');
+    assert.ok(resolvedBySentinel.filesMap instanceof Map && resolvedBySentinel.filesMap.has('app.mjs'));
+
+    // 2) MCP IPC POST /gpu/warm & MCP tool gpu_status(warm_index) must resolve ws.files from warmWorkspaceAsync (never 'Invalid workspace' / 'Invalid workspaceRoot')
+    engine.evict('all');
+    const ipcWarm = await dispatchIpcRoute(
+      'POST',
+      '/gpu/warm',
+      { wsPath: mainWs, maxNewFiles: 10 },
+      { engine, sentinel, settings: { enabled: true, budgetMb: 128 } }
+    );
+    assert.equal(ipcWarm.status, 200);
+    assert.notEqual(ipcWarm.body?.error, 'Invalid workspace', '/gpu/warm must resolve ws.files after warmWorkspaceAsync');
+    assert.equal(engine.hasWarmWorkspace(mainWs), true);
+
+    engine.evict('all');
+    const mcpWarmIdx = await executeMcpTool(
+      'gpu_status',
+      { action: 'warm_index', workspaceRoot: mainWs },
+      { engine }
+    );
+    assert.notEqual(mcpWarmIdx.text, 'Invalid workspaceRoot', 'gpu_status(warm_index) must resolve ws.files after warmWorkspaceAsync');
+    assert.equal(engine.hasWarmWorkspace(mainWs), true);
+
+    // 3) SQLiteKnowledgeHub.searchFederatedPeers must hit warm RAM on Win32 without re-running warmWorkspace on every query
+    engine.warmWorkspace(peerWs, { startWatcher: false });
+    let extraWarmCalls = 0;
+    const origWarm = engine.warmWorkspace.bind(engine);
+    engine.warmWorkspace = (...args) => {
+      extraWarmCalls += 1;
+      return origWarm(...args);
+    };
+
+    const fedRes = hub.searchFederatedPeers(mainWs, 'federatedSharedHelperToken', engine, {
+      extraPeers: [peerWs],
+      maxResults: 3,
+    });
+    assert.equal(fedRes.ok, true);
+    assert.equal(fedRes.results.length, 1);
+    assert.equal(fedRes.results[0].file, 'shared.mjs');
+    assert.equal(extraWarmCalls, 0, 'Warm federated peer workspace must be hit in RAM with 0 extra warmWorkspace calls');
+  } finally {
+    if (prevTestState === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
+    else process.env.TUNNEL_TEST_STATE_PATH = prevTestState;
+    sentinel.stopDaemonLoop();
+    hub.close();
+    engine.close();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });

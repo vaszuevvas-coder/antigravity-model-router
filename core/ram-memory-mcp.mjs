@@ -581,7 +581,10 @@ function scheduleBackgroundGpuWarm(wsPath, delayMs = 200) {
         if (!gpuCfg.gpuSemanticSearch || daemonShuttingDown) return;
         await indexSkillVectors({ cfgOverride: gpuCfg }).catch(() => {});
         if (daemonShuttingDown || !registeredWorkspaces.has(key)) return;
-        const ws = await engine.warmWorkspaceAsync(absRoot);
+        const warmRes = await engine.warmWorkspaceAsync(absRoot);
+        const ws = warmRes?.files
+          ? warmRes
+          : (warmRes?.ok ? engine.getOrCreateWorkspace(absRoot) : null);
         if (ws && ws.files.size > 0 && !daemonShuttingDown) {
           await warmWorkspaceVectorsOnce(ws.absRoot, ws.files, { maxNewFiles: 180, ensureEmbed: true });
         }
@@ -1194,7 +1197,12 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
   if (method === 'POST' && url === '/gpu/warm') {
     const wsPath = resolveDefaultWorkspace(body.wsPath);
     registerDaemonWorkspace(wsPath);
-    const ws = await targetEngine.warmWorkspaceAsync(wsPath);
+    const warmRes = await targetEngine.warmWorkspaceAsync(wsPath);
+    const ws = warmRes?.files
+      ? warmRes
+      : (warmRes?.ok && typeof targetEngine.getOrCreateWorkspace === 'function'
+          ? targetEngine.getOrCreateWorkspace(wsPath)
+          : null);
     if (!ws || !ws.files) return { status: 200, body: { ok: false, error: 'Invalid workspace' } };
     const resWarm = await warmWorkspaceVectorsOnce(ws.absRoot, ws.files, {
       maxNewFiles: Number(body.maxNewFiles || 300),
@@ -1321,7 +1329,9 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
         seenFiles.add(rel);
         matchedFiles.push(rel);
       }
-      const fileEntry = ws.files.get(rel);
+      const fileEntry = typeof targetEngine.resolveWorkspaceEntry === 'function'
+        ? targetEngine.resolveWorkspaceEntry(ws, rel)
+        : ws.files.get(rel);
       const localSyms = [];
       const rawSyms = [
         ...(Array.isArray(fileEntry?.exportedSymbols) ? fileEntry.exportedSymbols : []),
@@ -2219,7 +2229,12 @@ export async function executeMcpTool(name, args = {}, opts = {}) {
       }
       if (action === 'warm_index') {
         registerWs(wsRoot);
-        const ws = await activeEngine.warmWorkspaceAsync(wsRoot);
+        const warmRes = await activeEngine.warmWorkspaceAsync(wsRoot);
+        const ws = warmRes?.files
+          ? warmRes
+          : (warmRes?.ok && typeof activeEngine.getOrCreateWorkspace === 'function'
+              ? activeEngine.getOrCreateWorkspace(wsRoot)
+              : null);
         if (!ws || !ws.files) return { text: 'Invalid workspaceRoot', isError: true };
         const wRes = await warmWorkspaceVectorsOnce(ws.absRoot, ws.files, {
           maxNewFiles: 300,
@@ -2235,7 +2250,10 @@ export async function executeMcpTool(name, args = {}, opts = {}) {
       if (!fileArg) return { text: 'LSP error: filePath is required.', isError: true };
       const ws = activeEngine.getOrCreateWorkspace(wsRoot);
       const relCand = path.isAbsolute(fileArg) ? path.relative(wsRoot, fileArg).replace(/\\/g, '/') : fileArg.replace(/\\/g, '/');
-      const ramBuf = ws?.files?.get?.(relCand)?.buf;
+      const entry = typeof activeEngine.resolveWorkspaceEntry === 'function'
+        ? activeEngine.resolveWorkspaceEntry(ws, fileArg)
+        : ws?.files?.get?.(relCand);
+      const ramBuf = entry?.buf;
       const res = await lspBridge.checkFileDiagnostics(
         wsRoot,
         fileArg,

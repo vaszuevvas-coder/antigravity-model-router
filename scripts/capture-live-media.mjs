@@ -343,9 +343,9 @@ async function measureRealEngineTelemetry() {
   const { RamMemoryEngine } = await import('../core/ram-memory-engine.mjs');
   const { estimateTaskGradeAndThinkingBudget } = await import('../core/tool-pruner.mjs');
 
-  const engine = new RamMemoryEngine({ maxBudgetMb: 512, startWatcher: false });
+  const engine = new RamMemoryEngine({ budgetMb: 512, startWatcher: false });
   const tWarm0 = performance.now();
-  await engine.warmWorkspace(ROOT_DIR);
+  engine.warmWorkspace(ROOT_DIR, { startWatcher: false });
   const warmMs = Math.round(performance.now() - tWarm0);
 
   const tSearch0 = performance.now();
@@ -356,7 +356,7 @@ async function measureRealEngineTelemetry() {
   const sliceRes = engine.slice(ROOT_DIR, 'core/ram-memory-engine.mjs', { startLine: 1, endLine: 80 });
   const sliceMs = Number((performance.now() - tSlice0).toFixed(2));
 
-  const stats = engine.getStats(ROOT_DIR);
+  const stats = engine.getStats();
   const wsStats = stats?.workspaces?.[0] || {};
   engine.evict('all');
 

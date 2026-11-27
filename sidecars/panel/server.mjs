@@ -3174,8 +3174,11 @@ export async function startSidecarPanel(options = {}) {
         const { RamMemoryEngine } = await import('../../core/ram-memory-engine.mjs');
         const ram = new RamMemoryEngine();
         try {
-          const ws = await ram.warmWorkspaceAsync(wsRoot, { startWatcher: false });
-          if (!ws) return { ok: false, error: pickLang(lang, 'Рабочая папка не найдена', 'Workspace directory not found') };
+          const warmRes = await ram.warmWorkspaceAsync(wsRoot, { startWatcher: false });
+          const ws = warmRes?.files
+            ? warmRes
+            : (warmRes?.ok ? ram.getOrCreateWorkspace(wsRoot) : null);
+          if (!ws || !ws.files) return { ok: false, error: pickLang(lang, 'Рабочая папка не найдена', 'Workspace directory not found') };
           const idx = await mod.indexWorkspaceVectors(ws.absRoot, ws.files, { maxNewFiles: 350 });
           const snap = await fetchFreshGpuSnap();
           return { ...idx, gpu: snap, viaDaemon: false };

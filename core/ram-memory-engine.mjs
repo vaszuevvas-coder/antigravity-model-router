@@ -80,13 +80,15 @@ export class RamMemoryEngine {
   constructor(options = {}) {
     const safeOpts = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
     const {
-      budgetMb = DEFAULT_BUDGET_MB,
       budgetBytes = 0,
       onFileUpsert = null,
       knowledgeHub: customHub = null,
       sqliteKnowledgeEnabled = true,
+      startWatcher = true,
     } = safeOpts;
-    this.setBudgetMb(budgetMb);
+    const effectiveBudgetMb = safeOpts.budgetMb ?? safeOpts.maxBudgetMb ?? DEFAULT_BUDGET_MB;
+    this.defaultStartWatcher = startWatcher !== false;
+    this.setBudgetMb(effectiveBudgetMb);
     if (Number.isFinite(Number(budgetBytes)) && Number(budgetBytes) >= 16 * 1024) {
       this.budgetBytes = Math.round(Number(budgetBytes));
       this.budgetMb = Number((this.budgetBytes / (1024 * 1024)).toFixed(3));
@@ -269,11 +271,58 @@ export class RamMemoryEngine {
 
   _resolveCanonicalRel(ws, relPath) {
     if (!ws || !relPath) return relPath;
-    if (ws.files.has(relPath)) return relPath;
+    const normRel = String(relPath).replace(/\\/g, '/').replace(/^\.\//, '');
+    if (ws.files.has(normRel)) return normRel;
     if (process.platform === 'win32' && ws.filesLower) {
-      return ws.filesLower.get(relPath.toLowerCase()) || relPath;
+      return ws.filesLower.get(normRel.toLowerCase()) || normRel;
     }
-    return relPath;
+    return normRel;
+  }
+
+  /**
+   * Checks whether a workspace is already cached in RAM with at least one indexed file.
+   * @param {string} rootDir
+   * @returns {boolean}
+   */
+  hasWarmWorkspace(rootDir) {
+    if (!rootDir || typeof rootDir !== 'string') return false;
+    try {
+      const absRoot = path.resolve(rootDir);
+      const wsKey = process.platform === 'win32' ? absRoot.toLowerCase() : absRoot;
+      const ws = this.workspaces.get(wsKey);
+      return Boolean(ws && ws.files && ws.files.size > 0);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Resolves a workspace file entry with slash & Win32 case normalization without touching disk.
+   * @param {object|string} wsOrRoot
+   * @param {string} filePath
+   * @returns {object|null}
+   */
+  resolveWorkspaceEntry(wsOrRoot, filePath) {
+    if (!wsOrRoot || !filePath) return null;
+    let ws = wsOrRoot;
+    if (typeof wsOrRoot === 'string') {
+      try {
+        const absRoot = path.resolve(wsOrRoot);
+        const wsKey = process.platform === 'win32' ? absRoot.toLowerCase() : absRoot;
+        ws = this.workspaces.get(wsKey);
+      } catch {
+        return null;
+      }
+    }
+    if (!ws?.files) return null;
+    const raw = String(filePath).trim();
+    if (!raw) return null;
+    const relCand = path.isAbsolute(raw)
+      ? toRelPath(ws.absRoot, path.resolve(raw))
+      : raw.replace(/\\/g, '/').replace(/^\.\//, '');
+    if (!relCand || relCand.startsWith('..') || path.isAbsolute(relCand)) return null;
+    const canonical = this._resolveCanonicalRel(ws, relCand);
+    return ws.files.get(canonical) || null;
   }
 
   /**
@@ -497,7 +546,10 @@ export class RamMemoryEngine {
     }
 
     ws.files.delete(relPath);
-    ws.filesLower?.delete(relPath.toLowerCase());
+    const lowerKey = relPath.toLowerCase();
+    if (ws.filesLower?.get(lowerKey) === relPath) {
+      ws.filesLower.delete(lowerKey);
+    }
     ws.totalBytes = Math.max(0, ws.totalBytes - existing.approxRamBytes);
     this.totalCacheBytes = Math.max(0, this.totalCacheBytes - existing.approxRamBytes);
     ws.repoMapCache.clear();
@@ -624,7 +676,7 @@ export class RamMemoryEngine {
 
     const prevKey = this._resolveCanonicalRel(ws, relPath);
     const prev = ws.files.get(prevKey);
-    if (prev && prev.mtimeMs === stat.mtimeMs && prev.sizeBytes === stat.size) {
+    if (prev && prevKey === relPath && prev.mtimeMs === stat.mtimeMs && prev.sizeBytes === stat.size) {
       this._touchEntry(ws, prev);
       return prev;
     }
@@ -688,7 +740,7 @@ export class RamMemoryEngine {
 
     if (prev) {
       this.removeEntry(ws, prev.relPath, {
-        purgeIncoming: false,
+        purgeIncoming: prev.relPath !== relPath,
         keepArenaSlice: Boolean(preloadedArenaSlice && prev.relPath === relPath),
       });
     }
@@ -793,7 +845,7 @@ export class RamMemoryEngine {
 
     if (rebuildDeps) {
       this.linkFileDeps(ws, entry);
-      if (!prev) {
+      if (!prev || prev.relPath !== relPath) {
         for (const other of ws.files.values()) {
           if (other.relPath === relPath || !other.imports || other.imports.length === 0) continue;
           const otherOpts = this._getResolveOptsForFile(ws, other.relPath);
@@ -938,6 +990,10 @@ export class RamMemoryEngine {
           ws.watcher?.close();
         } catch {}
         ws.watcher = null;
+        if (ws.watchTimers) {
+          for (const t of ws.watchTimers.values()) clearTimeout(t);
+          ws.watchTimers.clear();
+        }
       });
       if (typeof ws.watcher.unref === 'function') ws.watcher.unref();
     } catch {
@@ -1004,7 +1060,7 @@ export class RamMemoryEngine {
    * @param {{ maxFiles?: number, startWatcher?: boolean }} [options={}]
    * @returns {{ ok: boolean, workspace: string, filesLoaded: number, symbolsCount: number, usedMb: number, budgetMb: number, elapsedMs: number }}
    */
-  warmWorkspace(rootDir, { maxFiles = DEFAULT_MAX_FILES_PER_WS, startWatcher = true } = {}) {
+  warmWorkspace(rootDir, { maxFiles = DEFAULT_MAX_FILES_PER_WS, startWatcher = this.defaultStartWatcher } = {}) {
     const startMs = Date.now();
     const ws = this.getOrCreateWorkspace(rootDir);
     if (!ws) {
@@ -1025,8 +1081,9 @@ export class RamMemoryEngine {
         continue;
       }
       if (!this.shouldIndexFile(relPath, stat.size)) continue;
-      const prev = ws.files.get(relPath);
-      if (prev && prev.mtimeMs === stat.mtimeMs && prev.sizeBytes === stat.size) {
+      const prevKey = this._resolveCanonicalRel(ws, relPath);
+      const prev = ws.files.get(prevKey);
+      if (prev && prevKey === relPath && prev.mtimeMs === stat.mtimeMs && prev.sizeBytes === stat.size) {
         this._touchEntry(ws, prev);
         continue;
       }
@@ -1110,7 +1167,7 @@ export class RamMemoryEngine {
   /**
    * Multi-core worker_threads warmWorkspace variant for cold / bulk file ingestion (25+ changed code files).
    */
-  async warmWorkspaceAsync(rootDir, { maxFiles = DEFAULT_MAX_FILES_PER_WS, startWatcher = true } = {}) {
+  async warmWorkspaceAsync(rootDir, { maxFiles = DEFAULT_MAX_FILES_PER_WS, startWatcher = this.defaultStartWatcher } = {}) {
     const startMs = Date.now();
     const ws = this.getOrCreateWorkspace(rootDir);
     if (!ws) {
@@ -1140,7 +1197,7 @@ export class RamMemoryEngine {
         if (!this.shouldIndexFile(relPath, stat.size)) continue;
         const prevKey = this._resolveCanonicalRel(ws, relPath);
         const prev = ws.files.get(prevKey);
-        if (prev && prev.mtimeMs === stat.mtimeMs && prev.sizeBytes === stat.size) {
+        if (prev && prevKey === relPath && prev.mtimeMs === stat.mtimeMs && prev.sizeBytes === stat.size) {
           this._touchEntry(ws, prev);
           continue;
         }
@@ -1626,30 +1683,31 @@ export class RamMemoryEngine {
 
       try {
         // Guard against main-thread stalls on huge repos (>1500 files)
-        if (!ws.symbolGraph && ws.files.size > 0 && ws.files.size <= 1500) {
+        if ((!ws.symbolGraph || ws.symbolGraphDirty?.size > 0) && ws.files.size > 0 && ws.files.size <= 1500) {
           ws.symbolGraph = buildSymbolCallGraph(ws.files);
           ws.symbolGraphDirty?.clear();
         }
 
-        const editedEntry = ws.files.get(relEdited);
+        const canonicalEdited = this._resolveCanonicalRel(ws, relEdited);
+        const editedEntry = ws.files.get(canonicalEdited);
         if (editedEntry) {
           if (!ws.simHashIndex && ws.files.size <= 1500) {
             ws.simHashIndex = buildWorkspaceSimHashIndex(ws.files);
           }
           if (ws.simHashIndex) {
             const hashes = computeFileSimHashes({
-              relPath: relEdited,
-              ext: editedEntry.ext || path.extname(relEdited).toLowerCase(),
+              relPath: canonicalEdited,
+              ext: editedEntry.ext || path.extname(canonicalEdited).toLowerCase(),
               text: editedEntry.buf.toString('utf8'),
               symbols: editedEntry.symbols || null,
             });
             if (hashes.length > 0) {
-              ws.simHashIndex.set(relEdited, hashes);
+              ws.simHashIndex.set(canonicalEdited, hashes);
             }
           }
         }
 
-        const revDeps = Array.from(ws.reverseDeps.get(relEdited) || []).slice(0, 3);
+        const revDeps = Array.from(ws.reverseDeps.get(canonicalEdited) || []).slice(0, 3);
         for (const depRel of revDeps) {
           const depEntry = ws.files.get(depRel);
           if (!depEntry) continue;

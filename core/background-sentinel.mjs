@@ -895,7 +895,12 @@ export class BackgroundSentinel {
       try {
         let ws = typeof eng.getOrCreateWorkspace === 'function' ? eng.getOrCreateWorkspace(absRoot) : null;
         if (ws && ws.files && ws.files.size === 0 && typeof eng.warmWorkspaceAsync === 'function') {
-          ws = await eng.warmWorkspaceAsync(absRoot, { startWatcher: false });
+          const warmRes = await eng.warmWorkspaceAsync(absRoot, { startWatcher: false });
+          ws = warmRes?.files
+            ? warmRes
+            : (warmRes?.ok && typeof eng.getOrCreateWorkspace === 'function'
+                ? eng.getOrCreateWorkspace(absRoot)
+                : null);
         }
         if (ws && ws.files && ws.files.size > 0) {
           return { ws, filesMap: ws.files };
