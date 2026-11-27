@@ -4,7 +4,23 @@
 
 Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
 
-> Хронология с `v3.8.0` по `v4.0.7` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`59` основных / `71` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `57` наборов автотестов).
+> Хронология с `v3.8.0` по `v4.0.8` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`59` основных / `71` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `58` наборов автотестов).
+
+---
+
+## [4.0.8] — 2026-11-27
+
+### Добавлено, исправлено и усилено (Глубокий аудит ядра, мультивыбор на Карте проекта, облегчённая Bento-панель, медиа `v4` и 58 наборов тестов)
+- **Глубокое усиление ядра, безопасности, откатов и кэшей ([core/safe-json.mjs](core/safe-json.mjs), [core/security-guard.mjs](core/security-guard.mjs), [core/plugin-updater.mjs](core/plugin-updater.mjs), [core/sqlite-knowledge-hub.mjs](core/sqlite-knowledge-hub.mjs), [core/skill-registry-bridge.mjs](core/skill-registry-bridge.mjs), [core/background-sentinel.mjs](core/background-sentinel.mjs), [core/shadow-worktree.mjs](core/shadow-worktree.mjs), [core/lsp-bridge.mjs](core/lsp-bridge.mjs), [core/cpu-delta-reread.mjs](core/cpu-delta-reread.mjs), [core/cache-dir.mjs](core/cache-dir.mjs), [tests/core-deep-audit-fixes.test.mjs](tests/core-deep-audit-fixes.test.mjs))**:
+  - Усилены атомарные файловые блокировки, откат обновлений `plugin-updater.mjs`, защита `security-guard.mjs`, жизненный цикл демонов и `shadow-worktree`, запросы SQLite-базы знаний, мост реестра навыков, LSP-фрейминг, границы `cpu-delta-reread` и нормализация путей Windows в `cache-dir.mjs` (всего `20` модулей).
+  - Добавлен набор регрессионных тестов `tests/core-deep-audit-fixes.test.mjs` и расширен `tests/cache-dir.test.mjs` — теперь в проекте `58` наборов автотестов.
+- **Карта проекта — мультивыбор `Ctrl+click` и WebGL2-кольцо выделения ([sidecars/panel/ui-src/js/07-project-graph.js](sidecars/panel/ui-src/js/07-project-graph.js), [sidecars/panel/ui-src/js/07b-project-graph-lenses.js](sidecars/panel/ui-src/js/07b-project-graph-lenses.js), [sidecars/panel/ui-src/js/07d-project-graph-spatial.js](sidecars/panel/ui-src/js/07d-project-graph-spatial.js), [tests/project-graph-panel.test.mjs](tests/project-graph-panel.test.mjs))**:
+  - Добавлен мультивыбор узлов через `Ctrl+click` с чипами, WebGL2-кольцо подсветки выбранных узлов и дополнительные автотесты графа.
+- **Облегчённый Bento-интерфейс и защита сборщиков телеметрии ([sidecars/panel/lib/panel-telemetry-collectors.mjs](sidecars/panel/lib/panel-telemetry-collectors.mjs), [sidecars/panel/ui-src/head-body.html](sidecars/panel/ui-src/head-body.html), [sidecars/panel/ui-src/styles.css](sidecars/panel/ui-src/styles.css), [sidecars/panel/ui-src/js/05-progress-hud.js](sidecars/panel/ui-src/js/05-progress-hud.js), [tests/panel-ui-audit-regressions.test.mjs](tests/panel-ui-audit-regressions.test.mjs))**:
+  - Удалены избыточное модальное окно мастера быстрой настройки (`-2818` строк кода) и некликабельная плашка «Все чаты» в шапке.
+  - Выровнены `bento-control-tile` в одну строку с отдельными кнопками бэкапа, добавлены маски прокрутки (`scroll-fade`) для тела категорий и левого рельса, а сборщики телеметрии защищены от гонок, `NaN` и тихих ошибок сброса.
+- **Универсальное промо-видео `v4`, анимированный баннер и веб-плеер ([docs/media/the-tunnel-demo-v4.mp4](docs/media/the-tunnel-demo-v4.mp4), [docs/media/hero-showcase.gif](docs/media/hero-showcase.gif), [docs/demo/index.html](docs/demo/index.html), [scripts/render-promo-video.mjs](scripts/render-promo-video.mjs), [assets/banner.svg](assets/banner.svg), [README.md](README.md))**:
+  - Перерендерены 30-секундное HD-видео (`the-tunnel-demo-v4.mp4`), анимированная обложка (`hero-showcase.gif`) и HTML5-плеер с универсальной маркировкой `v4`, обновлены баннер `assets/banner.svg` и метрики в `README.md` (`58` наборов тестов).
 
 ---
 

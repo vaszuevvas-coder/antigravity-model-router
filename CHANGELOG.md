@@ -4,7 +4,23 @@
 
 All notable changes to **The Tunnel** (`antigravity-model-router`) are documented in this file in accordance with [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [SemVer](https://semver.org/).
 
-> The timeline from `v3.8.0` to `v4.0.7` was reconstructed from development logs and verified against the codebase (`59` primary / `71` total core ESM modules, `59` `GUARDRAIL_KEYS` contours, `15` built-in skills, and `57` automated test suites).
+> The timeline from `v3.8.0` to `v4.0.8` was reconstructed from development logs and verified against the codebase (`59` primary / `71` total core ESM modules, `59` `GUARDRAIL_KEYS` contours, `15` built-in skills, and `58` automated test suites).
+
+---
+
+## [4.0.8] — 2026-11-27
+
+### Added, Fixed & Hardened (Deep Core Audit, Project Map Multi-Select, Streamlined Bento Panel, Evergreen `v4` Media & 58 Test Suites)
+- **Deep Core Reliability, Security & Cache Hardening ([core/safe-json.mjs](core/safe-json.mjs), [core/security-guard.mjs](core/security-guard.mjs), [core/plugin-updater.mjs](core/plugin-updater.mjs), [core/sqlite-knowledge-hub.mjs](core/sqlite-knowledge-hub.mjs), [core/skill-registry-bridge.mjs](core/skill-registry-bridge.mjs), [core/background-sentinel.mjs](core/background-sentinel.mjs), [core/shadow-worktree.mjs](core/shadow-worktree.mjs), [core/lsp-bridge.mjs](core/lsp-bridge.mjs), [core/cpu-delta-reread.mjs](core/cpu-delta-reread.mjs), [core/cache-dir.mjs](core/cache-dir.mjs), [tests/core-deep-audit-fixes.test.mjs](tests/core-deep-audit-fixes.test.mjs))**:
+  - Hardened atomic file locks, updater rollback safety, security-guard redaction, daemon/worktree lifecycle, SQLite knowledge hub queries, skill registry bridge, LSP framing, delta-reread bounds, and Windows cache path trimming across `20` core modules.
+  - Added `tests/core-deep-audit-fixes.test.mjs` (`356` LOC) and expanded `tests/cache-dir.test.mjs`, bringing the suite count to `58`.
+- **Interactive Project Map — Multi-Select Chips & WebGL2 Selection Ring ([sidecars/panel/ui-src/js/07-project-graph.js](sidecars/panel/ui-src/js/07-project-graph.js), [sidecars/panel/ui-src/js/07b-project-graph-lenses.js](sidecars/panel/ui-src/js/07b-project-graph-lenses.js), [sidecars/panel/ui-src/js/07d-project-graph-spatial.js](sidecars/panel/ui-src/js/07d-project-graph-spatial.js), [tests/project-graph-panel.test.mjs](tests/project-graph-panel.test.mjs))**:
+  - Added `Ctrl+click` multi-select node chips, WebGL2 selection ring rendering, and expanded spatial/graph regression tests.
+- **Streamlined Bento Panel & Hardened Telemetry Collectors ([sidecars/panel/lib/panel-telemetry-collectors.mjs](sidecars/panel/lib/panel-telemetry-collectors.mjs), [sidecars/panel/ui-src/head-body.html](sidecars/panel/ui-src/head-body.html), [sidecars/panel/ui-src/styles.css](sidecars/panel/ui-src/styles.css), [sidecars/panel/ui-src/js/05-progress-hud.js](sidecars/panel/ui-src/js/05-progress-hud.js), [tests/panel-ui-audit-regressions.test.mjs](tests/panel-ui-audit-regressions.test.mjs))**:
+  - Removed the redundant Quick Setup / Onboarding Wizard modal (`-2818` LOC) and non-interactive all-chats header pill for a cleaner, faster panel.
+  - Aligned `bento-control-tile` to a single row with standalone backup buttons, extended scroll-fade masks to category bodies and left rail, and hardened telemetry collectors against races, `NaN`, and silent reset failures.
+- **Evergreen `v4` Promo Video, Animated Hero Banner & Demo Player ([docs/media/the-tunnel-demo-v4.mp4](docs/media/the-tunnel-demo-v4.mp4), [docs/media/hero-showcase.gif](docs/media/hero-showcase.gif), [docs/demo/index.html](docs/demo/index.html), [scripts/render-promo-video.mjs](scripts/render-promo-video.mjs), [assets/banner.svg](assets/banner.svg), [README.md](README.md))**:
+  - Re-rendered the 30s 1080p promo showcase (`the-tunnel-demo-v4.mp4`), animated hero banner (`hero-showcase.gif`), and interactive HTML5 player with evergreen crimson `v4` branding and updated `assets/banner.svg` / `README.md` metrics (`58` test suites).
 
 ---
 

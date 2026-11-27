@@ -1,9 +1,9 @@
 ---
 name: model-router
-description: Control protocol for The Tunnel v4.0.7 3D Task Tensor (Breadth x Depth x Risk), Gemini 4 Hydrogen/Neon/Carbon/Orchestrator routing, Adaptive Swarm, CPU pool, and Int8 GPU copilot. Use when tuning router-state.json, model tiers, or RAM/VRAM guardrails.
+description: Control protocol for The Tunnel v4.0.8 3D Task Tensor (Breadth x Depth x Risk), Gemini 4 Hydrogen/Neon/Carbon/Orchestrator routing, Adaptive Swarm, CPU pool, and Int8 GPU copilot. Use when tuning router-state.json, model tiers, or RAM/VRAM guardrails.
 ---
 
-# The Tunnel v4.0.7 Control Protocol
+# The Tunnel v4.0.8 Control Protocol
 
 Manage routing strategies, 3D Task Tensor verdicts, Adaptive Swarm (`core/swarm-controller.mjs`), Multi-Core CPU pool, Local GPU Copilot (`core/local-gpu-engine.mjs`), guardrails, and the **The Tunnel** sidecar panel.
 
@@ -23,7 +23,7 @@ Manage routing strategies, 3D Task Tensor verdicts, Adaptive Swarm (`core/swarm-
   - **Swarm (`swarmMode`, `swarmWorkerTier`, `swarmAutoVerifier`, `swarmQuotaFailover`)**: Idle on `S/M` and narrow `L`; activates on `XL` (`auto_xl`), `L+XL` (`aggressive_l`), or `/swarm` (`manual_only`). Supports `hydrogen_auto` (`gemini-4-hydrogen-medium`) and `neon_auto` (`gemini-4-neon-medium`) in `workspace:"share"`, spawns `@verifier` (`workspace:"inherit"`), blocks `ask_question` in `<swarm_worker>`, and swaps `[quota]` across buckets via `swarm{action:"models"}` + `swarm{action:"model"}`.
 - **Pre-Task Gate**: Controlled by `confirmBeforeRun`, `confirmThreshold` (`"ALL"|"M"|"L"`), and `orchestratorSmartSynergy`.
 
-## 2. Guardrails & Coprocessors (v2.0 -> v4.0.7)
+## 2. Guardrails & Coprocessors (v2.0 -> v4.0.8)
 - **Context & Safety Guardrails**: `repoMap` (AST + X-Ray `🩻`), `toolPruning` (+ `Context7`), `diffOnly` (`edit_file` / `diff-patcher`), `obsMasking`, `cascadeVerify`, `shadowCheckpoints`, `transactionalPatch`, `blastRadius` (`🔗`), `circuitBreaker` (3 repeats), `historyCompaction` (`compactionTokenThreshold`), `pitfallLedger`, `thinkingLimiter`, `pageRankGraph` (`d=0.50`), `zeroTurnSlices`, `bayesianRouter` (`Beta(α,β)` 14d decay + fragility cap `200`), `testImpactVerify`, `sessionHandoff`, `readDedup` (`800L/46KB`), `skillCrystallizer` v2 (`audit-skill.mjs`), and `securityGuard`.
 - **Local GPU Copilot (`core/local-gpu-engine.mjs`)**: Offloads `gpu_distill` (`gemma4:12b`) and Hybrid GPU+RAM `i8bin-v2` semantic search (`qwen3-embedding:0.6b`/`4b`, `ram_search`/`ram_context_pack`/`gpu_semantic_search`) to `127.0.0.1:11434` (`gpuMaxVramMb`, `gpuEmbedKeepAlive`). Inspect or unload via `gpu_status` or `node core/ag-cli.mjs gpu <status|warm|search|distill|unload>`.
 - **Multi-Core CPU Coprocessor (`core/cpu-worker-pool.mjs` + `core/cpu-reranker.mjs`, 0 MB VRAM)**: Shared `worker_threads` pool (`cpuMaxThreads`, `unref()` auto-sleep) for parallel AST/cAST parsing, in-RAM Trigram+BM25F + Cross-Reranker (`<15ms`), and concurrent `cpuParallelVerify` micro-tests/linters.

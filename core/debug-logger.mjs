@@ -353,7 +353,7 @@ function readLocalPluginInfo(root) {
   const pkgManifest = safeReadJsonSync(join(root, 'package.json'), null, { selfHeal: false });
   const version = (typeof pluginManifest?.version === 'string' && pluginManifest.version.trim())
     || (typeof pkgManifest?.version === 'string' && pkgManifest.version.trim())
-    || '4.0.7';
+    || '4.0.8';
   const name = (typeof pluginManifest?.name === 'string' && pluginManifest.name.trim())
     || (typeof pkgManifest?.name === 'string' && pkgManifest.name.trim())
     || 'antigravity-model-router';
