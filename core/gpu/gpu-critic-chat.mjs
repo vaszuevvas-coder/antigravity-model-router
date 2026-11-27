@@ -4,11 +4,9 @@
  */
 
 import { createHash } from 'node:crypto';
-import https from 'node:https';
-import path, { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { redactSecretsInText } from '../security-guard.mjs';
-import { detectTextLanguage, normalizeLang, pickLang, readActiveUiLanguage } from '../i18n.mjs';
+import { detectTextLanguage, normalizeLang, readActiveUiLanguage } from '../i18n.mjs';
 import {
   DEFAULT_GPU_CONFIG,
   clampInt,
@@ -48,8 +46,6 @@ import {
   normalizeGroundingPosixPath,
   stripFileExt,
 } from './gpu-composer-copilot.mjs';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const CRITIC_CODE_EXTS = new Set(['.js', '.mjs', '.cjs']);
 
@@ -312,11 +308,11 @@ function collectDeclaredJsIdentifiers(strippedCode = '') {
   for (const m of strippedCode.matchAll(/\bcatch\s*\(\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\)/g)) {
     addId(m[1]);
   }
-  for (const m of strippedCode.matchAll(/(?:^|\n)\s*import\s+([\s\S]*?)\s+from\s+/g)) {
+  for (const m of strippedCode.matchAll(/(?:^|\n)\s*import(?:\s+|[ \t]*(?=[{*]))([^;]*?)\s+from\s+/g)) {
     const clause = m[1].replace(/\b[a-zA-Z_$][a-zA-Z0-9_$]*\s+as\s+/g, '');
     for (const id of clause.match(/\b[a-zA-Z_$][a-zA-Z0-9_$]*\b/g) || []) addId(id);
   }
-  for (const m of strippedCode.matchAll(/(?:^|\n)\s*export\s*\{([\s\S]*?)\}\s*from\s+/g)) {
+  for (const m of strippedCode.matchAll(/(?:^|\n)\s*export\s*\{([^;]*?)\}\s*from\s+/g)) {
     const clause = m[1].replace(/\b[a-zA-Z_$][a-zA-Z0-9_$]*\s+as\s+/g, '');
     for (const id of clause.match(/\b[a-zA-Z_$][a-zA-Z0-9_$]*\b/g) || []) addId(id);
   }
@@ -364,7 +360,7 @@ function collectDeclaredJsIdentifiers(strippedCode = '') {
       const after = strippedCode.slice(j, j + 24);
       if (/^\s*(?:=>|\{)/.test(after)) {
         const prefix = strippedCode.slice(Math.max(0, i - 24), i);
-        if (!/\b(?:if|while|for|switch|catch|with)\s*$/.test(prefix)) {
+        if (!/\b(?:if|while|for|switch|with)\s*$/.test(prefix)) {
           extractBindingNames(strippedCode.slice(i + 1, j - 1));
         }
       }
@@ -1792,12 +1788,29 @@ export async function generateIdleModuleSymbolCard(rawOpts = {}) {
   }
 
   try {
+    let targetModel = cfg.gpuChatModel || DEFAULT_GPU_CONFIG.gpuChatModel;
+    if (!httpJsonFn) {
+      const hw = probeNvidiaGpu();
+      const psRes = await ollamaHttpJson('GET', '/api/ps', null, 800, cfg.gpuEndpoint).catch(() => null);
+      const loadedModels = Array.isArray(psRes?.data?.models) ? psRes.data.models : [];
+      const tagSource = await getCachedOrFetchOllamaTagMap(cfg).catch(() => null);
+      const fit = evaluateVramModelFit({ cfg: { ...cfg, gpuChatModel: targetModel }, tagModels: tagSource, loadedModels, hw });
+      const tagKnown = Array.isArray(tagSource) || (tagSource instanceof Map && tagSource.size > 0);
+      if (fit.selectedSizeFits && (!tagKnown || fit.selectedChatDownloaded)) {
+        targetModel = fit.selectedChatModel || targetModel;
+      } else if (fit.bestFallbackChatModel) {
+        targetModel = fit.bestFallbackChatModel;
+      } else {
+        await unloadModelsExceedingBudget({ cfg, loadedModels, tagModels: tagSource, hw, callHttp: ollamaHttpJson }).catch(() => {});
+        return { ok: false, aborted: false, skippedVramCap: true, error: fit.reasonEn || fit.reasonRu || 'VRAM limit exceeded' };
+      }
+    }
     const safeSnippet = redactSecretsInText(cleanCode.slice(0, 5600));
     const exportsStr = Array.isArray(exportedSymbols) && exportedSymbols.length > 0
       ? exportedSymbols.slice(0, 24).join(', ')
       : 'none';
     const body = {
-      model: cfg.gpuChatModel || DEFAULT_GPU_CONFIG.gpuChatModel,
+      model: targetModel,
       stream: false,
       think: false,
       format: 'json',
@@ -1931,10 +1944,27 @@ export async function reviewGitDiffHunkLocally(rawOpts = {}) {
   }
 
   try {
+    let targetModel = cfg.gpuChatModel || DEFAULT_GPU_CONFIG.gpuChatModel;
+    if (!httpJsonFn) {
+      const hw = probeNvidiaGpu();
+      const psRes = await ollamaHttpJson('GET', '/api/ps', null, 800, cfg.gpuEndpoint).catch(() => null);
+      const loadedModels = Array.isArray(psRes?.data?.models) ? psRes.data.models : [];
+      const tagSource = await getCachedOrFetchOllamaTagMap(cfg).catch(() => null);
+      const fit = evaluateVramModelFit({ cfg: { ...cfg, gpuChatModel: targetModel }, tagModels: tagSource, loadedModels, hw });
+      const tagKnown = Array.isArray(tagSource) || (tagSource instanceof Map && tagSource.size > 0);
+      if (fit.selectedSizeFits && (!tagKnown || fit.selectedChatDownloaded)) {
+        targetModel = fit.selectedChatModel || targetModel;
+      } else if (fit.bestFallbackChatModel) {
+        targetModel = fit.bestFallbackChatModel;
+      } else {
+        await unloadModelsExceedingBudget({ cfg, loadedModels, tagModels: tagSource, hw, callHttp: ollamaHttpJson }).catch(() => {});
+        return { ok: false, aborted: false, skippedVramCap: true, findings: [], error: fit.reasonEn || fit.reasonRu || 'VRAM limit exceeded' };
+      }
+    }
     const safeDiff = redactSecretsInText(cleanDiff.slice(0, 12000));
     const safeContracts = redactSecretsInText(String(neighborContracts || '').trim().slice(0, 2400));
     const body = {
-      model: cfg.gpuChatModel || DEFAULT_GPU_CONFIG.gpuChatModel,
+      model: targetModel,
       stream: false,
       think: false,
       format: 'json',

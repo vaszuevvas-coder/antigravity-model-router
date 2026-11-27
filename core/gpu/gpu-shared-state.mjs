@@ -11,14 +11,14 @@ import os from 'node:os';
 import path, { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { computeMaxVramCapMb, probeAnyGpu } from '../hardware-profiler.mjs';
-import { createBaseLiveActivityState, isPidAlive } from '../cache-dir.mjs';
+import { createBaseLiveActivityState, isPidAlive, resolveTunnelCacheDir } from '../cache-dir.mjs';
 import { safeReadJsonSync, updateJsonAtomicSync } from '../safe-json.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export const PLUGIN_ROOT = join(__dirname, '..', '..');
 
-export const CACHE_DIR = join(PLUGIN_ROOT, '.cache');
+export const CACHE_DIR = resolveTunnelCacheDir(PLUGIN_ROOT);
 
 const STATE_FILE = join(PLUGIN_ROOT, 'router-state.json');
 
@@ -549,6 +549,13 @@ export function ollamaHttpJson(method, urlPath, bodyObj = null, timeoutMs = 1500
     let url;
     try {
       url = new URL(urlPath, endpoint);
+      const h = String(url.hostname || '').toLowerCase();
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        return resolve({ ok: false, error: 'Unsupported gpuEndpoint protocol' });
+      }
+      if (h !== '127.0.0.1' && h !== 'localhost' && h !== '::1' && h !== '[::1]') {
+        return resolve({ ok: false, error: 'gpuEndpoint must target localhost/loopback' });
+      }
     } catch (err) {
       return resolve({ ok: false, error: err.message });
     }
@@ -590,9 +597,15 @@ export function ollamaHttpJson(method, urlPath, bodyObj = null, timeoutMs = 1500
 
     let settled = false;
     let onAbort = null;
+    let hardTimer = null;
+    let reqRef = null;
     const finish = (val) => {
       if (settled) return;
       settled = true;
+      if (hardTimer) {
+        clearTimeout(hardTimer);
+        hardTimer = null;
+      }
       if (unregisterBg) {
         try { unregisterBg(); } catch {}
         unregisterBg = null;
@@ -614,6 +627,12 @@ export function ollamaHttpJson(method, urlPath, bodyObj = null, timeoutMs = 1500
       resolve(val);
     };
 
+    hardTimer = setTimeout(() => {
+      try { reqRef?.destroy(); } catch {}
+      finish({ ok: false, error: `Ollama request deadline (${timeoutMs}ms)` });
+    }, Math.max(50, Number(timeoutMs) || 5000));
+    if (typeof hardTimer.unref === 'function') hardTimer.unref();
+
     const req = mod.request(
       {
         hostname: url.hostname,
@@ -628,8 +647,26 @@ export function ollamaHttpJson(method, urlPath, bodyObj = null, timeoutMs = 1500
         gpuRuntime.ollamaOfflineUntilTs = 0;
         gpuRuntime.ollamaOfflineEndpoint = '';
         let raw = '';
+        let rawBytes = 0;
+        const MAX_OLLAMA_JSON_BYTES = 32 * 1024 * 1024;
         res.setEncoding('utf8');
-        res.on('data', (chunk) => { raw += chunk; });
+        res.on('data', (chunk) => {
+          rawBytes += Buffer.byteLength(chunk, 'utf8');
+          if (rawBytes > MAX_OLLAMA_JSON_BYTES) {
+            try { req.destroy(); } catch {}
+            finish({ ok: false, status: res.statusCode, error: 'Ollama response exceeded 32MB limit' });
+            return;
+          }
+          raw += chunk;
+        });
+        res.on('error', (err) => {
+          finish({ ok: false, status: res.statusCode, error: err?.message || 'Ollama response stream error' });
+        });
+        res.on('close', () => {
+          if (!settled && !res.complete) {
+            finish({ ok: false, status: res.statusCode, error: 'Ollama response closed prematurely' });
+          }
+        });
         res.on('end', () => {
           try {
             const parsed = raw ? JSON.parse(raw) : {};
@@ -644,6 +681,7 @@ export function ollamaHttpJson(method, urlPath, bodyObj = null, timeoutMs = 1500
         });
       }
     );
+    reqRef = req;
 
     if (signal) {
       onAbort = () => {

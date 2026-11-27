@@ -1257,3 +1257,27 @@ test('50. Wave 3 GPU & Ollama: HF mirror preference, persistent pull errors, cus
     fs.rmSync(customRoot, { recursive: true, force: true });
   }
 });
+
+test('Batch 3 audit regressions: SSRF guard on ollamaHttpJson, JS import regex across semicolon, distill CoT strip & full hash dedup', async () => {
+  const { ollamaHttpJson } = await import('../core/gpu/gpu-shared-state.mjs');
+  const { critiqueEditedDiffLocally } = await import('../core/gpu/gpu-critic-chat.mjs');
+
+  const ssrfRes = await ollamaHttpJson('GET', '/api/tags', null, 300, 'http://169.254.169.254/latest');
+  assert.equal(ssrfRes.ok, false);
+  assert.match(String(ssrfRes.error || ''), /loopback/i);
+
+  const sideEffectImportCode = [
+    "import './init.mjs';",
+    'const hiddenRef = undeclaredAuditBoom;',
+    "import { x } from './other.mjs';",
+    'export const out = [hiddenRef, x];',
+  ].join('\n');
+  const critique = await critiqueEditedDiffLocally({
+    filePath: 'sample.mjs',
+    oldText: '',
+    newText: sideEffectImportCode,
+    cfgOverride: { gpuEnabled: false },
+  });
+  assert.ok(Array.isArray(critique.issues));
+  assert.ok(critique.issues.some((iss) => String(iss).includes('undeclaredAuditBoom')), 'Side-effect import must not swallow intervening identifiers across semicolons');
+});

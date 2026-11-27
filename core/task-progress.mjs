@@ -15,7 +15,7 @@ import { ensureTunnelCacheDir, resolveTunnelCacheDir } from './cache-dir.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
-const CACHE_DIR = join(PLUGIN_ROOT, '.cache');
+const CACHE_DIR = resolveTunnelCacheDir(PLUGIN_ROOT);
 export const TASK_PROGRESS_FILE = join(CACHE_DIR, 'task-progress.json');
 
 const STALE_RUNNING_TTL_MS = 4 * 60 * 1000;
@@ -159,7 +159,7 @@ export function computeChecklistProgress(steps = [], intraStepOps = 0) {
 
   for (let i = 0; i < list.length; i++) {
     const st = list[i]?.status;
-    if (st === 'completed') {
+    if (st === 'completed' || st === 'done') {
       doneCount += 1;
     } else if (st === 'running' && runningIdx === -1) {
       runningIdx = i;
@@ -594,35 +594,46 @@ export function recordBgTaskDurationSample(task = {}, opts = {}) {
   if (!sig) return false;
 
   const filePath = getBgDurationHistoryFile(opts.cacheFile || '');
-  const store = readBgDurationStore(filePath);
-  if (store.recordedIds.includes(taskId)) return false;
-
   const now = Math.max(updatedAt, Number(opts.now || Date.now()));
-  const nextEntries = {};
-  for (const [k, v] of Object.entries(store.entries)) {
-    if (!v || typeof v !== 'object' || !Array.isArray(v.samples)) continue;
-    const upd = Number(v.updatedAt || 0);
-    if (upd > 0 && now - upd > BG_DURATION_HISTORY_TTL_MS) continue;
-    nextEntries[k] = {
-      samples: v.samples.map((n) => Math.round(Number(n))).filter((n) => Number.isFinite(n) && n >= BG_DURATION_MIN_MS && n <= BG_DURATION_MAX_MS).slice(-BG_DURATION_HISTORY_MAX_SAMPLES),
-      updatedAt: upd || now,
-    };
-  }
-  const existing = nextEntries[sig] || { samples: [], updatedAt: now };
-  existing.samples = [...existing.samples, durationMs].slice(-BG_DURATION_HISTORY_MAX_SAMPLES);
-  existing.updatedAt = now;
-  nextEntries[sig] = existing;
+  let recorded = false;
+  updateJsonAtomicSync(
+    filePath,
+    () => ({ entries: {}, recordedIds: [] }),
+    (prev) => {
+      const store = {
+        entries: prev?.entries && typeof prev.entries === 'object' && !Array.isArray(prev.entries) ? prev.entries : {},
+        recordedIds: Array.isArray(prev?.recordedIds) ? prev.recordedIds : [],
+      };
+      if (store.recordedIds.includes(taskId)) return prev || store;
 
-  const sortedKeys = Object.keys(nextEntries).sort((a, b) => (nextEntries[b].updatedAt || 0) - (nextEntries[a].updatedAt || 0));
-  if (sortedKeys.length > BG_DURATION_HISTORY_MAX_SIGNATURES) {
-    for (const dropKey of sortedKeys.slice(BG_DURATION_HISTORY_MAX_SIGNATURES)) {
-      delete nextEntries[dropKey];
+      const nextEntries = {};
+      for (const [k, v] of Object.entries(store.entries)) {
+        if (!v || typeof v !== 'object' || !Array.isArray(v.samples)) continue;
+        const upd = Number(v.updatedAt || 0);
+        if (upd > 0 && now - upd > BG_DURATION_HISTORY_TTL_MS) continue;
+        nextEntries[k] = {
+          samples: v.samples.map((n) => Math.round(Number(n))).filter((n) => Number.isFinite(n) && n >= BG_DURATION_MIN_MS && n <= BG_DURATION_MAX_MS).slice(-BG_DURATION_HISTORY_MAX_SAMPLES),
+          updatedAt: upd || now,
+        };
+      }
+      const existing = nextEntries[sig] || { samples: [], updatedAt: now };
+      existing.samples = [...existing.samples, durationMs].slice(-BG_DURATION_HISTORY_MAX_SAMPLES);
+      existing.updatedAt = now;
+      nextEntries[sig] = existing;
+
+      const sortedKeys = Object.keys(nextEntries).sort((a, b) => (nextEntries[b].updatedAt || 0) - (nextEntries[a].updatedAt || 0));
+      if (sortedKeys.length > BG_DURATION_HISTORY_MAX_SIGNATURES) {
+        for (const dropKey of sortedKeys.slice(BG_DURATION_HISTORY_MAX_SIGNATURES)) {
+          delete nextEntries[dropKey];
+        }
+      }
+
+      const nextIds = [...store.recordedIds.filter((id) => id !== taskId), taskId].slice(-BG_DURATION_HISTORY_MAX_IDS);
+      recorded = true;
+      return { entries: nextEntries, recordedIds: nextIds };
     }
-  }
-
-  const nextIds = [...store.recordedIds.filter((id) => id !== taskId), taskId].slice(-BG_DURATION_HISTORY_MAX_IDS);
-  atomicWriteJsonSync(filePath, { entries: nextEntries, recordedIds: nextIds });
-  return true;
+  );
+  return recorded;
 }
 
 export function estimateBgTaskProgressFromHistory(task = {}, now = Date.now(), opts = {}) {
@@ -2041,7 +2052,28 @@ export function getTaskProgressSnapshot(opts = {}) {
 
   if (dirty) {
     try {
-      atomicWriteJsonSync(getTaskProgressFile(), hydrated);
+      updateJsonAtomicSync(getTaskProgressFile(), createDefaultProgressState, (latestRaw) => {
+        const latest = latestRaw && typeof latestRaw === 'object' ? latestRaw : {};
+        const latestChats = latest.chats && typeof latest.chats === 'object' && !Array.isArray(latest.chats) ? latest.chats : {};
+        const mergedChats = { ...hydrated.chats };
+        for (const [k, lChat] of Object.entries(latestChats)) {
+          if (!lChat || typeof lChat !== 'object') continue;
+          const baseChat = raw?.chats?.[k];
+          if (Number(lChat.updatedAt || 0) > Number(baseChat?.updatedAt || 0)) {
+            mergedChats[k] = lChat;
+          }
+        }
+        const mergedRegistry = {
+          ...(hydrated.chatRegistry || {}),
+          ...(latest.chatRegistry && typeof latest.chatRegistry === 'object' ? latest.chatRegistry : {}),
+        };
+        return {
+          ...hydrated,
+          hostBootAt: Math.max(Number(latest.hostBootAt || 0), Number(hydrated.hostBootAt || 0)),
+          chatRegistry: mergedRegistry,
+          chats: mergedChats,
+        };
+      });
     } catch {}
   }
 
@@ -2125,21 +2157,23 @@ export function initTaskProgressFromPrompt({
     const subMeta = resolvedTranscript
       ? inspectSubagentTranscriptMeta(resolvedTranscript)
       : { isSubagent: false, parentConversationId: '', agentKind: '', agentHint: '' };
-    const isSub = Boolean(subMeta.isSubagent || existingChat?.isSubagent);
-    let parentCid = normalizeConversationId(subMeta.parentConversationId || existingChat?.parentConversationId || '');
+    const wtInit = parseAntigravityWorktreePath(cleanWs || existingChat?.workspaceRoot || '');
+    const isSub = Boolean(subMeta.isSubagent || wtInit?.parentCid || existingChat?.isSubagent);
+    let parentCid = normalizeConversationId(subMeta.parentConversationId || wtInit?.parentCid || existingChat?.parentConversationId || '');
     if (parentCid === 'default' || parentCid === cid) parentCid = '';
+    const parentProjHint = parentCid ? chatsMap[parentCid]?.projectName || '' : '';
 
     const tailSnapshot = resolvedTranscript
       ? inspectTranscriptTurnState(resolvedTranscript, now, { hostBootAt: Number(state.hostBootAt || 0) })
       : { exists: false };
     const effectiveInitWsRaw = sanitizeWorkspaceRoot(
-      cleanWs || existingChat?.workspaceRoot || tailSnapshot?.detectedWorkspace || ''
+      cleanWs || existingChat?.workspaceRoot || tailSnapshot?.detectedWorkspace || (parentCid ? chatsMap[parentCid]?.workspaceRoot || '' : '')
     );
     const effectiveInitWs = effectiveInitWsRaw && !isBrainOrTempWorkspacePath(effectiveInitWsRaw) ? effectiveInitWsRaw : '';
     const isUnscopedInit = !effectiveInitWs && !isSub;
     const projName = effectiveInitWs
-      ? extractProjectName(effectiveInitWs)
-      : (isSub ? extractProjectName(state.workspaceRoot || '') : UNSCOPED_CHAT_PROJECT_RU);
+      ? extractProjectName(effectiveInitWs, parentProjHint || existingChat?.projectName || '')
+      : (isSub ? extractProjectName('', parentProjHint || state.projectName || '') : UNSCOPED_CHAT_PROJECT_RU);
     let chatNumber = existingChat?.chatNumber || 1;
     let registry = state.chatRegistry;
     if (!isSub) {
@@ -3087,17 +3121,19 @@ export function recordTaskProgressOnPostTool({
     const subMeta = resolvedTranscript
       ? inspectSubagentTranscriptMeta(resolvedTranscript)
       : { isSubagent: false, parentConversationId: '', agentKind: '', agentHint: '' };
-    const effectiveIsSub = Boolean(subMeta.isSubagent || chatsMap[cid]?.isSubagent);
-    let effectiveParentCid = normalizeConversationId(subMeta.parentConversationId || chatsMap[cid]?.parentConversationId || '');
+    const wtPost = parseAntigravityWorktreePath(cleanWs || chatsMap[cid]?.workspaceRoot || '');
+    const effectiveIsSub = Boolean(subMeta.isSubagent || wtPost?.parentCid || chatsMap[cid]?.isSubagent);
+    let effectiveParentCid = normalizeConversationId(subMeta.parentConversationId || wtPost?.parentCid || chatsMap[cid]?.parentConversationId || '');
     if (effectiveParentCid === 'default' || effectiveParentCid === cid) effectiveParentCid = '';
+    const parentProjHint = effectiveParentCid ? chatsMap[effectiveParentCid]?.projectName || '' : '';
 
     const prevChatWsRaw = sanitizeWorkspaceRoot(chatsMap[cid]?.workspaceRoot || '');
     const prevChatWs = prevChatWsRaw && !isBrainOrTempWorkspacePath(prevChatWsRaw) ? prevChatWsRaw : '';
-    const effectiveWs = cleanWs || prevChatWs || (effectiveIsSub ? sanitizeWorkspaceRoot(state.workspaceRoot || '') : '');
+    const effectiveWs = cleanWs || prevChatWs || (effectiveParentCid ? sanitizeWorkspaceRoot(chatsMap[effectiveParentCid]?.workspaceRoot || '') : '') || (effectiveIsSub ? sanitizeWorkspaceRoot(state.workspaceRoot || '') : '');
     const isUnscopedChat = !effectiveIsSub && !effectiveWs;
     const projName = effectiveWs
-      ? extractProjectName(effectiveWs)
-      : (isUnscopedChat ? UNSCOPED_CHAT_PROJECT_RU : extractProjectName('', state.projectName || ''));
+      ? extractProjectName(effectiveWs, parentProjHint || chatsMap[cid]?.projectName || state.projectName || '')
+      : (isUnscopedChat ? UNSCOPED_CHAT_PROJECT_RU : extractProjectName('', parentProjHint || chatsMap[cid]?.projectName || state.projectName || ''));
     let chatNumber = chatsMap[cid]?.chatNumber || 1;
     let registry = state.chatRegistry;
     if (!effectiveIsSub) {
@@ -3465,13 +3501,17 @@ export function finalizeTaskProgressOnStop({
     state.chatRegistry = deduped.registry;
 
     const existing = chatsMap[cid] || null;
+    const wtStop = parseAntigravityWorktreePath(cleanWs || existing?.workspaceRoot || '');
+    const effectiveIsSub = Boolean(existing?.isSubagent || wtStop?.parentCid);
+    const parentStopCid = normalizeConversationId(wtStop?.parentCid || existing?.parentConversationId || '');
+    const parentProjHint = parentStopCid && parentStopCid !== 'default' ? chatsMap[parentStopCid]?.projectName || '' : '';
     const prevChatWsRaw = sanitizeWorkspaceRoot(existing?.workspaceRoot || '');
     const prevChatWs = prevChatWsRaw && !isBrainOrTempWorkspacePath(prevChatWsRaw) ? prevChatWsRaw : '';
-    const effectiveWs = cleanWs || prevChatWs || (existing?.isSubagent ? sanitizeWorkspaceRoot(state.workspaceRoot || '') : '');
-    const isUnscopedChat = Boolean(existing && !existing.isSubagent && !effectiveWs);
+    const effectiveWs = cleanWs || prevChatWs || (parentStopCid && parentStopCid !== 'default' ? sanitizeWorkspaceRoot(chatsMap[parentStopCid]?.workspaceRoot || '') : '') || (effectiveIsSub ? sanitizeWorkspaceRoot(state.workspaceRoot || '') : '');
+    const isUnscopedChat = Boolean(existing && !effectiveIsSub && !effectiveWs);
     const projName = effectiveWs
-      ? extractProjectName(effectiveWs)
-      : (isUnscopedChat ? UNSCOPED_CHAT_PROJECT_RU : extractProjectName('', state.projectName || ''));
+      ? extractProjectName(effectiveWs, parentProjHint || existing?.projectName || state.projectName || '')
+      : (isUnscopedChat ? UNSCOPED_CHAT_PROJECT_RU : extractProjectName('', parentProjHint || existing?.projectName || state.projectName || ''));
     if (!existing) {
       const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, effectiveWs);
       return hydrateStateWithPrimary(state, visible, projName, effectiveWs);
@@ -3587,7 +3627,9 @@ export function finalizeTaskProgressOnStop({
       : buildDefaultStepsForGrade(existing.grade || 'M', false);
     const finalizedSteps = isErr
       ? syncStepsArray(baseSteps, nextStep, 'error')
-      : baseSteps.map((s, idx) => ({ ...s, index: idx + 1, status: 'done' }));
+      : (existing.checklistStepsApplied
+          ? baseSteps.map((s, idx) => ({ ...s, index: idx + 1 }))
+          : baseSteps.map((s, idx) => ({ ...s, index: idx + 1, status: 'done' })));
     const rawPrevPct = Number(existing.highWaterPercent || 0) < 100
       ? Number(existing.highWaterPercent || 0)
       : (Number(existing.preStopPercent || 0) || Number(existing.percent || 0));

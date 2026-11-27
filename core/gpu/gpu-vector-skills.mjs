@@ -6,7 +6,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
-import path, { dirname, join } from 'node:path';
+import path, { join } from 'node:path';
 import { extractFileSymbolsWithRanges } from '../repo-mapper.mjs';
 import { atomicWriteJsonSync, safeReadJsonSync, sleepSync, withFileLockSync } from '../safe-json.mjs';
 import { normalizeLang, readActiveUiLanguage } from '../i18n.mjs';
@@ -747,12 +747,17 @@ async function indexWorkspaceVectorsLocked(absRoot, ramFilesMap, { maxNewFiles =
     }
   }
 
+  let indexedNow = 0;
   for (const [rel, data] of tempFileMap.entries()) {
-    if (data.chunks.length > 0 && data.chunks.length === data.expectedCount) {
+    if (data.expectedCount === 0) {
+      if (store.files.delete(rel)) removed += 1;
+    } else if (data.chunks.length > 0 && data.chunks.length === data.expectedCount) {
       store.files.set(rel, { sha1: data.sha1, chunks: data.chunks });
+      indexedNow += 1;
     } else if (data.chunks.length > 0) {
       // Частичная индексация при сбое батча: сохраняем доступные чанки, но сбрасываем sha1 для переиндексации
       store.files.set(rel, { sha1: '', chunks: data.chunks });
+      indexedNow += 1;
     }
   }
 
@@ -771,7 +776,7 @@ async function indexWorkspaceVectorsLocked(absRoot, ramFilesMap, { maxNewFiles =
   return {
     ok: true,
     model: cfg.gpuEmbedModel,
-    indexedNow: tempFileMap.size,
+    indexedNow,
     embeddedChunks,
     removed,
     totalFiles: store.files.size,
@@ -802,60 +807,76 @@ export async function indexSingleFileVector(wsAbsRoot, relPath, bufOrText) {
   if (buf.length === 0 || buf.length > 400_000) return { ok: true, skipped: true };
 
   const absRoot = path.resolve(wsAbsRoot);
-  const store = loadWorkspaceVectorStore(absRoot, cfg.gpuEmbedModel);
-  const sha1 = createHash('sha1').update(buf).digest('hex').slice(0, 16);
-  const existing = store.files.get(cleanRel);
-  if (existing && existing.sha1 === sha1) {
-    return { ok: true, skipped: true, cached: true };
-  }
+  const lockKey = process.platform === 'win32' ? absRoot.toLowerCase() : absRoot;
+  const prev = inFlightWsVectorLocks.get(lockKey) || Promise.resolve();
+  const runPromise = prev
+    .catch(() => {})
+    .then(async () => {
+      const store = loadWorkspaceVectorStore(absRoot, cfg.gpuEmbedModel);
+      const sha1 = createHash('sha1').update(buf).digest('hex').slice(0, 16);
+      const existing = store.files.get(cleanRel);
+      if (existing && existing.sha1 === sha1) {
+        return { ok: true, skipped: true, cached: true };
+      }
 
-  const hw = probeNvidiaGpu();
-  const singleGuard = evaluateGpuThermalAndLoadGuard(hw, { isBackground: true });
-  if (singleGuard.throttled) {
-    return {
-      ok: false,
-      skippedThermalGuard: true,
-      thermalReason: singleGuard.reason,
-      tempC: singleGuard.tempC,
-      utilPct: singleGuard.utilPct,
-      error: singleGuard.message,
-    };
-  }
-  if (hw?.available && hw.freeMb < 1200) {
-    return { ok: false, skippedLowVram: true, error: 'Insufficient free VRAM for single-file indexing' };
-  }
+      const hw = probeNvidiaGpu();
+      const singleGuard = evaluateGpuThermalAndLoadGuard(hw, { isBackground: true });
+      if (singleGuard.throttled) {
+        return {
+          ok: false,
+          skippedThermalGuard: true,
+          thermalReason: singleGuard.reason,
+          tempC: singleGuard.tempC,
+          utilPct: singleGuard.utilPct,
+          error: singleGuard.message,
+        };
+      }
+      if (hw?.available && hw.freeMb < 1200) {
+        return { ok: false, skippedLowVram: true, error: 'Insufficient free VRAM for single-file indexing' };
+      }
 
-  const chunks = chunkFileForVectors(cleanRel, buf.toString('utf8'));
-  if (chunks.length === 0) {
-    store.files.delete(cleanRel);
-    saveWorkspaceVectorStore(absRoot, store);
-    return { ok: true, indexedChunks: 0 };
-  }
+      const chunks = chunkFileForVectors(cleanRel, buf.toString('utf8'));
+      if (chunks.length === 0) {
+        store.files.delete(cleanRel);
+        let totalChunks = 0;
+        for (const v of store.files.values()) totalChunks += v.chunks.length;
+        store.totalChunks = totalChunks;
+        saveWorkspaceVectorStore(absRoot, store);
+        return { ok: true, indexedChunks: 0 };
+      }
 
-  const res = await embedTexts(chunks.map((c) => c.textForEmbed), 'document', { model: cfg.gpuEmbedModel, timeoutMs: 12000 });
-  if (!res.ok || res.embeddings.length !== chunks.length) {
-    return { ok: false, error: res.error || 'Single-file embed failed' };
-  }
+      const res = await embedTexts(chunks.map((c) => c.textForEmbed), 'document', { model: cfg.gpuEmbedModel, timeoutMs: 12000 });
+      if (!res.ok || res.embeddings.length !== chunks.length) {
+        return { ok: false, error: res.error || 'Single-file embed failed' };
+      }
 
-  const packedChunks = chunks.map((c, idx) => ({
-    startLine: c.startLine,
-    endLine: c.endLine,
-    vec: quantizeUnitToInt8(res.embeddings[idx]),
-  }));
-  store.files.set(cleanRel, { sha1, chunks: packedChunks });
-  let totalChunks = 0;
-  for (const v of store.files.values()) totalChunks += v.chunks.length;
-  store.totalChunks = totalChunks;
-  saveWorkspaceVectorStore(absRoot, store);
+      const packedChunks = chunks.map((c, idx) => ({
+        startLine: c.startLine,
+        endLine: c.endLine,
+        vec: quantizeUnitToInt8(res.embeddings[idx]),
+      }));
+      store.files.set(cleanRel, { sha1, chunks: packedChunks });
+      let totalChunks = 0;
+      for (const v of store.files.values()) totalChunks += v.chunks.length;
+      store.totalChunks = totalChunks;
+      saveWorkspaceVectorStore(absRoot, store);
 
-  recordGpuTelemetryPatch((cur) => ({
-    ...cur,
-    indexedFiles: store.files.size,
-    indexedChunks: totalChunks,
-    lastAt: new Date().toISOString(),
-  }));
+      recordGpuTelemetryPatch((cur) => ({
+        ...cur,
+        indexedFiles: store.files.size,
+        indexedChunks: totalChunks,
+        lastAt: new Date().toISOString(),
+      }));
 
-  return { ok: true, file: cleanRel, indexedChunks: packedChunks.length, totalChunks };
+      return { ok: true, file: cleanRel, indexedChunks: packedChunks.length, totalChunks };
+    });
+  const tracked = runPromise.finally(() => {
+    if (inFlightWsVectorLocks.get(lockKey) === tracked) {
+      inFlightWsVectorLocks.delete(lockKey);
+    }
+  });
+  inFlightWsVectorLocks.set(lockKey, tracked);
+  return runPromise;
 }
 
 /**
@@ -1449,8 +1470,12 @@ export async function indexSkillVectors({
   const store = loadSkillVectorStore(cfg.gpuEmbedModel, customRoot);
 
   if (skillEntries.length === 0) {
+    const hadEntries = store.entries.size > 0;
     store.entries.clear();
     store.skillsCount = 0;
+    if (store.storePath && (hadEntries || existsSync(store.storePath))) {
+      saveSkillVectorStore(store);
+    }
     return { ok: true, skillsCount: 0, chunksCount: 0, updatedCount: 0, store };
   }
 

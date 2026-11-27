@@ -688,12 +688,19 @@ export function findOllamaBinary(force = false, cfgOverride = null) {
   if (customDir) {
     const customCandidate = join(customDir, customBinName);
     if (existsSync(customCandidate)) {
-      gpuRuntime.ollamaBinCache = { ts: Date.now(), path: customCandidate };
+      if (!customCfg) {
+        gpuRuntime.ollamaBinCache = { ts: Date.now(), path: customCandidate };
+      }
       return customCandidate;
     }
   }
   const now = Date.now();
-  if (!force && gpuRuntime.ollamaBinCache.ts > 0 && (now - gpuRuntime.ollamaBinCache.ts) < OLLAMA_BIN_TTL_MS) {
+  if (
+    !force &&
+    gpuRuntime.ollamaBinCache.ts > 0 &&
+    (now - gpuRuntime.ollamaBinCache.ts) < OLLAMA_BIN_TTL_MS &&
+    (!gpuRuntime.ollamaBinCache.path || existsSync(gpuRuntime.ollamaBinCache.path))
+  ) {
     return gpuRuntime.ollamaBinCache.path;
   }
   let resolvedPath = null;
@@ -851,14 +858,15 @@ async function ensureOllamaRunningImpl(cfgInput = null) {
 
 function parseOllamaModelRef(rawModel = '') {
   const raw = String(rawModel || '').trim();
-  if (!raw) return null;
+  if (!raw || raw.includes('..') || raw.includes('\\') || raw.includes('\0')) return null;
   const lastSlash = raw.lastIndexOf('/');
   const lastColon = raw.lastIndexOf(':');
   const hasTag = lastColon > lastSlash;
   const namePart = hasTag ? raw.slice(0, lastColon) : raw;
   const tag = (hasTag ? raw.slice(lastColon + 1) : 'latest') || 'latest';
+  if (/[\\/:]/.test(tag) || tag === '.' || tag === '..') return null;
   const parts = namePart.split('/').filter(Boolean);
-  if (parts.length === 0) return null;
+  if (parts.length === 0 || parts.some((p) => p === '.' || p === '..')) return null;
   let host = '';
   let namespace = 'library';
   let repo = '';
@@ -877,10 +885,11 @@ function parseOllamaModelRef(rawModel = '') {
 
 function collectManifestLayerBlobs(doc, blobsDir, outSet, visited = new Set()) {
   if (!doc || typeof doc !== 'object') return;
+  const SAFE_DIGEST_RE = /^sha256:[a-zA-Z0-9_-]{4,128}$/;
   if (Array.isArray(doc.layers)) {
     for (const layer of doc.layers) {
       const digest = String(layer?.digest || '').trim();
-      if (digest.startsWith('sha256:')) {
+      if (SAFE_DIGEST_RE.test(digest)) {
         outSet.add(digest.replace(':', '-'));
       }
     }
@@ -891,7 +900,7 @@ function collectManifestLayerBlobs(doc, blobsDir, outSet, visited = new Set()) {
     const targets = ggufEntries.length > 0 ? ggufEntries : doc.manifests;
     for (const entry of targets) {
       const digest = String(entry?.digest || '').trim();
-      if (!digest.startsWith('sha256:')) continue;
+      if (!SAFE_DIGEST_RE.test(digest)) continue;
       const blobName = digest.replace(':', '-');
       if (visited.has(blobName)) continue;
       visited.add(blobName);
@@ -1388,6 +1397,20 @@ async function execDefaultOllamaHttpStep(
   const endpoint = resolvedCfg.gpuEndpoint || 'http://127.0.0.1:11434';
   const cmd = String(args[0] || '').toLowerCase();
 
+  let url;
+  try {
+    url = new URL('/api/pull', endpoint);
+    const h = String(url.hostname || '').toLowerCase();
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return { ok: false, code: -1, sawDownloadProgress: false, error: 'Unsupported gpuEndpoint protocol' };
+    }
+    if (h !== '127.0.0.1' && h !== 'localhost' && h !== '::1' && h !== '[::1]') {
+      return { ok: false, code: -1, sawDownloadProgress: false, error: 'gpuEndpoint must target localhost/loopback' };
+    }
+  } catch (err) {
+    return { ok: false, code: -1, sawDownloadProgress: false, error: err.message };
+  }
+
   if (cmd === 'cp') {
     const res = await ollamaHttpJson('POST', '/api/copy', { source: args[1], destination: args[2] }, manifestTimeoutMs, endpoint);
     return { ok: Boolean(res?.ok), code: res?.ok ? 0 : 1, sawDownloadProgress: true, error: res?.error || '' };
@@ -1400,23 +1423,13 @@ async function execDefaultOllamaHttpStep(
     return execDefaultOllamaCliStep(args, { cfg: resolvedCfg, onLine, manifestTimeoutMs, totalTimeoutMs, checkCancelled, lang });
   }
 
-  let url;
-  try {
-    url = new URL('/api/pull', endpoint);
-    const h = String(url.hostname || '').toLowerCase();
-    if (h !== '127.0.0.1' && h !== 'localhost' && h !== '::1' && h !== '[::1]') {
-      return { ok: false, code: -1, sawDownloadProgress: false, error: 'gpuEndpoint must target localhost/loopback' };
-    }
-  } catch (err) {
-    return { ok: false, code: -1, sawDownloadProgress: false, error: err.message };
-  }
-
   return new Promise((resolvePromise) => {
     const isHttps = url.protocol === 'https:';
     const mod = isHttps ? https : http;
     const payloadStr = JSON.stringify({ model: String(args[1] || ''), stream: true });
     let settled = false;
     let sawDownloadProgress = false;
+    let sawSuccess = false;
     let lastActivityAt = Date.now();
     let lastErrorLine = '';
     let lineBuf = '';
@@ -1454,6 +1467,7 @@ async function execDefaultOllamaHttpStep(
         pct = Math.max(0, Math.min(100, Math.round((completed / total) * 100)));
       } else if (/^success$/i.test(statusStr)) {
         pct = 100;
+        sawSuccess = true;
       }
       if ((pct !== null && pct > 0) || total > 0 || /\b(?:verifying|writing manifest|success)\b/i.test(statusStr)) {
         sawDownloadProgress = true;
@@ -1487,18 +1501,26 @@ async function execDefaultOllamaHttpStep(
             processJsonLine(line);
           }
         });
+        res.on('error', (err) => {
+          finish({ ok: false, code: res.statusCode || 1, error: err?.message || 'Ollama pull stream error' });
+        });
+        res.on('close', () => {
+          if (!settled && !res.complete) {
+            finish({ ok: false, code: res.statusCode || 1, error: lastErrorLine || 'Ollama pull stream closed prematurely' });
+          }
+        });
         res.on('end', () => {
           if (lineBuf.trim()) {
             processJsonLine(lineBuf);
             lineBuf = '';
           }
-          if (res.statusCode >= 200 && res.statusCode < 300 && !lastErrorLine) {
+          if (res.complete && res.statusCode >= 200 && res.statusCode < 300 && sawSuccess && !lastErrorLine) {
             finish({ ok: true, code: 0 });
           } else {
             finish({
               ok: false,
               code: res.statusCode || 1,
-              error: lastErrorLine || `HTTP ${res.statusCode}`,
+              error: lastErrorLine || (!res.complete ? 'Ollama pull stream truncated' : (!sawSuccess ? 'Ollama pull did not confirm success' : `HTTP ${res.statusCode}`)),
             });
           }
         });
@@ -1950,11 +1972,13 @@ export async function startGpuCascadePull({
   };
   persistPullStatus(activePullJob.status, true);
 
+  const jobToken = {};
+  activePullJob.token = jobToken;
   const runLoop = async () => {
     const errors = [];
     try {
       for (let i = 0; i < items.length; i++) {
-        if (activePullJob.cancelRequested) break;
+        if (activePullJob.cancelRequested || activePullJob.token !== jobToken) break;
         const item = items[i];
         if (item.status === 'skipped') continue;
 
@@ -1970,9 +1994,9 @@ export async function startGpuCascadePull({
           lang: pullLang,
           preferMirror: effectiveMirrorMode,
           execStepFn,
-          checkCancelled: () => activePullJob.cancelRequested,
+          checkCancelled: () => activePullJob.cancelRequested || activePullJob.token !== jobToken,
           onProgress: ({ percent, source, statusText }) => {
-            if (!activePullJob.active) return;
+            if (!activePullJob.active || activePullJob.token !== jobToken) return;
             item.percent = Number(percent) || 0;
             if (source) item.source = source;
             activePullJob.status.currentPercent = item.percent;
@@ -1984,6 +2008,7 @@ export async function startGpuCascadePull({
             persistPullStatus(activePullJob.status, false);
           },
         });
+        if (activePullJob.token !== jobToken) break;
 
         if (res.ok) {
           item.status = 'done';
@@ -2007,6 +2032,7 @@ export async function startGpuCascadePull({
         const refreshTags = await ollamaHttpJson('GET', '/api/tags', null, 800, cfg.gpuEndpoint).catch(() => null);
         if (refreshTags?.ok) updateOllamaTagsCache(cfg.gpuEndpoint, refreshTags.data?.models);
       }
+      if (activePullJob.token !== jobToken) return;
       activePullJob.active = false;
       activePullJob.status.active = false;
       activePullJob.status.finishedAt = Date.now();
@@ -2147,7 +2173,12 @@ export function clearOllamaInstallJobStatus() {
 function validateAndPrepareDir(rawDir, isEn, plat = process.platform) {
   const clean = String(rawDir || '').trim();
   if (!clean) return { ok: true, dir: '' };
-  if (clean.length > 512 || /[\r\n\0<>|"?*]/.test(clean.replace(/^[A-Za-z]:/, ''))) {
+  if (
+    clean.length > 512 ||
+    /^(?:\\\\|\/\/)/.test(clean) ||
+    clean.split(/[\\/]/).includes('..') ||
+    /[\r\n\0<>|"?*:]/.test(clean.replace(/^[A-Za-z]:/, ''))
+  ) {
     return { ok: false, error: isEn ? 'Invalid folder path' : 'Некорректный путь к папке' };
   }
   if (plat === 'win32') {
@@ -2167,11 +2198,15 @@ function validateAndPrepareDir(rawDir, isEn, plat = process.platform) {
 
 function defaultDownloadFileWithRedirects(urlStr, destPath, { onProgress = null, redirectsLeft = 5, timeoutMs = 180000 } = {}) {
   return new Promise((resolvePromise) => {
+    const isLoopbackHost = (h = '') => {
+      const low = String(h || '').toLowerCase();
+      return low === '127.0.0.1' || low === 'localhost' || low === '::1' || low === '[::1]';
+    };
     let parsed;
     try {
       parsed = new URL(urlStr);
-      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-        resolvePromise({ ok: false, error: 'Unsupported installer URL protocol' });
+      if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLoopbackHost(parsed.hostname))) {
+        resolvePromise({ ok: false, error: 'Installer download requires HTTPS (or loopback HTTP)' });
         return;
       }
     } catch (err) {
@@ -2182,9 +2217,15 @@ function defaultDownloadFileWithRedirects(urlStr, destPath, { onProgress = null,
     const mod = parsed.protocol === 'https:' ? https : http;
     let settled = false;
     let fileStream = null;
+    let hardTimer = null;
+    let req = null;
     const finish = (res) => {
       if (settled) return;
       settled = true;
+      if (hardTimer) {
+        clearTimeout(hardTimer);
+        hardTimer = null;
+      }
       if (fileStream) {
         try { fileStream.destroy(); } catch {}
       }
@@ -2194,7 +2235,12 @@ function defaultDownloadFileWithRedirects(urlStr, destPath, { onProgress = null,
       resolvePromise(res);
     };
 
-    const req = mod.get(parsed, { timeout: 30000 }, (res) => {
+    hardTimer = setTimeout(() => {
+      try { req?.destroy(new Error('OllamaSetup.exe download deadline exceeded')); } catch {}
+    }, Math.max(100, Number(timeoutMs) || 180000));
+    if (typeof hardTimer.unref === 'function') hardTimer.unref();
+
+    req = mod.get(parsed, { timeout: 30000 }, (res) => {
       const code = Number(res.statusCode) || 0;
       if ((code === 301 || code === 302 || code === 303 || code === 307 || code === 308) && res.headers?.location) {
         res.resume();
@@ -2202,8 +2248,24 @@ function defaultDownloadFileWithRedirects(urlStr, destPath, { onProgress = null,
           finish({ ok: false, error: 'Too many redirects while downloading OllamaSetup.exe' });
           return;
         }
-        const nextUrl = new URL(res.headers.location, parsed).toString();
-        defaultDownloadFileWithRedirects(nextUrl, destPath, { onProgress, redirectsLeft: redirectsLeft - 1, timeoutMs }).then(resolvePromise);
+        let nextParsed;
+        try {
+          nextParsed = new URL(res.headers.location, parsed);
+        } catch (err) {
+          finish({ ok: false, error: err?.message || 'Invalid redirect URL' });
+          return;
+        }
+        if (nextParsed.protocol !== 'https:' && !(nextParsed.protocol === 'http:' && isLoopbackHost(nextParsed.hostname))) {
+          finish({ ok: false, error: 'Refusing insecure redirect downgrade during installer download' });
+          return;
+        }
+        settled = true;
+        if (hardTimer) {
+          clearTimeout(hardTimer);
+          hardTimer = null;
+        }
+        try { req.setTimeout(0); } catch {}
+        defaultDownloadFileWithRedirects(nextParsed.toString(), destPath, { onProgress, redirectsLeft: redirectsLeft - 1, timeoutMs }).then(resolvePromise);
         return;
       }
       if (code < 200 || code >= 300) {
@@ -2223,7 +2285,18 @@ function defaultDownloadFileWithRedirects(urlStr, destPath, { onProgress = null,
         }
       });
       res.on('error', (err) => finish({ ok: false, error: err?.message || 'Download stream error' }));
-      fileStream.on('finish', () => finish({ ok: true, path: destPath, bytes: downloaded }));
+      res.on('close', () => {
+        if (!settled && !res.complete) {
+          finish({ ok: false, error: 'Download connection closed before EOF' });
+        }
+      });
+      fileStream.on('finish', () => {
+        if (!res.complete || (totalBytes > 0 && downloaded < totalBytes)) {
+          finish({ ok: false, error: 'Incomplete OllamaSetup.exe download' });
+          return;
+        }
+        finish({ ok: true, path: destPath, bytes: downloaded });
+      });
       res.pipe(fileStream);
     });
 

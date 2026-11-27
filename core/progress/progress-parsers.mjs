@@ -52,9 +52,12 @@ export function sanitizeFileBasename(filePath = '') {
   return basename(clean).replace(/["']+$/g, '');
 }
 
+const UNSAFE_PROTO_CID_KEYS = new Set(['__proto__', 'constructor', 'prototype', 'toString', 'valueOf', 'hasOwnProperty']);
+
 export function normalizeConversationId(rawCid = 'default') {
   const clean = String(rawCid || 'default').trim().replace(/^["'\s]+|["'\s]+$/g, '') || 'default';
-  return clean.replace(/__[0-9a-f]{8}$/i, '') || 'default';
+  const base = clean.replace(/__[0-9a-f]{8}$/i, '') || 'default';
+  return UNSAFE_PROTO_CID_KEYS.has(base) ? 'default' : base;
 }
 
 export const UUID_PROJ_NAME_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -80,8 +83,8 @@ export function isBrainOrTempWorkspacePath(wsPath = '') {
 export function extractProjectName(workspaceRoot = '', fallbackProjectName = '') {
   const clean = sanitizeWorkspaceRoot(workspaceRoot);
   if (!clean || isBrainOrTempWorkspacePath(clean)) return fallbackProjectName || 'antigravity-model-router';
-  if (ANTIGRAVITY_WORKTREE_RE.test(clean) && fallbackProjectName) {
-    return String(fallbackProjectName).trim().replace(/^["']+$/g, '') || 'antigravity-model-router';
+  if (ANTIGRAVITY_WORKTREE_RE.test(clean)) {
+    return String(fallbackProjectName || '').trim().replace(/^["']+|["']+$/g, '') || 'antigravity-model-router';
   }
   const base = basename(clean).replace(/["']+$/g, '');
   if (UUID_PROJ_NAME_RE.test(base) && fallbackProjectName) {
@@ -510,7 +513,7 @@ export function compactTechnicalStepLabel(rawText = '', maxChars = 30) {
 
   // Shorten full/relative file paths (outside http/https URLs) to basename
   text = text.replace(
-    new RegExp(`(?<![:/])(?:[A-Za-z]:[\\\\/]|[.\\\\/])?(?:[A-Za-z0-9_.-]+[\\\\/])+([A-Za-z0-9_.-]+\\.${STEP_CODE_EXT_RE})(?:#L\\d+(?:-L?\\d+)?)?`, 'gi'),
+    new RegExp(`(?<![:/])(?:[A-Za-z]:[\\\\/]|[.\\\\/])?(?:[A-Za-zА-Яа-яЁё0-9_.-]+[\\\\/])+([A-Za-zА-Яа-яЁё0-9_.-]+\\.${STEP_CODE_EXT_RE})(?:#L\\d+(?:-L?\\d+)?)?`, 'gi'),
     '$1'
   );
 
@@ -1089,6 +1092,12 @@ function readBoundedLogHeadAndTail(filePath, maxHeadBytes = 512, maxTailBytes = 
         const tailBuf = Buffer.allocUnsafe(tailLen);
         readSync(fd, tailBuf, 0, tailLen, size - tailLen);
         tailText = tailBuf.toString('utf-8');
+        if (size > tailLen) {
+          const nlIdx = tailText.indexOf('\n');
+          if (nlIdx !== -1 && nlIdx < tailText.length - 1) {
+            tailText = tailText.slice(nlIdx + 1);
+          }
+        }
       }
     }
   } catch {

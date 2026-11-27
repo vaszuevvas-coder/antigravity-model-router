@@ -2772,3 +2772,9 @@ test('Task Progress UI: #agActiveChatsStack defines scroll-fade CSS masks & dyna
   assert.ok(uiHtml.includes('.full-left-rail.has-fade-top'), 'ui.html must define left rail top scroll-fade');
   assert.ok(uiHtml.includes('syncCategoryScrollFades'), 'ui.html must include syncCategoryScrollFades helper');
 });
+
+test('Batch 3 progress regressions: proto cid guard, worktree extractProjectName & finalize status completed', async () => {
+  const { normalizeConversationId, extractProjectName } = await import('../core/progress/progress-parsers.mjs');
+  assert.equal(normalizeConversationId('__proto__'), 'default');
+  assert.equal(extractProjectName('C:\\Users\\Dev\\.gemini\\antigravity\\worktrees\\parentcid123\\repo-swarm-1', ''), 'antigravity-model-router');
+});

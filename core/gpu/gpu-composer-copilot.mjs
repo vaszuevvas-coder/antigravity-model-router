@@ -4,12 +4,9 @@
  */
 
 import { createHash } from 'node:crypto';
-import { spawn } from 'node:child_process';
-import http from 'node:http';
-import https from 'node:https';
-import path, { dirname, join } from 'node:path';
+import path from 'node:path';
 import { redactSecretsInText } from '../security-guard.mjs';
-import { detectTextLanguage, normalizeLang, readActiveUiLanguage } from '../i18n.mjs';
+import { normalizeLang, readActiveUiLanguage } from '../i18n.mjs';
 import {
   CONTINUATION_CACHE_MAX,
   CONTINUATION_CACHE_TTL_MS,
@@ -1764,7 +1761,27 @@ export async function analyzeUiScreenshotLocally(opts = {}) {
   }
 
   const userHint = typeof safeOpts.userHint === 'string' ? safeOpts.userHint.trim().slice(0, 600) : '';
-  const targetModel = cfg.gpuChatModel || DEFAULT_GPU_CONFIG.gpuChatModel;
+  let targetModel = cfg.gpuChatModel || DEFAULT_GPU_CONFIG.gpuChatModel;
+  if (!httpJsonFn) {
+    const ready = await ensureOllamaRunning(cfg).catch(() => ({ ok: false }));
+    if (!ready?.ok) {
+      return { ok: false, error: ready?.error || (isEn ? 'Ollama not reachable' : 'Ollama недоступна') };
+    }
+    const hw = probeNvidiaGpu();
+    const psRes = await ollamaHttpJson('GET', '/api/ps', null, 800, cfg.gpuEndpoint).catch(() => null);
+    const loadedModels = Array.isArray(psRes?.data?.models) ? psRes.data.models : [];
+    const tagSource = await getCachedOrFetchOllamaTagMap(cfg).catch(() => null);
+    const fit = evaluateVramModelFit({ cfg: { ...cfg, gpuChatModel: targetModel }, tagModels: tagSource, loadedModels, hw });
+    const tagKnown = Array.isArray(tagSource) || (tagSource instanceof Map && tagSource.size > 0);
+    if (fit.selectedSizeFits && (!tagKnown || fit.selectedChatDownloaded)) {
+      targetModel = fit.selectedChatModel || targetModel;
+    } else if (fit.bestFallbackChatModel) {
+      targetModel = fit.bestFallbackChatModel;
+    } else {
+      await unloadModelsExceedingBudget({ cfg, loadedModels, tagModels: tagSource, hw, callHttp: ollamaHttpJson }).catch(() => {});
+      return { ok: false, skippedVramCap: true, error: fit.reasonEn || fit.reasonRu || 'VRAM limit exceeded' };
+    }
+  }
   const timeoutMs = clampInt(safeOpts.timeoutMs, 1500, 60_000, 18_000);
   const body = {
     model: targetModel,
@@ -1898,7 +1915,24 @@ export async function generateLocalCommitSummary(opts = {}) {
     return fallback;
   }
 
-  const targetModel = cfg.gpuChatModel || DEFAULT_GPU_CONFIG.gpuChatModel;
+  let targetModel = cfg.gpuChatModel || DEFAULT_GPU_CONFIG.gpuChatModel;
+  if (!httpJsonFn) {
+    const ready = await ensureOllamaRunning(cfg).catch(() => ({ ok: false }));
+    if (!ready?.ok) return fallback;
+    const hw = probeNvidiaGpu();
+    const psRes = await ollamaHttpJson('GET', '/api/ps', null, 800, cfg.gpuEndpoint).catch(() => null);
+    const loadedModels = Array.isArray(psRes?.data?.models) ? psRes.data.models : [];
+    const tagSource = await getCachedOrFetchOllamaTagMap(cfg).catch(() => null);
+    const fit = evaluateVramModelFit({ cfg: { ...cfg, gpuChatModel: targetModel }, tagModels: tagSource, loadedModels, hw });
+    const tagKnown = Array.isArray(tagSource) || (tagSource instanceof Map && tagSource.size > 0);
+    if (fit.selectedSizeFits && (!tagKnown || fit.selectedChatDownloaded)) {
+      targetModel = fit.selectedChatModel || targetModel;
+    } else if (fit.bestFallbackChatModel) {
+      targetModel = fit.bestFallbackChatModel;
+    } else {
+      return fallback;
+    }
+  }
   const timeoutMs = clampInt(safeOpts.timeoutMs, 1000, 30_000, 12_000);
   const body = {
     model: targetModel,
@@ -1986,7 +2020,24 @@ export async function structureVoiceTranscriptLocally(opts = {}) {
   const workspaceFiles = Array.isArray(safeOpts.workspaceFiles)
     ? safeOpts.workspaceFiles.map((f) => String(f || '').trim()).filter(Boolean).slice(0, 20)
     : [];
-  const targetModel = cfg.gpuChatModel || DEFAULT_GPU_CONFIG.gpuChatModel;
+  let targetModel = cfg.gpuChatModel || DEFAULT_GPU_CONFIG.gpuChatModel;
+  if (!httpJsonFn) {
+    const ready = await ensureOllamaRunning(cfg).catch(() => ({ ok: false }));
+    if (!ready?.ok) return fallback;
+    const hw = probeNvidiaGpu();
+    const psRes = await ollamaHttpJson('GET', '/api/ps', null, 800, cfg.gpuEndpoint).catch(() => null);
+    const loadedModels = Array.isArray(psRes?.data?.models) ? psRes.data.models : [];
+    const tagSource = await getCachedOrFetchOllamaTagMap(cfg).catch(() => null);
+    const fit = evaluateVramModelFit({ cfg: { ...cfg, gpuChatModel: targetModel }, tagModels: tagSource, loadedModels, hw });
+    const tagKnown = Array.isArray(tagSource) || (tagSource instanceof Map && tagSource.size > 0);
+    if (fit.selectedSizeFits && (!tagKnown || fit.selectedChatDownloaded)) {
+      targetModel = fit.selectedChatModel || targetModel;
+    } else if (fit.bestFallbackChatModel) {
+      targetModel = fit.bestFallbackChatModel;
+    } else {
+      return fallback;
+    }
+  }
   const timeoutMs = clampInt(safeOpts.timeoutMs, 1000, 20_000, 8000);
   const body = {
     model: targetModel,

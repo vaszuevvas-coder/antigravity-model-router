@@ -5,7 +5,7 @@
 
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
-import path, { join } from 'node:path';
+import path from 'node:path';
 import { hashShingle64 } from '../cpu-graph-contracts.mjs';
 import { atomicWriteJsonSync, safeReadJsonSync } from '../safe-json.mjs';
 import { checkFileSecurity, redactSecretsInText } from '../security-guard.mjs';
@@ -23,6 +23,7 @@ import {
   ramDistillCache,
   readFreshTtlLruEntry,
   recordGpuTelemetryPatch,
+  stripReasoningTags,
 } from './gpu-shared-state.mjs';
 import {
   ensureOllamaRunning,
@@ -333,8 +334,9 @@ export async function distillText(rawParams = {}) {
     }
   }
 
+  const rawHash = createHash('sha1').update(rawText).digest('hex');
   const dedupKey = createHash('sha1')
-    .update(`${requestedTag}|${cfg.gpuMaxVramMb}|${mode}|${query}|${rawText.length}|${rawText.slice(0, 4096)}`)
+    .update(`${requestedTag}|${cfg.gpuMaxVramMb}|${cfg.gpuEndpoint || ''}|${mode}|${maxOutputTokens}|${query}|${rawText.length}|${rawHash}`)
     .digest('hex')
     .slice(0, 20);
   if (!httpJsonFn && inFlightDistillMap.has(dedupKey)) {
@@ -448,7 +450,7 @@ export async function distillText(rawParams = {}) {
         temperature: 0.1,
       },
     };
-    if (/qwen3|gemma4/i.test(targetModel)) {
+    if (/qwen3|gemma4|deepseek/i.test(targetModel)) {
       body.think = false;
     }
 
@@ -464,7 +466,7 @@ export async function distillText(rawParams = {}) {
       return { ok: false, error: chatRes.error || 'Ollama /api/chat failed', latencyMs };
     }
 
-    const distilled = String(chatRes.data?.message?.content || '').trim();
+    const distilled = stripReasoningTags(String(chatRes.data?.message?.content || '')).trim();
     if (!distilled) {
       return { ok: false, error: 'Ollama /api/chat returned empty content', latencyMs };
     }
@@ -682,24 +684,67 @@ export async function distillLocalFile(rawOpts = {}) {
       }
       rawText = decoded.text;
     } else {
+      const wantSlice = Number(startLine) > 0 || Number(endLine) > 0;
       const headBytes = 512 * 1024;
       const tailBytes = 1536 * 1024;
       const fd = openSync(absPath, 'r');
       try {
-        const headBuf = Buffer.alloc(headBytes);
-        const headRead = readSync(fd, headBuf, 0, headBytes, 0);
-        const headDecoded = decodeTextBufferAutoUtf(headBuf.subarray(0, headRead), 4096);
-        if (!headDecoded.ok) {
-          return { ok: false, error: headDecoded.error || 'Binary file detected (NUL bytes in header); distillation skipped' };
+        if (wantSlice && Number(startLine) >= 1) {
+          const sReq = Math.max(1, Number(startLine) || 1);
+          const eReq = Number(endLine) > 0 ? Math.max(sReq, Number(endLine)) : sReq + 500;
+          const CHUNK_SIZE = 256 * 1024;
+          const readBuf = Buffer.alloc(CHUNK_SIZE);
+          let pos = 0;
+          let curLine = 1;
+          let carry = '';
+          const collected = [];
+          let collectedBytes = 0;
+          const probeBytes = readSync(fd, readBuf, 0, Math.min(4096, st.size), 0);
+          const probeRes = decodeTextBufferAutoUtf(readBuf.subarray(0, probeBytes), 4096);
+          if (!probeRes.ok) {
+            return { ok: false, error: probeRes.error || 'Binary file detected (NUL bytes in header); distillation skipped' };
+          }
+          if (probeRes.encoding === 'utf8' || probeRes.encoding === 'utf8bom') {
+            pos = probeRes.encoding === 'utf8bom' ? 3 : 0;
+            while (pos < st.size && curLine <= eReq && collectedBytes < MAX_FULL_READ_BYTES) {
+              const n = readSync(fd, readBuf, 0, Math.min(CHUNK_SIZE, st.size - pos), pos);
+              if (n <= 0) break;
+              pos += n;
+              const str = carry + readBuf.subarray(0, n).toString('utf8');
+              const parts = str.split(/\r?\n/);
+              carry = pos < st.size ? (parts.pop() ?? '') : '';
+              for (const ln of parts) {
+                if (curLine >= sReq && curLine <= eReq) {
+                  collected.push(ln);
+                  collectedBytes += Buffer.byteLength(ln, 'utf8') + 1;
+                  if (collectedBytes >= MAX_FULL_READ_BYTES) break;
+                }
+                curLine++;
+              }
+            }
+            if (carry && curLine >= sReq && curLine <= eReq && collectedBytes < MAX_FULL_READ_BYTES) {
+              collected.push(carry);
+            }
+            rawText = collected.join('\n');
+            lineStartOffset = sReq;
+          }
         }
-        const tailBuf = Buffer.alloc(tailBytes);
-        let tailPos = Math.max(headRead, st.size - tailBytes);
-        if ((headDecoded.encoding === 'utf16le' || headDecoded.encoding === 'utf16be') && (tailPos % 2 !== 0)) {
-          tailPos = Math.max(headRead, tailPos - 1);
+        if (!rawText) {
+          const headBuf = Buffer.alloc(headBytes);
+          const headRead = readSync(fd, headBuf, 0, headBytes, 0);
+          const headDecoded = decodeTextBufferAutoUtf(headBuf.subarray(0, headRead), 4096);
+          if (!headDecoded.ok) {
+            return { ok: false, error: headDecoded.error || 'Binary file detected (NUL bytes in header); distillation skipped' };
+          }
+          const tailBuf = Buffer.alloc(tailBytes);
+          let tailPos = Math.max(headRead, st.size - tailBytes);
+          if ((headDecoded.encoding === 'utf16le' || headDecoded.encoding === 'utf16be') && (tailPos % 2 !== 0)) {
+            tailPos = Math.max(headRead, tailPos - 1);
+          }
+          const tailRead = readSync(fd, tailBuf, 0, tailBytes, tailPos);
+          const tailText = decodeTailSliceWithEncoding(tailBuf.subarray(0, tailRead), headDecoded.encoding);
+          rawText = `${headDecoded.text}\n\n... [TRUNCATED LARGE FILE: ${st.size} bytes] ...\n\n${tailText}`;
         }
-        const tailRead = readSync(fd, tailBuf, 0, tailBytes, tailPos);
-        const tailText = decodeTailSliceWithEncoding(tailBuf.subarray(0, tailRead), headDecoded.encoding);
-        rawText = `${headDecoded.text}\n\n... [TRUNCATED LARGE FILE: ${st.size} bytes] ...\n\n${tailText}`;
       } finally {
         try { closeSync(fd); } catch {}
       }
