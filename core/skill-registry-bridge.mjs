@@ -22,7 +22,7 @@ const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype', 'toString'
 const MAX_QUARANTINE_FILE_BYTES = 512 * 1024;
 const FORBIDDEN_BINARY_EXT_RE = /\.(?:exe|dll|so|dylib|bat|cmd|ps1|bin|wasm|node|zip|tar|gz)$/i;
 const LOCAL_SKILL_MD_CACHE = new Map();
-const MAX_SKILL_MD_CACHE = 64;
+const MAX_SKILL_MD_CACHE = 128;
 
 export function validateSkillSlug(raw = '') {
   const s = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
@@ -63,9 +63,12 @@ function collectLocalSkills(skillsRoots = []) {
       if (!existsSync(mdPath)) continue;
       try {
         const st = statSync(mdPath);
-        const cached = LOCAL_SKILL_MD_CACHE.get(mdPath);
+        const isQuarantinePath = /(?:^|[\\/])skill-quarantine(?:[\\/]|$)/i.test(mdPath);
+        const cached = isQuarantinePath ? null : LOCAL_SKILL_MD_CACHE.get(mdPath);
         let entry = null;
         if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) {
+          LOCAL_SKILL_MD_CACHE.delete(mdPath);
+          LOCAL_SKILL_MD_CACHE.set(mdPath, cached);
           entry = cached.entry;
         } else {
           const raw = readFileSync(mdPath, 'utf8');
@@ -78,11 +81,15 @@ function collectLocalSkills(skillsRoots = []) {
             source: 'local',
             alreadyInstalled: true,
           };
-          if (LOCAL_SKILL_MD_CACHE.size >= MAX_SKILL_MD_CACHE) {
-            const oldestKey = LOCAL_SKILL_MD_CACHE.keys().next().value;
-            if (oldestKey !== undefined) LOCAL_SKILL_MD_CACHE.delete(oldestKey);
+          if (!isQuarantinePath) {
+            if (LOCAL_SKILL_MD_CACHE.has(mdPath)) {
+              LOCAL_SKILL_MD_CACHE.delete(mdPath);
+            } else if (LOCAL_SKILL_MD_CACHE.size >= MAX_SKILL_MD_CACHE) {
+              const oldestKey = LOCAL_SKILL_MD_CACHE.keys().next().value;
+              if (oldestKey !== undefined) LOCAL_SKILL_MD_CACHE.delete(oldestKey);
+            }
+            LOCAL_SKILL_MD_CACHE.set(mdPath, { mtimeMs: st.mtimeMs, size: st.size, entry });
           }
-          LOCAL_SKILL_MD_CACHE.set(mdPath, { mtimeMs: st.mtimeMs, size: st.size, entry });
         }
         seen.add(slug);
         entries.push({ ...entry });
@@ -222,6 +229,37 @@ function collectFilesRecursive(dirAbs, baseAbs = dirAbs, depth = 0, out = []) {
 }
 
 /**
+ * Removes orphan quarantine directories older than `maxAgeMs` (default 30 minutes).
+ * @param {string} quarantineRoot
+ * @param {number} [maxAgeMs=1800000]
+ * @returns {number} Number of removed directories
+ */
+export function pruneStaleQuarantineDirs(quarantineRoot, maxAgeMs = 30 * 60 * 1000) {
+  if (!quarantineRoot || !existsSync(quarantineRoot)) return 0;
+  const ttlMs = Number.isFinite(Number(maxAgeMs)) && Number(maxAgeMs) >= 0 ? Number(maxAgeMs) : 30 * 60 * 1000;
+  const cutoff = Date.now() - ttlMs;
+  let removed = 0;
+  let entries = [];
+  try {
+    entries = readdirSync(quarantineRoot, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const ent of entries) {
+    if (!ent.isDirectory()) continue;
+    const full = join(quarantineRoot, ent.name);
+    try {
+      const st = statSync(full);
+      if (st.mtimeMs < cutoff) {
+        rmSync(full, { recursive: true, force: true });
+        removed += 1;
+      }
+    } catch {}
+  }
+  return removed;
+}
+
+/**
  * Stages a candidate skill in `.cache/skill-quarantine/` and runs AgentShield + Skill-Architect audits.
  */
 export function quarantineAndAuditSkillCandidate(opts = {}) {
@@ -245,130 +283,138 @@ export function quarantineAndAuditSkillCandidate(opts = {}) {
 
   const baseCache = ensureTunnelCacheDir(cacheDir ? resolve(cacheDir) : resolveTunnelCacheDir(PLUGIN_ROOT));
   const quarantineRoot = join(baseCache, 'skill-quarantine');
+  pruneStaleQuarantineDirs(quarantineRoot);
   const qDir = join(quarantineRoot, `${cleanSlug}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
   mkdirSync(qDir, { recursive: true });
 
-  const shieldFindings = [];
-  const mdBytes = Buffer.byteLength(mdText, 'utf8');
-  if (mdBytes > MAX_QUARANTINE_FILE_BYTES || mdText.includes('\0')) {
-    shieldFindings.push({
-      file: join(qDir, 'SKILL.md'),
-      kind: 'skill',
-      severity: 'critical',
-      ruleId: 'skill_oversized_or_binary',
-      message: isEn
-        ? `SKILL.md exceeds ${Math.round(MAX_QUARANTINE_FILE_BYTES / 1024)} KB limit or contains binary data`
-        : `SKILL.md превышает лимит ${Math.round(MAX_QUARANTINE_FILE_BYTES / 1024)} КБ или содержит бинарные данные`,
-      excerpt: '',
-    });
-  }
-
-  const skillMdPath = join(qDir, 'SKILL.md');
-  writeFileSync(skillMdPath, mdText.slice(0, MAX_QUARANTINE_FILE_BYTES), 'utf8');
-
-  if (extraFiles && typeof extraFiles === 'object' && !Array.isArray(extraFiles)) {
-    for (const [rawRel, content] of Object.entries(extraFiles)) {
-      const safeRel = sanitizeRelativeSkillPath(rawRel);
-      if (!safeRel || safeRel.toUpperCase() === 'SKILL.MD') continue;
-      if (FORBIDDEN_BINARY_EXT_RE.test(safeRel)) {
-        shieldFindings.push({
-          file: safeRel,
-          kind: 'skill',
-          severity: 'critical',
-          ruleId: 'skill_oversized_or_binary',
-          message: isEn
-            ? `Forbidden binary or executable attachment: ${safeRel}`
-            : `Запрещённое бинарное или исполняемое вложение: ${safeRel}`,
-          excerpt: safeRel,
-        });
-        continue;
-      }
-      if (content && typeof content === 'object' && !Buffer.isBuffer(content) && content.oversizedOrBinary) {
-        shieldFindings.push({
-          file: safeRel,
-          kind: 'skill',
-          severity: 'critical',
-          ruleId: 'skill_oversized_or_binary',
-          message: isEn
-            ? `Attachment exceeds 512 KB or is binary: ${safeRel}`
-            : `Вложение превышает 512 КБ или является бинарным: ${safeRel}`,
-          excerpt: safeRel,
-        });
-        continue;
-      }
-      const isBuf = Buffer.isBuffer(content);
-      const rawText = isBuf ? content.toString('utf8') : String(content ?? '');
-      const hasNull = isBuf ? content.includes(0) : rawText.includes('\0');
-      const byteSize = isBuf ? content.length : Buffer.byteLength(rawText, 'utf8');
-      if (hasNull || byteSize > MAX_QUARANTINE_FILE_BYTES) {
-        shieldFindings.push({
-          file: safeRel,
-          kind: 'skill',
-          severity: 'critical',
-          ruleId: 'skill_oversized_or_binary',
-          message: isEn
-            ? `Attachment ${safeRel} exceeds 512 KB or contains null bytes`
-            : `Вложение ${safeRel} превышает 512 КБ или содержит нулевые байты`,
-          excerpt: safeRel,
-        });
-        continue;
-      }
-      const dest = resolve(qDir, safeRel);
-      if (!dest.startsWith(resolve(qDir) + sep)) continue;
-      mkdirSync(dirname(dest), { recursive: true });
-      writeFileSync(dest, rawText, 'utf8');
+  try {
+    const shieldFindings = [];
+    const mdBytes = Buffer.byteLength(mdText, 'utf8');
+    if (mdBytes > MAX_QUARANTINE_FILE_BYTES || mdText.includes('\0')) {
+      shieldFindings.push({
+        file: join(qDir, 'SKILL.md'),
+        kind: 'skill',
+        severity: 'critical',
+        ruleId: 'skill_oversized_or_binary',
+        message: isEn
+          ? `SKILL.md exceeds ${Math.round(MAX_QUARANTINE_FILE_BYTES / 1024)} KB limit or contains binary data`
+          : `SKILL.md превышает лимит ${Math.round(MAX_QUARANTINE_FILE_BYTES / 1024)} КБ или содержит бинарные данные`,
+        excerpt: '',
+      });
     }
-  }
 
-  // Scan ALL quarantined files (SKILL.md + scripts/* + references/* + evals/*), never SKILL.md alone
-  const allQuarantinedFiles = collectFilesRecursive(qDir);
-  for (const qFile of allQuarantinedFiles) {
-    shieldFindings.push(...scanSkillFile(qFile.fullPath, { lang: isEn ? 'en' : 'ru' }));
-  }
-  const shieldBlocking = shieldFindings.filter((f) => f.severity === 'critical' || f.severity === 'high');
-  const existingAbs = resolve(existingSkillsRoot || DEFAULT_SKILLS_ROOT);
-  const skillAudit = auditSkill(qDir, { skillsRoot: existingAbs });
+    const skillMdPath = join(qDir, 'SKILL.md');
+    writeFileSync(skillMdPath, mdText.slice(0, MAX_QUARANTINE_FILE_BYTES), 'utf8');
 
-  const collisions = Array.isArray(skillAudit?.triggerEval?.collisions) ? skillAudit.triggerEval.collisions : [];
-  const maxCollision = collisions.reduce((mx, c) => Math.max(mx, Number(c?.similarity || 0)), 0);
+    if (extraFiles && typeof extraFiles === 'object' && !Array.isArray(extraFiles)) {
+      for (const [rawRel, content] of Object.entries(extraFiles)) {
+        const safeRel = sanitizeRelativeSkillPath(rawRel);
+        if (!safeRel || safeRel.toUpperCase() === 'SKILL.MD') continue;
+        if (FORBIDDEN_BINARY_EXT_RE.test(safeRel)) {
+          shieldFindings.push({
+            file: safeRel,
+            kind: 'skill',
+            severity: 'critical',
+            ruleId: 'skill_oversized_or_binary',
+            message: isEn
+              ? `Forbidden binary or executable attachment: ${safeRel}`
+              : `Запрещённое бинарное или исполняемое вложение: ${safeRel}`,
+            excerpt: safeRel,
+          });
+          continue;
+        }
+        if (content && typeof content === 'object' && !Buffer.isBuffer(content) && content.oversizedOrBinary) {
+          shieldFindings.push({
+            file: safeRel,
+            kind: 'skill',
+            severity: 'critical',
+            ruleId: 'skill_oversized_or_binary',
+            message: isEn
+              ? `Attachment exceeds 512 KB or is binary: ${safeRel}`
+              : `Вложение превышает 512 КБ или является бинарным: ${safeRel}`,
+            excerpt: safeRel,
+          });
+          continue;
+        }
+        const isBuf = Buffer.isBuffer(content);
+        const rawText = isBuf ? content.toString('utf8') : String(content ?? '');
+        const hasNull = isBuf ? content.includes(0) : rawText.includes('\0');
+        const byteSize = isBuf ? content.length : Buffer.byteLength(rawText, 'utf8');
+        if (hasNull || byteSize > MAX_QUARANTINE_FILE_BYTES) {
+          shieldFindings.push({
+            file: safeRel,
+            kind: 'skill',
+            severity: 'critical',
+            ruleId: 'skill_oversized_or_binary',
+            message: isEn
+              ? `Attachment ${safeRel} exceeds 512 KB or contains null bytes`
+              : `Вложение ${safeRel} превышает 512 КБ или содержит нулевые байты`,
+            excerpt: safeRel,
+          });
+          continue;
+        }
+        const dest = resolve(qDir, safeRel);
+        if (!dest.startsWith(resolve(qDir) + sep)) continue;
+        mkdirSync(dirname(dest), { recursive: true });
+        writeFileSync(dest, rawText, 'utf8');
+      }
+    }
 
-  const reasons = [];
-  if (shieldBlocking.length > 0) {
-    reasons.push(
-      isEn
-        ? `AgentShield blocked threat: ${Array.from(new Set(shieldBlocking.map((f) => f.ruleId))).join(', ')}`
-        : `AgentShield заблокировал угрозу: ${Array.from(new Set(shieldBlocking.map((f) => f.ruleId))).join(', ')}`
-    );
-  }
-  if ((skillAudit?.errorsCount || 0) > 0) {
-    const ids = (skillAudit.findings || []).filter((f) => f.severity === 'error').map((f) => f.id).join(', ');
-    reasons.push(
-      isEn
-        ? `Skill-Architect found errors (${skillAudit.errorsCount}): ${ids}`
-        : `Skill-Architect обнаружил ошибки (${skillAudit.errorsCount}): ${ids}`
-    );
-  }
-  if (maxCollision >= 0.55) {
-    reasons.push(
-      isEn
-        ? `High trigger collision (>=0.55) with existing skills (${maxCollision})`
-        : `Высокая коллизия триггеров (>=0.55) с существующими навыками (${maxCollision})`
-    );
-  }
+    // Scan ALL quarantined files (SKILL.md + scripts/* + references/* + evals/*), never SKILL.md alone
+    const allQuarantinedFiles = collectFilesRecursive(qDir);
+    for (const qFile of allQuarantinedFiles) {
+      shieldFindings.push(...scanSkillFile(qFile.fullPath, { lang: isEn ? 'en' : 'ru' }));
+    }
+    const shieldBlocking = shieldFindings.filter((f) => f.severity === 'critical' || f.severity === 'high');
+    const existingAbs = resolve(existingSkillsRoot || DEFAULT_SKILLS_ROOT);
+    const skillAudit = auditSkill(qDir, { skillsRoot: existingAbs });
 
-  const approved = shieldBlocking.length === 0 && (skillAudit?.errorsCount || 0) === 0 && maxCollision < 0.55;
+    const collisions = Array.isArray(skillAudit?.triggerEval?.collisions) ? skillAudit.triggerEval.collisions : [];
+    const maxCollision = collisions.reduce((mx, c) => Math.max(mx, Number(c?.similarity || 0)), 0);
 
-  return {
-    ok: true,
-    approved,
-    slug: cleanSlug,
-    quarantineDir: qDir,
-    shieldFindings,
-    shieldBlockingCount: shieldBlocking.length,
-    skillAudit,
-    maxCollision,
-    reasons,
-  };
+    const reasons = [];
+    if (shieldBlocking.length > 0) {
+      reasons.push(
+        isEn
+          ? `AgentShield blocked threat: ${Array.from(new Set(shieldBlocking.map((f) => f.ruleId))).join(', ')}`
+          : `AgentShield заблокировал угрозу: ${Array.from(new Set(shieldBlocking.map((f) => f.ruleId))).join(', ')}`
+      );
+    }
+    if ((skillAudit?.errorsCount || 0) > 0) {
+      const ids = (skillAudit.findings || []).filter((f) => f.severity === 'error').map((f) => f.id).join(', ');
+      reasons.push(
+        isEn
+          ? `Skill-Architect found errors (${skillAudit.errorsCount}): ${ids}`
+          : `Skill-Architect обнаружил ошибки (${skillAudit.errorsCount}): ${ids}`
+      );
+    }
+    if (maxCollision >= 0.55) {
+      reasons.push(
+        isEn
+          ? `High trigger collision (>=0.55) with existing skills (${maxCollision})`
+          : `Высокая коллизия триггеров (>=0.55) с существующими навыками (${maxCollision})`
+      );
+    }
+
+    const approved = shieldBlocking.length === 0 && (skillAudit?.errorsCount || 0) === 0 && maxCollision < 0.55;
+
+    return {
+      ok: true,
+      approved,
+      slug: cleanSlug,
+      quarantineDir: qDir,
+      shieldFindings,
+      shieldBlockingCount: shieldBlocking.length,
+      skillAudit,
+      maxCollision,
+      reasons,
+    };
+  } catch (err) {
+    try {
+      rmSync(qDir, { recursive: true, force: true });
+    } catch {}
+    throw err;
+  }
 }
 
 /**

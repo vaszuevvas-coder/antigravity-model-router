@@ -1111,7 +1111,10 @@ export async function ensureHardwareCalibratedOnce(opts = {}) {
   const statePath = opts.statePath || join(pluginRoot, 'router-state.json');
   if (!existsSync(statePath)) return { calibrated: false, reason: 'missing_state' };
 
-  const cur = safeReadJsonSync(statePath, () => ({}), { selfHeal: true }) || {};
+  const cur = safeReadJsonSync(statePath, () => null, { selfHeal: false });
+  if (!cur || typeof cur !== 'object' || Array.isArray(cur)) {
+    return { calibrated: false, reason: 'corrupt_or_unreadable_state' };
+  }
   if (cur.hardwareProfiled === true) {
     return { calibrated: false, reason: 'already_profiled' };
   }

@@ -278,7 +278,7 @@ export function loadGpuConfig(override = {}) {
     typeof process.env.TUNNEL_TEST_STATE_PATH === 'string' && process.env.TUNNEL_TEST_STATE_PATH.trim()
       ? path.resolve(process.env.TUNNEL_TEST_STATE_PATH.trim())
       : STATE_FILE;
-  let st = hasFullRouterState ? {} : safeReadJsonSync(activeStateFile, () => ({}), { selfHeal: true });
+  let st = hasFullRouterState ? {} : safeReadJsonSync(activeStateFile, () => ({}), { selfHeal: false });
   // Fallback to calibrated global plugin state when running CLI tools inside uncalibrated repo checkout
   if (
     !process.env.TUNNEL_TEST_STATE_PATH &&

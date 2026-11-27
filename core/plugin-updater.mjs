@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { setDefaultResultOrder } from 'node:dns';
 import {
   copyFileSync,
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -24,8 +25,9 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { isPidAlive } from './cache-dir.mjs';
 import { normalizeLang } from './i18n.mjs';
-import { atomicWriteJsonSync, safeReadJsonSync } from './safe-json.mjs';
+import { atomicWriteJsonSync, safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
 import { appendDebugLog } from './debug-logger.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -1144,6 +1146,52 @@ async function downloadUpdateArchive(
   return buf.length;
 }
 
+const REPLACEABLE_UPDATE_ENTRIES = [
+  'core',
+  'sidecars',
+  'skills',
+  'rules',
+  'agents',
+  'scripts',
+  'plugin.json',
+  'package.json',
+  'hooks.json',
+  'mcp_config.json',
+  'install.js',
+];
+
+function stageRollbackTree(installTarget, rollbackDir) {
+  mkdirSync(rollbackDir, { recursive: true });
+  for (const name of REPLACEABLE_UPDATE_ENTRIES) {
+    const src = join(installTarget, name);
+    if (!existsSync(src)) continue;
+    cpSync(src, join(rollbackDir, name), { recursive: true, force: true });
+  }
+}
+
+function restoreRollbackTree(rollbackDir, installTarget) {
+  if (!rollbackDir || !existsSync(rollbackDir)) return;
+  let entries = [];
+  try {
+    entries = readdirSync(rollbackDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  mkdirSync(installTarget, { recursive: true });
+  for (const entry of entries) {
+    const src = join(rollbackDir, entry.name);
+    const dst = join(installTarget, entry.name);
+    try {
+      if (entry.isDirectory() && existsSync(dst)) {
+        try {
+          rmSync(dst, { recursive: true, force: true });
+        } catch {}
+      }
+      cpSync(src, dst, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
 function copyFilteredTreeFallback(sourceDir, installTarget, depth = 0) {
   mkdirSync(installTarget, { recursive: true });
   const skipNames = depth === 0 ? PRESERVED_ROOT_ENTRIES : new Set(['.git', '.cache', 'node_modules', 'tests', '.shadow']);
@@ -1224,11 +1272,64 @@ export async function applyPluginUpdate(options = {}) {
   };
   activeJobs.set(root, job);
 
+  const normStatusKey = (p) => (process.platform === 'win32' ? resolve(p).toLowerCase() : resolve(p));
+  const targetStatusPath = getStatusFilePath(installTarget);
+  const rootStatusPath = getStatusFilePath(root);
+  const hasSeparateTargetStatus = normStatusKey(targetStatusPath) !== normStatusKey(rootStatusPath);
+  const statusPathsToClaim = hasSeparateTargetStatus ? [targetStatusPath, rootStatusPath] : [targetStatusPath];
+
+  const claimedLocks = [];
+  let lockConflict = null;
+  for (const statusPath of statusPathsToClaim) {
+    let prevSnapshot = null;
+    try {
+      updateJsonAtomicSync(
+        statusPath,
+        () => createIdleStatus(root),
+        (cur) => {
+          prevSnapshot = cur && typeof cur === 'object' ? { ...cur } : null;
+          if (
+            cur?.active === true &&
+            Number.isInteger(cur.appliedByPid) &&
+            cur.appliedByPid > 0 &&
+            cur.appliedByPid !== effectiveAppliedByPid &&
+            isPidAlive(cur.appliedByPid) &&
+            (now - Number(cur.updatedAt || 0)) < 180_000
+          ) {
+            lockConflict = { ...cur };
+            return cur;
+          }
+          return { ...job.status };
+        }
+      );
+    } catch {
+      // Safe fallback if lock path is temporarily unavailable
+    }
+    if (lockConflict) {
+      for (const prev of claimedLocks) {
+        try {
+          atomicWriteJsonSync(prev.statusPath, prev.prevSnapshot || createIdleStatus(root));
+        } catch {}
+      }
+      activeJobs.delete(root);
+      return { ...lockConflict, alreadyRunning: true };
+    }
+    claimedLocks.push({ statusPath, prevSnapshot });
+  }
+
+  const persistAllStatus = (nextStatus) => {
+    persistUpdateStatus(root, nextStatus);
+    if (hasSeparateTargetStatus) {
+      persistUpdateStatus(installTarget, nextStatus);
+    }
+  };
   const setStatus = (patch) => {
     Object.assign(job.status, patch, { updatedAt: Date.now() });
-    persistUpdateStatus(root, job.status);
+    persistAllStatus(job.status);
   };
-  persistUpdateStatus(root, job.status);
+  if (claimedLocks.length === 0) {
+    persistAllStatus(job.status);
+  }
 
   const runUpdate = async () => {
     let tempWorkDir = '';
@@ -1422,37 +1523,52 @@ export async function applyPluginUpdate(options = {}) {
         statusTextEn: `Installing ${verLabel} into plugin folder...`,
       });
 
-      const installerScript = join(sourceDir, 'install.js');
-      if (typeof runInstallFn === 'function') {
-        await runInstallFn({
-          sourceDir,
-          targetDir: installTarget,
-          targetVersion: effectiveVersion || extractedMeta.version,
-          silent: true,
-        });
-      } else if (existsSync(installerScript)) {
-        await execFileAsync(
-          process.execPath,
-          [installerScript, '--target', installTarget, '--silent', '--lang', cleanLang],
-          { cwd: sourceDir, windowsHide: true, timeout: 60000 }
+      const rollbackDir = join(tempWorkDir, 'rollback');
+      stageRollbackTree(installTarget, rollbackDir);
+
+      const restoreRouterStateIfNeeded = () => {
+        if (stateBackupRaw === null) return;
+        const existingParsed = existsSync(targetStatePath)
+          ? safeReadJsonSync(targetStatePath, null, { selfHeal: false })
+          : null;
+        const stateIntact = Boolean(
+          existsSync(targetStatePath) &&
+          existingParsed &&
+          typeof existingParsed === 'object' &&
+          !Array.isArray(existingParsed)
         );
-      } else {
-        copyFilteredTreeFallback(sourceDir, installTarget);
+        if (!stateIntact) {
+          atomicWriteJsonSync(targetStatePath, stateBackupRaw);
+        }
+      };
+
+      const installerScript = join(sourceDir, 'install.js');
+      try {
+        if (typeof runInstallFn === 'function') {
+          await runInstallFn({
+            sourceDir,
+            targetDir: installTarget,
+            targetVersion: effectiveVersion || extractedMeta.version,
+            silent: true,
+          });
+        } else if (existsSync(installerScript)) {
+          await execFileAsync(
+            process.execPath,
+            [installerScript, '--target', installTarget, '--silent', '--lang', cleanLang],
+            { cwd: sourceDir, windowsHide: true, timeout: 60000 }
+          );
+        } else {
+          copyFilteredTreeFallback(sourceDir, installTarget);
+        }
+      } catch (installErr) {
+        restoreRollbackTree(rollbackDir, installTarget);
+        try {
+          restoreRouterStateIfNeeded();
+        } catch {}
+        throw installErr;
       }
 
-      if (stateBackupRaw !== null) {
-        let stateIntact = false;
-        if (existsSync(targetStatePath)) {
-          try {
-            const parsed = JSON.parse(readFileSync(targetStatePath, 'utf8'));
-            stateIntact = Boolean(parsed && typeof parsed === 'object' && !Array.isArray(parsed));
-          } catch {}
-        }
-        if (!stateIntact) {
-          mkdirSync(dirname(targetStatePath), { recursive: true });
-          writeFileSync(targetStatePath, stateBackupRaw, 'utf8');
-        }
-      }
+      restoreRouterStateIfNeeded();
 
       // Clear stale update-check caches so UI reflects installed version accurately
       for (const cacheCandidate of [getCacheFilePath(root), getCacheFilePath(installTarget)]) {

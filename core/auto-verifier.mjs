@@ -21,6 +21,7 @@ import { localizeFaultWithV8Sbfl } from './cpu-sbfl-healer.mjs';
 const execFileAsync = promisify(execFile);
 const fastLinterDetectCache = new Map();
 const FAST_LINTER_CACHE_TTL_MS = 60_000;
+const MAX_FAST_LINTER_CACHE = 64;
 const FAST_LINTER_EXTS = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx']);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -62,6 +63,12 @@ function hasVerifiedSyntaxHash(sha1) {
   const disk = safeReadJsonSync(getSyntaxCacheFile(), () => ({ hashes: {} }), { selfHeal: false });
   const diskTs = disk?.hashes && Object.hasOwn(disk.hashes, sha1) ? Number(disk.hashes[sha1]) : 0;
   if (diskTs > 0 && (now - diskTs) < SYNTAX_CACHE_TTL_MS) {
+    if (memVerifiedHashes.has(sha1)) {
+      memVerifiedHashes.delete(sha1);
+    } else if (memVerifiedHashes.size >= SYNTAX_CACHE_MAX_ENTRIES) {
+      const oldest = memVerifiedHashes.keys().next().value;
+      if (oldest !== undefined) memVerifiedHashes.delete(oldest);
+    }
     memVerifiedHashes.set(sha1, diskTs);
     return true;
   }
@@ -761,6 +768,12 @@ export function detectWorkspaceFastLinter(rootDir = process.cwd()) {
     spec = { tool: 'biome', bin: isWin ? 'biome.cmd' : 'biome' };
   }
 
+  if (fastLinterDetectCache.has(cacheKey)) {
+    fastLinterDetectCache.delete(cacheKey);
+  } else if (fastLinterDetectCache.size >= MAX_FAST_LINTER_CACHE) {
+    const oldestKey = fastLinterDetectCache.keys().next().value;
+    if (oldestKey !== undefined) fastLinterDetectCache.delete(oldestKey);
+  }
   fastLinterDetectCache.set(cacheKey, { ts: now, spec });
   return spec;
 }

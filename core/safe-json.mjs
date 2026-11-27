@@ -4,6 +4,7 @@
  * параллельных процессов (субагентов Teamwork) и повреждения состояния при сбоях.
  */
 
+import { randomBytes } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -38,7 +39,7 @@ const TRANSIENT_FS_CODES = new Set([
   'ENOTEMPTY',
 ]);
 
-const TMP_ARTIFACT_SUFFIX_RE = /^\d+\.[a-z0-9]{4,10}\.tmp$/;
+const TMP_ARTIFACT_SUFFIX_RE = /^\d+\.[a-z0-9]{4,16}\.tmp$/;
 
 function stripUtf8Bom(raw) {
   if (typeof raw !== 'string') return '';
@@ -110,7 +111,7 @@ const SLEEP_BUF = (() => {
  * @param {number} ms Количество миллисекунд
  */
 export function sleepSync(ms) {
-  if (!ms || ms <= 0) return;
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return;
   if (SLEEP_BUF) {
     try {
       Atomics.wait(SLEEP_BUF, 0, 0, ms);
@@ -133,6 +134,9 @@ export function sleepSync(ms) {
  * @returns {T}
  */
 export function withFileLockSync(targetPath, fn, options = {}) {
+  if (typeof targetPath !== 'string' || !targetPath.trim() || targetPath.includes('\0')) {
+    throw new TypeError('Invalid targetPath');
+  }
   const opts = options && typeof options === 'object' ? options : {};
   const maxWaitMs = Number.isFinite(Number(opts.maxWaitMs)) && Number(opts.maxWaitMs) > 0
     ? Number(opts.maxWaitMs)
@@ -156,7 +160,11 @@ export function withFileLockSync(targetPath, fn, options = {}) {
     // Re-entrant call in the same process: reuse active lock instead of self-deadlocking
     activeProcessLocks.set(lockKey, prevDepth + 1);
     try {
-      return fn();
+      const res = fn();
+      if (res !== null && (typeof res === 'object' || typeof res === 'function') && typeof res.then === 'function') {
+        throw new TypeError('withFileLockSync requires a synchronous callback');
+      }
+      return res;
     } finally {
       const rem = (activeProcessLocks.get(lockKey) || 1) - 1;
       if (rem > 0) activeProcessLocks.set(lockKey, rem);
@@ -187,17 +195,21 @@ export function withFileLockSync(targetPath, fn, options = {}) {
           let effectiveStaleMs = staleLockMs;
           try {
             const ownerRaw = readFileSync(ownerFile, 'utf-8');
-            const ownerPid = Number(String(ownerRaw || '').split(':')[0]);
+            const parts = String(ownerRaw || '').split(':');
+            const ownerPid = Number(parts[0]);
+            const ownerTs = Number(parts[1]) || st.mtimeMs;
             if (Number.isInteger(ownerPid) && ownerPid > 0) {
-              let alive = false;
               try {
                 process.kill(ownerPid, 0);
-                alive = true;
-              } catch (killErr) {
-                alive = killErr?.code === 'EPERM';
-              }
-              if (alive) {
                 effectiveStaleMs = Math.max(staleLockMs, 60000);
+              } catch (killErr) {
+                if (killErr?.code === 'ESRCH') {
+                  effectiveStaleMs = Math.min(staleLockMs, 50);
+                } else if (killErr?.code === 'EPERM') {
+                  if (Date.now() - ownerTs < 15000) {
+                    effectiveStaleMs = Math.max(staleLockMs, 60000);
+                  }
+                }
               }
             }
           } catch {}
@@ -235,7 +247,11 @@ export function withFileLockSync(targetPath, fn, options = {}) {
 
   activeProcessLocks.set(lockKey, 1);
   try {
-    return fn();
+    const res = fn();
+    if (res !== null && (typeof res === 'object' || typeof res === 'function') && typeof res.then === 'function') {
+      throw new TypeError('withFileLockSync requires a synchronous callback');
+    }
+    return res;
   } finally {
     activeProcessLocks.delete(lockKey);
     // Only release lockDir if this process still owns it (prevents deleting a stolen lock)
@@ -308,11 +324,13 @@ function coerceParsedWithDefault(parsed, defaultFactory) {
  * @param {object} [options]
  * @param {boolean} [options.selfHeal=true] Перезаписать ли битый/пустой файл значением по умолчанию
  * @param {number} [options.lockWaitMs=750] Максимальное время ожидания замка при самоисцелении
+ * @param {boolean} [options.backupCorrupt=false] Сохранить ли резервную копию `.corrupt` перед перезаписью битого JSON
  * @returns {T}
  */
 export function safeReadJsonSync(filePath, defaultFactory, options = {}) {
   const opts = options && typeof options === 'object' ? options : {};
   const selfHeal = opts.selfHeal !== undefined ? Boolean(opts.selfHeal) : true;
+  const backupCorrupt = Boolean(opts.backupCorrupt);
   const lockWaitMs = Number.isFinite(Number(opts.lockWaitMs)) && Number(opts.lockWaitMs) > 0
     ? Math.min(5000, Math.round(Number(opts.lockWaitMs)))
     : 750;
@@ -402,6 +420,11 @@ export function safeReadJsonSync(filePath, defaultFactory, options = {}) {
           } catch {
             // Confirmed corrupted JSON under lock — proceed to self-heal
           }
+          if (backupCorrupt) {
+            try {
+              writeFileSync(`${filePath}.corrupt`, latestRaw, 'utf-8');
+            } catch {}
+          }
         }
 
         const def = resolveDefault(defaultFactory);
@@ -422,6 +445,9 @@ export function safeReadJsonSync(filePath, defaultFactory, options = {}) {
  * @param {{ spaces?: number }} [options={}] Параметры форматирования
  */
 export function atomicWriteJsonSync(filePath, data, options = {}) {
+  if (typeof filePath !== 'string' || !filePath.trim() || filePath.includes('\0')) {
+    throw new TypeError('Invalid filePath');
+  }
   const opts = options && typeof options === 'object' ? options : {};
   const spaces = opts.spaces !== undefined ? opts.spaces : 2;
   const dir = dirname(filePath);
@@ -434,7 +460,7 @@ export function atomicWriteJsonSync(filePath, data, options = {}) {
   if (jsonStr === undefined) {
     jsonStr = 'null';
   }
-  const tmpPath = `${filePath}.${process.pid}.${Math.random().toString(36).slice(2, 7)}.tmp`;
+  const tmpPath = `${filePath}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
 
   let renamed = false;
   try {
@@ -475,14 +501,22 @@ export function atomicWriteJsonSync(filePath, data, options = {}) {
  * @param {string} filePath Путь к файлу
  * @param {T | (() => T)} defaultFactory Фабрика по умолчанию
  * @param {(current: T) => T} mutatorFn Функция изменения состояния
- * @param {{ spaces?: number }} [options={}] Параметры записи JSON
+ * @param {{ spaces?: number, maxWaitMs?: number, staleLockMs?: number, createDir?: boolean }} [options={}] Параметры записи JSON и замка
  * @returns {T} Обновлённое состояние
  */
 export function updateJsonAtomicSync(filePath, defaultFactory, mutatorFn, options = {}) {
-  return withFileLockSync(filePath, () => {
-    const current = safeReadJsonSync(filePath, defaultFactory, { selfHeal: true });
-    const updated = mutatorFn(current) || current;
-    atomicWriteJsonSync(filePath, updated, options);
-    return updated;
-  });
+  return withFileLockSync(
+    filePath,
+    () => {
+      const current = safeReadJsonSync(filePath, defaultFactory, { selfHeal: true });
+      const rawNext = mutatorFn(current);
+      if (rawNext !== null && (typeof rawNext === 'object' || typeof rawNext === 'function') && typeof rawNext.then === 'function') {
+        throw new TypeError('updateJsonAtomicSync requires a synchronous mutatorFn');
+      }
+      const updated = rawNext !== undefined ? rawNext : current;
+      atomicWriteJsonSync(filePath, updated, options);
+      return updated;
+    },
+    { maxWaitMs: options?.maxWaitMs, staleLockMs: options?.staleLockMs, createDir: options?.createDir }
+  );
 }

@@ -13,6 +13,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const DEFAULT_IDLE_UNLOAD_MS = 10 * 60 * 1000;
 const DISCOVERY_CACHE_TTL_MS = 30 * 1000;
+const MAX_OPEN_DOCS = 128;
 const HEADER_DELIM_CRLF = Buffer.from('\r\n\r\n', 'ascii');
 const HEADER_DELIM_LF = Buffer.from('\n\n', 'ascii');
 
@@ -502,6 +503,23 @@ class LspSession {
     if (typeof this.idleTimer.unref === 'function') this.idleTimer.unref();
   }
 
+  _terminateProc(proc) {
+    if (!proc) return;
+    try { proc.stdout?.removeAllListeners?.(); } catch {}
+    try { proc.stderr?.removeAllListeners?.(); } catch {}
+    try { proc.removeAllListeners?.(); } catch {}
+    try { if (!proc.killed) proc.kill(); } catch {}
+  }
+
+  _setOpenDoc(key, doc) {
+    while (!this.openDocs.has(key) && this.openDocs.size >= MAX_OPEN_DOCS) {
+      const oldestKey = this.openDocs.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.openDocs.delete(oldestKey);
+    }
+    this.openDocs.set(key, doc);
+  }
+
   async ensureStarted(timeoutMs = 1500) {
     if (this.disposed) return false;
     if (this.initialized && this.proc && !this.proc.killed) return true;
@@ -510,6 +528,7 @@ class LspSession {
     }
 
     this.initPromise = (async () => {
+      let spawnedProc = null;
       try {
         const proc = this.spawnFn(this.serverCmd.command, this.serverCmd.args || [], {
           cwd: this.wsRoot,
@@ -519,8 +538,11 @@ class LspSession {
           env: { ...process.env, ...(this.serverCmd.env || {}) },
         });
         if (!proc || !proc.stdin || !proc.stdout) {
+          if (proc) this._terminateProc(proc);
+          this.initPromise = null;
           return false;
         }
+        spawnedProc = proc;
         this.proc = proc;
         if (typeof proc.unref === 'function') proc.unref();
 
@@ -554,12 +576,17 @@ class LspSession {
           },
           Math.max(400, Math.min(4000, timeoutMs + 500))
         );
-        if (!initRes || this.disposed) return false;
+        if (!initRes || this.disposed) {
+          if (spawnedProc) this._terminateProc(spawnedProc);
+          this._handleProcessExit();
+          return false;
+        }
         this.sendNotification('initialized', {});
         this.initialized = true;
         this._touchIdle();
         return true;
       } catch {
+        if (spawnedProc) this._terminateProc(spawnedProc);
         this._handleProcessExit();
         return false;
       }
@@ -609,7 +636,7 @@ class LspSession {
         };
         prev.diagnostics = diags;
         prev.updatedAt = Date.now();
-        this.openDocs.set(key, prev);
+        this._setOpenDoc(key, prev);
 
         const waiters = this.diagWaiters.get(key);
         if (waiters && waiters.length > 0) {
@@ -628,8 +655,10 @@ class LspSession {
 
   _handleProcessExit() {
     this.initialized = false;
+    const prevProc = this.proc;
     this.proc = null;
     this.initPromise = null;
+    if (prevProc) this._terminateProc(prevProc);
     for (const [, entry] of this.pending.entries()) {
       clearTimeout(entry.timer);
       entry.reject(new Error('LSP exited'));
@@ -695,7 +724,7 @@ class LspSession {
         diagnostics: existing?.diagnostics || [],
         updatedAt: Date.now(),
       };
-      this.openDocs.set(key, doc);
+      this._setOpenDoc(key, doc);
       this.sendNotification('textDocument/didOpen', {
         textDocument: { uri, languageId, version: 1, text: nextText },
       });

@@ -5,12 +5,12 @@
  * and re-read within the active context window, avoiding full-file re-reads.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateSync, inflateSync } from 'node:zlib';
 import { extractFileSymbolsWithRanges } from './repo-mapper.mjs';
-import { safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
+import { safeReadJsonSync, updateJsonAtomicSync, withFileLockSync } from './safe-json.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
@@ -62,7 +62,10 @@ function removeOrphanBlobs(activeEntries = []) {
     for (const f of files) {
       if (!keepFiles.has(f) && f.endsWith('.zlib')) {
         try {
-          rmSync(join(SNAPSHOT_DIR, f), { force: true });
+          const full = join(SNAPSHOT_DIR, f);
+          const st = statSync(full);
+          if (Date.now() - st.mtimeMs < 5000) continue;
+          rmSync(full, { force: true });
         } catch {}
       }
     }
@@ -96,43 +99,46 @@ export function saveReadSnapshot(params = {}, positionalText = undefined, positi
   try {
     ensureSnapshotDir();
     const compressed = deflateSync(Buffer.from(text, 'utf8'));
-    writeFileSync(snapshotBlobPath(sha1), compressed);
 
-    let activeEntries = [];
-    updateJsonAtomicSync(SNAPSHOT_INDEX_FILE, defaultSnapshotIndex, (state) => {
-      const now = Date.now();
-      let entries = (Array.isArray(state?.entries) ? state.entries : []).filter(
-        (e) => e && e.sha1 && (now - (e.ts || 0) <= SNAPSHOT_TTL_MS)
-      );
+    withFileLockSync(SNAPSHOT_INDEX_FILE, () => {
+      writeFileSync(snapshotBlobPath(sha1), compressed);
 
-      const idx = entries.findIndex(
-        (e) => e.sha1 === sha1 && (!normPath || e.normPath === normPath) && (!convoKey || e.convoKey === convoKey)
-      );
-      const record = {
-        sha1,
-        normPath,
-        convoKey,
-        lines,
-        rawBytes,
-        compressedBytes: compressed.length,
-        ts: now,
-      };
-      if (idx >= 0) {
-        entries[idx] = record;
-      } else {
-        entries.push(record);
-      }
+      let activeEntries = [];
+      updateJsonAtomicSync(SNAPSHOT_INDEX_FILE, defaultSnapshotIndex, (state) => {
+        const now = Date.now();
+        let entries = (Array.isArray(state?.entries) ? state.entries : []).filter(
+          (e) => e && e.sha1 && (now - (e.ts || 0) <= SNAPSHOT_TTL_MS)
+        );
 
-      // Enforce LRU cap (keep most recently used)
-      entries.sort((a, b) => (a.ts || 0) - (b.ts || 0));
-      if (entries.length > SNAPSHOT_LRU_CAP) {
-        entries = entries.slice(-SNAPSHOT_LRU_CAP);
-      }
-      activeEntries = entries;
-      return { version: 1, entries };
+        const idx = entries.findIndex(
+          (e) => e.sha1 === sha1 && (!normPath || e.normPath === normPath) && (!convoKey || e.convoKey === convoKey)
+        );
+        const record = {
+          sha1,
+          normPath,
+          convoKey,
+          lines,
+          rawBytes,
+          compressedBytes: compressed.length,
+          ts: now,
+        };
+        if (idx >= 0) {
+          entries[idx] = record;
+        } else {
+          entries.push(record);
+        }
+
+        // Enforce LRU cap (keep most recently used)
+        entries.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+        if (entries.length > SNAPSHOT_LRU_CAP) {
+          entries = entries.slice(-SNAPSHOT_LRU_CAP);
+        }
+        activeEntries = entries;
+        return { version: 1, entries };
+      });
+
+      removeOrphanBlobs(activeEntries);
     });
-
-    removeOrphanBlobs(activeEntries);
     return true;
   } catch {
     return false;
@@ -159,7 +165,7 @@ export function loadReadSnapshot(sha1OrOpts = '') {
   const index = safeReadJsonSync(SNAPSHOT_INDEX_FILE, defaultSnapshotIndex, { selfHeal: false });
   const entries = Array.isArray(index?.entries) ? index.entries : [];
   const matching = entries.find((e) => e && e.sha1 === sha1);
-  if (matching && (now - (matching.ts || 0) > SNAPSHOT_TTL_MS)) {
+  if (!matching || (now - (matching.ts || 0) > SNAPSHOT_TTL_MS)) {
     return null;
   }
 
@@ -214,25 +220,27 @@ export function clearReadSnapshots(filter = {}) {
   const baseConvo = rawConvo ? String(rawConvo).replace(/__[0-9a-f]{8}$/i, '') || 'default' : '';
   let activeEntries = [];
   try {
-    updateJsonAtomicSync(SNAPSHOT_INDEX_FILE, defaultSnapshotIndex, (state) => {
-      const now = Date.now();
-      const entries = (Array.isArray(state?.entries) ? state.entries : []).filter((e) => {
-        if (!e || !e.sha1) return false;
-        if (now - (e.ts || 0) > SNAPSHOT_TTL_MS) return false;
-        if (targetSha1 && e.sha1 === targetSha1) return false;
-        if (targetNorm && e.normPath === targetNorm) return false;
-        if (rawConvo) {
-          const k = String(e.convoKey || '');
-          if (k === rawConvo || k === baseConvo || k.startsWith(`${baseConvo}__`)) {
-            return false;
+    withFileLockSync(SNAPSHOT_INDEX_FILE, () => {
+      updateJsonAtomicSync(SNAPSHOT_INDEX_FILE, defaultSnapshotIndex, (state) => {
+        const now = Date.now();
+        const entries = (Array.isArray(state?.entries) ? state.entries : []).filter((e) => {
+          if (!e || !e.sha1) return false;
+          if (now - (e.ts || 0) > SNAPSHOT_TTL_MS) return false;
+          if (targetSha1 && e.sha1 === targetSha1) return false;
+          if (targetNorm && e.normPath === targetNorm) return false;
+          if (rawConvo) {
+            const k = String(e.convoKey || '');
+            if (k === rawConvo || k === baseConvo || k.startsWith(`${baseConvo}__`)) {
+              return false;
+            }
           }
-        }
-        return true;
+          return true;
+        });
+        activeEntries = entries;
+        return { version: 1, entries };
       });
-      activeEntries = entries;
-      return { version: 1, entries };
+      removeOrphanBlobs(activeEntries);
     });
-    removeOrphanBlobs(activeEntries);
   } catch {}
 }
 

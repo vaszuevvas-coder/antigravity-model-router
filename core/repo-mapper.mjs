@@ -1219,6 +1219,9 @@ function buildDependencyGraph(filesIndex, absRootDir) {
       if (cleanImp.startsWith('.')) {
         const absImp = path.resolve(uDir, cleanImp).replace(/\\/g, '/');
         const relImp = path.relative(absRootDir, absImp).replace(/\\/g, '/');
+        if (!relImp || relImp.startsWith('..') || path.isAbsolute(relImp)) {
+          continue;
+        }
 
         const candidates = [
           relImp,
@@ -2132,6 +2135,7 @@ export function findReverseImporters(rootDir, targetFilePath, maxDependents = 8)
     : path.resolve(absRoot, targetFilePath);
 
   const relativeTarget = path.relative(absRoot, absTarget).replace(/\\/g, '/');
+  const isExternalTarget = !relativeTarget || relativeTarget.startsWith('..') || path.isAbsolute(relativeTarget);
   const targetExt = path.extname(absTarget).toLowerCase();
   const targetBaseName = path.basename(absTarget, targetExt);
   const targetFileWithExt = path.basename(absTarget);
@@ -2143,6 +2147,15 @@ export function findReverseImporters(rootDir, targetFilePath, maxDependents = 8)
       const targetContent = fs.readFileSync(absTarget, 'utf8');
       exportedSymbols = extractExportedSymbols(targetExt, targetContent);
     } catch {}
+  }
+
+  if (isExternalTarget) {
+    return {
+      targetFile: relativeTarget,
+      exportedSymbols,
+      dependents: [],
+      formattedHint: ''
+    };
   }
 
   // 2. Сначала проверяем кэш репозитория (мгновенно из памяти без повторного чтения с диска)

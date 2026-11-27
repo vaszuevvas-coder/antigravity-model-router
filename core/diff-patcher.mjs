@@ -12,10 +12,12 @@ import { fileURLToPath } from 'node:url';
 import { verifyContentSyntax } from './auto-verifier.mjs';
 import { extractFileSymbolsWithRanges } from './repo-mapper.mjs';
 import { updateJsonAtomicSync, withFileLockSync } from './safe-json.mjs';
+import { resolveTunnelCacheDir } from './cache-dir.mjs';
 import { healSearchBlockBitapAst } from './cpu-sbfl-healer.mjs';
 import { loadCpuConfig, recordCpuCompressionSaving } from './cpu-worker-pool.mjs';
 
-const OVERWRITE_GUARD_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '.cache', 'overwrite-guard.json');
+const PLUGIN_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+const getOverwriteGuardFile = () => path.join(resolveTunnelCacheDir(PLUGIN_ROOT), 'overwrite-guard.json');
 const OVERWRITE_CONFIRM_TTL_MS = 3 * 60 * 1000;
 
 /**
@@ -519,7 +521,7 @@ export function checkOverwriteGuard(toolName, args = {}, state = {}) {
           const now = Date.now();
           let confirmedRetry = false;
           try {
-            updateJsonAtomicSync(OVERWRITE_GUARD_FILE, () => ({ warned: {} }), (st) => {
+            updateJsonAtomicSync(getOverwriteGuardFile(), () => ({ warned: {} }), (st) => {
               const warned = (st && typeof st.warned === 'object' && !Array.isArray(st.warned)) ? { ...st.warned } : {};
               for (const [k, ts] of Object.entries(warned)) {
                 if (!Number.isFinite(ts) || now - ts > OVERWRITE_CONFIRM_TTL_MS) {
@@ -536,7 +538,7 @@ export function checkOverwriteGuard(toolName, args = {}, state = {}) {
               return { warned };
             });
           } catch {
-            confirmedRetry = true;
+            confirmedRetry = false;
           }
 
           if (!confirmedRetry) {

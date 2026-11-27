@@ -430,8 +430,12 @@ export function compileUserIntentToTechSpec(userPrompt = '', { wsPath = '', repo
   }
 
   if (contracts.length < 6) {
-    const explicitSyms = promptText.match(/\b(?:[a-z][a-zA-Z0-9]{2,}[A-Z][a-zA-Z0-9]*|[a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b/g) || [];
+    const symScanText = promptText.length > 8000 ? promptText.slice(0, 8000) : promptText;
+    const explicitSyms = symScanText.match(/\b[a-z][a-zA-Z0-9_]{3,}\b/g) || [];
     for (const sym of explicitSyms) {
+      const isCamel = !sym.includes('_') && /[A-Z]/.test(sym);
+      const isSnake = sym.includes('_') && !/[A-Z]/.test(sym) && !sym.endsWith('_') && !sym.includes('__');
+      if (!isCamel && !isSnake) continue;
       if (!contractSet.has(sym) && contracts.length < 6) {
         contractSet.add(sym);
         contracts.push(sym);

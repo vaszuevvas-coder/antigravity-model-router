@@ -110,7 +110,8 @@ function buildNonOverlappingBlocks(rawSymbols, totalLines) {
     for (let j = i + 1; j < normalized.length; j++) {
       const inner = normalized[j];
       if (inner.startLine > outer.endLine) break;
-      if (inner.startLine > outer.startLine && inner.kind === 'method') {
+      if (inner.startLine > outer.startLine && inner.startLine <= outer.endLine && inner.kind === 'method') {
+        if (inner.endLine > outer.endLine) inner.endLine = outer.endLine;
         inner.parentClass = outer.name;
         hasChild = true;
       } else if (inner.startLine > outer.startLine && inner.endLine <= outer.endLine) {

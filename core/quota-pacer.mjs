@@ -152,7 +152,14 @@ export function computeQuotaBurnForecast(eventsOrSamples = null, state = {}) {
         // Migrate legacy bloated per-step cache file cleanly
         samples = [];
         try {
-          atomicWriteJsonSync(qFile, { schemaVersion: QUOTA_PACER_SCHEMA_VERSION, samples: [] });
+          withFileLockSync(qFile, () => {
+            const latest = safeReadJsonSync(qFile, () => null, { selfHeal: false });
+            if (latest?.schemaVersion === QUOTA_PACER_SCHEMA_VERSION && Array.isArray(latest?.samples)) {
+              samples = latest.samples;
+              return;
+            }
+            atomicWriteJsonSync(qFile, { schemaVersion: QUOTA_PACER_SCHEMA_VERSION, samples: [] });
+          });
         } catch {}
       }
     }

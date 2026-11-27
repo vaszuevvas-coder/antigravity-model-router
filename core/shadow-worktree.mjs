@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { maskTerminalOutput } from './obs-masker.mjs';
 import { atomicWriteJsonSync, safeReadJsonSync, withFileLockSync } from './safe-json.mjs';
 import { checkCommandSecurity } from './security-guard.mjs';
-import { createShadowCheckpoint } from './shadow-guard.mjs';
+import { createShadowCheckpoint, rollbackTurn } from './shadow-guard.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
@@ -233,7 +233,12 @@ export function listShadowWorktrees(workspaceRoot = '', opts = {}) {
   }
   if (dirty) {
     try {
-      atomicWriteJsonSync(paths.indexFile, { entries: alive });
+      withFileLockSync(paths.indexFile, () => {
+        const latest = loadIndex(paths.indexFile).filter(
+          (e) => e && e.id && e.worktreePath && existsSync(e.worktreePath)
+        );
+        atomicWriteJsonSync(paths.indexFile, { entries: latest });
+      });
     } catch {}
   }
   if (!wsFilter) return alive;
@@ -365,6 +370,7 @@ export function promoteShadowWorktree(opts = {}) {
 
   const promotedFiles = [];
   const deletedFiles = [];
+  const failedFiles = [];
   const promoteTurnId = `wt_promote_${entry.id}`;
 
   for (const item of diff.changedFiles) {
@@ -373,15 +379,21 @@ export function promoteShadowWorktree(opts = {}) {
     const relToRepo = relative(entry.repoRoot, targetAbs);
     if (!relToRepo || relToRepo.startsWith('..') || isAbsolute(relToRepo)) continue;
 
+    let targetIsDir = false;
     try {
-      createShadowCheckpoint({
-        filePath: targetAbs,
-        workspaceRoot: entry.repoRoot,
-        toolName: 'worktree_promote',
-        turnId: promoteTurnId,
-        turnLabel: isEn ? `Apply sandbox: ${entry.label}` : `Применение песочницы: ${entry.label}`,
-      });
+      targetIsDir = existsSync(targetAbs) && statSync(targetAbs).isDirectory();
     } catch {}
+    if (!targetIsDir) {
+      try {
+        createShadowCheckpoint({
+          filePath: targetAbs,
+          workspaceRoot: entry.repoRoot,
+          toolName: 'worktree_promote',
+          turnId: promoteTurnId,
+          turnLabel: isEn ? `Apply sandbox: ${entry.label}` : `Применение песочницы: ${entry.label}`,
+        });
+      } catch {}
+    }
 
     if (item.status === 'deleted') {
       try {
@@ -389,7 +401,9 @@ export function promoteShadowWorktree(opts = {}) {
           unlinkSync(targetAbs);
           deletedFiles.push(item.path);
         }
-      } catch {}
+      } catch (err) {
+        failedFiles.push({ path: item.path, error: String(err?.message || err) });
+      }
     } else if (existsSync(srcAbs)) {
       try {
         const st = statSync(srcAbs);
@@ -398,8 +412,29 @@ export function promoteShadowWorktree(opts = {}) {
           copyFileSync(srcAbs, targetAbs);
           promotedFiles.push(item.path);
         }
-      } catch {}
+      } catch (err) {
+        failedFiles.push({ path: item.path, error: String(err?.message || err) });
+      }
     }
+  }
+
+  if (failedFiles.length > 0) {
+    try {
+      rollbackTurn(promoteTurnId, entry.repoRoot, { lang: safeOpts.lang });
+    } catch {}
+    return {
+      ok: false,
+      id: entry.id,
+      turnId: promoteTurnId,
+      promotedFiles: [],
+      deletedFiles: [],
+      failedFiles,
+      count: 0,
+      cleanedUp: false,
+      error: isEn
+        ? `Failed to promote ${failedFiles.length} file(s); changes rolled back`
+        : `Не удалось перенести файлов: ${failedFiles.length}; изменения откачены`,
+    };
   }
 
   const cleanup = safeOpts.cleanup !== false;

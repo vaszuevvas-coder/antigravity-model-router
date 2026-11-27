@@ -1458,6 +1458,7 @@ export class BackgroundSentinel {
     const cachedFiles = doc.files && typeof doc.files === 'object' ? { ...doc.files } : {};
 
     const staleCandidates = [];
+    const validRelSet = new Set();
     let totalEligibleFiles = 0;
 
     for (const [relPath, entry] of filesMap.entries()) {
@@ -1468,6 +1469,7 @@ export class BackgroundSentinel {
       const text = getEntryText(entry);
       if (!text.trim()) continue;
       totalEligibleFiles += 1;
+      validRelSet.add(relPath);
 
       const sha256 = sha256Hex(text);
       const prev = cachedFiles[relPath];
@@ -1488,17 +1490,32 @@ export class BackgroundSentinel {
 
     if (batch.length === 0) {
       wsState.symbolCardsDirty = false;
-      atomicWriteJsonSync(cardsFile, {
-        wsKey: wsState.wsKey,
-        totalEligibleFiles,
-        lastFile: doc.lastFile || '',
-        lastRunAt: doc.lastRunAt || new Date().toISOString(),
-        files: cachedFiles,
-      });
+      let finalIndexedFiles = Object.keys(cachedFiles).length;
+      updateJsonAtomicSync(
+        cardsFile,
+        () => ({ wsKey: wsState.wsKey, files: {} }),
+        (cur) => {
+          const baseFiles = cur?.files && typeof cur.files === 'object' ? cur.files : {};
+          const mergedFiles = {};
+          for (const [k, v] of Object.entries(baseFiles)) {
+            if (validRelSet.size === 0 || validRelSet.has(k)) {
+              mergedFiles[k] = v;
+            }
+          }
+          finalIndexedFiles = Object.keys(mergedFiles).length;
+          return {
+            wsKey: wsState.wsKey,
+            totalEligibleFiles,
+            lastFile: cur?.lastFile || doc.lastFile || '',
+            lastRunAt: cur?.lastRunAt || doc.lastRunAt || new Date().toISOString(),
+            files: mergedFiles,
+          };
+        }
+      );
       return {
         ok: true,
         indexedNow: 0,
-        indexedFiles: Object.keys(cachedFiles).length,
+        indexedFiles: finalIndexedFiles,
         totalEligibleFiles,
       };
     }
@@ -1510,8 +1527,9 @@ export class BackgroundSentinel {
       `Indexing module symbol cards (${batch[0].relPath})`
     );
     let indexedNow = 0;
-    let lastFile = doc.lastFile || '';
+    let lastFile = '';
     let aborted = false;
+    const newCards = {};
 
     try {
       for (const item of batch) {
@@ -1533,7 +1551,7 @@ export class BackgroundSentinel {
           break;
         }
         if (cardRes?.ok && cardRes.card) {
-          cachedFiles[item.relPath] = {
+          newCards[item.relPath] = {
             sha256: item.sha256,
             purposeRu: cardRes.card.purposeRu,
             purposeEn: cardRes.card.purposeEn,
@@ -1549,19 +1567,37 @@ export class BackgroundSentinel {
         wsState.symbolCardsDirty = false;
       }
 
-      atomicWriteJsonSync(cardsFile, {
-        wsKey: wsState.wsKey,
-        totalEligibleFiles,
-        lastFile,
-        lastRunAt: new Date().toISOString(),
-        files: cachedFiles,
-      });
+      let finalIndexedFiles = 0;
+      updateJsonAtomicSync(
+        cardsFile,
+        () => ({ wsKey: wsState.wsKey, files: {} }),
+        (cur) => {
+          const baseFiles = cur?.files && typeof cur.files === 'object' ? cur.files : {};
+          const mergedFiles = {};
+          for (const [k, v] of Object.entries(baseFiles)) {
+            if (validRelSet.size === 0 || validRelSet.has(k)) {
+              mergedFiles[k] = v;
+            }
+          }
+          for (const [k, v] of Object.entries(newCards)) {
+            mergedFiles[k] = v;
+          }
+          finalIndexedFiles = Object.keys(mergedFiles).length;
+          return {
+            wsKey: wsState.wsKey,
+            totalEligibleFiles,
+            lastFile: lastFile || cur?.lastFile || doc.lastFile || '',
+            lastRunAt: new Date().toISOString(),
+            files: mergedFiles,
+          };
+        }
+      );
 
       return {
         ok: !aborted,
         aborted,
         indexedNow,
-        indexedFiles: Object.keys(cachedFiles).length,
+        indexedFiles: finalIndexedFiles,
         totalEligibleFiles,
       };
     } finally {

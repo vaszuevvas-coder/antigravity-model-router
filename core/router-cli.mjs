@@ -178,14 +178,14 @@ export function backupRouterProfile(backupPath = '', options = {}) {
       };
     }
     const targetPath = pathCheck.path;
-    const state = stripDeprecatedStateKeys(safeReadJsonSync(getRouterStateFile(), {}));
+    const state = stripDeprecatedStateKeys(safeReadJsonSync(getRouterStateFile(), {}, { selfHeal: false }));
 
     const cacheFiles = {};
     for (const item of BACKUP_CACHE_FILES) {
       for (const cand of item.candidates) {
         const candPath = join(CACHE_DIR, cand);
         if (fs.existsSync(candPath)) {
-          const content = safeReadJsonSync(candPath, null);
+          const content = safeReadJsonSync(candPath, null, { selfHeal: false });
           if (content !== null) {
             cacheFiles[item.key] = content;
             break;
@@ -194,7 +194,7 @@ export function backupRouterProfile(backupPath = '', options = {}) {
       }
     }
 
-    const pluginMeta = safeReadJsonSync(join(PLUGIN_ROOT, 'plugin.json'), {});
+    const pluginMeta = safeReadJsonSync(join(PLUGIN_ROOT, 'plugin.json'), {}, { selfHeal: false });
     const snapshot = {
       version: String(pluginMeta?.version || '4.0.7'),
       createdAt: new Date().toISOString(),
@@ -282,7 +282,7 @@ export function restoreRouterProfile(backupPath = '', options = {}) {
       };
     }
 
-    const snapshot = safeReadJsonSync(sourcePath, null);
+    const snapshot = safeReadJsonSync(sourcePath, null, { selfHeal: false });
     if (!snapshot || typeof snapshot !== 'object') {
       return {
         ok: false,
@@ -321,7 +321,7 @@ export function restoreRouterProfile(backupPath = '', options = {}) {
     let stateKeysRestored = 0;
     if (snapshot.state && typeof snapshot.state === 'object' && !Array.isArray(snapshot.state)) {
       const stateFile = getRouterStateFile();
-      const prevState = stripDeprecatedStateKeys(safeReadJsonSync(stateFile, {}));
+      const prevState = stripDeprecatedStateKeys(safeReadJsonSync(stateFile, {}, { selfHeal: false }));
       const cleanPatch = sanitizeStatePatch(snapshot.state);
       const safeMerged = sanitizeStatePatch({ ...prevState, ...cleanPatch });
       atomicWriteJsonSync(stateFile, {
@@ -367,7 +367,7 @@ export function restoreRouterProfile(backupPath = '', options = {}) {
  * @returns {{ ok: boolean, version: string, activeGuardrails: number, totalGuardrails: number, strategy: string, skillsCount: number, formatted: string }}
  */
 export function getRouterStatusSummary(workspaceRoot = process.cwd()) {
-  const state = stripDeprecatedStateKeys(safeReadJsonSync(getRouterStateFile(), {}));
+  const state = stripDeprecatedStateKeys(safeReadJsonSync(getRouterStateFile(), {}, { selfHeal: false }));
   const activeGuardrails = GUARDRAIL_KEYS.filter(k => state[k] !== false).length;
   const totalGuardrails = GUARDRAIL_KEYS.length;
   const strategy = state.strategy || 'flash_dispatcher';
@@ -380,7 +380,7 @@ export function getRouterStatusSummary(workspaceRoot = process.cwd()) {
     }
   } catch {}
 
-  const pluginMeta = safeReadJsonSync(join(PLUGIN_ROOT, 'plugin.json'), {});
+  const pluginMeta = safeReadJsonSync(join(PLUGIN_ROOT, 'plugin.json'), {}, { selfHeal: false });
   const version = String(pluginMeta?.version || '4.0.7');
   const formatted = `🛡️ [Router Status] v${version} | Strategy: ${strategy} | Profile: ${hookProfile} | Guardrails: ${activeGuardrails}/${totalGuardrails} active | Skills: ${skillsCount} ready`;
 
@@ -416,7 +416,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const cmd = args[0] || 'status';
 
   if (cmd === 'help' || cmd === '--help' || cmd === '-h') {
-    const pluginMeta = safeReadJsonSync(join(PLUGIN_ROOT, 'plugin.json'), {});
+    const pluginMeta = safeReadJsonSync(join(PLUGIN_ROOT, 'plugin.json'), {}, { selfHeal: false });
     const version = String(pluginMeta?.version || '4.0.7');
     console.log(
       isEnCli
@@ -445,7 +445,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     );
     process.exit(0);
   } else if (cmd === '--version' || cmd === '-v' || cmd === 'version') {
-    const pluginMeta = safeReadJsonSync(join(PLUGIN_ROOT, 'plugin.json'), {});
+    const pluginMeta = safeReadJsonSync(join(PLUGIN_ROOT, 'plugin.json'), {}, { selfHeal: false });
     const version = String(pluginMeta?.version || '4.0.7');
     if (args.includes('--json')) {
       console.log(JSON.stringify({ ok: true, version }));
@@ -850,7 +850,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     }
   } else if (cmd === 'doctor' || cmd === 'setup-recommend') {
     const targetDir = resolve(args.find((a, idx) => idx > 0 && !a.startsWith('-')) || process.cwd());
-    const st = safeReadJsonSync(getRouterStateFile(), () => ({}), { selfHeal: true });
+    const st = safeReadJsonSync(getRouterStateFile(), () => ({}), { selfHeal: false });
     const res = recommendProjectSetup({ workspaceRoot: targetDir, currentState: st, lang: cliLang });
     if (args.includes('--json')) {
       console.log(JSON.stringify(res, null, 2));

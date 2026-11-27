@@ -8,6 +8,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 
 const _agentIgnoreCache = new Map(); // wsKey -> { sig, patterns, compiled }
+const MAX_AGENT_IGNORE_CACHE = 64;
 
 /**
  * Parses .agentignore and .rooignore files in workspace root with mtime memoization.
@@ -46,6 +47,8 @@ export function parseAgentIgnore(workspaceRoot = '') {
   const sig = sigParts.join('|');
   const cached = _agentIgnoreCache.get(wsKey);
   if (cached && cached.sig === sig) {
+    _agentIgnoreCache.delete(wsKey);
+    _agentIgnoreCache.set(wsKey, cached);
     return cached.patterns;
   }
 
@@ -96,6 +99,14 @@ function readIgnoreFileText(fullPath) {
     }
   }
 
+  if (_agentIgnoreCache.has(wsKey)) {
+    _agentIgnoreCache.delete(wsKey);
+  } else if (_agentIgnoreCache.size >= MAX_AGENT_IGNORE_CACHE) {
+    const oldestKey = _agentIgnoreCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      _agentIgnoreCache.delete(oldestKey);
+    }
+  }
   _agentIgnoreCache.set(wsKey, { sig, patterns });
   return patterns;
 }
@@ -272,6 +283,94 @@ export function checkFileSecurity(opts = {}) {
   return { allow: true, category: 'clean', reason: '' };
 }
 
+const WIN_PATH_IN_QUOTE_RE = /[A-Za-z]:\\|^\\\\|\.[\\/]/;
+const AFTER_QUOTE_CTRL_RE = /^\s*(?:[|;&\r\n]|--[a-z]|-[A-Za-z]\b|\b(?:reset|clean|checkout|restore|push|rm|del|Remove-Item)\b|$)/i;
+
+/**
+ * Deterministically masks quoted string literals while preventing Windows/PowerShell
+ * trailing-backslash firewall bypasses (e.g. `"C:\dir\" && git reset --hard` or `'a\' && ...`).
+ *
+ * @param {string} trimmed
+ * @returns {string}
+ */
+function maskQuotedCommandLiterals(trimmed = '') {
+  if (!trimmed || typeof trimmed !== 'string') return '';
+  const len = trimmed.length;
+  let out = '';
+  let i = 0;
+
+  while (i < len) {
+    const ch = trimmed[i];
+
+    if (ch === "'") {
+      let j = i + 1;
+      let closed = false;
+      while (j < len) {
+        if (trimmed[j] === "'") {
+          if (j + 1 < len && trimmed[j + 1] === "'") {
+            j += 2;
+            continue;
+          }
+          closed = true;
+          break;
+        }
+        j += 1;
+      }
+      if (closed) {
+        out += "''";
+        i = j + 1;
+      } else {
+        out += ch;
+        i += 1;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      let j = i + 1;
+      let closed = false;
+      while (j < len) {
+        if (trimmed[j] === '`' && j + 1 < len && (trimmed[j + 1] === '"' || trimmed[j + 1] === '`')) {
+          j += 2;
+          continue;
+        }
+        if (trimmed[j] === '"') {
+          let bsCount = 0;
+          let k = j - 1;
+          while (k > i && trimmed[k] === '\\') {
+            bsCount += 1;
+            k -= 1;
+          }
+          if (bsCount % 2 === 0) {
+            closed = true;
+            break;
+          }
+          const inner = trimmed.slice(i + 1, j);
+          const rest = trimmed.slice(j + 1);
+          if (WIN_PATH_IN_QUOTE_RE.test(inner) || AFTER_QUOTE_CTRL_RE.test(rest)) {
+            closed = true;
+            break;
+          }
+        }
+        j += 1;
+      }
+      if (closed) {
+        out += '""';
+        i = j + 1;
+      } else {
+        out += ch;
+        i += 1;
+      }
+      continue;
+    }
+
+    out += ch;
+    i += 1;
+  }
+
+  return out;
+}
+
 /**
  * Checks command string for destructive operations or unbounded noisy flood.
  * 
@@ -345,9 +444,7 @@ function checkCommandSecurityImpl(opts = {}, positionalWorkspaceRoot = '') {
   }
 
   // Mask quoted string literals so safe searches like `rg "git reset --hard"` or commit messages do not false-positive
-  const unquoted = trimmed
-    .replace(/"(?:\\.|[^"\\])*"/g, '""')
-    .replace(/'(?:\\.|[^'\\])*'/g, "''");
+  const unquoted = maskQuotedCommandLiterals(trimmed);
 
   // 0) Direct shell read/copy/exfiltration of protected secret files (.env, SSH keys, .agentignore)
   const fileReadSegRe = /(?:^|[|;&\r\n]|(?:^|[|;&\s])\/c\s+)\s*(?:cat|type|Get-Content|gc|more|head|tail|Select-String|sls|rg|grep|findstr|Copy-Item|cp|copy|Move-Item|mv|Get-Item|gi|Import-Csv)\b([^|;&\r\n]*)/gi;

@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expandQueryBilingualStems } from './cpu-reranker.mjs';
-import { atomicWriteJsonSync, safeReadJsonSync } from './safe-json.mjs';
+import { atomicWriteJsonSync, safeReadJsonSync, updateJsonAtomicSync } from './safe-json.mjs';
 import { resolveTunnelCacheDir } from './cache-dir.mjs';
 import { redactSecretsInText } from './security-guard.mjs';
 
@@ -27,7 +27,21 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
 const CACHE_DIR = join(PLUGIN_ROOT, '.cache');
 const DEFAULT_DB_PATH = join(CACHE_DIR, 'tunnel-knowledge.sqlite');
-const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype', 'toString', 'valueOf', 'hasOwnProperty']);
+const UNSAFE_KEYS = new Set([
+  '__proto__',
+  'constructor',
+  'prototype',
+  'toString',
+  'valueOf',
+  'hasOwnProperty',
+  'isPrototypeOf',
+  'propertyIsEnumerable',
+  'toLocaleString',
+  '__defineGetter__',
+  '__defineSetter__',
+  '__lookupGetter__',
+  '__lookupSetter__',
+]);
 
 function asObj(val) {
   return val && typeof val === 'object' && !Array.isArray(val) ? val : {};
@@ -250,6 +264,42 @@ export class SqliteKnowledgeHub {
     }
   }
 
+  _updateFallbackDoc(mutatorFn) {
+    this._syncDefaultPathIfNeeded();
+    try {
+      const dir = dirname(this.jsonFallbackPath);
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      updateJsonAtomicSync(
+        this.jsonFallbackPath,
+        () => ({
+          repairBuckets: {},
+          astMeta: {},
+          victoryRecipes: {},
+          federation: {},
+          projectInstincts: {},
+          ccrBlobs: {},
+          sessionEpisodes: {},
+        }),
+        (raw) => {
+          const doc = {
+            repairBuckets: asObj(raw?.repairBuckets),
+            astMeta: asObj(raw?.astMeta),
+            victoryRecipes: asObj(raw?.victoryRecipes),
+            federation: asObj(raw?.federation),
+            projectInstincts: asObj(raw?.projectInstincts),
+            ccrBlobs: asObj(raw?.ccrBlobs),
+            sessionEpisodes: asObj(raw?.sessionEpisodes),
+          };
+          const next = mutatorFn(doc);
+          return next && typeof next === 'object' ? next : doc;
+        }
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   close() {
     this._closed = true;
     if (this.db) {
@@ -311,12 +361,16 @@ export class SqliteKnowledgeHub {
       }
     }
 
-    const doc = this._readFallbackDoc();
-    if (!doc.repairBuckets[wsKey]) doc.repairBuckets[wsKey] = {};
-    for (const m of matched) {
-      doc.repairBuckets[wsKey][m.bucketKey] = { items: m.items, updatedAt: now };
-    }
-    this._writeFallbackDoc(doc);
+    this._updateFallbackDoc((doc) => {
+      if (!doc.repairBuckets[wsKey] || typeof doc.repairBuckets[wsKey] !== 'object' || Array.isArray(doc.repairBuckets[wsKey])) {
+        doc.repairBuckets[wsKey] = {};
+      }
+      for (const m of matched) {
+        if (UNSAFE_KEYS.has(m.bucketKey)) continue;
+        doc.repairBuckets[wsKey][m.bucketKey] = { items: m.items, updatedAt: now };
+      }
+      return doc;
+    });
     return { ok: true, savedBuckets: matched.length };
   }
 
@@ -418,12 +472,15 @@ export class SqliteKnowledgeHub {
       }
     }
 
-    const doc = this._readFallbackDoc();
-    if (!doc.astMeta[wsKey]) doc.astMeta[wsKey] = {};
-    for (const row of cleanRows) {
-      doc.astMeta[wsKey][row.relPath] = { sha1: row.sha1, meta: JSON.parse(row.metaJson), updatedAt: now };
-    }
-    this._writeFallbackDoc(doc);
+    this._updateFallbackDoc((doc) => {
+      if (!doc.astMeta[wsKey] || typeof doc.astMeta[wsKey] !== 'object' || Array.isArray(doc.astMeta[wsKey])) {
+        doc.astMeta[wsKey] = {};
+      }
+      for (const row of cleanRows) {
+        doc.astMeta[wsKey][row.relPath] = { sha1: row.sha1, meta: JSON.parse(row.metaJson), updatedAt: now };
+      }
+      return doc;
+    });
     return { ok: true, saved: cleanRows.length };
   }
 
@@ -516,29 +573,30 @@ export class SqliteKnowledgeHub {
       }
     }
 
-    const doc = this._readFallbackDoc();
-    const list = Array.isArray(doc.victoryRecipes[wsKey]) ? doc.victoryRecipes[wsKey] : [];
-    const found = list.find((r) => r.normKey === normKey);
-    if (found) {
-      found.fixSummary = rawFix || rawErr;
-      found.touchedFiles = touchedFiles;
-      found.stems = stems;
-      found.hits = Number(found.hits || 1) + 1;
-      found.updatedAt = now;
-    } else {
-      list.unshift({
-        id,
-        normKey,
-        errorExcerpt: rawErr,
-        touchedFiles,
-        fixSummary: rawFix || rawErr,
-        stems,
-        hits: 1,
-        updatedAt: now,
-      });
-    }
-    doc.victoryRecipes[wsKey] = list.slice(0, this.maxRecipesPerWs);
-    this._writeFallbackDoc(doc);
+    this._updateFallbackDoc((doc) => {
+      const list = Array.isArray(doc.victoryRecipes[wsKey]) ? [...doc.victoryRecipes[wsKey]] : [];
+      const found = list.find((r) => r.normKey === normKey);
+      if (found) {
+        found.fixSummary = rawFix || rawErr;
+        found.touchedFiles = touchedFiles;
+        found.stems = stems;
+        found.hits = Number(found.hits || 1) + 1;
+        found.updatedAt = now;
+      } else {
+        list.unshift({
+          id,
+          normKey,
+          errorExcerpt: rawErr,
+          touchedFiles,
+          fixSummary: rawFix || rawErr,
+          stems,
+          hits: 1,
+          updatedAt: now,
+        });
+      }
+      doc.victoryRecipes[wsKey] = list.slice(0, this.maxRecipesPerWs);
+      return doc;
+    });
     return {
       ok: true,
       recipe: { id, errorExcerpt: rawErr, touchedFiles, fixSummary: rawFix || rawErr, updatedAt: new Date(now).toISOString() },
@@ -597,10 +655,12 @@ export class SqliteKnowledgeHub {
       }
     }
 
-    const doc = this._readFallbackDoc();
-    const prev = Array.isArray(doc.victoryRecipes[wsKey]) ? doc.victoryRecipes[wsKey].length : 0;
-    delete doc.victoryRecipes[wsKey];
-    this._writeFallbackDoc(doc);
+    let prev = 0;
+    this._updateFallbackDoc((doc) => {
+      prev = Array.isArray(doc.victoryRecipes[wsKey]) ? doc.victoryRecipes[wsKey].length : 0;
+      delete doc.victoryRecipes[wsKey];
+      return doc;
+    });
     return { ok: true, removed: prev };
   }
 
@@ -698,9 +758,10 @@ export class SqliteKnowledgeHub {
       }
     }
 
-    const doc = this._readFallbackDoc();
-    doc.federation[primaryKey] = cleanPeers;
-    this._writeFallbackDoc(doc);
+    this._updateFallbackDoc((doc) => {
+      doc.federation[primaryKey] = cleanPeers;
+      return doc;
+    });
     return { ok: true, peers: cleanPeers };
   }
 
@@ -925,73 +986,76 @@ export class SqliteKnowledgeHub {
       }
     }
 
-    const doc = this._readFallbackDoc();
-    const list = Array.isArray(doc.projectInstincts[wsKey]) ? [...doc.projectInstincts[wsKey]] : [];
-    const idx = list.findIndex((it) => it && it.normKey === normKey);
-    if (idx !== -1) {
-      const prev = list[idx];
-      const decayedPrev = prev.promotedSkill
-        ? Number(prev.confidence || 0.35)
-        : this._computeDecayedConfidence(prev.confidence, prev.updatedAt, now);
-      const nextConf = Number(Math.min(0.95, decayedPrev + stepDelta).toFixed(4));
-      const nextEvidence = Number(prev.evidenceCount || 1) + 1;
-      list[idx] = {
-        ...prev,
+    let outcome = null;
+    this._updateFallbackDoc((doc) => {
+      const list = Array.isArray(doc.projectInstincts[wsKey]) ? [...doc.projectInstincts[wsKey]] : [];
+      const idx = list.findIndex((it) => it && it.normKey === normKey);
+      if (idx !== -1) {
+        const prev = list[idx];
+        const decayedPrev = prev.promotedSkill
+          ? Number(prev.confidence || 0.35)
+          : this._computeDecayedConfidence(prev.confidence, prev.updatedAt, now);
+        const nextConf = Number(Math.min(0.95, decayedPrev + stepDelta).toFixed(4));
+        const nextEvidence = Number(prev.evidenceCount || 1) + 1;
+        list[idx] = {
+          ...prev,
+          pattern: cleanPattern,
+          category: cleanCategory,
+          confidence: nextConf,
+          evidenceCount: nextEvidence,
+          stems,
+          updatedAt: now,
+        };
+        doc.projectInstincts[wsKey] = list;
+        const promotedSkill = asStr(prev.promotedSkill);
+        outcome = {
+          ok: true,
+          id: asStr(prev.id),
+          wsKey,
+          pattern: cleanPattern,
+          category: cleanCategory,
+          confidence: nextConf,
+          effectiveConfidence: nextConf,
+          evidenceCount: nextEvidence,
+          promotedSkill,
+          readyForPromotion: !promotedSkill && nextConf >= 0.75 && nextEvidence >= 3,
+          updated: true,
+        };
+        return doc;
+      }
+
+      const item = {
+        id,
+        wsKey,
+        normKey,
         pattern: cleanPattern,
         category: cleanCategory,
-        confidence: nextConf,
-        evidenceCount: nextEvidence,
+        confidence: initConf,
+        evidenceCount: 1,
+        promotedSkill: '',
         stems,
+        createdAt: now,
         updatedAt: now,
       };
-      doc.projectInstincts[wsKey] = list;
-      this._writeFallbackDoc(doc);
-      const promotedSkill = asStr(prev.promotedSkill);
-      return {
+      list.push(item);
+      list.sort((a, b) => Number(Boolean(b.promotedSkill)) - Number(Boolean(a.promotedSkill)) || Number(b.confidence || 0) - Number(a.confidence || 0) || Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+      doc.projectInstincts[wsKey] = list.slice(0, this.maxInstinctsPerWs);
+      outcome = {
         ok: true,
-        id: asStr(prev.id),
+        id,
         wsKey,
         pattern: cleanPattern,
         category: cleanCategory,
-        confidence: nextConf,
-        effectiveConfidence: nextConf,
-        evidenceCount: nextEvidence,
-        promotedSkill,
-        readyForPromotion: !promotedSkill && nextConf >= 0.75 && nextEvidence >= 3,
-        updated: true,
+        confidence: initConf,
+        effectiveConfidence: initConf,
+        evidenceCount: 1,
+        promotedSkill: '',
+        readyForPromotion: false,
+        updated: false,
       };
-    }
-
-    const item = {
-      id,
-      wsKey,
-      normKey,
-      pattern: cleanPattern,
-      category: cleanCategory,
-      confidence: initConf,
-      evidenceCount: 1,
-      promotedSkill: '',
-      stems,
-      createdAt: now,
-      updatedAt: now,
-    };
-    list.push(item);
-    list.sort((a, b) => Number(Boolean(b.promotedSkill)) - Number(Boolean(a.promotedSkill)) || Number(b.confidence || 0) - Number(a.confidence || 0) || Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
-    doc.projectInstincts[wsKey] = list.slice(0, this.maxInstinctsPerWs);
-    this._writeFallbackDoc(doc);
-    return {
-      ok: true,
-      id,
-      wsKey,
-      pattern: cleanPattern,
-      category: cleanCategory,
-      confidence: initConf,
-      effectiveConfidence: initConf,
-      evidenceCount: 1,
-      promotedSkill: '',
-      readyForPromotion: false,
-      updated: false,
-    };
+      return doc;
+    });
+    return outcome || { ok: false, error: 'fallback_instinct_error' };
   }
 
   listInstincts({
@@ -1084,20 +1148,21 @@ export class SqliteKnowledgeHub {
       }
     }
 
-    const doc = this._readFallbackDoc();
-    const keys = wsKey ? [wsKey] : Object.keys(doc.projectInstincts);
     let updated = false;
-    for (const k of keys) {
-      const arr = Array.isArray(doc.projectInstincts[k]) ? doc.projectInstincts[k] : [];
-      const idx = arr.findIndex((it) => it && it.id === cleanId);
-      if (idx !== -1) {
-        arr[idx] = { ...arr[idx], promotedSkill: cleanSlug, updatedAt: now };
-        doc.projectInstincts[k] = arr;
-        updated = true;
-        break;
+    this._updateFallbackDoc((doc) => {
+      const keys = wsKey ? [wsKey] : Object.keys(doc.projectInstincts);
+      for (const k of keys) {
+        const arr = Array.isArray(doc.projectInstincts[k]) ? [...doc.projectInstincts[k]] : [];
+        const idx = arr.findIndex((it) => it && it.id === cleanId);
+        if (idx !== -1) {
+          arr[idx] = { ...arr[idx], promotedSkill: cleanSlug, updatedAt: now };
+          doc.projectInstincts[k] = arr;
+          updated = true;
+          break;
+        }
       }
-    }
-    if (updated) this._writeFallbackDoc(doc);
+      return doc;
+    });
     return { ok: updated, id: cleanId, skillSlug: cleanSlug };
   }
 
@@ -1117,19 +1182,20 @@ export class SqliteKnowledgeHub {
         return { ok: false, deleted: false, id: cleanId };
       }
     }
-    const doc = this._readFallbackDoc();
-    const keys = wsKey ? [wsKey] : Object.keys(doc.projectInstincts);
     let deleted = false;
-    for (const k of keys) {
-      const arr = Array.isArray(doc.projectInstincts[k]) ? doc.projectInstincts[k] : [];
-      const next = arr.filter((it) => it && it.id !== cleanId);
-      if (next.length !== arr.length) {
-        doc.projectInstincts[k] = next;
-        deleted = true;
-        break;
+    this._updateFallbackDoc((doc) => {
+      const keys = wsKey ? [wsKey] : Object.keys(doc.projectInstincts);
+      for (const k of keys) {
+        const arr = Array.isArray(doc.projectInstincts[k]) ? doc.projectInstincts[k] : [];
+        const next = arr.filter((it) => it && it.id !== cleanId);
+        if (next.length !== arr.length) {
+          doc.projectInstincts[k] = next;
+          deleted = true;
+          break;
+        }
       }
-    }
-    if (deleted) this._writeFallbackDoc(doc);
+      return doc;
+    });
     return { ok: deleted, deleted, id: cleanId };
   }
 
@@ -1165,23 +1231,24 @@ export class SqliteKnowledgeHub {
       }
     }
 
-    const doc = this._readFallbackDoc();
-    const keys = wsKey ? [wsKey] : Object.keys(doc.projectInstincts);
-    for (const k of keys) {
-      const arr = Array.isArray(doc.projectInstincts[k]) ? doc.projectInstincts[k] : [];
-      const kept = arr.filter((it) => {
-        if (!it) return false;
-        if (it.promotedSkill) return true;
-        const eff = this._computeDecayedConfidence(it.confidence, it.updatedAt, now);
-        if (eff < minKeep) {
-          removed++;
-          return false;
-        }
-        return true;
-      });
-      doc.projectInstincts[k] = kept;
-    }
-    if (removed > 0) this._writeFallbackDoc(doc);
+    this._updateFallbackDoc((doc) => {
+      const keys = wsKey ? [wsKey] : Object.keys(doc.projectInstincts);
+      for (const k of keys) {
+        const arr = Array.isArray(doc.projectInstincts[k]) ? doc.projectInstincts[k] : [];
+        const kept = arr.filter((it) => {
+          if (!it) return false;
+          if (it.promotedSkill) return true;
+          const eff = this._computeDecayedConfidence(it.confidence, it.updatedAt, now);
+          if (eff < minKeep) {
+            removed++;
+            return false;
+          }
+          return true;
+        });
+        doc.projectInstincts[k] = kept;
+      }
+      return doc;
+    });
     return { ok: true, removed };
   }
 
@@ -1269,35 +1336,36 @@ export class SqliteKnowledgeHub {
       }
     }
 
-    const doc = this._readFallbackDoc();
-    const map = asObj(doc.ccrBlobs);
-    for (const [k, v] of Object.entries(map)) {
-      if (!v || Number(v.expiresAt || 0) < now) delete map[k];
-    }
-    map[hash] = {
-      hash,
-      wsKey,
-      source: cleanSource,
-      commandHint: cleanCmd,
-      originalText: redacted,
-      originalChars,
-      originalLines,
-      compressedChars: compChars,
-      createdAt: now,
-      expiresAt,
-    };
-    const sorted = Object.values(map).sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
-    const kept = {};
-    let totalBytes = 0;
-    for (const item of sorted) {
-      if (Object.keys(kept).length >= safeMaxEntries) break;
-      const sz = Number(item.originalChars || 0);
-      if (totalBytes + sz > safeMaxBytes && totalBytes > 0) continue;
-      totalBytes += sz;
-      kept[item.hash] = item;
-    }
-    doc.ccrBlobs = kept;
-    this._writeFallbackDoc(doc);
+    this._updateFallbackDoc((doc) => {
+      const map = asObj(doc.ccrBlobs);
+      for (const [k, v] of Object.entries(map)) {
+        if (!v || Number(v.expiresAt || 0) < now) delete map[k];
+      }
+      map[hash] = {
+        hash,
+        wsKey,
+        source: cleanSource,
+        commandHint: cleanCmd,
+        originalText: redacted,
+        originalChars,
+        originalLines,
+        compressedChars: compChars,
+        createdAt: now,
+        expiresAt,
+      };
+      const sorted = Object.values(map).sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+      const kept = {};
+      let totalBytes = 0;
+      for (const item of sorted) {
+        if (Object.keys(kept).length >= safeMaxEntries) break;
+        const sz = Number(item.originalChars || 0);
+        if (totalBytes + sz > safeMaxBytes && totalBytes > 0) continue;
+        totalBytes += sz;
+        kept[item.hash] = item;
+      }
+      doc.ccrBlobs = kept;
+      return doc;
+    });
     return { ok: true, hash, originalChars, originalLines, compressedChars: compChars, expiresAt };
   }
 
@@ -1342,8 +1410,13 @@ export class SqliteKnowledgeHub {
       const entry = Object.hasOwn(doc.ccrBlobs, cleanHash) ? doc.ccrBlobs[cleanHash] : null;
       if (!entry || Number(entry.expiresAt || 0) < now) {
         if (entry) {
-          delete doc.ccrBlobs[cleanHash];
-          this._writeFallbackDoc(doc);
+          this._updateFallbackDoc((latest) => {
+            const latestEntry = Object.hasOwn(latest.ccrBlobs, cleanHash) ? latest.ccrBlobs[cleanHash] : null;
+            if (latestEntry && Number(latestEntry.expiresAt || 0) < now) {
+              delete latest.ccrBlobs[cleanHash];
+            }
+            return latest;
+          });
         }
         return { ok: false, error: 'not_found_or_expired' };
       }
@@ -1368,24 +1441,36 @@ export class SqliteKnowledgeHub {
 
     if (cleanQuery) {
       let matcher = null;
+      let usingRegex = false;
+      const lowerQ = cleanQuery.toLowerCase();
+      const substrMatcher = (ln) => ln.toLowerCase().includes(lowerQ);
       const rxLiteralMatch = /^\/(.+)\/([imsu]*)$/.exec(cleanQuery);
       const rawRegexPattern = cleanQuery.startsWith('re:') ? cleanQuery.slice(3).trim() : (rxLiteralMatch ? rxLiteralMatch[1] : '');
       const rawRegexFlags = rxLiteralMatch ? rxLiteralMatch[2].replace(/g/g, '') : 'i';
-      if (rawRegexPattern && rawRegexPattern.length <= 80 && !/\([^)]*[+*][^)]*\)[+*?{]/.test(rawRegexPattern)) {
+      if (
+        rawRegexPattern &&
+        rawRegexPattern.length <= 80 &&
+        !/\([^)]*(?:[+*]|\{[0-9,])[^)]*\)[+*?{]|\([^)]*\|[^)]*\)[+*?{]/.test(rawRegexPattern)
+      ) {
         try {
           const rx = new RegExp(rawRegexPattern, rawRegexFlags.includes('i') ? rawRegexFlags : `${rawRegexFlags}i`);
           matcher = (ln) => rx.test(String(ln || '').slice(0, 2000));
+          usingRegex = true;
         } catch {
           matcher = null;
         }
       }
       if (!matcher) {
-        const lowerQ = cleanQuery.toLowerCase();
-        matcher = (ln) => ln.toLowerCase().includes(lowerQ);
+        matcher = substrMatcher;
       }
 
       const selectedIdx = new Set();
+      const regexDeadline = Date.now() + 40;
       for (let i = 0; i < totalLines; i++) {
+        if (usingRegex && (i & 31) === 0 && Date.now() > regexDeadline) {
+          usingRegex = false;
+          matcher = substrMatcher;
+        }
         if (matcher(lines[i])) {
           matchCount += 1;
           const from = Math.max(0, i - 2);
@@ -1470,18 +1555,18 @@ export class SqliteKnowledgeHub {
         return { ok: false, removed: 0 };
       }
     }
-    const doc = this._readFallbackDoc();
-    const entries = Object.values(asObj(doc.ccrBlobs));
-    const alive = entries
-      .filter((e) => e && Number(e.expiresAt || 0) >= now)
-      .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
-    const kept = {};
-    for (const item of alive.slice(0, safeMax)) kept[item.hash] = item;
-    const removed = Math.max(0, entries.length - Object.keys(kept).length);
-    if (removed > 0) {
+    let removed = 0;
+    this._updateFallbackDoc((doc) => {
+      const entries = Object.values(asObj(doc.ccrBlobs));
+      const alive = entries
+        .filter((e) => e && Number(e.expiresAt || 0) >= now)
+        .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+      const kept = {};
+      for (const item of alive.slice(0, safeMax)) kept[item.hash] = item;
+      removed = Math.max(0, entries.length - Object.keys(kept).length);
       doc.ccrBlobs = kept;
-      this._writeFallbackDoc(doc);
-    }
+      return doc;
+    });
     return { ok: true, removed };
   }
 
@@ -1615,45 +1700,48 @@ export class SqliteKnowledgeHub {
       }
     }
 
-    const doc = this._readFallbackDoc();
-    const list = Array.isArray(doc.sessionEpisodes[wsKey]) ? [...doc.sessionEpisodes[wsKey]] : [];
-    const existingIdx = cleanConvo && cleanKind === 'session'
-      ? list.findIndex((it) => it && it.conversationId === cleanConvo && it.kind === 'session')
-      : -1;
-    if (existingIdx !== -1) {
-      const prev = list[existingIdx];
-      list[existingIdx] = {
-        ...prev,
+    let outcome = null;
+    this._updateFallbackDoc((doc) => {
+      const list = Array.isArray(doc.sessionEpisodes[wsKey]) ? [...doc.sessionEpisodes[wsKey]] : [];
+      const existingIdx = cleanConvo && cleanKind === 'session'
+        ? list.findIndex((it) => it && it.conversationId === cleanConvo && it.kind === 'session')
+        : -1;
+      if (existingIdx !== -1) {
+        const prev = list[existingIdx];
+        list[existingIdx] = {
+          ...prev,
+          title: finalTitle,
+          summary: cleanSummary,
+          decisions: cleanDecisions,
+          touchedFiles: cleanFiles,
+          stems,
+          estTokens,
+          updatedAt: now,
+        };
+        doc.sessionEpisodes[wsKey] = list;
+        outcome = { ok: true, id: asStr(prev.id), updated: true };
+        return doc;
+      }
+      list.push({
+        id,
+        wsKey,
+        conversationId: cleanConvo,
         title: finalTitle,
+        kind: cleanKind,
         summary: cleanSummary,
         decisions: cleanDecisions,
         touchedFiles: cleanFiles,
         stems,
         estTokens,
+        createdAt: now,
         updatedAt: now,
-      };
-      doc.sessionEpisodes[wsKey] = list;
-      this._writeFallbackDoc(doc);
-      return { ok: true, id: asStr(prev.id), updated: true };
-    }
-    list.push({
-      id,
-      wsKey,
-      conversationId: cleanConvo,
-      title: finalTitle,
-      kind: cleanKind,
-      summary: cleanSummary,
-      decisions: cleanDecisions,
-      touchedFiles: cleanFiles,
-      stems,
-      estTokens,
-      createdAt: now,
-      updatedAt: now,
+      });
+      list.sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+      doc.sessionEpisodes[wsKey] = list.slice(0, 120);
+      outcome = { ok: true, id, updated: false };
+      return doc;
     });
-    list.sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
-    doc.sessionEpisodes[wsKey] = list.slice(0, 120);
-    this._writeFallbackDoc(doc);
-    return { ok: true, id, updated: false };
+    return outcome || { ok: false, error: 'fallback_episode_error' };
   }
 
   _loadEpisodesForWorkspace(wsKey) {

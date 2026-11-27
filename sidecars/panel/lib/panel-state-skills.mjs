@@ -1163,7 +1163,7 @@ export function sanitizeSkillModesPatch(modesObj) {
 }
 
 export function loadState(options = {}) {
-  const raw = safeReadJsonSync(resolvePanelStatePath(), () => ({}), { selfHeal: true });
+  const raw = safeReadJsonSync(resolvePanelStatePath(), () => ({}), { selfHeal: false });
   const src = raw && typeof raw === 'object' ? { ...raw } : {};
   delete src.domains;
   for (const k of DEPRECATED_STATE_KEYS) {
