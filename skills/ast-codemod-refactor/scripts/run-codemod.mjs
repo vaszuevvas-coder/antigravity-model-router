@@ -135,6 +135,7 @@ export function runCodemod(options = {}) {
       try {
         fs.writeFileSync(filePath, newContent, 'utf8');
       } catch (writeErr) {
+        delete backupSnapshot[filePath];
         rolledBack.push({ path: filePath, reason: `Write failure: ${writeErr.message}` });
         continue;
       }
@@ -143,9 +144,9 @@ export function runCodemod(options = {}) {
       if (['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.json'].includes(ext)) {
         const verdict = verifyContentSyntax(newContent, filePath);
         if (!verdict.valid) {
-          delete backupSnapshot[filePath];
           try {
             fs.writeFileSync(filePath, content, 'utf8');
+            delete backupSnapshot[filePath];
             rolledBack.push({ path: filePath, reason: (verdict.error || 'Syntax check failed').trim() });
           } catch (rbErr) {
             rollbackFailed.push({
@@ -217,9 +218,21 @@ if (isMain) {
         'Usage: node run-codemod.mjs [rootDir] --find <pattern> --replace <replacement> [--regex] [--word] [--ext <.js,.mjs,...>] [--dry-run]'
       );
       process.exit(0);
-    } else if (arg === '--find' && i + 1 < args.length) {
+    } else if (arg.startsWith('--find=')) {
+      find = arg.slice('--find='.length);
+    } else if (arg === '--find') {
+      if (i + 1 >= args.length) {
+        console.log(JSON.stringify({ ok: false, error: 'Missing value for --find' }, null, 2));
+        process.exit(1);
+      }
       find = args[++i];
-    } else if (arg === '--replace' && i + 1 < args.length) {
+    } else if (arg.startsWith('--replace=')) {
+      replace = arg.slice('--replace='.length);
+    } else if (arg === '--replace') {
+      if (i + 1 >= args.length) {
+        console.log(JSON.stringify({ ok: false, error: 'Missing value for --replace' }, null, 2));
+        process.exit(1);
+      }
       replace = args[++i];
     } else if (arg === '--regex') {
       isRegex = true;
@@ -227,8 +240,14 @@ if (isMain) {
       wordBoundary = true;
     } else if (arg === '--dry-run') {
       dryRun = true;
-    } else if (arg === '--ext' && i + 1 < args.length) {
-      extensions = args[++i].split(',').map((s) => s.trim());
+    } else if (arg.startsWith('--ext=')) {
+      extensions = arg.slice('--ext='.length).split(',').map((s) => s.trim()).filter(Boolean);
+    } else if (arg === '--ext') {
+      if (i + 1 >= args.length) {
+        console.log(JSON.stringify({ ok: false, error: 'Missing value for --ext' }, null, 2));
+        process.exit(1);
+      }
+      extensions = args[++i].split(',').map((s) => s.trim()).filter(Boolean);
     } else if (!arg.startsWith('-')) {
       rootDir = arg;
     }

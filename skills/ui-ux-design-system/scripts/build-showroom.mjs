@@ -71,6 +71,9 @@ function resolveReferenceImageSrc(rawRef) {
   if (/^(?:https?:|file:)\/\//i.test(trimmed)) {
     return trimmed;
   }
+  if (/^data:/i.test(trimmed) || /^[a-zA-Z][a-zA-Z0-9+.-]{1,31}:/.test(trimmed)) {
+    return '';
+  }
   try {
     const resolved = path.resolve(trimmed);
     if (fs.existsSync(resolved)) {
@@ -92,7 +95,7 @@ function resolveReferenceImageSrc(rawRef) {
       }
     }
   } catch {}
-  return trimmed;
+  return '';
 }
 
 /**
@@ -182,7 +185,8 @@ export function generateShowroomHtml(spec = {}, options = {}) {
     return { ok: false, html: '', variantCount: 0 };
   }
 
-  const showLang = normalizeLang(options.lang || spec.lang || readActiveUiLanguage(), 'en');
+  const safeOpts = options && typeof options === 'object' ? options : {};
+  const showLang = normalizeLang(safeOpts.lang || spec.lang || readActiveUiLanguage(), 'en');
   const isEn = showLang === 'en';
   const title = String(spec.title || (isEn ? 'Design & Motion Showroom (A / B / C)' : 'Витрина вариантов дизайна и анимации (A / B / C)'));
   const hasExplicitVariants = Array.isArray(spec.variants) && spec.variants.length > 0;
@@ -251,7 +255,8 @@ export function generateShowroomHtml(spec = {}, options = {}) {
               }
             ]);
 
-  const cardsHtml = rawVariants.slice(0, 6).map((v, idx) => {
+  const cardsHtml = rawVariants.slice(0, 6).map((rawV, idx) => {
+    const v = rawV && typeof rawV === 'object' ? rawV : {};
     const theme = inferVariantVisualTheme(v, idx);
     const badge = escapeHtml(v.id || String.fromCharCode(65 + idx));
     const label = escapeHtml(v.label || `${isEn ? 'Variant' : 'Вариант'} ${badge}`);
@@ -824,7 +829,7 @@ function inferVariantVisualTheme(variant = {}, idx = 0) {
   }
 
   // 2. Detect explicit or best contrasting accent color
-  let bestAccent = variant.accentColor ? parseHexColor(variant.accentColor, null) : null;
+  let bestAccent = safeVariant.accentColor ? parseHexColor(safeVariant.accentColor, null) : null;
   if (!bestAccent) {
     const hexes = cssAndHtml.match(/#[0-9a-fA-F]{6}/g) || [];
     let bestScore = 0;
@@ -1149,12 +1154,24 @@ export function collectFilesByExt(
   depth = 0
 ) {
   if (depth > 5 || acc.length >= 60) return acc;
-  const st = fs.statSync(targetAbs);
+  let st;
+  try {
+    st = fs.statSync(targetAbs);
+  } catch {
+    return acc;
+  }
   if (st.isFile()) {
     if (extRe.test(targetAbs)) acc.push(targetAbs);
     return acc;
   }
-  for (const entry of fs.readdirSync(targetAbs, { withFileTypes: true })) {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(targetAbs, { withFileTypes: true });
+  } catch {
+    return acc;
+  }
+  for (const entry of entries) {
+    if (acc.length >= 60) break;
     if (ignoreDirs.has(entry.name)) continue;
     const full = path.join(targetAbs, entry.name);
     if (entry.isDirectory()) collectFilesByExt(full, extRe, ignoreDirs, acc, depth + 1);
@@ -1163,13 +1180,14 @@ export function collectFilesByExt(
   return acc;
 }
 
-function buildSnapshotStandaloneHtml(variant = {}, idx = 0, lang = '') {
-  const isEnSnap = normalizeLang(lang || variant?.lang || readActiveUiLanguage(), 'en') === 'en';
+function buildSnapshotStandaloneHtml(rawVariant = {}, idx = 0, lang = '') {
+  const variant = rawVariant && typeof rawVariant === 'object' ? rawVariant : {};
+  const isEnSnap = normalizeLang(lang || variant.lang || readActiveUiLanguage(), 'en') === 'en';
   const theme = inferVariantVisualTheme(variant, idx);
   const badge = escapeHtml(variant.id || String.fromCharCode(65 + idx));
   const label = escapeHtml(variant.label || `${isEnSnap ? 'Variant' : 'Вариант'} ${badge}`);
   const sub = escapeHtml(variant.subtitle || '');
-  const css = String(variant.css || '');
+  const css = String(variant.css || '').replace(/<\/style/gi, '<\\/style');
   const refImgSrc = resolveReferenceImageSrc(variant.referenceImage);
   const safeUrl = sanitizeExternalUrl(variant.sourceUrl);
   const notesText = normalizeNotesText(variant.notes);

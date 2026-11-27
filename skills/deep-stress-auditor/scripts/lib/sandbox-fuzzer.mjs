@@ -179,6 +179,17 @@ async function minimizeFailingStringPayload(runner, file, fnName, rawStr, maxDur
           break;
         }
       }
+      if (!reduced && n > 2) {
+        for (let i = 0; i < chars.length && withinBudget(); i += stepSize) {
+          const comp = chars.slice(0, i).concat(chars.slice(i + stepSize));
+          if (comp.length > 0 && comp.length < chars.length && await testSub(comp.join(''))) {
+            chars = comp;
+            n = Math.max(2, n - 1);
+            reduced = true;
+            break;
+          }
+        }
+      }
       if (reduced) continue;
       if (n < chars.length) n = Math.min(chars.length, n * 2);
       else break;

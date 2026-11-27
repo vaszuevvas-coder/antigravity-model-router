@@ -194,7 +194,7 @@ export function auditUiContent(content = '', filePath = 'ui.html') {
   if (ellipsisNoMinWidth && !/min-width\s*:\s*0\b/i.test(text)) {
     add('responsive', 'medium', 'ellipsis-missing-min-width', findLineNumber(text, ellipsisNoMinWidth.index), 'text-overflow: ellipsis without min-width: 0 can break flex truncation.', 1);
   }
-  const fixedWideWidth = text.match(/\bwidth\s*:\s*(?:7[6-9]\d|[89]\d\d|\d{4,})px\b/i);
+  const fixedWideWidth = text.match(/(?<![-\w])width\s*:\s*(?:7[6-9]\d|[89]\d\d|\d{4,})px\b/i);
   if (fixedWideWidth && !/max-width\s*:/i.test(text)) {
     add('responsive', 'medium', 'fixed-wide-px-width', findLineNumber(text, fixedWideWidth.index), 'Large fixed px width without max-width causes horizontal overflow on narrow viewports.', 2);
   }
@@ -204,7 +204,7 @@ export function auditUiContent(content = '', filePath = 'ui.html') {
   const isMarkupFile = /\.(?:html?|jsx|tsx|vue|svelte)$/i.test(filePath);
   const styleAndMarkupText = isMarkupFile
     ? text
-        .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, (m) => m.replace(/[^\n]/g, ' '))
         .replace(/data:image\/[^"'\s)]+/gi, 'data:image/scrubbed')
     : text;
   const rootMatch = /:root\s*\{[\s\S]*?\}/.exec(styleAndMarkupText);
@@ -220,13 +220,13 @@ export function auditUiContent(content = '', filePath = 'ui.html') {
     if (bgEntry && fgEntry) {
       const ratio = computeWcagContrastRatio(bgEntry[1], fgEntry[1]);
       if (ratio !== null && ratio < 4.5) {
-        add('accessibility', 'high', 'low-root-contrast', findLineNumber(text, rootMatch.index), `Low WCAG contrast (${ratio}:1 < 4.5:1) between ${bgEntry[0]} (${bgEntry[1]}) and ${fgEntry[0]} (${fgEntry[1]}).`, 2);
+        add('accessibility', 'high', 'low-root-contrast', findLineNumber(styleAndMarkupText, rootMatch.index), `Low WCAG contrast (${ratio}:1 < 4.5:1) between ${bgEntry[0]} (${bgEntry[1]}) and ${fgEntry[0]} (${fgEntry[1]}).`, 2);
       }
     }
   }
-  const nowrapClipMatch = /\{[^}]*white-space\s*:\s*nowrap[^}]*\bwidth\s*:\s*(?:[1-9]\d|1[0-7]\d)px\b[^}]*\}|\{[^}]*\bwidth\s*:\s*(?:[1-9]\d|1[0-7]\d)px\b[^}]*white-space\s*:\s*nowrap[^}]*\}/i.exec(styleAndMarkupText);
+  const nowrapClipMatch = /\{[^}]*white-space\s*:\s*nowrap[^}]*(?<![-\w])width\s*:\s*(?:[1-9]\d|1[0-7]\d)px\b[^}]*\}|\{[^}]*(?<![-\w])width\s*:\s*(?:[1-9]\d|1[0-7]\d)px\b[^}]*white-space\s*:\s*nowrap[^}]*\}/i.exec(styleAndMarkupText);
   if (nowrapClipMatch && !/text-overflow\s*:\s*ellipsis|overflow\s*:\s*hidden/i.test(nowrapClipMatch[0])) {
-    add('responsive', 'low', 'nowrap-fixed-width-clip', findLineNumber(text, nowrapClipMatch.index), 'Fixed narrow px width with white-space: nowrap risks clipping localized RU/DE labels; use min-width or ellipsis.', 1);
+    add('responsive', 'low', 'nowrap-fixed-width-clip', findLineNumber(styleAndMarkupText, nowrapClipMatch.index), 'Fixed narrow px width with white-space: nowrap risks clipping localized RU/DE labels; use min-width or ellipsis.', 1);
   }
   const bodyWithoutRoot = (rootMatch ? styleAndMarkupText.replace(rootMatch[0], '') : styleAndMarkupText)
     .replace(/--[a-zA-Z0-9_-]+\s*:\s*[^;\n}]+/g, '');
@@ -297,8 +297,16 @@ export function formatUiAuditReport(report = {}) {
   for (const f of (safeRep.findings || []).slice(0, 18)) {
     lines.push(`  - [${String(f.severity).toUpperCase()} · ${f.dimension}/${f.ruleId}] ${f.file}:L${f.line} — ${f.message}`);
   }
-  if ((safeRep.findings || []).length === 0) {
+  if ((safeRep.findings || []).length === 0 && (!safeRep.viewports || safeRep.viewports.skipped || safeRep.viewports.ok)) {
     lines.push('  ✅ Zero anti-slop, a11y, performance, responsive, or token issues found.');
+  }
+  if (safeRep.viewports && !safeRep.viewports.skipped) {
+    const vpResults = Array.isArray(safeRep.viewports.results) ? safeRep.viewports.results : [];
+    const failedVp = vpResults.filter((r) => !r.ok);
+    lines.push(`  📐 Viewports: ${vpResults.length} checked, ${failedVp.length} failed`);
+    for (const r of failedVp.slice(0, 6)) {
+      lines.push(`    - [${r.width}px] overflow=${Boolean(r.hasHorizontalOverflow)} brokenImgs=${r.brokenImages ?? 0}`);
+    }
   }
   return lines.join('\n');
 }
@@ -353,7 +361,9 @@ function sendCdpCommand(ws, id, method, params = {}) {
  * @param {string} targetUrlOrHtmlPath
  * @param {{ widths?: number[], timeoutMs?: number }} [options={}]
  */
-export async function auditUiViewports(targetUrlOrHtmlPath = '', { widths = [1440, 1024, 768, 390], timeoutMs = 12000 } = {}) {
+export async function auditUiViewports(targetUrlOrHtmlPath = '', rawOpts = {}) {
+  const { widths = [1440, 1024, 768, 390], timeoutMs = 12000 } =
+    rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   const raw = String(targetUrlOrHtmlPath || '').trim();
   if (!raw) return { ok: false, skipped: false, error: 'missing_target', results: [] };
 
@@ -363,7 +373,28 @@ export async function auditUiViewports(targetUrlOrHtmlPath = '', { widths = [144
     if (!fs.existsSync(abs)) {
       return { ok: false, skipped: false, error: 'target_not_found', target: abs, results: [] };
     }
-    targetUrl = pathToFileURL(abs).href;
+    let st;
+    try {
+      st = fs.statSync(abs);
+    } catch {
+      return { ok: false, skipped: false, error: 'target_not_found', target: abs, results: [] };
+    }
+    if (st.isDirectory()) {
+      const indexCand = path.join(abs, 'index.html');
+      let htmlEntry = fs.existsSync(indexCand) ? indexCand : '';
+      if (!htmlEntry) {
+        const htmlFiles = collectFilesByExt(abs, /\.html?$/i, IGNORE_DIRS);
+        if (htmlFiles[0]) htmlEntry = htmlFiles[0];
+      }
+      if (!htmlEntry) {
+        return { ok: true, skipped: true, reason: 'non_html_target', target: abs, results: [] };
+      }
+      targetUrl = pathToFileURL(htmlEntry).href;
+    } else if (!/\.html?$/i.test(abs)) {
+      return { ok: true, skipped: true, reason: 'non_html_target', target: abs, results: [] };
+    } else {
+      targetUrl = pathToFileURL(abs).href;
+    }
   }
 
   const browserExe = findHeadlessBrowserExecutable();
@@ -520,6 +551,10 @@ const isMain = (() => {
 })();
 if (isMain) {
   const args = process.argv.slice(2);
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log('Usage: node audit-ui.mjs <file-or-dir> [--viewports] [--json]');
+    process.exit(0);
+  }
   const asJson = args.includes('--json');
   const checkViewports = args.includes('--viewports');
   const target = args.find((a) => !a.startsWith('-')) || process.cwd();

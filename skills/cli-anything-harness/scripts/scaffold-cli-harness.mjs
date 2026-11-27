@@ -125,10 +125,14 @@ export function validateCliHarness(harnessDir = process.cwd()) {
         walk(full, depth + 1);
       } else {
         if (/^SKILL\.md$/i.test(ent.name)) hasSkillMd = true;
-        if (/(?:\.test\.|\.spec\.|_test\.|^test_)/i.test(ent.name)) hasTests = true;
-        if (/\.(?:py|mjs|js|ts|go|rs)$/i.test(ent.name) && scannedCode.length < 40) {
+        const isTestFile = /(?:\.test\.|\.spec\.|_test\.|^test_)/i.test(ent.name)
+          || /(?:^|\/)(?:tests?|__tests__)\//i.test(rel);
+        if (isTestFile) hasTests = true;
+        if (!isTestFile && /\.(?:py|mjs|cjs|mts|cts|js|ts|go|rs)$/i.test(ent.name) && scannedCode.length < 40) {
           scannedCode.push(rel);
           try {
+            const st = fs.statSync(full);
+            if (!st.isFile() || st.size > 2 * 1024 * 1024) continue;
             const raw = fs.readFileSync(full, 'utf8').slice(0, 64 * 1024);
             if (/--json|['"]json['"]|json_output/i.test(raw)) hasJsonFlag = true;
             if (/--help|\busage:|\bargparse\b|\bclick\b|\bcommander\b|\byargs\b/i.test(raw)) hasHelpFlag = true;
@@ -172,13 +176,19 @@ if (isMain) {
     process.exit(0);
   }
   const asJson = args.includes('--json');
-  const probeIdx = args.indexOf('--probe');
-  const valIdx = args.indexOf('--validate');
+  const getValArg = (flag) => {
+    const eq = args.find((a) => a.startsWith(`${flag}=`));
+    if (eq) return eq.slice(flag.length + 1);
+    const idx = args.indexOf(flag);
+    return idx !== -1 && args[idx + 1] && !args[idx + 1].startsWith('-') ? args[idx + 1] : '';
+  };
+  const probeTarget = getValArg('--probe');
+  const valTarget = getValArg('--validate');
   let res;
-  if (probeIdx !== -1 && args[probeIdx + 1]) {
-    res = probeAppForCliHarness(args[probeIdx + 1]);
-  } else if (valIdx !== -1 && args[valIdx + 1]) {
-    res = validateCliHarness(args[valIdx + 1]);
+  if (probeTarget) {
+    res = probeAppForCliHarness(probeTarget);
+  } else if (valTarget) {
+    res = validateCliHarness(valTarget);
   } else {
     res = { ok: false, exitCode: 2, error: 'Specify --probe <dir> or --validate <harnessDir>' };
   }

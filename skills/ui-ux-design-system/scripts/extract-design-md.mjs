@@ -89,7 +89,8 @@ function hexLuminance(hex = '') {
  * @param {string} [targetDir=process.cwd()]
  * @param {{ maxFiles?: number }} [options={}]
  */
-export function extractDesignTokensFromWorkspace(targetDir = process.cwd(), { maxFiles = 120 } = {}) {
+export function extractDesignTokensFromWorkspace(targetDir = process.cwd(), rawOpts = {}) {
+  const { maxFiles = 120 } = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   const absRoot = path.resolve(targetDir || process.cwd());
   if (!fs.existsSync(absRoot)) {
     return { ok: false, error: 'path_not_found', target: absRoot };
@@ -195,7 +196,9 @@ export function extractDesignTokensFromWorkspace(targetDir = process.cwd(), { ma
 /**
  * Generates DESIGN.md from extracted codebase tokens.
  */
-export function generateDesignMdFromCode(targetDir = process.cwd(), { outPath = '', overwrite = false, write = true } = {}) {
+export function generateDesignMdFromCode(targetDir = process.cwd(), rawOpts = {}) {
+  const { outPath = '', overwrite = false, write = true } =
+    rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   const absRoot = path.resolve(targetDir || process.cwd());
   const extracted = extractDesignTokensFromWorkspace(absRoot);
   if (!extracted.ok) return extracted;
@@ -257,12 +260,24 @@ const isMain = (() => {
 })();
 if (isMain) {
   const args = process.argv.slice(2);
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log('Usage: node extract-design-md.mjs [targetDir] [--write] [--overwrite] [--out <DESIGN.md>] [--json]');
+    process.exit(0);
+  }
   const doWrite = args.includes('--write');
   const overwrite = args.includes('--overwrite');
   const asJson = args.includes('--json');
-  const target = args.find((a) => !a.startsWith('-')) || process.cwd();
+  let outPath = '';
+  let target = '';
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith('--out=')) outPath = a.slice('--out='.length);
+    else if (a === '--out' && i + 1 < args.length && !args[i + 1].startsWith('-')) outPath = args[++i];
+    else if (!a.startsWith('-') && !target) target = a;
+  }
+  target = target || process.cwd();
   const res = doWrite
-    ? generateDesignMdFromCode(target, { overwrite, write: true })
+    ? generateDesignMdFromCode(target, { outPath, overwrite, write: true })
     : extractDesignTokensFromWorkspace(target);
   if (asJson) {
     console.log(JSON.stringify(res, null, 2));

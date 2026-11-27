@@ -213,6 +213,11 @@ export function inspectBufferEncoding(buf) {
   let text = '';
   if (hasUtf16LeBom) {
     text = buf.subarray(2).toString('utf16le');
+  } else if (hasUtf16BeBom) {
+    const evenLen = buf.length - ((buf.length - 2) % 2);
+    const body = Buffer.from(buf.subarray(2, evenLen));
+    body.swap16();
+    text = body.toString('utf16le');
   } else if (hasUtf8Bom) {
     text = buf.subarray(3).toString('utf8');
   } else {

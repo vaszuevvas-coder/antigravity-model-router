@@ -293,9 +293,14 @@ const isMain = (() => {
 })();
 if (isMain) {
   const args = process.argv.slice(2);
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log('Usage: node query-ux-matrix.mjs [domain] [--mode persuade|operate|read|experience] [--stack <name>] [--limit 3] [--charts] [--init-design-md <dir>] [--overwrite] [--json]');
+    process.exit(0);
+  }
   let domain = '';
   let mode = '';
   let stack = '';
+  let limit = 3;
   let includeCharts = false;
   let asJson = false;
   let initDir = '';
@@ -303,11 +308,18 @@ if (isMain) {
   let overwrite = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === '--domain' && i + 1 < args.length) domain = args[++i];
-    else if (a === '--mode' && i + 1 < args.length) mode = args[++i];
-    else if (a === '--stack' && i + 1 < args.length) stack = args[++i];
-    else if (a === '--history' && i + 1 < args.length) historyPath = args[++i];
-    else if (a === '--init-design-md' && i + 1 < args.length) initDir = args[++i];
+    if (a.startsWith('--domain=')) domain = a.slice('--domain='.length);
+    else if (a === '--domain' && i + 1 < args.length && !args[i + 1].startsWith('-')) domain = args[++i];
+    else if (a.startsWith('--mode=')) mode = a.slice('--mode='.length);
+    else if (a === '--mode' && i + 1 < args.length && !args[i + 1].startsWith('-')) mode = args[++i];
+    else if (a.startsWith('--stack=')) stack = a.slice('--stack='.length);
+    else if (a === '--stack' && i + 1 < args.length && !args[i + 1].startsWith('-')) stack = args[++i];
+    else if (a.startsWith('--limit=')) limit = Number(a.slice('--limit='.length)) || 3;
+    else if (a === '--limit' && i + 1 < args.length && !args[i + 1].startsWith('-')) limit = Number(args[++i]) || 3;
+    else if (a.startsWith('--history=')) historyPath = a.slice('--history='.length);
+    else if (a === '--history' && i + 1 < args.length && !args[i + 1].startsWith('-')) historyPath = args[++i];
+    else if (a.startsWith('--init-design-md=')) initDir = a.slice('--init-design-md='.length);
+    else if (a === '--init-design-md' && i + 1 < args.length && !args[i + 1].startsWith('-')) initDir = args[++i];
     else if (a === '--charts') includeCharts = true;
     else if (a === '--json') asJson = true;
     else if (a === '--overwrite') overwrite = true;
@@ -318,6 +330,6 @@ if (isMain) {
     console.log(JSON.stringify(initRes, null, 2));
     process.exit(initRes.ok ? 0 : 1);
   }
-  const res = queryUxMatrix({ domain, mode, stack, includeCharts, historyPath });
+  const res = queryUxMatrix({ domain, mode, stack, includeCharts, limit, historyPath });
   console.log(asJson ? JSON.stringify(res, null, 2) : formatUxBrief(res));
 }

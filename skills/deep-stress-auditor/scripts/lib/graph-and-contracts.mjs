@@ -30,6 +30,7 @@ function toPosixRel(rootDir, absPath) {
 
 function getPkgName(specifier) {
   if (!specifier || specifier.startsWith('.') || specifier.startsWith('/') || specifier.startsWith('#')) return null;
+  if (specifier.startsWith('~/') || specifier.startsWith('$') || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(specifier)) return null;
   if (specifier.startsWith('node:') || BUILTIN_SET.has(specifier)) return null;
   if (specifier.startsWith('@')) {
     const parts = specifier.split('/');
@@ -527,7 +528,7 @@ export function analyzeCrossFileAndContracts({ rootDir, dirEntriesCache, manifes
     }
 
     for (const ni of imp.namedImports || []) {
-      if (ni.imported === 'default') continue;
+      if (ni.imported === 'default' || ni.isType) continue;
       if (!expMeta.named.has(ni.imported)) {
         findings.push({
           tier: 'T2',
@@ -625,7 +626,7 @@ export function analyzeCrossFileAndContracts({ rootDir, dirEntriesCache, manifes
           findings.push({
             tier: 'T2',
             ruleId: 'SHALLOW_PASS_THROUGH_WRAPPER',
-            severity: 'LOW',
+            severity: 'INFO',
             cwe: 'CWE-1061',
             confidence: 0.8,
             file: fr.relPath,

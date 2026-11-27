@@ -165,14 +165,15 @@ export async function searchOpenMedia(opts = {}) {
     timeoutMs = 8000,
   } = safe;
   const cleanQuery = String(query || '').trim();
+  const safeLimit = Math.max(1, Math.min(20, Math.floor(Number(limit) || 6)));
   if (!cleanQuery) {
-    return { ok: false, error: 'empty_query', items: [], downloadedFiles: [], footerLine: '', creditsMarkdown: '' };
+    return { ok: false, error: 'empty_query', source: 'none', query: cleanQuery, items: [], downloadedFiles: [], footerLine: '', creditsMarkdown: '' };
   }
   if (typeof fetchImpl !== 'function') {
-    return { ok: false, error: 'fetch_unavailable', items: [], downloadedFiles: [], footerLine: '', creditsMarkdown: '' };
+    return { ok: false, error: 'fetch_unavailable', source: 'none', query: cleanQuery, items: [], downloadedFiles: [], footerLine: '', creditsMarkdown: '' };
   }
 
-  const searchUrl = buildOpenverseSearchUrl({ query: cleanQuery, mediaType, license, pageSize: limit, aspectRatio });
+  const searchUrl = buildOpenverseSearchUrl({ query: cleanQuery, mediaType, license, pageSize: safeLimit, aspectRatio });
   let items = [];
   let source = 'openverse';
 
@@ -184,13 +185,13 @@ export async function searchOpenMedia(opts = {}) {
     });
     if (guard.ok && guard.res?.ok) {
       const json = await guard.res.json();
-      items = normalizeOpenverseResults(json, mediaType).slice(0, limit);
+      items = normalizeOpenverseResults(json, mediaType).slice(0, safeLimit);
     }
   } catch {}
 
   if (items.length === 0 && mediaType !== 'audio') {
     try {
-      items = await fetchWikimediaFallbackImages({ query: cleanQuery, limit, fetchImpl, timeoutMs });
+      items = await fetchWikimediaFallbackImages({ query: cleanQuery, limit: safeLimit, fetchImpl, timeoutMs });
       if (items.length > 0) source = 'wikimedia_commons';
     } catch {}
   }
@@ -204,9 +205,11 @@ export async function searchOpenMedia(opts = {}) {
       try {
         const assetGuard = await safeFetchWithRedirectGuard(item.url, { fetchImpl, timeoutMs });
         if (!assetGuard.ok || !assetGuard.res?.ok) continue;
+        const ct = String(assetGuard.res.headers?.get?.('content-type') || '').toLowerCase();
+        if (/^(?:text\/html|application\/xhtml|application\/json)/i.test(ct)) continue;
         const buf = await readResponseBufferLimited(assetGuard.res, MAX_MEDIA_BYTES + 1);
         if (buf.length === 0 || buf.length > MAX_MEDIA_BYTES) continue;
-        const ext = inferMediaExt(assetGuard.finalUrl || item.url, assetGuard.res.headers?.get?.('content-type') || '', mediaType);
+        const ext = inferMediaExt(assetGuard.finalUrl || item.url, ct, mediaType);
         const fileName = `${String(i + 1).padStart(2, '0')}-${slugifyFilePart(item.title, 'asset')}${ext}`;
         const destPath = path.join(absOut, fileName);
         fs.writeFileSync(destPath, buf);
@@ -240,25 +243,31 @@ const isMain = (() => {
 })();
 if (isMain) {
   const args = process.argv.slice(2);
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log('Usage: node fetch-open-media.mjs <query> [--type images|audio] [--license cc0,pdm,by] [--limit 6] [--aspect-ratio <ratio>] [--out <dir>] [--json]');
+    process.exit(0);
+  }
   let query = '';
   let mediaType = 'images';
   let license = 'cc0,pdm,by';
   let limit = 6;
+  let aspectRatio = '';
   let outDir = '';
   let asJson = false;
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === '--query' && args[i + 1]) query = args[++i];
-    else if (a === '--type' && args[i + 1]) mediaType = args[++i];
-    else if (a === '--license' && args[i + 1]) license = args[++i];
-    else if (a === '--limit' && args[i + 1]) limit = Number(args[++i]) || 6;
-    else if (a === '--out' && args[i + 1]) outDir = args[++i];
+    if (a === '--query' && i + 1 < args.length && !args[i + 1].startsWith('-')) query = args[++i];
+    else if (a === '--type' && i + 1 < args.length && !args[i + 1].startsWith('-')) mediaType = args[++i];
+    else if (a === '--license' && i + 1 < args.length && !args[i + 1].startsWith('-')) license = args[++i];
+    else if (a === '--limit' && i + 1 < args.length && !args[i + 1].startsWith('-')) limit = Number(args[++i]) || 6;
+    else if (a === '--aspect-ratio' && i + 1 < args.length && !args[i + 1].startsWith('-')) aspectRatio = args[++i];
+    else if (a === '--out' && i + 1 < args.length && !args[i + 1].startsWith('-')) outDir = args[++i];
     else if (a === '--json') asJson = true;
     else if (!a.startsWith('-') && !query) query = a;
   }
 
-  const res = await searchOpenMedia({ query, mediaType, license, limit, outDir, download: Boolean(outDir) });
+  const res = await searchOpenMedia({ query, mediaType, license, limit, aspectRatio, outDir, download: Boolean(outDir) });
   if (asJson) {
     console.log(JSON.stringify(res, null, 2));
   } else {
@@ -268,4 +277,5 @@ if (isMain) {
     }
     if (res.footerLine) console.log(`\n${res.footerLine}`);
   }
+  if (res.error === 'empty_query') process.exit(1);
 }

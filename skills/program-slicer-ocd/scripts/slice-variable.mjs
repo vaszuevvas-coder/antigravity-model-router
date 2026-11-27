@@ -116,7 +116,7 @@ function detectRole(line, symbolName) {
   const declPattern = new RegExp(`(?:\\b(?:const|let|var)\\b[\\s\\S]*?${idPat}|\\bfunction\\s*\\w*\\s*\\([^)]*?${idPat})`, 'i');
   const returnPattern = new RegExp(`\\breturn\\b[\\s\\S]*?${idPat}`);
   const branchPattern = new RegExp(`\\b(?:if|else\\s+if|switch|while)\\s*\\([\\s\\S]*?${idPat}`);
-  const mutatePattern = new RegExp(`${idPat}(?:\\.[A-Za-z0-9_$]+)?\\s*(?:=(?!=)|\\+=|-=|\\*=|\\/=|%=|\\+\\+|--|\\.(?:push|set|delete|splice|shift|unshift|add|clear)\\()`);
+  const mutatePattern = new RegExp(`${idPat}(?:\\.[A-Za-z0-9_$]+)?\\s*(?:(?<![!<>=])=(?![=>])|\\+=|-=|\\*=|\\/=|%=|\\+\\+|--|\\.(?:push|set|delete|splice|shift|unshift|add|clear)\\()`);
 
   if (declPattern.test(line)) return 'decl';
   if (mutatePattern.test(line)) return 'mutate';
@@ -130,8 +130,8 @@ const JS_RESERVED = new Set(['const', 'let', 'var', 'return', 'if', 'else', 'for
 function findSimpleAlias(line, symbolName) {
   const sym = escapeRegex(symbolName);
   const idPat = `(?<![A-Za-z0-9_$.])${sym}(?![A-Za-z0-9_$.])`;
-  const aliasPattern1 = new RegExp(`\\b(?:const|let|var)\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=(?!=)\\s*${idPat}`);
-  const aliasPattern2 = new RegExp(`(?:^|;\\s*)([A-Za-z_$][A-Za-z0-9_$]*)\\s*=(?!=)\\s*${idPat}`);
+  const aliasPattern1 = new RegExp(`\\b(?:const|let|var)\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=(?!=)\\s*${idPat}(?!\\s*=>)`);
+  const aliasPattern2 = new RegExp(`(?:^|;\\s*)([A-Za-z_$][A-Za-z0-9_$]*)\\s*=(?!=)\\s*${idPat}(?!\\s*=>)`);
   const m1 = line.match(aliasPattern1);
   if (m1 && m1[1] && m1[1] !== symbolName && !JS_RESERVED.has(m1[1])) return m1[1];
   const m2 = line.trim().match(aliasPattern2);
@@ -152,7 +152,7 @@ export function sliceSourceCode(sourceText, symbolName, options = {}) {
     };
   }
 
-  const { focusLine = 0, contextLines = 1, maxLines = 60 } = options || {};
+  const { focusLine = 0, maxLines = 60 } = options || {};
   const lines = sourceText.split(/\r?\n/);
   const totalFileLines = lines.length;
 
@@ -218,7 +218,16 @@ export function sliceSourceCode(sourceText, symbolName, options = {}) {
     }
 
     const lineNum = idx + 1;
-    const role = detectRole(lines[idx], symbolName);
+    let roleTarget = symbolName;
+    if (!baseRegex.test(lines[idx])) {
+      for (const a of aliases) {
+        if (makeIdentRegex(escapeRegex(a)).test(lines[idx])) {
+          roleTarget = a;
+          break;
+        }
+      }
+    }
+    const role = detectRole(lines[idx], roleTarget);
     sliceMap.set(lineNum, {
       line: lineNum,
       role,

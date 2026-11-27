@@ -51,11 +51,27 @@ export function parseAuditCliArgs(argv = []) {
     } else if (arg === '--native') native = true;
     else if (arg === '--json') json = true;
     else if (arg === '--update-ratchet') updateRatchet = true;
-    else if (arg.startsWith('--ratchet=')) ratchetPath = resolve(arg.slice('--ratchet='.length));
-    else if (arg.startsWith('--fail-on=')) failOn = arg.slice('--fail-on='.length);
-    else if (arg.startsWith('--max-files=')) maxFiles = Math.max(100, Math.min(50000, Number(arg.slice('--max-files='.length)) || 0));
-    else if (arg.startsWith('--output=')) output = resolve(arg.slice('--output='.length));
-    else if ((arg === '--output' || arg === '-o') && i + 1 < safeArgv.length) output = resolve(safeArgv[++i]);
+    else if (arg.startsWith('--ratchet=')) {
+      const val = arg.slice('--ratchet='.length);
+      if (val) ratchetPath = resolve(val);
+    } else if (arg === '--ratchet' && i + 1 < safeArgv.length && !safeArgv[i + 1].startsWith('-')) {
+      ratchetPath = resolve(safeArgv[++i]);
+    } else if (arg.startsWith('--fail-on=')) {
+      failOn = arg.slice('--fail-on='.length);
+    } else if (arg === '--fail-on' && i + 1 < safeArgv.length && !safeArgv[i + 1].startsWith('-')) {
+      failOn = safeArgv[++i];
+    } else if (arg.startsWith('--max-files=')) {
+      const n = Number(arg.slice('--max-files='.length));
+      if (Number.isFinite(n) && n > 0) maxFiles = Math.max(100, Math.min(50000, Math.floor(n)));
+    } else if (arg === '--max-files' && i + 1 < safeArgv.length && !safeArgv[i + 1].startsWith('-')) {
+      const n = Number(safeArgv[++i]);
+      if (Number.isFinite(n) && n > 0) maxFiles = Math.max(100, Math.min(50000, Math.floor(n)));
+    } else if (arg.startsWith('--output=')) {
+      const val = arg.slice('--output='.length);
+      if (val) output = resolve(val);
+    } else if ((arg === '--output' || arg === '-o') && i + 1 < safeArgv.length && !safeArgv[i + 1].startsWith('-')) {
+      output = resolve(safeArgv[++i]);
+    }
     else if (!arg.startsWith('-') && !dirSet) {
       targetDir = resolve(arg);
       dirSet = true;
@@ -138,6 +154,25 @@ export async function runStressAudit(targetDir, options = {}) {
   const deepEnabled = Boolean(options.deep);
   const failOn = options.failOn || 'high';
   const profile = deepEnabled ? 'deep' : (fuzzEnabled ? 'fuzz' : (nativeEnabled ? 'native' : 'fast'));
+
+  if (!existsSync(absTarget)) {
+    return buildAuditReport({
+      targetDir: absTarget,
+      profile,
+      elapsedMs: performance.now() - t0,
+      scannedFiles: 0,
+      rawFindings: [{
+        tier: 'T0',
+        ruleId: 'TARGET_NOT_FOUND',
+        severity: 'CRITICAL',
+        confidence: 1,
+        file: absTarget,
+        line: 1,
+        message: `Target directory does not exist: ${absTarget}`,
+      }],
+      failOn,
+    });
+  }
 
   // 1. Discover files, BOM/encoding & stack
   const defaultMaxFiles = deepEnabled ? 8000 : 5000;

@@ -532,7 +532,7 @@ function loadSiblingSkills(skillsRoot, excludeSlug = '') {
 
 function loadEvalPrompts(skillDir, explicitEvalFile = '') {
   const candidates = explicitEvalFile
-    ? [resolve(explicitEvalFile)]
+    ? [resolve(explicitEvalFile), join(skillDir, explicitEvalFile)]
     : [join(skillDir, 'evals', 'evals.json')];
   for (const cand of candidates) {
     if (!existsSync(cand)) continue;
@@ -620,6 +620,15 @@ export function auditSkill(targetPathOrSlug, { skillsRoot = DEFAULT_SKILLS_ROOT,
       message: `False positive triggers on ${triggerEval.falsePositives.length} negative prompt(s).`,
     });
   }
+  if (!triggerEval.syntheticProbesUsed && triggerEval.falseNegatives.length > 0) {
+    score = Math.max(0, score - 8);
+    findings.push({
+      id: 'TRIG_FALSE_NEGATIVE',
+      severity: 'warn',
+      penalty: 8,
+      message: `Missed ${triggerEval.falseNegatives.length} positive prompt(s) in evals.`,
+    });
+  }
 
   const grade = score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 60 ? 'C' : 'D';
   const errorsCount = findings.filter((f) => f.severity === 'error').length;
@@ -686,6 +695,10 @@ if (isExecutedDirectly()) {
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
+    if (a === '--help' || a === '-h') {
+      console.log('Usage: node audit-skill.mjs (<slugOrDir> | --all) [--skills-root <dir>] [--eval <evals.json>] [--json] [--strict] [--output <path>]');
+      process.exit(0);
+    }
     if (a === '--all') runAll = true;
     else if (a === '--json') asJson = true;
     else if (a === '--strict') strict = true;

@@ -26,7 +26,7 @@ node "<skill_dir>/scripts/lint-video-composition.mjs" <file-or-dir> [--snapshot 
 ```
 
 ## 4. Frame-Accurate Sound Design & Critique (`real-sfx` + `earshot`)
-- Extract HyperFrames (`data-start`/GSAP) or Remotion (`<Sequence from={...}>`) cues, synthesize/resolve real WAV effects (`earshot` CLI if installed, otherwise zero-dep PCM synthesis + Openverse audio), mix via FFmpeg at `-16 LUFS`, and audit peaks/silence so rendered videos never ship mute or clipped:
+- Extract HyperFrames (`data-start`/GSAP) or Remotion (`<Sequence from={...}>`) cues, synthesize/resolve real WAV effects (`earshot` CLI if installed, otherwise zero-dep PCM synthesis), mix via FFmpeg at `-16 LUFS`, and audit peaks/silence so rendered videos never ship mute or clipped:
 ```bash
 node "<skill_dir>/scripts/compose-video-sfx.mjs" --cues <composition> --out-dir ./sfx [--render <video.mp4>] [--json]
 node "<skill_dir>/scripts/compose-video-sfx.mjs" --synth success --out ./sfx/success.wav --json

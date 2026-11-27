@@ -28,6 +28,18 @@ function readHtmlAttr(attrs = '', name = '') {
   return String(m[1] ?? m[2] ?? m[3] ?? '').trim();
 }
 
+function runAgentBrowserCli(spawnSyncImpl, args, opts = {}) {
+  const res = spawnSyncImpl('agent-browser', args, opts);
+  if (
+    process.platform === 'win32'
+    && (res?.error?.code === 'EINVAL' || res?.error?.code === 'ENOENT')
+    && !opts.shell
+  ) {
+    return spawnSyncImpl('agent-browser', args, { ...opts, shell: true });
+  }
+  return res;
+}
+
 /**
  * Probes whether `agent-browser` CLI binary is available in PATH.
  * @param {Function} [spawnSyncImpl]
@@ -38,7 +50,7 @@ export function detectAgentBrowserCli(spawnSyncImpl = spawnSync) {
     return { installed: false, version: '' };
   }
   try {
-    const res = spawnSyncImpl('agent-browser', ['--version'], {
+    const res = runAgentBrowserCli(spawnSyncImpl, ['--version'], {
       windowsHide: true,
       timeout: 1500,
       encoding: 'utf8',
@@ -92,13 +104,13 @@ export function extractCompactInteractiveRefTree(html = '') {
   }
 
   // Extract interactive elements: button, a, input, select, textarea, or explicit role="button" / data-action
-  const controlRe = /<(button|a|input|select|textarea|div|span)\b([^>]{0,1200})(?:>([\s\S]{0,600}?)<\/\1>|\/?>)/gi;
+  // Scan opening tags so outer layout <div>/<span> wrappers never swallow nested interactive controls.
+  const openTagRe = /<(button|a|input|select|textarea|div|span)\b([^>]{0,1200})>/gi;
   let m;
   let seq = 1;
-  while ((m = controlRe.exec(cleanHtml)) !== null) {
+  while ((m = openTagRe.exec(cleanHtml)) !== null) {
     const tag = m[1].toLowerCase();
     const attrs = m[2] || '';
-    const inner = m[3] || '';
     const roleAttr = readHtmlAttr(attrs, 'role').toLowerCase();
     const actionAttr = readHtmlAttr(attrs, 'data-action');
     const hrefAttr = readHtmlAttr(attrs, 'href');
@@ -115,6 +127,20 @@ export function extractCompactInteractiveRefTree(html = '') {
     }
     if (readHtmlAttr(attrs, 'aria-hidden').toLowerCase() === 'true' && readHtmlAttr(attrs, 'tabindex').trim() === '-1') {
       continue;
+    }
+
+    let inner = '';
+    if (tag !== 'input' && !attrs.trimEnd().endsWith('/')) {
+      const afterOpen = openTagRe.lastIndex;
+      const closeRe = new RegExp(`</${tag}\\s*>`, 'i');
+      const closeSlice = cleanHtml.slice(afterOpen, afterOpen + 800);
+      const closeMatch = closeRe.exec(closeSlice);
+      if (closeMatch) {
+        inner = closeSlice.slice(0, closeMatch.index);
+        if (tag !== 'div' && tag !== 'span') {
+          openTagRe.lastIndex = afterOpen + closeMatch.index + closeMatch[0].length;
+        }
+      }
     }
 
     const id = readHtmlAttr(attrs, 'id');
@@ -231,6 +257,8 @@ function isAllowedDogfoodUrl(raw = '') {
       h.startsWith('169.254.') ||
       h.startsWith('::ffff:169.254.') ||
       h.startsWith('::ffff:a9fe:') ||
+      h === 'fd00:ec2::254' ||
+      h === '100.100.100.200' ||
       h === 'metadata.google.internal' ||
       h === 'metadata.goog'
     ) {
@@ -274,14 +302,14 @@ export async function runWebappDogfoodAudit(opts = {}) {
     if (cli.installed) {
       const safeSession = (sessionName || `dogfood-${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 48);
       try {
-        const openRes = spawnSyncImpl('agent-browser', ['--session', safeSession, 'open', rawTarget], {
+        const openRes = runAgentBrowserCli(spawnSyncImpl, ['--session', safeSession, 'open', rawTarget], {
           windowsHide: true,
           timeout: 12000,
           encoding: 'utf8',
         });
         if (openRes.status === 0) {
           engine = 'agent-browser';
-          const snapRes = spawnSyncImpl('agent-browser', ['--session', safeSession, 'snapshot', '-i', '--json'], {
+          const snapRes = runAgentBrowserCli(spawnSyncImpl, ['--session', safeSession, 'snapshot', '-i', '--json'], {
             windowsHide: true,
             timeout: 8000,
             encoding: 'utf8',
@@ -292,7 +320,7 @@ export async function runWebappDogfoodAudit(opts = {}) {
               refs = Array.isArray(parsed?.refs) ? parsed.refs : (Array.isArray(parsed) ? parsed : []);
             } catch {}
           }
-          const errRes = spawnSyncImpl('agent-browser', ['--session', safeSession, 'errors'], {
+          const errRes = runAgentBrowserCli(spawnSyncImpl, ['--session', safeSession, 'errors'], {
             windowsHide: true,
             timeout: 5000,
             encoding: 'utf8',
@@ -307,7 +335,7 @@ export async function runWebappDogfoodAudit(opts = {}) {
         }
       } finally {
         try {
-          spawnSyncImpl('agent-browser', ['--session', safeSession, 'close'], { windowsHide: true, timeout: 3000 });
+          runAgentBrowserCli(spawnSyncImpl, ['--session', safeSession, 'close'], { windowsHide: true, timeout: 3000 });
         } catch {}
       }
     }
@@ -350,7 +378,15 @@ export async function runWebappDogfoodAudit(opts = {}) {
         return { ok: false, error: err?.message || 'fetch_failed', engine, interactiveCount: 0, refs: [], issues: [] };
       }
     } else {
-      let absFile = path.resolve(rawTarget);
+      let localInputPath = rawTarget;
+      if (/^file:\/\//i.test(rawTarget)) {
+        try {
+          localInputPath = fileURLToPath(rawTarget);
+        } catch {
+          return { ok: false, error: 'invalid_file_url', engine, interactiveCount: 0, refs: [], issues: [] };
+        }
+      }
+      let absFile = path.resolve(localInputPath);
       if (fs.existsSync(absFile) && fs.statSync(absFile).isDirectory()) {
         const indexCand = path.join(absFile, 'index.html');
         const firstHtml = fs.readdirSync(absFile).find((f) => /\.html?$/i.test(f));
@@ -403,10 +439,16 @@ const isMain = (() => {
 })();
 if (isMain) {
   const args = process.argv.slice(2);
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log('Usage: node run-webapp-dogfood.mjs <url-or-html> [--out <report.md>] [--delta <prev.json>] [--json]');
+    process.exit(0);
+  }
   const asJson = args.includes('--json');
   const getArg = (flag) => {
+    const eq = args.find((a) => a.startsWith(`${flag}=`));
+    if (eq) return eq.slice(flag.length + 1);
     const idx = args.indexOf(flag);
-    return idx >= 0 && args[idx + 1] ? args[idx + 1] : '';
+    return idx >= 0 && args[idx + 1] && !args[idx + 1].startsWith('-') ? args[idx + 1] : '';
   };
   const outPath = getArg('--out');
   const deltaPath = getArg('--delta');
@@ -420,4 +462,5 @@ if (isMain) {
     } catch {}
   }
   console.log(asJson ? JSON.stringify(report, null, 2) : report.summaryMarkdown || `Dogfood QA: ${report.error || 'done'}`);
+  if (!report.ok) process.exitCode = 1;
 }

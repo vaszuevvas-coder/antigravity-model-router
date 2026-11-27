@@ -107,3 +107,31 @@ test('auditGithubPublish passes cleanly on a compliant repository', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('auditGithubPublish catches long-line secrets, repo-escaping links, release-manifest drift, and nonexistent root', () => {
+  const missing = auditGithubPublish({ rootDir: path.join(os.tmpdir(), `gh-missing-${Date.now()}`) });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.errors[0].ruleId, 'root_not_found');
+
+  const dir = makeTempRepo({
+    'package.json': JSON.stringify({ name: 'long-line-repo', version: '2.0.0' }),
+    'plugin.json': JSON.stringify({ name: 'long-line-repo', version: '2.0.0' }),
+    'release-manifest.json': JSON.stringify({ version: '1.9.0' }),
+    'README.md': '# Repo v2.0.0\n\n`[ignored](does-not-exist.md)`\n![Banner](/LICENSE)\n[Escape](../../outside.md)\n',
+    'CHANGELOG.md': '# Changelog\n\n## [2.0.0]\n',
+    LICENSE: 'MIT',
+    '.gitignore': 'node_modules/\n',
+    'src/bundle.min.js': `${'a'.repeat(4500)} const k="ghp_${'Z'.repeat(36)}";`,
+  });
+  try {
+    const res = auditGithubPublish({ rootDir: dir, currentUsername: 'UnitTester', currentHostname: 'UNIT-HOST-77' });
+    assert.equal(res.ok, false);
+    assert.ok(res.errors.some((e) => e.ruleId === 'secret_gh_pat'));
+    const warnIds = new Set(res.warnings.map((w) => w.ruleId));
+    assert.ok(warnIds.has('release_manifest_version_mismatch'));
+    assert.ok(warnIds.has('broken_md_link'));
+    assert.equal(res.warnings.filter((w) => w.ruleId === 'broken_md_link').length, 1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

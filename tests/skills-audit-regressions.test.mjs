@@ -13,12 +13,14 @@ import { extractCompactInteractiveRefTree, runWebappDogfoodAudit } from '../skil
 import { auditGithubPublish, checkMarkdownLinks } from '../skills/github-publish-guard/scripts/audit-github-publish.mjs';
 import { runCodemod } from '../skills/ast-codemod-refactor/scripts/run-codemod.mjs';
 import { sliceSourceCode } from '../skills/program-slicer-ocd/scripts/slice-variable.mjs';
-import { evaluateSkillTriggers, parseYamlFrontmatter } from '../skills/skill-architect/scripts/audit-skill.mjs';
+import { auditSkill, evaluateSkillTriggers, parseYamlFrontmatter } from '../skills/skill-architect/scripts/audit-skill.mjs';
 import { aggregateEvalIteration } from '../skills/skill-architect/scripts/eval-skill-benchmark.mjs';
 import { lintVideoCompositionContent } from '../skills/programmatic-video-studio/scripts/lint-video-composition.mjs';
-import { readResponseBufferLimited } from '../skills/ui-ux-design-system/scripts/fetch-web-refs.mjs';
+import { readResponseBufferLimited, validatePublicRefUrl } from '../skills/ui-ux-design-system/scripts/fetch-web-refs.mjs';
 import { normalizeOpenverseResults, searchOpenMedia } from '../skills/ui-ux-design-system/scripts/fetch-open-media.mjs';
 import { generateDesignMdFromCode } from '../skills/ui-ux-design-system/scripts/extract-design-md.mjs';
+import { auditUiContent, auditUiViewports } from '../skills/ui-ux-design-system/scripts/audit-ui.mjs';
+import { generateShowroomHtml } from '../skills/ui-ux-design-system/scripts/build-showroom.mjs';
 
 function makeTmpDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -291,4 +293,85 @@ test('13. Windows CLI entrypoints execute even with lowercase drive letter in ar
   const parsed = JSON.parse(out);
   assert.equal(parsed.slug, 'skill-architect');
   assert.equal(parsed.ok, true);
+});
+
+test('14. Batch 7A fixes: dogfood nested DOM & SSRF, video comment masking, slicer arrow-fn/alias, auditSkill eval path & codemod flag guard', async () => {
+  const nestedTree = extractCompactInteractiveRefTree('<div class="toolbar"><button id="saveBtn">Save</button><span><a href="/home">Home</a></span></div>');
+  assert.equal(nestedTree.interactiveCount, 2);
+  assert.deepEqual(nestedTree.refs.map((r) => r.id), ['saveBtn', '']);
+
+  const blockedImds = await runWebappDogfoodAudit({ target: 'http://[fd00:ec2::254]/latest/meta-data/', useAgentBrowser: false });
+  assert.equal(blockedImds.ok, false);
+  assert.equal(blockedImds.error, 'blocked_target_url');
+
+  const lintClean = lintVideoCompositionContent('// Avoid Math.random() and setTimeout() inside Remotion\nimport { useCurrentFrame } from "remotion";\nconst x = useCurrentFrame();\n', 'Comp.tsx');
+  assert.equal(lintClean.ok, true);
+  assert.equal(lintClean.findings.length, 0);
+
+  const slicedArrow = sliceSourceCode([
+    'const order = getOrder();',
+    'return items.map(order => order.id);',
+    'const fn = order => order.id;',
+    'fn.extra = 1;',
+    'const alias = order;',
+    'alias.total = 42;',
+    'return alias;',
+  ].join('\n'), 'order');
+  assert.equal(slicedArrow.sliceLines.find((l) => l.line === 2)?.role, 'return');
+  assert.equal(slicedArrow.sliceLines.some((l) => l.line === 4), false);
+  assert.equal(slicedArrow.sliceLines.find((l) => l.line === 6)?.role, 'mutate');
+  assert.equal(slicedArrow.sliceLines.find((l) => l.line === 7)?.role, 'return');
+
+  const tmpSkill = makeTmpDir('skill-eval-fn-');
+  try {
+    fs.mkdirSync(path.join(tmpSkill, 'evals'), { recursive: true });
+    fs.writeFileSync(path.join(tmpSkill, 'SKILL.md'), '---\nname: alpha-demo\ndescription: Deterministic widget inspector for telemetry traces. Use when inspecting widget traces.\n---\n\n# Alpha\n', 'utf8');
+    fs.writeFileSync(path.join(tmpSkill, 'evals', 'evals.json'), JSON.stringify({
+      positive: ['unrelated quantum astrophysics simulation'],
+      negative: ['widget traces telemetry'],
+    }), 'utf8');
+    const audited = auditSkill(tmpSkill, { evalFile: 'evals/evals.json' });
+    assert.ok(audited.findings.some((f) => f.id === 'TRIG_FALSE_NEGATIVE'));
+    assert.ok(audited.findings.some((f) => f.id === 'TRIG_FALSE_POSITIVE'));
+  } finally {
+    fs.rmSync(tmpSkill, { recursive: true, force: true });
+  }
+});
+
+test('15. Batch 7B fixes: SSRF IP/trailing-dot hardening, responsive min-width & viewport non-HTML skip, showroom null/scheme safety & media limit clamp', async () => {
+  for (const badUrl of [
+    'http://localhost.:11434/api/tags',
+    'http://[::127.0.0.1]/admin',
+    'http://[fe81::1]/link',
+    'http://224.0.0.1/mcast',
+  ]) {
+    const v = validatePublicRefUrl(badUrl);
+    assert.equal(v.ok, false, `Expected SSRF block for ${badUrl}`);
+    assert.equal(v.reason, 'ssrf_private_host');
+  }
+
+  const uiRes = auditUiContent('@media (min-width: 1024px) { .card { padding: 24px; } }\n:root { --bg: #ffffff; --text: #111111; }', 'app.css');
+  assert.equal(uiRes.findings.some((f) => f.ruleId === 'fixed-wide-px-width'), false);
+
+  const tmpDir = makeTmpDir('skills-ui-b7b-');
+  try {
+    const cssPath = path.join(tmpDir, 'style.css');
+    fs.writeFileSync(cssPath, 'body { color: #111; }', 'utf8');
+    const vpSkip = await auditUiViewports(cssPath, null);
+    assert.equal(vpSkip.ok, true);
+    assert.equal(vpSkip.skipped, true);
+    assert.equal(vpSkip.reason, 'non_html_target');
+
+    const showroom = generateShowroomHtml({
+      title: 'Test',
+      variants: [null, { id: 'A', referenceImage: 'data:text/html,<script>1</script>', css: '</style><script>2</script>' }],
+    }, null);
+    assert.equal(showroom.ok, true);
+    assert.equal(showroom.html.includes('data:text/html'), false);
+
+    const mediaBad = await searchOpenMedia({ query: 'test', limit: -1, fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ results: Array.from({ length: 10 }, (_, i) => ({ id: String(i), url: `https://example.com/${i}.png` })) }) }) });
+    assert.equal(mediaBad.items.length, 1);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });

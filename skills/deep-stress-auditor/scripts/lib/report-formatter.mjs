@@ -36,7 +36,7 @@ export function buildAuditReport(opts = {}) {
       dedup.set(key, {
         tier: f.tier || 'T1',
         ruleId: f.ruleId,
-        severity: f.severity || 'INFO',
+        severity: SEV_ORDER[f.severity] !== undefined ? f.severity : 'INFO',
         cwe: f.cwe || 'CWE-1006',
         confidence: Number(Number(f.confidence || 0.8).toFixed(2)),
         file: f.file || '',

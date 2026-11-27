@@ -41,13 +41,21 @@ export function detectCompositionMode(code = '', filePath = '') {
   return 'unknown';
 }
 
+function stripCommentsPreservingLines(src = '') {
+  return String(src || '')
+    .replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/(^|[^:\\])\/\/[^\n]*/g, '$1');
+}
+
 /**
  * Audits a single HyperFrames or Remotion composition for frame-determinism hazards.
  * @param {string} content
  * @param {string} [filePath='composition.html']
  */
 export function lintVideoCompositionContent(content = '', filePath = 'composition.html') {
-  const text = typeof content === 'string' ? content : String(content || '');
+  const rawText = typeof content === 'string' ? content : String(content || '');
+  const text = stripCommentsPreservingLines(rawText);
   const mode = detectCompositionMode(text, filePath);
   const findings = [];
 
@@ -246,6 +254,10 @@ const isMain = (() => {
 })();
 if (isMain) {
   const args = process.argv.slice(2);
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log('Usage: node lint-video-composition.mjs <file-or-dir> [--snapshot 0,1.5,3] [--out-dir <dir>] [--json]');
+    process.exit(0);
+  }
   let asJson = false;
   let target = '';
   let snapRaw = '';
@@ -253,15 +265,32 @@ if (isMain) {
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--json') asJson = true;
-    else if (a === '--snapshot' && i + 1 < args.length) snapRaw = args[++i];
-    else if (a === '--out-dir' && i + 1 < args.length) outDir = args[++i];
+    else if (a.startsWith('--snapshot=')) snapRaw = a.slice('--snapshot='.length);
+    else if (a === '--snapshot' && i + 1 < args.length && !args[i + 1].startsWith('-')) snapRaw = args[++i];
+    else if (a.startsWith('--out-dir=')) outDir = a.slice('--out-dir='.length);
+    else if (a === '--out-dir' && i + 1 < args.length && !args[i + 1].startsWith('-')) outDir = args[++i];
     else if (!a.startsWith('-') && !target) target = a;
   }
   const report = lintVideoCompositionPath(target || process.cwd());
   let snapRes = null;
-  if (snapRaw && target && /\.html?$/i.test(target)) {
-    const times = snapRaw.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n >= 0);
-    snapRes = captureHtmlTimelineSnapshots(target, { timestampsSec: times.length ? times : [0, 1], outDir });
+  if (snapRaw && target) {
+    const absTarget = path.resolve(target);
+    let htmlTarget = '';
+    if (/\.html?$/i.test(absTarget) && fs.existsSync(absTarget)) {
+      htmlTarget = absTarget;
+    } else if (fs.existsSync(absTarget) && fs.statSync(absTarget).isDirectory()) {
+      const indexCand = path.join(absTarget, 'index.html');
+      if (fs.existsSync(indexCand)) {
+        htmlTarget = indexCand;
+      } else {
+        const htmlFiles = collectFilesByExt(absTarget, /\.html?$/i, IGNORE_DIRS);
+        if (htmlFiles[0]) htmlTarget = htmlFiles[0];
+      }
+    }
+    if (htmlTarget) {
+      const times = snapRaw.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n >= 0);
+      snapRes = captureHtmlTimelineSnapshots(htmlTarget, { timestampsSec: times.length ? times : [0, 1], outDir });
+    }
   }
   const payload = snapRes ? { ...report, snapshots: snapRes } : report;
   if (asJson) {

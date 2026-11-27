@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runStressAudit } from '../skills/deep-stress-auditor/scripts/run-stress-audit.mjs';
+import { inspectBufferEncoding } from '../skills/deep-stress-auditor/scripts/lib/stack-detector.mjs';
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -361,6 +362,47 @@ test('4. JS/TS import lexer ignores string/template/regex fixtures and method ca
       [{ file: 'src/real-broken.mjs', evidence: './actually-missing-tpl-expr.mjs' }],
       `Unexpected BROKEN_RELATIVE_IMPORT findings: ${JSON.stringify(broken)}`
     );
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
+});
+
+test('5. Batch 7A fixes: CRLF import line accuracy, inline type imports, $ taint IDs, UTF-16BE BOM, INFO severity parity & missing targetDir', async () => {
+  const missingReport = await runStressAudit(path.join(os.tmpdir(), `nonexistent-dsa-${Date.now()}`), { fuzz: false, shutdownPool: true });
+  assert.equal(missingReport.status, 'FAILED');
+  assert.ok(missingReport.findings.some((f) => f.ruleId === 'TARGET_NOT_FOUND' && f.severity === 'CRITICAL'));
+
+  // UTF-16BE BOM ('A' = 0x00 0x41, 'B' = 0x00 0x42) decodes cleanly without U+FFFD replacement chars
+  const beBuf = Buffer.from([0xfe, 0xff, 0x00, 0x41, 0x00, 0x42]);
+  const encRes = inspectBufferEncoding(beBuf);
+  assert.equal(encRes.encoding, 'utf16');
+  assert.equal(encRes.text, 'AB');
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsa-b7a-'));
+  try {
+    fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 'dsa-b7a', type: 'module', dependencies: {} }, null, 2), 'utf8');
+    fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, 'src', 'types-mod.mjs'), 'export const helper = 1;\nexport function pass(x) { return helper + x; }\n', 'utf8');
+    fs.writeFileSync(
+      path.join(tmpDir, 'src', 'crlf-and-taint.mjs'),
+      [
+        'import { exec } from "node:child_process";',
+        'import { type GhostType, helper } from "./types-mod.mjs";',
+        'import "https://cdn.jsdelivr.net/npm/lit@3/+esm";',
+        'const { $cmd } = req.query;',
+        'exec($cmd);',
+        'export const bad = await import("./missing-crlf.mjs");',
+      ].join('\r\n'),
+      'utf8'
+    );
+    const report = await runStressAudit(tmpDir, { fuzz: false, shutdownPool: true });
+    assert.equal(report.findings.some((f) => f.ruleId === 'MISSING_DEPENDENCY' && f.evidence.includes('https:')), false);
+    assert.equal(report.findings.some((f) => f.ruleId === 'BROKEN_NAMED_EXPORT' && f.evidence.includes('GhostType')), false);
+    assert.ok(report.findings.some((f) => f.ruleId === 'COMMAND_INJECTION'));
+    const crlfBroken = report.findings.find((f) => f.ruleId === 'BROKEN_RELATIVE_IMPORT');
+    assert.equal(crlfBroken?.line, 6);
+    const sevSum = report.summary.CRITICAL + report.summary.HIGH + report.summary.MEDIUM + report.summary.INFO;
+    assert.equal(sevSum, report.summary.total);
   } finally {
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   }

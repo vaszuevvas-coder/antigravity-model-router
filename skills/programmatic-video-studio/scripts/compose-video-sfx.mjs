@@ -406,7 +406,7 @@ export function buildFfmpegMixArgs(opts = {}) {
     if (videoPath && outputVideoPath) {
       args.push('-map', '0:v', '-map', '[sfxout]', '-c:v', 'copy', '-c:a', 'aac', '-shortest', outputVideoPath);
     } else {
-      args.push('-map', '[sfxout]', outputWavPath);
+      args.push('-map', '[sfxout]', '-ar', '48000', '-c:a', 'pcm_s16le', outputWavPath);
     }
   }
   return { ok: mixLabels.length > 0, args, cueCount: mixLabels.length };
@@ -420,10 +420,16 @@ const isMain = (() => {
 })();
 if (isMain) {
   const args = process.argv.slice(2);
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log('Usage: node compose-video-sfx.mjs (--cues <composition> [--out-dir <dir>] [--render <video.mp4>] | --synth <kind> [--out <wav>] | --critique <wav>) [--json]');
+    process.exit(0);
+  }
   const asJson = args.includes('--json');
   const getArg = (flag) => {
+    const eq = args.find((a) => a.startsWith(`${flag}=`));
+    if (eq) return eq.slice(flag.length + 1);
     const idx = args.indexOf(flag);
-    return idx >= 0 && args[idx + 1] ? args[idx + 1] : '';
+    return idx >= 0 && args[idx + 1] && !args[idx + 1].startsWith('-') ? args[idx + 1] : '';
   };
 
   const synthKind = getArg('--synth');
@@ -433,7 +439,7 @@ if (isMain) {
   const outDir = getArg('--out-dir') || path.resolve('sfx-output');
   const renderVideo = getArg('--render');
 
-  let result = { ok: false };
+  let result = { ok: false, error: 'missing_mode' };
   if (synthKind) {
     const wav = synthesizeProceduralWavBuffer(synthKind);
     const dest = path.resolve(outPath || `${normalizeCueKind(synthKind)}.wav`);
@@ -442,28 +448,41 @@ if (isMain) {
     result = { ok: true, mode: 'synth', kind: normalizeCueKind(synthKind), outPath: dest, metrics: analyzeWavBufferAcousticMetrics(wav) };
   } else if (critiquePath) {
     const absWav = path.resolve(critiquePath);
-    const buf = fs.existsSync(absWav) ? fs.readFileSync(absWav) : Buffer.alloc(0);
-    result = { mode: 'critique', filePath: absWav, ...analyzeWavBufferAcousticMetrics(buf) };
+    let isFile = false;
+    try { isFile = fs.existsSync(absWav) && fs.statSync(absWav).isFile(); } catch {}
+    if (!isFile) {
+      result = { ok: false, mode: 'critique', filePath: absWav, error: 'file_not_found' };
+    } else {
+      const buf = fs.readFileSync(absWav);
+      result = { mode: 'critique', filePath: absWav, ...analyzeWavBufferAcousticMetrics(buf) };
+    }
   } else if (cuesTarget) {
     const absSrc = path.resolve(cuesTarget);
-    const srcText = fs.existsSync(absSrc) ? fs.readFileSync(absSrc, 'utf8') : '';
-    const parsed = extractTimelineAudioCues(srcText, absSrc);
-    const resolvedCues = parsed.cues.map((c, idx) => resolveCueAudioAsset(c, { outDir, seed: idx + 1 }));
-    const mixPlan = buildFfmpegMixArgs({
-      videoPath: renderVideo ? path.resolve(renderVideo) : '',
-      cueFiles: resolvedCues,
-      outputWavPath: path.join(path.resolve(outDir), 'sfx-track.wav'),
-      outputVideoPath: renderVideo ? path.join(path.resolve(outDir), 'with-sfx.mp4') : '',
-    });
-    let ffmpegRendered = false;
-    if (renderVideo && mixPlan.ok) {
-      try {
-        const ff = spawnSync('ffmpeg', mixPlan.args, { windowsHide: true, timeout: 30000, encoding: 'utf8' });
-        ffmpegRendered = ff.status === 0;
-      } catch {}
+    let isFile = false;
+    try { isFile = fs.existsSync(absSrc) && fs.statSync(absSrc).isFile(); } catch {}
+    if (!isFile) {
+      result = { ok: false, mode: 'cues', filePath: absSrc, error: 'file_not_found' };
+    } else {
+      const srcText = fs.readFileSync(absSrc, 'utf8');
+      const parsed = extractTimelineAudioCues(srcText, absSrc);
+      const resolvedCues = parsed.cues.map((c, idx) => resolveCueAudioAsset(c, { outDir, seed: idx + 1 }));
+      const mixPlan = buildFfmpegMixArgs({
+        videoPath: renderVideo ? path.resolve(renderVideo) : '',
+        cueFiles: resolvedCues,
+        outputWavPath: path.join(path.resolve(outDir), 'sfx-track.wav'),
+        outputVideoPath: renderVideo ? path.join(path.resolve(outDir), 'with-sfx.mp4') : '',
+      });
+      let ffmpegRendered = false;
+      if (renderVideo && mixPlan.ok) {
+        try {
+          const ff = spawnSync('ffmpeg', mixPlan.args, { windowsHide: true, timeout: 30000, encoding: 'utf8' });
+          ffmpegRendered = ff.status === 0;
+        } catch {}
+      }
+      result = { ok: true, mode: 'cues', ...parsed, resolvedCues, mixPlan, ffmpegRendered };
     }
-    result = { ok: true, mode: 'cues', ...parsed, resolvedCues, mixPlan, ffmpegRendered };
   }
 
-  console.log(asJson ? JSON.stringify(result, null, 2) : `🔊 [VideoSFX] ok=${Boolean(result.ok)} mode=${result.mode || 'none'}`);
+  console.log(asJson ? JSON.stringify(result, null, 2) : `🔊 [VideoSFX] ok=${Boolean(result.ok)} mode=${result.mode || 'none'}${result.error ? ` (${result.error})` : ''}`);
+  if (!result.ok) process.exitCode = 1;
 }

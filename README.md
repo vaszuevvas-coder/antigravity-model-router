@@ -55,7 +55,7 @@ Explore real architecture, transitive impact waves, dependency cycles, and AST s
 ## 🎛️ 7-Tab Crimson Rail Cockpit & Smart Composer 2.0 (`EN / RU`)
 
 <p align="center">
-  <img src="docs/media/cockpit-showcase.png" alt="The Tunnel v4.0.8 — 7-Tab Crimson Rail Control Panel (Live Capture)" width="100%" />
+  <img src="docs/media/cockpit-showcase.png" alt="The Tunnel v4.0.9 — 7-Tab Crimson Rail Control Panel (Live Capture)" width="100%" />
 </p>
 
 - **7-Tab Modular Cockpit & Lite Mode:** Dedicated tabs (`cockpit / behavior / economy / hardware / bugs / memory / settings`), adaptive UI scaling (`90%–130%`), live `EN ↔ RU` switching, built-in **What's New** changelog modal, and safe 1-click **GitHub Plugin Updater**.
@@ -85,7 +85,7 @@ Explore real architecture, transitive impact waves, dependency cycles, and AST s
 ### Zero-Token Local Acceleration (`RAM + CPU + Optional GPU`)
 | Coprocessor | Engine & Modules | What It Delivers |
 | :--- | :--- | :--- |
-| **In-RAM MCP (`4–32 GB`)** | `core/ram/{search,slicer,graph-queries,context-packs}.mjs` | Sub-millisecond `ram_slice`, `BM25F + Trigram`, `LongCodeZip` AST Knapsack, `RepoGraph` & **Graphify v2** |
+| **In-RAM MCP (`4–32 GB`)** | `core/ram/ram-{search,slicer,graph-queries,context-packs}.mjs` | Sub-millisecond `ram_slice`, `BM25F + Trigram`, `LongCodeZip` AST Knapsack, `RepoGraph` & **Graphify v2** |
 | **CPU Worker Pool** | `core/cpu-worker-pool.mjs`, `core/cpu-reranker.mjs`, `core/obs-masker.mjs` | Zero-VRAM `<15 ms` RU↔EN Cross-Reranker, `Drain3` + `Headroom` JSON crusher, `TOON` (`-35%` tokens), `Myers` delta, `Mutation Guard` |
 | **Local Ollama GPU** | `core/local-gpu-engine.mjs`, `core/gpu/gpu-vram-runtime.mjs` | `i8bin-v2` Int8 MRL-512 semantic index (`qwen3-embedding`), `gemma4:12b` 0-token log distill, Vision audit, post-edit critic & 1-click Ollama installer |
 

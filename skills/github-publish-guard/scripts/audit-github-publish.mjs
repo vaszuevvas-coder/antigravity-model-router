@@ -176,6 +176,17 @@ function collectFilesToAudit(rootDir, stagedOnly = false) {
   return { isGit: false, files };
 }
 
+function chunkAuditLine(line, chunkSize = 8192, overlap = 256) {
+  if (line.length <= chunkSize) return [{ text: line, offset: 0 }];
+  const chunks = [];
+  const step = chunkSize - overlap;
+  for (let off = 0; off < line.length; off += step) {
+    chunks.push({ text: line.slice(off, off + chunkSize), offset: off });
+    if (off + chunkSize >= line.length) break;
+  }
+  return chunks;
+}
+
 /**
  * Scans a single text file for machine fingerprints (OS user paths, hostnames, LAN IPs).
  */
@@ -192,94 +203,110 @@ export function scanTextForFingerprints(text, relPath, {
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
-    if (!line || line.length > 4000) continue;
+    if (!line) continue;
     const lineNum = i + 1;
-    const isRegexLine = looksLikeRegexLiteralLine(line);
+    const seenOffsets = new Set();
 
-    // 1. Windows absolute user paths: C:\Users\<name>
-    WIN_USER_PATH_RE.lastIndex = 0;
-    let m;
-    while ((m = WIN_USER_PATH_RE.exec(line)) !== null) {
-      const userSeg = m[2];
-      const matchesCurrentUser = normUser.length >= 3 && userSeg.toLowerCase() === normUser;
-      if (matchesCurrentUser) {
-        findings.push({
-          severity: 'error',
-          category: 'privacy',
-          ruleId: 'machine_user_path',
-          file: relPath,
-          line: lineNum,
-          message: `Current OS username leaked in Windows path: ${m[1]}${userSeg}`,
-        });
-      } else if (!isTestFile && !isRegexLine && !isPlaceholderUser(userSeg)) {
-        findings.push({
-          severity: 'error',
-          category: 'privacy',
-          ruleId: 'abs_home_path',
-          file: relPath,
-          line: lineNum,
-          message: `Absolute Windows user path detected: ${m[1]}${userSeg}`,
-        });
-      }
-    }
+    for (const { text: chunk, offset } of chunkAuditLine(line)) {
+      const isRegexLine = chunk.length <= 4000 && looksLikeRegexLiteralLine(chunk);
 
-    // 2. Unix absolute home paths: /Users/<name> or /home/<name>
-    UNIX_HOME_PATH_RE.lastIndex = 0;
-    while ((m = UNIX_HOME_PATH_RE.exec(line)) !== null) {
-      const userSeg = m[2];
-      const matchesCurrentUser = normUser.length >= 3 && userSeg.toLowerCase() === normUser;
-      if (matchesCurrentUser) {
-        findings.push({
-          severity: 'error',
-          category: 'privacy',
-          ruleId: 'machine_user_path',
-          file: relPath,
-          line: lineNum,
-          message: `Current OS username leaked in home path: ${m[1]}${userSeg}`,
-        });
-      } else if (!isTestFile && !isRegexLine && !isPlaceholderUser(userSeg)) {
-        findings.push({
-          severity: 'error',
-          category: 'privacy',
-          ruleId: 'abs_home_path',
-          file: relPath,
-          line: lineNum,
-          message: `Absolute Unix home path detected: ${m[1]}${userSeg}`,
-        });
-      }
-    }
-
-    // 3. Machine hostname in non-test config/docs
-    if (checkHost && !isTestFile) {
-      const hostIdx = line.toLowerCase().indexOf(normHost);
-      if (hostIdx !== -1) {
-        const prev = hostIdx > 0 ? line[hostIdx - 1] : ' ';
-        const next = line[hostIdx + normHost.length] || ' ';
-        if (!/[a-z0-9_-]/i.test(prev) && !/[a-z0-9_-]/i.test(next)) {
+      // 1. Windows absolute user paths: C:\Users\<name>
+      WIN_USER_PATH_RE.lastIndex = 0;
+      let m;
+      while ((m = WIN_USER_PATH_RE.exec(chunk)) !== null) {
+        const userSeg = m[2];
+        const matchesCurrentUser = normUser.length >= 3 && userSeg.toLowerCase() === normUser;
+        const absPos = offset + m.index;
+        if (seenOffsets.has(`win:${absPos}`)) continue;
+        if (matchesCurrentUser) {
+          seenOffsets.add(`win:${absPos}`);
           findings.push({
-            severity: 'warn',
+            severity: 'error',
             category: 'privacy',
-            ruleId: 'machine_hostname',
+            ruleId: 'machine_user_path',
             file: relPath,
             line: lineNum,
-            message: `Local machine hostname detected ("${currentHostname}")`,
+            message: `Current OS username leaked in Windows path: ${m[1]}${userSeg}`,
+          });
+        } else if (!isTestFile && !isRegexLine && !isPlaceholderUser(userSeg)) {
+          seenOffsets.add(`win:${absPos}`);
+          findings.push({
+            severity: 'error',
+            category: 'privacy',
+            ruleId: 'abs_home_path',
+            file: relPath,
+            line: lineNum,
+            message: `Absolute Windows user path detected: ${m[1]}${userSeg}`,
           });
         }
       }
-    }
 
-    // 4. Private LAN IPs in non-test files (skip loopback 127.0.0.1 and RFC 5737 doc ranges)
-    if (!isTestFile && !isRegexLine) {
-      LAN_IP_RE.lastIndex = 0;
-      while ((m = LAN_IP_RE.exec(line)) !== null) {
-        findings.push({
-          severity: 'warn',
-          category: 'privacy',
-          ruleId: 'lan_ip',
-          file: relPath,
-          line: lineNum,
-          message: `Private LAN IP address detected: ${m[0]}`,
-        });
+      // 2. Unix absolute home paths: /Users/<name> or /home/<name>
+      UNIX_HOME_PATH_RE.lastIndex = 0;
+      while ((m = UNIX_HOME_PATH_RE.exec(chunk)) !== null) {
+        const userSeg = m[2];
+        const matchesCurrentUser = normUser.length >= 3 && userSeg.toLowerCase() === normUser;
+        const absPos = offset + m.index;
+        if (seenOffsets.has(`unix:${absPos}`)) continue;
+        if (matchesCurrentUser) {
+          seenOffsets.add(`unix:${absPos}`);
+          findings.push({
+            severity: 'error',
+            category: 'privacy',
+            ruleId: 'machine_user_path',
+            file: relPath,
+            line: lineNum,
+            message: `Current OS username leaked in home path: ${m[1]}${userSeg}`,
+          });
+        } else if (!isTestFile && !isRegexLine && !isPlaceholderUser(userSeg)) {
+          seenOffsets.add(`unix:${absPos}`);
+          findings.push({
+            severity: 'error',
+            category: 'privacy',
+            ruleId: 'abs_home_path',
+            file: relPath,
+            line: lineNum,
+            message: `Absolute Unix home path detected: ${m[1]}${userSeg}`,
+          });
+        }
+      }
+
+      // 3. Machine hostname in non-test config/docs
+      if (checkHost && !isTestFile) {
+        const hostIdx = chunk.toLowerCase().indexOf(normHost);
+        if (hostIdx !== -1 && !seenOffsets.has(`host:${offset + hostIdx}`)) {
+          const prev = hostIdx > 0 ? chunk[hostIdx - 1] : ' ';
+          const next = chunk[hostIdx + normHost.length] || ' ';
+          if (!/[a-z0-9_-]/i.test(prev) && !/[a-z0-9_-]/i.test(next)) {
+            seenOffsets.add(`host:${offset + hostIdx}`);
+            findings.push({
+              severity: 'warn',
+              category: 'privacy',
+              ruleId: 'machine_hostname',
+              file: relPath,
+              line: lineNum,
+              message: `Local machine hostname detected ("${currentHostname}")`,
+            });
+          }
+        }
+      }
+
+      // 4. Private LAN IPs in non-test files (skip loopback 127.0.0.1 and RFC 5737 doc ranges)
+      if (!isTestFile && !isRegexLine) {
+        LAN_IP_RE.lastIndex = 0;
+        while ((m = LAN_IP_RE.exec(chunk)) !== null) {
+          const absPos = offset + m.index;
+          if (seenOffsets.has(`lan:${absPos}`)) continue;
+          seenOffsets.add(`lan:${absPos}`);
+          findings.push({
+            severity: 'warn',
+            category: 'privacy',
+            ruleId: 'lan_ip',
+            file: relPath,
+            line: lineNum,
+            message: `Private LAN IP address detected: ${m[0]}`,
+          });
+        }
       }
     }
   }
@@ -296,25 +323,32 @@ export function scanTextForSecrets(text, relPath) {
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
-    if (!line || line.length > 4000) continue;
-    if (looksLikeRegexLiteralLine(line)) continue;
-    for (const rule of SECRET_RULES) {
-      rule.re.lastIndex = 0;
-      let m;
-      while ((m = rule.re.exec(line)) !== null) {
-        const hit = m[0];
-        if (isMaskedOrPlaceholderToken(hit)) continue;
-        // Skip synthetic test fixtures only if explicitly marked as fake/mock on the same line
-        if (isTestFile && /(?:mock|fake|fixture|dummy|test_token|synthetic)/i.test(line)) continue;
-        const preview = hit.length > 12 ? `${hit.slice(0, 6)}...${hit.slice(-4)}` : '***';
-        findings.push({
-          severity: 'error',
-          category: 'privacy',
-          ruleId: `secret_${rule.id}`,
-          file: relPath,
-          line: i + 1,
-          message: `Potential ${rule.label} exposed (${preview})`,
-        });
+    if (!line) continue;
+    const seenOffsets = new Set();
+    for (const { text: chunk, offset } of chunkAuditLine(line)) {
+      if (chunk.length <= 4000 && looksLikeRegexLiteralLine(chunk)) continue;
+      for (const rule of SECRET_RULES) {
+        rule.re.lastIndex = 0;
+        let m;
+        while ((m = rule.re.exec(chunk)) !== null) {
+          const absPos = offset + m.index;
+          const dedupKey = `${rule.id}:${absPos}`;
+          if (seenOffsets.has(dedupKey)) continue;
+          const hit = m[0];
+          if (isMaskedOrPlaceholderToken(hit)) continue;
+          // Skip synthetic test fixtures only if explicitly marked as fake/mock on the same line
+          if (isTestFile && /(?:mock|fake|fixture|dummy|test_token|synthetic)/i.test(chunk)) continue;
+          seenOffsets.add(dedupKey);
+          const preview = hit.length > 12 ? `${hit.slice(0, 6)}...${hit.slice(-4)}` : '***';
+          findings.push({
+            severity: 'error',
+            category: 'privacy',
+            ruleId: `secret_${rule.id}`,
+            file: relPath,
+            line: i + 1,
+            message: `Potential ${rule.label} exposed (${preview})`,
+          });
+        }
       }
     }
   }
@@ -326,7 +360,8 @@ export function scanTextForSecrets(text, relPath) {
  */
 export function checkMarkdownLinks(text, relPath, rootDir) {
   const findings = [];
-  const baseDir = path.dirname(path.join(rootDir, relPath));
+  const absRoot = path.resolve(rootDir);
+  const baseDir = path.dirname(path.join(absRoot, relPath));
   const lines = String(text || '').split(/\r?\n/);
   let inFence = false;
   const linkRe = /!?\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
@@ -338,9 +373,10 @@ export function checkMarkdownLinks(text, relPath, rootDir) {
       continue;
     }
     if (inFence) continue;
+    const cleanLine = line.replace(/`[^`]*`/g, '');
     linkRe.lastIndex = 0;
     let m;
-    while ((m = linkRe.exec(line)) !== null) {
+    while ((m = linkRe.exec(cleanLine)) !== null) {
       const target = m[1].trim();
       if (
         !target
@@ -358,15 +394,23 @@ export function checkMarkdownLinks(text, relPath, rootDir) {
         cleanPath = rawPath;
       }
       if (!cleanPath) continue;
-      const absTarget = path.resolve(baseDir, cleanPath);
-      if (!fs.existsSync(absTarget)) {
+      const absTarget = cleanPath.startsWith('/')
+        ? path.resolve(absRoot, cleanPath.replace(/^\/+/, ''))
+        : path.resolve(baseDir, cleanPath);
+      const relFromRoot = path.relative(absRoot, absTarget);
+      const escapesRepo = relFromRoot === '..'
+        || relFromRoot.startsWith(`..${path.sep}`)
+        || path.isAbsolute(relFromRoot);
+      if (escapesRepo || !fs.existsSync(absTarget)) {
         findings.push({
           severity: 'warn',
           category: 'docs',
           ruleId: 'broken_md_link',
           file: relPath,
           line: i + 1,
-          message: `Broken relative Markdown link: "${target}"`,
+          message: escapesRepo
+            ? `Markdown link escapes repository root: "${target}"`
+            : `Broken relative Markdown link: "${target}"`,
         });
       }
     }
@@ -524,7 +568,7 @@ export function checkVersionAndDocsParity(rootDir) {
   if (fs.existsSync(testsDir)) {
     try {
       meta.testsCount = fs.readdirSync(testsDir, { withFileTypes: true })
-        .filter((d) => d.isFile() && /\.test\.[cm]?js$/.test(d.name))
+        .filter((d) => d.isFile() && /\.test\.[cm]?[jt]sx?$/.test(d.name))
         .length;
     } catch {}
   }
@@ -625,6 +669,34 @@ export function checkVersionAndDocsParity(rootDir) {
         file: 'assets/banner.svg',
         line: 1,
         message: `assets/banner.svg lists ${verMatches[0]} instead of v${canonicalVersion}`,
+      });
+    }
+  }
+
+  for (const mfRel of ['release-manifest.json', 'releases/release-manifest.json']) {
+    const mfPath = path.join(rootDir, mfRel);
+    if (!fs.existsSync(mfPath)) continue;
+    try {
+      const mf = JSON.parse(fs.readFileSync(mfPath, 'utf8'));
+      const mfVer = typeof mf?.version === 'string' ? mf.version.trim() : '';
+      if (mfVer && canonicalVersion && mfVer !== canonicalVersion) {
+        findings.push({
+          severity: 'warn',
+          category: 'metadata',
+          ruleId: 'release_manifest_version_mismatch',
+          file: mfRel,
+          line: 1,
+          message: `${mfRel} version is ${mfVer}, while package/plugin version is ${canonicalVersion}`,
+        });
+      }
+    } catch (err) {
+      findings.push({
+        severity: 'error',
+        category: 'metadata',
+        ruleId: 'invalid_json',
+        file: mfRel,
+        line: 1,
+        message: `Invalid JSON in ${mfRel}: ${err.message}`,
       });
     }
   }
@@ -736,6 +808,34 @@ export function auditGithubPublish({
   currentHostname = '',
 } = {}) {
   const absRoot = path.resolve(rootDir);
+  let rootIsDir = false;
+  try {
+    rootIsDir = fs.existsSync(absRoot) && fs.statSync(absRoot).isDirectory();
+  } catch {}
+  if (!rootIsDir) {
+    const errFinding = {
+      severity: 'error',
+      category: 'github_rules',
+      ruleId: 'root_not_found',
+      file: '.',
+      line: 1,
+      message: `Target root directory does not exist or is not a directory: ${absRoot}`,
+    };
+    return {
+      ok: false,
+      grade: 'F',
+      score: 0,
+      strict,
+      rootDir: absRoot,
+      scannedFiles: 0,
+      errorsCount: 1,
+      warningsCount: 0,
+      errors: [errFinding],
+      warnings: [],
+      metadata: { packageVersion: null, pluginVersion: null, skillsCount: 0, testsCount: 0 },
+      remote: null,
+    };
+  }
   let resolvedUser = currentUsername;
   if (!resolvedUser) {
     try {
@@ -945,8 +1045,16 @@ function parseCliArgs(argv) {
   };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
-    if (a === '--root' && argv[i + 1]) {
-      opts.rootDir = argv[++i];
+    if (a.startsWith('--root=')) {
+      const v = a.slice('--root='.length);
+      if (!v) opts.invalidRootArg = true;
+      else opts.rootDir = v;
+    } else if (a === '--root') {
+      if (argv[i + 1] && !argv[i + 1].startsWith('-')) {
+        opts.rootDir = argv[++i];
+      } else {
+        opts.invalidRootArg = true;
+      }
     } else if (a === '--staged') {
       opts.stagedOnly = true;
     } else if (a === '--remote') {
@@ -973,6 +1081,11 @@ if (isDirectRun) {
   if (opts.help) {
     console.log('Usage: node audit-github-publish.mjs [--root <dir>] [--staged] [--remote] [--strict] [--json]');
     process.exit(0);
+  }
+  if (opts.invalidRootArg) {
+    const msg = 'Missing directory value for --root';
+    console.log(opts.json ? JSON.stringify({ ok: false, error: msg }, null, 2) : msg);
+    process.exit(1);
   }
   const result = auditGithubPublish(opts);
   if (opts.json) {

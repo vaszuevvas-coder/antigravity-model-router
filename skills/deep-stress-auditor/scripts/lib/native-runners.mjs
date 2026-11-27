@@ -12,17 +12,37 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 
 async function runToolSafe(cmd, args, cwd, timeoutMs = 6000) {
-  try {
-    const res = await execFileAsync(cmd, args, {
+  const execOnce = async (bin, useShell) => {
+    const safeBin = useShell && process.platform === 'win32' && /[\s&|()^]/.test(String(bin)) && !/^".*"$/.test(String(bin))
+      ? `"${bin}"`
+      : bin;
+    const res = await execFileAsync(safeBin, args, {
       cwd,
       timeout: timeoutMs,
       encoding: 'utf8',
       windowsHide: true,
-      shell: process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(String(cmd || '')),
+      shell: useShell,
       maxBuffer: 2 * 1024 * 1024,
     });
     return { available: true, code: 0, stdout: res.stdout || '', stderr: res.stderr || '' };
+  };
+  const baseShell = process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(String(cmd || ''));
+  try {
+    return await execOnce(cmd, baseShell);
   } catch (err) {
+    if (
+      process.platform === 'win32'
+      && err?.code === 'ENOENT'
+      && !baseShell
+      && !/[\\/]/.test(String(cmd || ''))
+      && !/\.[a-z0-9]+$/i.test(String(cmd || ''))
+    ) {
+      try {
+        return await execOnce(`${cmd}.cmd`, true);
+      } catch (retryErr) {
+        err = retryErr;
+      }
+    }
     if (err?.code === 'ENOENT' || err?.code === 'EINVAL' || err?.code === 'EACCES') {
       return { available: false, code: -1, stdout: '', stderr: '' };
     }

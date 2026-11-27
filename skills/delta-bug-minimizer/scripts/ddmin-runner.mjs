@@ -307,17 +307,29 @@ async function runCli() {
   const inputIdx = args.indexOf('--input');
   const cmdIdx = args.indexOf('--cmd');
 
-  if (inputIdx !== -1 && cmdIdx !== -1 && args[inputIdx + 1] && args[cmdIdx + 1]) {
-    const inputFile = args[inputIdx + 1];
-    const cmdTemplate = args[cmdIdx + 1];
+  const hasArgVal = (idx) => idx !== -1 && args[idx + 1] && !args[idx + 1].startsWith('-');
+  const getEqOrVal = (flag) => {
+    const eq = args.find((a) => a.startsWith(`${flag}=`));
+    if (eq) return eq.slice(flag.length + 1);
+    const idx = args.indexOf(flag);
+    return hasArgVal(idx) ? args[idx + 1] : '';
+  };
 
-    if (!/\{file\}/i.test(cmdTemplate)) {
-      emitOutput({ ok: false, error: 'Command template (--cmd) must contain {FILE} placeholder' });
-      process.exit(1);
-    }
+  const inputFile = getEqOrVal('--input');
+  const cmdTemplate = getEqOrVal('--cmd');
+  const rawTimeout = Number(getEqOrVal('--timeout'));
+  const timeoutMs = Number.isFinite(rawTimeout) && rawTimeout > 0 ? Math.floor(rawTimeout) : 15000;
+
+  if (inputFile && cmdTemplate) {
+    const isJson = args.includes('--json');
+    const outFile = getEqOrVal('--output');
+    const emitOutput = (obj) => {
+      if (outFile) writeFileSync(outFile, JSON.stringify(obj, null, 2) + '\n', 'utf8');
+      console.log(isJson ? JSON.stringify(obj, null, 2) : `ddmin: ${obj.originalSize ?? 0} -> ${obj.minimizedSize ?? 0} (${obj.iterations ?? 0} iters)`);
+    };
 
     if (!existsSync(inputFile)) {
-      console.error(JSON.stringify({ ok: false, error: `File not found: ${inputFile}` }));
+      emitOutput({ ok: false, error: `File not found: ${inputFile}` });
       process.exit(1);
     }
 
@@ -332,8 +344,11 @@ async function runCli() {
       slotTmpFiles.set(slot, tmpFile);
       try {
         writeFileSync(tmpFile, subset.join('\n'), 'utf8');
-        const cmd = cmdTemplate.replace(/(["']?)\{file\}\1/gi, (_m, q) => (q ? `${q}${tmpFile}${q}` : `"${tmpFile}"`));
-        const execOpts = { shell: true, windowsHide: true };
+        const cmd = cmdTemplate.replace(/(["']?)\{file\}\1/gi, (_m, q) => {
+          if (q === "'" && process.platform === 'win32') return `"${tmpFile}"`;
+          return q ? `${q}${tmpFile}${q}` : `"${tmpFile}"`;
+        });
+        const execOpts = { shell: true, windowsHide: true, timeout: timeoutMs, stdio: 'ignore' };
         if (signal) execOpts.signal = signal;
         await execFileAsync(cmd, execOpts);
         return false;

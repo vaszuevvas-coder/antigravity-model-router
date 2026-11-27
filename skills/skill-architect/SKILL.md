@@ -17,7 +17,7 @@ Design, evolve, and verify `SKILL.md` bundles against SOTA 2026 standards (`Skil
 ## 2. Anti-Negative-Transfer Principles (`SkillsBench` / `EvoSkill`)
 - **Delta-Only Knowledge**: Omit generic programming advice the model already knows because textbook priors dilute repository invariants and trigger Negative Transfer.
 - **Causal `Why`-Invariants**: Prefer `"Do X because Y prevents Z"` over bare `"ALWAYS"` / `"NEVER"` rules so the agent adapts safely on legitimate edge cases.
-- **Trigger Calibration (`description`)**: Write 3rd-person compact English metadata (`60-260` chars) pairing exact capability with `"Use when..."` — keeping `SKILL.md` EN-only saves catalog & back-translation tokens while human-facing Russian UI titles live in `sidecars/panel/server.mjs` (`SKILL_RU_TITLES` / `SKILL_RU_HINTS`).
+- **Trigger Calibration (`description`)**: Write 3rd-person compact English metadata (`60-260` chars) pairing exact capability with `"Use when..."` — keeping `SKILL.md` EN-only saves catalog & back-translation tokens while human-facing Russian UI titles live in `sidecars/panel/lib/panel-state-skills.mjs` (`SKILL_RU_TITLES` / `SKILL_RU_HINTS`).
 - **Failure-Driven Distillation (`EvoSkill`)**: Convert resolved `pitfall-ledger` regressions into compact `Why`-invariants rather than stacking duplicate raw error logs.
 
 ## 3. Deterministic Audit & Trigger Eval CLI
@@ -38,4 +38,4 @@ Optional `<skill_dir>/evals/evals.json` supports `{ "positive": ["..."], "negati
 
 ## 4. Verification Gate
 - Confirm `audit-skill.mjs` passes with `errorsCount === 0`, score `>= 75` (Grade `A` or `B`), `0` broken `scripts/` links, and `0` high sibling collisions (`>= 0.55`).
-- For core plugin skills, verify RU display labels exist in `sidecars/panel/server.mjs` (`SKILL_RU_TITLES` / `SKILL_RU_HINTS`) and `SKILL.md` indexes cleanly in `core/local-gpu-engine.mjs`.
+- For core plugin skills, verify RU display labels exist in `sidecars/panel/lib/panel-state-skills.mjs` (`SKILL_RU_TITLES` / `SKILL_RU_HINTS`) and `SKILL.md` indexes cleanly in `core/local-gpu-engine.mjs`.

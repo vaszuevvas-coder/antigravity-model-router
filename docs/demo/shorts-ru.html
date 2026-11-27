@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>The Tunnel v4.0.6 — Вертикальный обзор (Shorts / Reels 25s)</title>
+  <title>The Tunnel v4.0.9 — Вертикальный обзор (Shorts / Reels 25s)</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -271,7 +271,7 @@
               <path d="M64 36 L90 64 L64 92 L38 64 Z" fill="#181215" stroke="#f04848" stroke-width="7" stroke-linejoin="round"/>
               <path d="M64 51 L75 64 L64 77 L53 64 Z" fill="#f04848"/>
             </svg>
-            <div>THE TUNNEL <span>v4.0.6</span></div>
+            <div>THE TUNNEL <span>v4.0.9</span></div>
           </div>
           <div class="brand-right">
             <span class="live-dot"></span>
@@ -337,7 +337,7 @@
               <span id="cockpitPhaseBadge">УМНЫЙ ВВОД @FILE</span>
             </div>
             <div class="device-body">
-              <img id="cockpitLiveImg" src="/shorts-ru-frames/cockpit/frame-0001.png" alt="Живая панель управления The Tunnel" />
+              <img id="cockpitLiveImg" src="../media/demo-cockpit.gif" alt="Живая панель управления The Tunnel" />
             </div>
           </div>
         </div>
@@ -361,7 +361,7 @@
               <span>188 файлов · 419 связей</span>
             </div>
             <div class="device-body" style="padding:4px;">
-              <img id="mapLiveImg" src="/shorts-ru-frames/map/frame-0001.png" alt="Интерактивная карта проекта The Tunnel" />
+              <img id="mapLiveImg" src="../media/demo-project-map.gif" alt="Интерактивная карта проекта The Tunnel" />
             </div>
             <div class="map-hud-foot">
               <strong id="mapFootMode">Папки → Файлы · Плавный зум</strong>
@@ -405,7 +405,7 @@
               <div class="stack-info">
                 <div class="stack-kicker">МАШИНА ВРЕМЕНИ И СТРАХОВКА</div>
                 <div class="stack-name">Откат шага и Git-песочницы</div>
-                <div class="stack-sub">AgentShield, Wiretap и 56 наборов тестов</div>
+                <div class="stack-sub">AgentShield, Wiretap и 60 наборов тестов</div>
               </div>
               <div class="stack-val">59 защит</div>
             </div>
@@ -424,7 +424,7 @@
             <path d="M64 50 L76 64 L64 78 L52 64 Z" fill="#f04848"/>
           </svg>
           <div class="kicker">Бесплатно · Открытый код</div>
-          <h2 class="h1-big" style="font-size:68px;">The Tunnel <span>v4.0.6</span></h2>
+          <h2 class="h1-big" style="font-size:68px;">The Tunnel <span>v4.0.9</span></h2>
           <p class="sub-lead">Установка в один клик на любую ОС</p>
           <div class="os-pills">
             <div class="os-pill">Windows · Setup.exe</div>
@@ -604,7 +604,9 @@
           const cFrame = Math.min(CLIPS.cockpitCount, 1 + Math.floor(u * CLIPS.cockpitCount));
           const cImg = document.getElementById('cockpitLiveImg');
           if (cImg) {
-            const targetSrc = '/shorts-ru-frames/cockpit/frame-' + pad4(cFrame) + '.png';
+            const targetSrc = isCapture
+              ? '/shorts-ru-frames/cockpit/frame-' + pad4(cFrame) + '.png'
+              : '../media/demo-cockpit.gif';
             if (cImg.getAttribute('data-cur-src') !== targetSrc) {
               cImg.setAttribute('data-cur-src', targetSrc);
               cImg.src = targetSrc;
@@ -627,7 +629,9 @@
           const mFrame = Math.min(CLIPS.mapCount, 1 + Math.floor(u * CLIPS.mapCount));
           const mImg = document.getElementById('mapLiveImg');
           if (mImg) {
-            const targetSrc = '/shorts-ru-frames/map/frame-' + pad4(mFrame) + '.png';
+            const targetSrc = isCapture
+              ? '/shorts-ru-frames/map/frame-' + pad4(mFrame) + '.png'
+              : '../media/demo-project-map.gif';
             if (mImg.getAttribute('data-cur-src') !== targetSrc) {
               mImg.setAttribute('data-cur-src', targetSrc);
               mImg.src = targetSrc;

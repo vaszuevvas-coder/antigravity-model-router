@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * @file eval-skill-benchmark.mjs
  * @description Deterministic `agentskills.io` A/B Eval Harness (`evals/evals.json`, `grading.json`, `timing.json`, `benchmark.json`).
@@ -109,7 +110,8 @@ export function gradeOutputsAgainstAssertions(outputsDir, assertions = []) {
         evidence = `JSON file "${target}" not found`;
       } else {
         try {
-          JSON.parse(hit.text);
+          const jsonText = hit.text || (hit.size <= 10 * 1024 * 1024 ? readFileSync(hit.full, 'utf8') : '');
+          JSON.parse(jsonText);
           passed = true;
           evidence = `Parsed valid JSON in ${hit.name} (${hit.size}B)`;
         } catch (err) {
@@ -279,8 +281,13 @@ const isMain = (() => {
   return process.platform === 'win32' ? self.toLowerCase() === arg.toLowerCase() : self === arg;
 })();
 if (isMain) {
-  const mode = process.argv[2] || '';
-  const target = process.argv[3] || '';
+  const args = process.argv.slice(2);
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log('Usage: node eval-skill-benchmark.mjs (--init <skillDir> | --aggregate <iterationDir>)');
+    process.exit(0);
+  }
+  const mode = args[0] || '';
+  const target = args[1] || '';
   if (mode === '--init' && target) {
     console.log(JSON.stringify(initSkillEvalsTemplate(target), null, 2));
   } else if (mode === '--aggregate' && target) {

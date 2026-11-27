@@ -5,11 +5,11 @@
     "sourceUrl": "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill",
     "license": "MIT",
     "counts": {
-      "reasoning": 194,
-      "palettes": 194,
+      "reasoning": 100,
+      "palettes": 100,
       "typography": 74,
       "charts": 25,
-      "uxGuidelines": 141,
+      "uxGuidelines": 100,
       "motion": 17,
       "stacks": 6
     }
@@ -2873,7 +2873,7 @@
       "secondary": "Column Chart, Grouped Bar",
       "whenToUse": "Comparing discrete categories by magnitude; ranking or ordering is the core insight; categories ≤ 15",
       "whenNotToUse": "Categories > 15 (use table or search); data has time dimension (use line); showing proportions (use waffle/stacked)",
-      "a11yFallback": "Visible sortable data table plus concise comparison summary. Keyboard: focus reveals hover values; focusable headers with Enter/Space sort a",
+      "a11yFallback": "Visible sortable data table plus concise comparison summary. Keyboard: focus reveals hover values; focusable headers with Enter/Space sort ascending or descending.",
       "libraries": "Chart.js, Recharts, D3.js"
     },
     {
@@ -2882,8 +2882,8 @@
       "bestChart": "Pie Chart or Donut",
       "secondary": "Stacked Bar, Waffle Chart",
       "whenToUse": "≤5 categories; one dominant segment vs rest; emphasis on visual proportion over exact values",
-      "whenNotToUse": "Categories > 5; slice differences < 5% (visually indistinguishable); user needs precise values; accessibility-first cont",
-      "a11yFallback": "Percentage data table and concise part-to-whole summary; offer a stacked bar view. Keyboard: focus reveals slice values; Enter/Space drills ",
+      "whenNotToUse": "Categories > 5; slice differences < 5% (visually indistinguishable); user needs precise values; accessibility-first contexts",
+      "a11yFallback": "Percentage data table and concise part-to-whole summary; offer a stacked bar view. Keyboard: focus reveals slice values; Enter/Space drills into slice details.",
       "libraries": "Chart.js, Recharts, D3.js"
     },
     {
@@ -2912,8 +2912,8 @@
       "bestChart": "Choropleth Map or Bubble Map",
       "secondary": "Geographic Heat Map",
       "whenToUse": "Data has a regional/location dimension; spatial distribution is the core insight for the user",
-      "whenNotToUse": "Regions have very different sizes making visual comparison misleading (use bar); raw counts or totals on a choropleth (n",
-      "a11yFallback": "Sortable region table plus geographic summary. Keyboard: arrow keys or labeled pan buttons move the map; +/- buttons zoom; Enter drills into",
+      "whenNotToUse": "Regions have very different sizes making visual comparison misleading (use bar); raw counts or totals on a choropleth (normalize per capita)",
+      "a11yFallback": "Sortable region table plus geographic summary. Keyboard: arrow keys or labeled pan buttons move the map; +/- buttons zoom; Enter drills into region details.",
       "libraries": "D3.js, Mapbox, Leaflet"
     },
     {
@@ -2943,7 +2943,7 @@
       "secondary": "Ribbon Chart",
       "whenToUse": "Historical data + model predictions; communicating uncertainty range to non-technical stakeholders",
       "whenNotToUse": "No historical baseline; prediction confidence is too low to be useful; audience is not data-literate",
-      "a11yFallback": "Visible forecast table plus uncertainty summary. Keyboard: focus reveals hover values; buttons toggle actual/forecast; +/- buttons zoom; Res",
+      "a11yFallback": "Visible forecast table plus uncertainty summary. Keyboard: focus reveals hover values; buttons toggle actual/forecast; +/- buttons zoom; Reset restores range.",
       "libraries": "Chart.js, ApexCharts, Plotly"
     },
     {
@@ -2953,7 +2953,7 @@
       "secondary": "Scatter with Alert",
       "whenToUse": "Monitoring a time-series for outliers; alerting users to unexpected spikes or dips in operational data",
       "whenNotToUse": "Anomalies are predefined categories (use bar with highlight); real-time context without a pause control",
-      "a11yFallback": "Anomaly event list/table plus narrative alert summary. Keyboard: focus reveals point details; alerts are available in the persistent list wi",
+      "a11yFallback": "Anomaly event list/table plus narrative alert summary. Keyboard: focus reveals point details; alerts are available in the persistent list with timestamps.",
       "libraries": "D3.js, Plotly, ApexCharts"
     },
     {
@@ -2963,7 +2963,7 @@
       "secondary": "Sunburst, Nested Donut, Icicle",
       "whenToUse": "Showing size relationships within a hierarchy; overview of proportional structure (e.g., budget breakdown)",
       "whenNotToUse": "Hierarchy depth > 3 levels (too complex to read); user needs to compare sibling values precisely",
-      "a11yFallback": "Collapsible tree table plus hierarchy summary; treemap remains supplementary. Keyboard: focus reveals hover values; Enter/Space drills or ex",
+      "a11yFallback": "Collapsible tree table plus hierarchy summary; treemap remains supplementary. Keyboard: focus reveals hover values; Enter/Space drills or expands.",
       "libraries": "D3.js, Recharts, ApexCharts"
     },
     {
@@ -3003,7 +3003,7 @@
       "secondary": "OHLC Bar, Heikin-Ashi",
       "whenToUse": "Financial time-series with Open/High/Low/Close data; trading or investment product context only",
       "whenNotToUse": "Non-financial audience; no OHLC data available (use line chart); accessibility-first context",
-      "a11yFallback": "Sortable OHLC table plus daily-change summary. Keyboard: focus reveals candle values; +/- buttons zoom; Reset restores range; live updates d",
+      "a11yFallback": "Sortable OHLC table plus daily-change summary. Keyboard: focus reveals candle values; +/- buttons zoom; Reset restores range; live updates described concisely.",
       "libraries": "Lightweight Charts (TradingView), ApexCharts"
     },
     {
@@ -3013,7 +3013,7 @@
       "secondary": "Hierarchical Tree, Adjacency Matrix",
       "whenToUse": "Mapping connections between entities; network topology or social graph exploration context",
       "whenNotToUse": "Node count > 500 without clustering pre-applied; user needs precise connection counts; mobile context",
-      "a11yFallback": "Adjacency list/table and relationship summary; tree view when applicable. Keyboard: focus reveals node details; Enter drills; Move up/down/l",
+      "a11yFallback": "Adjacency list/table and relationship summary; tree view when applicable. Keyboard: focus reveals node details; Enter drills; Move up/down/left/right buttons pan.",
       "libraries": "D3.js (d3-force), Vis.js, Cytoscape.js"
     },
     {
@@ -3053,7 +3053,7 @@
       "secondary": "Treemap, Icicle, Circle Packing",
       "whenToUse": "Exploring nested proportions where both hierarchy and relative size matter (e.g., org spend breakdown)",
       "whenNotToUse": "More than 3 hierarchy levels (outer rings become unreadable); precision matters over overview; mobile",
-      "a11yFallback": "Collapsible indented list/table plus hierarchy summary and breadcrumbs. Keyboard: Enter/Space drills or expands; Back button returns; focus ",
+      "a11yFallback": "Collapsible indented list/table plus hierarchy summary and breadcrumbs. Keyboard: Enter/Space drills or expands; Back button returns; focus reveals segment values.",
       "libraries": "D3.js (d3-hierarchy), Recharts, ApexCharts"
     },
     {
@@ -3063,7 +3063,7 @@
       "secondary": "Decision Tree, Flow Chart",
       "whenToUse": "Decomposing a metric into contributing factors; AI-assisted analysis or BI drill-down scenarios",
       "whenNotToUse": "No clear parent-child causal relationship; audience expects a summary rather than exploration",
-      "a11yFallback": "Expandable tree table plus root-cause summary. Keyboard: Enter/Space drills and expands; Back collapses; dedicated expand/collapse buttons e",
+      "a11yFallback": "Expandable tree table plus root-cause summary. Keyboard: Enter/Space drills and expands; Back collapses; dedicated expand/collapse buttons expand/collapse all nodes.",
       "libraries": "Power BI (native), React-Flow, Custom D3.js"
     },
     {
@@ -3083,7 +3083,7 @@
       "secondary": "Ticker Tape, Moving Gauge",
       "whenToUse": "Live monitoring dashboards; IoT/ops data updating at ≥1 Hz; user needs current value at a glance",
       "whenNotToUse": "Update frequency < 1/min (use periodic-refresh line chart); flashing content without reduced-motion support",
-      "a11yFallback": "Streaming data table plus current-value/trend summary. Keyboard: Pause/Resume button controls updates; focus reveals values; +/- buttons zoo",
+      "a11yFallback": "Streaming data table plus current-value/trend summary. Keyboard: Pause/Resume button controls updates; focus reveals values; +/- buttons zoom; Reset restores range.",
       "libraries": "Smoothed D3.js, CanvasJS"
     },
     {
@@ -3093,7 +3093,7 @@
       "secondary": "Sentiment Arc, Radar Chart",
       "whenToUse": "NLP output visualization; exploratory analysis of text corpus sentiment; frequency-weighted keyword overview",
       "whenNotToUse": "Precise values matter (word size is inherently imprecise); screen-reader context; corpus < 50 items",
-      "a11yFallback": "Sortable term table/list plus sentiment summary; word cloud is supplementary. Keyboard: focus reveals word details; labeled controls filter ",
+      "a11yFallback": "Sortable term table/list plus sentiment summary; word cloud is supplementary. Keyboard: focus reveals word details; labeled controls filter sentiment.",
       "libraries": "D3-cloud, Highcharts, Nivo"
     },
     {
@@ -3103,7 +3103,7 @@
       "secondary": "Directed Acyclic Graph (DAG), Petri Net",
       "whenToUse": "Analyzing event logs to visualize actual process flows; identifying bottlenecks and deviations in ops/product funnels",
       "whenNotToUse": "No event log data available; audience expects a static flowchart (use diagram tool); node count > 100 without pre-filter",
-      "a11yFallback": "Path summary table plus bottleneck narrative. Keyboard: Move buttons replace drag; focus reveals node details; Enter activates a node; Back ",
+      "a11yFallback": "Path summary table plus bottleneck narrative. Keyboard: Move buttons replace drag; focus reveals node details; Enter activates a node; Back returns to overview.",
       "libraries": "React-Flow, Cytoscape.js, Recharts"
     }
   ],

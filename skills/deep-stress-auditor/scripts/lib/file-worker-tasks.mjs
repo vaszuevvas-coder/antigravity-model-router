@@ -775,13 +775,15 @@ function checkConfigAndEncoding(item, findings) {
 function parseNamedSpecifiers(rawList) {
   const out = [];
   for (const part of rawList.split(',')) {
-    const trimmed = part.trim().replace(/^type\s+/, '');
+    const rawTrimmed = part.trim();
+    const isType = /^type\s+/.test(rawTrimmed);
+    const trimmed = rawTrimmed.replace(/^type\s+/, '');
     if (!trimmed) continue;
     const asParts = trimmed.split(/\s+as\s+/);
     const imported = asParts[0].trim();
     const local = (asParts[1] || imported).trim();
     if (/^[A-Za-z0-9_$]+$/.test(imported)) {
-      out.push({ imported, local });
+      out.push({ imported, local, isType });
     }
   }
   return out;
@@ -1005,8 +1007,10 @@ function extractJsTsImportsAndExports(relPath, cleanCode, findings) {
 
   const lines = cleanCode.split(/\r?\n/);
   const lineOffsets = [0];
-  for (let i = 0; i < lines.length; i++) {
-    lineOffsets.push(lineOffsets[i] + lines[i].length + 1);
+  for (let i = 0; i < cleanCode.length; i++) {
+    if (cleanCode.charCodeAt(i) === 10) {
+      lineOffsets.push(i + 1);
+    }
   }
   const offsetToLine = (idx) => {
     let lo = 0;
@@ -1297,7 +1301,10 @@ function extractJsTsImportsAndExports(relPath, cleanCode, findings) {
                 checkBackslashSpecifier(specifier, line, 'Backslash used in module import specifier (breaks on Linux/macOS/ESM)');
                 const inner = cleanCode.slice(openBrace.start + 1, closeBrace.start);
                 const namedImports = parseNamedSpecifiers(inner);
-                for (const ni of namedImports) namedExports.push(ni.local);
+                for (const ni of namedImports) {
+                  if (ni.local === 'default') hasDefaultExport = true;
+                  else namedExports.push(ni.local);
+                }
                 imports.push({
                   specifier,
                   line,
@@ -1754,19 +1761,20 @@ function scanTaintAndSecurity(item, cleanCode, findings) {
           if (/^[A-Za-z0-9_$]+$/.test(v)) taintedVars.add(v);
         }
       }
-      const assign = trimmed.match(/^(?:const|let|var\s+)?([A-Za-z0-9_]+)\s*(?::?=)\s*(.+)/);
+      const assign = trimmed.match(/^(?:const|let|var\s+)?([A-Za-z0-9_$]+)\s*(?::?=)\s*(.+)/);
       if (assign && !SANITIZER_RE.test(assign[2])) {
         taintedVars.add(assign[1]);
       }
     } else {
-      const assign = trimmed.match(/^(?:const|let|var\s+)?([A-Za-z0-9_]+)\s*(?::?=)\s*(.+)/);
+      const assign = trimmed.match(/^(?:const|let|var\s+)?([A-Za-z0-9_$]+)\s*(?::?=)\s*(.+)/);
       if (assign) {
         const rhs = assign[2];
         if (SANITIZER_RE.test(rhs)) {
           taintedVars.delete(assign[1]);
         } else {
           for (const tv of taintedVars) {
-            if (new RegExp(`\\b${tv}\\b`).test(rhs)) {
+            const escTv = tv.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            if (new RegExp(`(?<![A-Za-z0-9_$])${escTv}(?![A-Za-z0-9_$])`).test(rhs)) {
               taintedVars.add(assign[1]);
               break;
             }
@@ -1777,7 +1785,10 @@ function scanTaintAndSecurity(item, cleanCode, findings) {
 
     const lineHasTaint =
       TAINT_SOURCE_RE.test(trimmed) ||
-      Array.from(taintedVars).some((tv) => new RegExp(`\\b${tv}\\b`).test(trimmed));
+      Array.from(taintedVars).some((tv) => {
+        const escTv = tv.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`(?<![A-Za-z0-9_$])${escTv}(?![A-Za-z0-9_$])`).test(trimmed);
+      });
 
     // 2. CWE-89 SQL Injection (concatenation/template/f-string inside SQL query call)
     if (

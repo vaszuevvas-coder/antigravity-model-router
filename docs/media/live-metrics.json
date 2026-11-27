@@ -1,11 +1,11 @@
 {
   "generatedAt": "2026-11-27T06:56:03.272Z",
   "telemetry": {
-    "version": "4.0.6",
+    "version": "4.0.9",
     "counts": {
       "topCore": 59,
       "totalCore": 71,
-      "testSuites": 56,
+      "testSuites": 60,
       "builtInSkills": 15,
       "guardrails": 59
     },

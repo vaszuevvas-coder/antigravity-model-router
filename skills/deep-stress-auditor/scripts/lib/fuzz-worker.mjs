@@ -12,6 +12,8 @@ import https from 'node:https';
 import { syncBuiltinESMExports } from 'node:module';
 import net from 'node:net';
 import { pathToFileURL } from 'node:url';
+import v8 from 'node:v8';
+import vm from 'node:vm';
 import workerThreads, { isMainThread, parentPort, workerData } from 'node:worker_threads';
 
 const BLOCKED_MSG = 'ERR_SANDBOX_MUTATION_BLOCKED: Side-effect write/network/exec blocked during stress fuzzing';
@@ -19,6 +21,42 @@ const rpcPort = workerData?.__fuzzPort || parentPort;
 const origSetTimeout = globalThis.setTimeout.bind(globalThis);
 let blockedCallsInTurn = 0;
 let virtualTimeOffsetMs = 0;
+let _workerGcFn = null;
+
+function forceWorkerGc() {
+  if (typeof globalThis.gc === 'function') {
+    globalThis.gc();
+    return;
+  }
+  if (_workerGcFn === null) {
+    try {
+      v8.setFlagsFromString('--expose_gc');
+      const fn = vm.runInNewContext('gc');
+      _workerGcFn = typeof fn === 'function' ? fn : false;
+    } catch {
+      _workerGcFn = false;
+    }
+  }
+  if (typeof _workerGcFn === 'function') _workerGcFn();
+}
+
+function denyCallback(...args) {
+  if (++blockedCallsInTurn > 16) virtualTimeOffsetMs += 500;
+  const err = new Error(BLOCKED_MSG);
+  err.code = 'ERR_SANDBOX_FS_MUTATION_BLOCKED';
+  let cb = null;
+  for (let i = args.length - 1; i >= 0; i--) {
+    if (typeof args[i] === 'function') {
+      cb = args[i];
+      break;
+    }
+  }
+  if (typeof cb === 'function') {
+    queueMicrotask(() => cb(err));
+    return;
+  }
+  throw err;
+}
 
 function denySync() {
   if (++blockedCallsInTurn > 16) virtualTimeOffsetMs += 500;
@@ -50,11 +88,8 @@ function installZeroMutationSandbox() {
   ];
   for (const m of blockedAsyncFs) {
     if (typeof fsPromises[m] === 'function') fsPromises[m] = denyAsync;
+    if (typeof fs[m] === 'function') fs[m] = denyCallback;
   }
-  fs.writeFile = (_p, _d, cb) => {
-    const fn = typeof _d === 'function' ? _d : cb;
-    if (typeof fn === 'function') fn(new Error(BLOCKED_MSG));
-  };
 
   const isValidFsPathArg = (p) => (
     (typeof p === 'string' && p.length > 0 && !p.includes('\0')) ||
@@ -108,6 +143,30 @@ function installZeroMutationSandbox() {
     if (isWriteOpenFlags(flags)) denySync();
     return origOpenSync(pathArg, flags, mode);
   };
+  if (typeof fs.open === 'function') {
+    const origOpen = fs.open.bind(fs);
+    fs.open = (pathArg, flags, ...rest) => {
+      try {
+        assertValidFsPathArg(pathArg);
+      } catch (err) {
+        let cb = null;
+        for (let i = rest.length - 1; i >= 0; i--) {
+          if (typeof rest[i] === 'function') {
+            cb = rest[i];
+            break;
+          }
+        }
+        if (typeof flags === 'function') cb = flags;
+        if (typeof cb === 'function') {
+          queueMicrotask(() => cb(err));
+          return;
+        }
+        throw err;
+      }
+      if (isWriteOpenFlags(flags)) return denyCallback(pathArg, flags, ...rest);
+      return origOpen(pathArg, flags, ...rest);
+    };
+  }
   if (typeof fsPromises.open === 'function') {
     const origFpOpen = fsPromises.open.bind(fsPromises);
     fsPromises.open = async (pathArg, flags, mode) => {
@@ -354,13 +413,14 @@ async function runModuleFuzz({ file, relPath, candidates }) {
     // 200-step memory leak micro-benchmark on fast pure benign functions
     if ((acceptsString || acceptsObject) && baselineMs < 5 && performance.now() - modStart < 1200) {
       const sampleInput = acceptsString ? 'steady_state_probe_payload' : { ok: true };
+      forceWorkerGc();
       const startHeap = process.memoryUsage().heapUsed;
       for (let step = 0; step < 200; step++) {
         try {
           await invokeWithTimeoutCheck(fn, sampleInput);
         } catch {}
       }
-      if (typeof globalThis.gc === 'function') globalThis.gc();
+      forceWorkerGc();
       const deltaMb = (process.memoryUsage().heapUsed - startHeap) / (1024 * 1024);
       if (deltaMb > 24) {
         issues.push({

@@ -66,16 +66,17 @@ function isPrivateOrLoopbackIpv4(host) {
   const c = Number(m[3]);
   const d = Number(m[4]);
   if (a > 255 || b > 255 || c > 255 || d > 255) return true;
-  if (a === 127 || a === 0 || a === 10) return true;
+  if (a === 127 || a === 0 || a === 10 || a >= 224) return true;
   if (a === 169 && b === 254) return true;
   if (a === 172 && b >= 16 && b <= 31) return true;
   if (a === 192 && b === 168) return true;
+  if (a === 198 && (b === 18 || b === 19)) return true;
   if (a === 100 && b >= 64 && b <= 127) return true;
   return false;
 }
 
 function isPrivateOrLoopbackHost(rawHost = '') {
-  const host = String(rawHost || '').trim().toLowerCase().replace(/^\[|\]$/g, '');
+  const host = String(rawHost || '').trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
   if (!host) return true;
   if (
     host === 'localhost' ||
@@ -87,9 +88,10 @@ function isPrivateOrLoopbackHost(rawHost = '') {
   }
   if (isPrivateOrLoopbackIpv4(host)) return true;
   if (host === '::1' || host === '::') return true;
-  if (host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80:')) return true;
-  if (host.startsWith('::ffff:')) {
-    const v4Part = host.slice(7);
+  if (host.startsWith('fc') || host.startsWith('fd') || /^fe[89ab][0-9a-f]:/.test(host)) return true;
+  const v6MappedOrCompat = /^::(?:ffff:)?([0-9a-f.:]+)$/.exec(host);
+  if (v6MappedOrCompat) {
+    const v4Part = v6MappedOrCompat[1];
     if (isPrivateOrLoopbackIpv4(v4Part)) return true;
     const hexMatch = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(v4Part);
     if (hexMatch) {
@@ -127,8 +129,9 @@ export function validatePublicRefUrl(rawUrl) {
   if (parsed.username || parsed.password) {
     return { ok: false, url: '', host: '', reason: 'credentials_disallowed' };
   }
-  const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
-  if (isPrivateOrLoopbackHost(parsed.hostname)) {
+  const normHostname = parsed.hostname.toLowerCase().replace(/\.+$/, '');
+  const host = normHostname.replace(/^www\./, '');
+  if (isPrivateOrLoopbackHost(normHostname)) {
     return { ok: false, url: '', host, reason: 'ssrf_private_host' };
   }
   return { ok: true, url: parsed.href, host };
@@ -543,7 +546,9 @@ export async function readResponseBufferLimited(res, maxBytes) {
   return buf;
 }
 
-export async function safeFetchWithRedirectGuard(rawUrl, { fetchImpl, timeoutMs, accept = '*/*', maxRedirects = 3 } = {}) {
+export async function safeFetchWithRedirectGuard(rawUrl, rawOpts = {}) {
+  const { fetchImpl, timeoutMs, accept = '*/*', maxRedirects = 3 } =
+    rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   let currentUrl = rawUrl;
   for (let hop = 0; hop <= maxRedirects; hop++) {
     const v = validatePublicRefUrl(currentUrl);
@@ -626,6 +631,7 @@ function tryCaptureHeadlessScreenshot(targetUrl, outPngPath) {
         '--no-first-run',
         '--no-default-browser-check',
         '--mute-audio',
+        '--host-resolver-rules=MAP localhost ~NOTFOUND, MAP *.localhost ~NOTFOUND, MAP *.local ~NOTFOUND, MAP *.internal ~NOTFOUND',
         `--user-data-dir=${tmpProfileDir}`,
         '--window-size=1280,800',
         `--screenshot=${outPngPath}`,
@@ -689,8 +695,9 @@ function saveCachedReference(cacheDir, url, card, localImagePath) {
   } catch {}
 }
 
-function buildCompactMarkdownPreview(cards = [], { lang = '' } = {}) {
+function buildCompactMarkdownPreview(cards = [], rawOpts = {}) {
   if (!Array.isArray(cards) || cards.length === 0) return '';
+  const { lang = '' } = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   const isEn = normalizeLang(lang || readActiveUiLanguage(), 'en') === 'en';
   return cards
     .map((card, i) => {
@@ -714,12 +721,14 @@ function buildCompactMarkdownPreview(cards = [], { lang = '' } = {}) {
  * @param {string[]} [urls=[]]
  * @param {object} [options={}]
  */
-export async function fetchWebReferencesBatch(urls = [], options = {}) {
+export async function fetchWebReferencesBatch(urls = [], rawOpts = {}) {
+  const options = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   const batchLang = normalizeLang(options.lang || readActiveUiLanguage(), 'en');
   const isEnBatch = batchLang === 'en';
   const artifactDir = path.resolve(options.artifactDir || path.join(process.cwd(), '.cache', 'web-refs-out'));
   const cacheDir = path.resolve(options.cacheDir || DEFAULT_CACHE_DIR);
-  const cacheTtlMs = Number(options.cacheTtlMs || DEFAULT_CACHE_TTL_MS);
+  const rawTtl = options.cacheTtlMs === undefined || options.cacheTtlMs === null ? NaN : Number(options.cacheTtlMs);
+  const cacheTtlMs = Number.isFinite(rawTtl) && rawTtl >= 0 ? rawTtl : DEFAULT_CACHE_TTL_MS;
   const noCache = Boolean(options.noCache);
   const limit = Math.max(1, Math.min(5, Number(options.limit || 3)));
   const timeoutMs = Math.max(800, Number(options.timeoutMs || 4500));
