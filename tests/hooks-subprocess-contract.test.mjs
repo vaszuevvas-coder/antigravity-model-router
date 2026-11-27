@@ -447,3 +447,115 @@ test('Batch 4 regressions: update_steps allows fast-path, SessionStart/PreInvoca
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });
+
+test('PreToolUse burst concurrency (6 parallel hooks) and broken/zombie .lock recovery complete fast with exit 0', async () => {
+  const { tmpRoot, wsDir, cacheDir } = makeIsolatedEnvDirs('amr-hook-locks-');
+
+  try {
+    // 1. Concurrent burst of 6 parallel PreToolUse subprocesses sharing one cacheDir
+    const burstPayloads = [1, 2, 3, 4].map((i) => {
+      const f = path.join(wsDir, `burst-${i}.mjs`);
+      fs.writeFileSync(f, `export const v${i} = ${i};\n`, 'utf8');
+      return JSON.stringify({
+        hookEventName: 'PreToolUse',
+        conversationId: 'burst-convo',
+        workspacePaths: [wsDir],
+        toolCall: { name: 'read_file', args: { Path: f, StartLine: 1, EndLine: 5 } },
+      });
+    });
+    burstPayloads.push(
+      JSON.stringify({
+        hookEventName: 'PreToolUse',
+        conversationId: 'burst-convo',
+        workspacePaths: [wsDir],
+        toolCall: { name: 'run_command', args: { CommandLine: 'git status -sb' } },
+      }),
+      JSON.stringify({
+        hookEventName: 'PreToolUse',
+        conversationId: 'burst-convo',
+        workspacePaths: [wsDir],
+        toolCall: {
+          name: 'update_steps',
+          args: { steps: [{ title: 'Check burst', status: 'in_progress' }] },
+        },
+      })
+    );
+
+    const tBurstStart = performance.now();
+    const burstResults = await Promise.all(
+      burstPayloads.map((p) => runHookSubprocess('PreToolUse', p, { cacheDir, timeoutMs: 8000 }))
+    );
+    const burstWallMs = performance.now() - tBurstStart;
+    for (let i = 0; i < burstResults.length; i++) {
+      const r = burstResults[i];
+      assert.equal(r.code, 0, `Burst item #${i} exited with ${r.code}, stderr: ${r.stderr}`);
+      const json = parseStrictSingleJsonStdout(r.stdout, `Burst item #${i}`);
+      assert.ok(json.decision === 'allow' || json.decision === 'deny');
+    }
+    assert.ok(burstWallMs < 4500, `6 concurrent PreToolUse hooks took too long: ${burstWallMs.toFixed(1)}ms`);
+    const leftoverLocks = fs.readdirSync(cacheDir).filter((n) => /\.lock(?:\.fb)?(?:\.stale\..*)?$/.test(n));
+    assert.deepEqual(leftoverLocks, [], `Leftover lock artifacts after burst: ${leftoverLocks.join(', ')}`);
+
+    const tpLock = path.join(cacheDir, 'task-progress.json.lock');
+    const makeReadPayload = (tag) => {
+      const f = path.join(wsDir, `lock-${tag}.mjs`);
+      fs.writeFileSync(f, `export const tag = "${tag}";\n`, 'utf8');
+      return JSON.stringify({
+        hookEventName: 'PreToolUse',
+        conversationId: `lock-${tag}`,
+        workspacePaths: [wsDir],
+        toolCall: { name: 'read_file', args: { Path: f, StartLine: 1, EndLine: 5 } },
+      });
+    };
+
+    // 2a. Corrupt regular file at .lock path
+    fs.writeFileSync(tpLock, 'corrupt-lock-file', 'utf8');
+    const corruptRes = await runHookSubprocess('PreToolUse', makeReadPayload('corrupt'), { cacheDir, timeoutMs: 5000 });
+    assert.equal(corruptRes.code, 0, corruptRes.stderr);
+    assert.equal(parseStrictSingleJsonStdout(corruptRes.stdout, 'corrupt .lock').decision, 'allow');
+    assert.ok(corruptRes.elapsedMs < 2000, `Corrupt .lock recovery took ${corruptRes.elapsedMs.toFixed(1)}ms`);
+    assert.equal(fs.existsSync(tpLock), false, 'Corrupt .lock file should be evicted');
+
+    // 2b. Orphaned .lock directory with missing owner file (backdated 600ms)
+    fs.mkdirSync(tpLock, { recursive: true });
+    const back600 = new Date(Date.now() - 600);
+    fs.utimesSync(tpLock, back600, back600);
+    const orphanRes = await runHookSubprocess('PreToolUse', makeReadPayload('orphan'), { cacheDir, timeoutMs: 5000 });
+    assert.equal(orphanRes.code, 0, orphanRes.stderr);
+    assert.equal(parseStrictSingleJsonStdout(orphanRes.stdout, 'orphan .lock').decision, 'allow');
+    assert.ok(orphanRes.elapsedMs < 2000, `Orphan .lock eviction took ${orphanRes.elapsedMs.toFixed(1)}ms`);
+    assert.equal(fs.existsSync(tpLock), false, 'Orphan .lock dir should be evicted');
+
+    // 2c. Unrenameable stale .lock directory (open owner handle on Windows forces fallback to .lock.fb)
+    fs.mkdirSync(tpLock, { recursive: true });
+    const ownerPath = path.join(tpLock, 'owner');
+    fs.writeFileSync(ownerPath, '999999:1:dead', 'utf8');
+    const back15s = new Date(Date.now() - 15_000);
+    fs.utimesSync(tpLock, back15s, back15s);
+    const heldFd = fs.openSync(ownerPath, 'r');
+    try {
+      const zombieRes = await runHookSubprocess('PreToolUse', makeReadPayload('zombie'), { cacheDir, timeoutMs: 5000 });
+      assert.equal(zombieRes.code, 0, zombieRes.stderr);
+      assert.equal(parseStrictSingleJsonStdout(zombieRes.stdout, 'zombie .lock').decision, 'allow');
+      assert.ok(zombieRes.elapsedMs < 2500, `Zombie .lock fallback took ${zombieRes.elapsedMs.toFixed(1)}ms`);
+      assert.equal(fs.existsSync(path.join(cacheDir, 'task-progress.json')), true, 'task-progress.json must still update via fallback');
+    } finally {
+      try { fs.closeSync(heldFd); } catch {}
+      fs.rmSync(tpLock, { recursive: true, force: true });
+    }
+
+    // 2d. Live-PID-held .lock respects bounded maxWaitMs (never hangs >= 5000ms)
+    fs.mkdirSync(tpLock, { recursive: true });
+    fs.writeFileSync(path.join(tpLock, 'owner'), `${process.pid}:${Date.now()}:alive`, 'utf8');
+    try {
+      const busyRes = await runHookSubprocess('PreToolUse', makeReadPayload('busy'), { cacheDir, timeoutMs: 5000 });
+      assert.equal(busyRes.code, 0, busyRes.stderr);
+      assert.equal(parseStrictSingleJsonStdout(busyRes.stdout, 'live-PID .lock').decision, 'allow');
+      assert.ok(busyRes.elapsedMs < 2500, `Bounded PreToolUse under live lock took ${busyRes.elapsedMs.toFixed(1)}ms`);
+    } finally {
+      fs.rmSync(tpLock, { recursive: true, force: true });
+    }
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});

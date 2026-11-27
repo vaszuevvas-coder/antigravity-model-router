@@ -631,7 +631,8 @@ export function recordBgTaskDurationSample(task = {}, opts = {}) {
       const nextIds = [...store.recordedIds.filter((id) => id !== taskId), taskId].slice(-BG_DURATION_HISTORY_MAX_IDS);
       recorded = true;
       return { entries: nextEntries, recordedIds: nextIds };
-    }
+    },
+    { maxWaitMs: 1200, staleLockMs: 3500 }
   );
   return recorded;
 }
@@ -2390,7 +2391,7 @@ export function initTaskProgressFromPrompt({
     state.chats = chatsMap;
     const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, effectiveInitWs);
     return hydrateStateWithPrimary(state, visible, projName, effectiveInitWs);
-  });
+  }, { maxWaitMs: 1200, staleLockMs: 3500 });
 }
 
 /**
@@ -3079,7 +3080,7 @@ export function advanceTaskProgressOnPreTool({
     state.chats = chatsMap;
     const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, effectiveWs);
     return hydrateStateWithPrimary(state, visible, projName, effectiveWs);
-  });
+  }, { maxWaitMs: 800, staleLockMs: 3000 });
 }
 
 /**
@@ -3362,7 +3363,7 @@ export function recordTaskProgressOnPostTool({
     state.chats = chatsMap;
     const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, effectiveWs);
     return hydrateStateWithPrimary(state, visible, projName, effectiveWs);
-  });
+  }, { maxWaitMs: 1200, staleLockMs: 3500 });
 }
 
 /**
@@ -3686,7 +3687,7 @@ export function finalizeTaskProgressOnStop({
     state.chats = chatsMap;
     const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, effectiveWs);
     return hydrateStateWithPrimary(state, visible, projName, effectiveWs);
-  });
+  }, { maxWaitMs: 1200, staleLockMs: 3500 });
 }
 
 /**

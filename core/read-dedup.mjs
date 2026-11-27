@@ -465,7 +465,7 @@ export function checkAndRecordRead(opts = {}) {
       version: 1,
       entries
     };
-  });
+  }, { maxWaitMs: 800, staleLockMs: 3000 });
 
   if (snapshotToSave) {
     saveReadSnapshot(snapshotToSave);
@@ -510,7 +510,7 @@ export function markFileEditedForDelta(filePath = '') {
       version: 1,
       entries
     };
-  });
+  }, { maxWaitMs: 800, staleLockMs: 3000 });
 }
 
 /**
@@ -533,7 +533,7 @@ export function invalidateReadCacheForFile(filePath = '') {
       version: 1,
       entries
     };
-  });
+  }, { maxWaitMs: 800, staleLockMs: 3000 });
   clearReadSnapshots({ filePath, normPath: targetNorm });
 }
 

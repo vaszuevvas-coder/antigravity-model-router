@@ -21,7 +21,7 @@
           {
             "type": "command",
             "command": "node ./core/hook-runner.mjs PreToolUse",
-            "timeout": 5
+            "timeout": 10
           }
         ]
       }

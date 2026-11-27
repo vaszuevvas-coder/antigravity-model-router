@@ -53,18 +53,20 @@ function findStaleLockFiles(cacheDir, nowMs = Date.now()) {
       const isFile = entry.isFile();
       const isDir = entry.isDirectory();
       if (!isFile && !isDir) continue;
-      if (!entry.name.endsWith('.lock') && !/\.lock\.stale\./.test(entry.name)) continue;
+      if (!entry.name.endsWith('.lock') && !entry.name.endsWith('.lock.fb') && !/\.lock(?:\.fb)?\.stale\./.test(entry.name)) continue;
       const fullPath = join(cacheDir, entry.name);
       try {
         if (isDir) {
-          const ownerPath = join(fullPath, 'owner');
-          if (existsSync(ownerPath)) {
-            const ownerRaw = readFileSync(ownerPath, 'utf8').trim();
-            const ownerPid = Number(ownerRaw.split(':')[0]);
-            if (Number.isInteger(ownerPid) && ownerPid > 0 && isPidAlive(ownerPid)) {
-              continue;
+          try {
+            const ownerPath = join(fullPath, 'owner');
+            if (existsSync(ownerPath)) {
+              const ownerRaw = readFileSync(ownerPath, 'utf8').trim();
+              const ownerPid = Number(ownerRaw.split(':')[0]);
+              if (Number.isInteger(ownerPid) && ownerPid > 0 && isPidAlive(ownerPid)) {
+                continue;
+              }
             }
-          }
+          } catch {}
         }
         const st = statSync(fullPath);
         const ageMs = Math.max(0, nowMs - Number(st.mtimeMs || 0));

@@ -114,7 +114,7 @@ function enqueuePostCommandHint(convoKey = 'default', hintText = '') {
       const prev = Array.isArray(queues[key]) ? queues[key] : [];
       queues[key] = [...prev.slice(-2), { text: cleanHint, ts: now }];
       return { queues };
-    });
+    }, { maxWaitMs: 800, staleLockMs: 3000 });
   } catch {}
 }
 
@@ -144,7 +144,7 @@ function consumePostCommandHints(convoKey = 'default') {
         }
       }
       return { queues };
-    });
+    }, { maxWaitMs: 800, staleLockMs: 3000 });
   } catch {}
   return consumed;
 }
@@ -1865,7 +1865,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
           getTs: (v) => Number(v?.ts || 0),
         });
         return { turns };
-      }, { spaces: 0 });
+      }, { spaces: 0, maxWaitMs: 800, staleLockMs: 3000 });
     } catch {}
   }
 
@@ -1904,7 +1904,7 @@ function recordReadBatchActivity({ convoId = 'default', toolName = '' } = {}) {
         ts: now,
       };
       return { streams };
-    });
+    }, { maxWaitMs: 600, staleLockMs: 3000 });
   } catch {}
 }
 
@@ -1934,7 +1934,7 @@ function consumeReadBatchAdvisory(convoId = 'default') {
       }
       streams[convoId] = { singleReadTurns: streak, readsInTurn: 0, ts: Date.now() };
       return { streams };
-    });
+    }, { maxWaitMs: 800, staleLockMs: 3000 });
   } catch {}
   return advisory;
 }
@@ -2444,7 +2444,7 @@ export async function handlePreToolUse(payload = {}, rawState = {}) {
           getTs: (v) => Number(v?.ts || 0),
         });
         return { turns };
-      }, { spaces: 0 });
+      }, { spaces: 0, maxWaitMs: 800, staleLockMs: 3000 });
     } catch {}
     return { decision: 'allow' };
   }
@@ -2693,7 +2693,7 @@ export async function handlePreToolUse(payload = {}, rawState = {}) {
             for (let i = 6; i < keys.length; i++) delete prev[keys[i]];
           }
           return { entries: prev };
-        });
+        }, { maxWaitMs: 800, staleLockMs: 3000 });
       }
     } catch {}
   }

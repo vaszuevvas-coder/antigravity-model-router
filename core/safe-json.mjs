@@ -72,11 +72,12 @@ function sweepOrphanArtifacts(targetPath, minAgeMs = 30000) {
     const dir = dirname(targetPath);
     const base = basename(targetPath);
     const stalePrefix = `${base}.lock.stale.`;
+    const staleFbPrefix = `${base}.lock.fb.stale.`;
     const tmpPrefix = `${base}.`;
     const cutoff = Date.now() - Math.max(30000, Number(minAgeMs) || 30000);
     const entries = readdirSync(dir);
     for (const name of entries) {
-      const isStaleLock = name.startsWith(stalePrefix);
+      const isStaleLock = name.startsWith(stalePrefix) || name.startsWith(staleFbPrefix);
       const isTmpFile =
         !isStaleLock &&
         name.startsWith(tmpPrefix) &&
@@ -153,12 +154,12 @@ export function withFileLockSync(targetPath, fn, options = {}) {
     } catch {}
   }
 
-  const lockDir = `${targetPath}.lock`;
-  const lockKey = normalizeLockKey(lockDir);
-  const prevDepth = activeProcessLocks.get(lockKey) || 0;
+  const primaryLockDir = `${targetPath}.lock`;
+  const primaryLockKey = normalizeLockKey(primaryLockDir);
+  const prevDepth = activeProcessLocks.get(primaryLockKey) || 0;
   if (prevDepth > 0) {
     // Re-entrant call in the same process: reuse active lock instead of self-deadlocking
-    activeProcessLocks.set(lockKey, prevDepth + 1);
+    activeProcessLocks.set(primaryLockKey, prevDepth + 1);
     try {
       const res = fn();
       if (res !== null && (typeof res === 'object' || typeof res === 'function') && typeof res.then === 'function') {
@@ -166,35 +167,54 @@ export function withFileLockSync(targetPath, fn, options = {}) {
       }
       return res;
     } finally {
-      const rem = (activeProcessLocks.get(lockKey) || 1) - 1;
-      if (rem > 0) activeProcessLocks.set(lockKey, rem);
-      else activeProcessLocks.delete(lockKey);
+      const rem = (activeProcessLocks.get(primaryLockKey) || 1) - 1;
+      if (rem > 0) activeProcessLocks.set(primaryLockKey, rem);
+      else activeProcessLocks.delete(primaryLockKey);
     }
   }
 
-  const ownerFile = join(lockDir, 'owner');
+  let activeLockDir = primaryLockDir;
+  let activeOwnerFile = join(activeLockDir, 'owner');
+  let usingFallback = false;
+  let zombieProbeCount = 0;
+  let firstZombieProbeAt = 0;
+  let staleEvictFailCount = 0;
   const ownerToken = `${process.pid}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
   const startTime = Date.now();
   let acquired = false;
 
   while (Date.now() - startTime < maxWaitMs) {
     try {
-      mkdirSync(lockDir);
+      mkdirSync(activeLockDir);
       try {
-        writeFileSync(ownerFile, ownerToken, 'utf-8');
+        writeFileSync(activeOwnerFile, ownerToken, 'utf-8');
         acquired = true;
         break;
       } catch (writeErr) {
-        removePathWithRetry(lockDir, { recursive: true });
+        removePathWithRetry(activeLockDir, { recursive: true });
         throw writeErr;
       }
     } catch (err) {
       if (err && (err.code === 'EEXIST' || err.code === 'EACCES' || err.code === 'EPERM' || err.code === 'EBUSY')) {
+        if (err.code === 'EPERM' || err.code === 'EACCES') {
+          if (!firstZombieProbeAt) firstZombieProbeAt = Date.now();
+          zombieProbeCount++;
+        }
         try {
-          const st = statSync(lockDir);
+          const st = statSync(activeLockDir);
+          if (!st.isDirectory()) {
+            const corruptPath = `${activeLockDir}.stale.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}`;
+            try {
+              renameSync(activeLockDir, corruptPath);
+              removePathWithRetry(corruptPath, { recursive: false });
+            } catch {
+              removePathWithRetry(activeLockDir, { recursive: false });
+            }
+            continue;
+          }
           let effectiveStaleMs = staleLockMs;
           try {
-            const ownerRaw = readFileSync(ownerFile, 'utf-8');
+            const ownerRaw = readFileSync(activeOwnerFile, 'utf-8');
             const parts = String(ownerRaw || '').split(':');
             const ownerPid = Number(parts[0]);
             const ownerTs = Number(parts[1]) || st.mtimeMs;
@@ -212,18 +232,49 @@ export function withFileLockSync(targetPath, fn, options = {}) {
                 }
               }
             }
-          } catch {}
+          } catch (ownerErr) {
+            if (ownerErr?.code === 'ENOENT') {
+              effectiveStaleMs = Math.min(staleLockMs, 350);
+            } else if (ownerErr?.code === 'EPERM' || ownerErr?.code === 'EACCES') {
+              if (!firstZombieProbeAt) firstZombieProbeAt = Date.now();
+              zombieProbeCount++;
+            }
+          }
           if (Date.now() - st.mtimeMs > effectiveStaleMs) {
             // Atomically claim stale lock before removal to prevent TOCTOU double-eviction
-            const stalePath = `${lockDir}.stale.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}`;
+            const stalePath = `${activeLockDir}.stale.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}`;
             try {
-              renameSync(lockDir, stalePath);
+              renameSync(activeLockDir, stalePath);
               removePathWithRetry(stalePath, { recursive: true });
               sweepOrphanArtifacts(targetPath, Math.max(staleLockMs, 30000));
               continue;
-            } catch {}
+            } catch (evictErr) {
+              if (evictErr && (evictErr.code === 'EPERM' || evictErr.code === 'EACCES' || evictErr.code === 'EBUSY')) {
+                if (!firstZombieProbeAt) firstZombieProbeAt = Date.now();
+                staleEvictFailCount++;
+              }
+            }
           }
         } catch {}
+        if (!usingFallback && firstZombieProbeAt > 0 && Date.now() - firstZombieProbeAt >= 60) {
+          let isDirUnreadableEperm = false;
+          if (zombieProbeCount >= 4) {
+            try {
+              readdirSync(activeLockDir);
+            } catch (rdErr) {
+              isDirUnreadableEperm = rdErr?.code === 'EPERM' || rdErr?.code === 'EACCES';
+            }
+          }
+          if ((zombieProbeCount >= 4 && isDirUnreadableEperm) || staleEvictFailCount >= 4) {
+            usingFallback = true;
+            activeLockDir = `${targetPath}.lock.fb`;
+            activeOwnerFile = join(activeLockDir, 'owner');
+            zombieProbeCount = 0;
+            firstZombieProbeAt = 0;
+            staleEvictFailCount = 0;
+            continue;
+          }
+        }
         sleepSync(3 + Math.floor(Math.random() * 6));
       } else if (err && (err.code === 'ENOENT' || err.code === 'ENOTEMPTY')) {
         if (err.code === 'ENOENT' && !createDir) {
@@ -245,7 +296,7 @@ export function withFileLockSync(targetPath, fn, options = {}) {
     throw new Error(`Lock acquisition timeout (${maxWaitMs}ms) for ${targetPath}`);
   }
 
-  activeProcessLocks.set(lockKey, 1);
+  activeProcessLocks.set(primaryLockKey, 1);
   try {
     const res = fn();
     if (res !== null && (typeof res === 'object' || typeof res === 'function') && typeof res.then === 'function') {
@@ -253,19 +304,28 @@ export function withFileLockSync(targetPath, fn, options = {}) {
     }
     return res;
   } finally {
-    activeProcessLocks.delete(lockKey);
-    // Only release lockDir if this process still owns it (prevents deleting a stolen lock)
+    activeProcessLocks.delete(primaryLockKey);
+    // Only release activeLockDir if this process still owns it (prevents deleting a stolen lock)
     let stillOwned = false;
     try {
-      stillOwned = readFileSync(ownerFile, 'utf-8') === ownerToken;
+      stillOwned = readFileSync(activeOwnerFile, 'utf-8') === ownerToken;
     } catch {
       stillOwned = false;
     }
     if (stillOwned) {
-      if (!removePathWithRetry(lockDir, { recursive: true })) {
+      const releasedPath = `${activeLockDir}.stale.${process.pid}.${Date.now()}.${randomBytes(2).toString('hex')}`;
+      let releasedViaRename = false;
+      try {
+        renameSync(activeLockDir, releasedPath);
+        releasedViaRename = true;
+        removePathWithRetry(releasedPath, { recursive: true });
+      } catch {
+        releasedViaRename = false;
+      }
+      if (!releasedViaRename && !removePathWithRetry(activeLockDir, { recursive: true })) {
         try {
-          unlinkSync(ownerFile);
-          rmdirSync(lockDir);
+          unlinkSync(activeOwnerFile);
+          rmdirSync(activeLockDir);
         } catch {}
       }
     }

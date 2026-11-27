@@ -1486,6 +1486,9 @@ function discoverSkillsUncached(activeWs = '') {
     } catch {}
   }
 
+  // 1b. Собственные встроенные навыки текущего плагина (для CI, dev-репозитория и тестовой изоляции)
+  scanSkillsDir(join(PANEL_PLUGIN_ROOT, 'skills'), 'Плагин · The Tunnel', 'Plugin · The Tunnel');
+
   // 2. Проектные навыки текущего воркспейса (.agents/skills, .gemini/skills)
   if (activeWs) {
     scanSkillsDir(join(activeWs, '.agents', 'skills'), 'Проектный', 'Workspace');
