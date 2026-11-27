@@ -1,0 +1,737 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Tunnel v4.0.6 — Вертикальный обзор (Shorts / Reels 25s)</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: #06070a; color: #f3f4f6;
+      font-family: system-ui, -apple-system, 'Segoe UI', Inter, Roboto, sans-serif;
+      user-select: none;
+    }
+    body.capture-mode { width: 1080px; height: 1920px; }
+    body.capture-mode .controls-dock { display: none !important; }
+    body.capture-mode .viewport-wrap { display: block; width: 1080px; height: 1920px; }
+
+    .viewport-wrap {
+      width: 100vw; height: 100vh; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; background: #040507;
+    }
+    .stage-shell {
+      position: relative; width: 1080px; height: 1920px;
+      background: radial-gradient(circle at 50% 24%, #181116 0%, #090a0e 52%, #06070a 100%);
+      overflow: hidden; transform-origin: center center;
+    }
+    .bg-grid {
+      position: absolute; inset: 0; pointer-events: none;
+      background-image:
+        linear-gradient(to right, rgba(255,255,255,0.036) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255,255,255,0.036) 1px, transparent 1px);
+      background-size: 72px 72px;
+    }
+    .bg-glow-top {
+      position: absolute; left: 50%; top: 180px; width: 780px; height: 780px;
+      transform: translate(-50%, -50%); pointer-events: none;
+      background: radial-gradient(circle, rgba(240,72,72,0.16) 0%, rgba(240,72,72,0.0) 68%);
+    }
+
+    /* Top Stories-Style 5-Segment Progress + Brand Header (Safe Top Margin >= 46px) */
+    .top-hud {
+      position: absolute; top: 36px; left: 42px; right: 42px; z-index: 40;
+      display: flex; flex-direction: column; gap: 16px;
+    }
+    .stories-bars { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; height: 6px; }
+    .story-seg { background: rgba(255,255,255,0.14); border-radius: 4px; overflow: hidden; }
+    .story-fill { height: 100%; width: 100%; background: #f04848; transform-origin: left center; transform: scaleX(0); }
+    .brand-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 18px; border-radius: 12px;
+      background: rgba(14,16,22,0.88); border: 1px solid rgba(255,255,255,0.1);
+    }
+    .brand-left { display: flex; align-items: center; gap: 12px; font: 800 22px ui-monospace, Consolas, monospace; letter-spacing: 0.6px; }
+    .brand-left span { color: #f04848; }
+    .brand-right {
+      display: flex; align-items: center; gap: 10px;
+      font: 700 18px ui-monospace, Consolas, monospace; color: #d1d5db;
+    }
+    .live-dot { width: 10px; height: 10px; border-radius: 50%; background: #3fb950; }
+
+    /* Transition crimson scanner bar */
+    .scan-wipe {
+      position: absolute; left: 0; right: 0; top: 0; height: 6px; z-index: 45;
+      background: linear-gradient(90deg, transparent, #f04848, #ff9b9b, #f04848, transparent);
+      opacity: 0; pointer-events: none; transform: translateY(0);
+    }
+
+    /* Scene Container inside Safe Reels/Shorts Content Box (y: 155..1355) */
+    .scene {
+      position: absolute; left: 42px; right: 42px; top: 162px; bottom: 560px;
+      opacity: 0; pointer-events: none;
+      display: flex; flex-direction: column;
+    }
+
+    /* Typography helpers */
+    .kicker {
+      display: inline-flex; align-items: center; gap: 10px; align-self: flex-start;
+      padding: 7px 16px; border-radius: 999px;
+      background: rgba(240,72,72,0.14); border: 1px solid rgba(240,72,72,0.45);
+      font: 700 19px ui-monospace, Consolas, monospace; color: #ff6b6b; letter-spacing: 0.8px;
+      text-transform: uppercase;
+    }
+    .h1-big {
+      font-size: 74px; font-weight: 900; line-height: 1.04; letter-spacing: -2px; color: #ffffff;
+    }
+    .h1-big span { color: #f04848; }
+    .h2-title {
+      font-size: 48px; font-weight: 850; line-height: 1.1; letter-spacing: -1.1px; color: #f9fafb;
+    }
+    .h2-title span { color: #f04848; }
+    .sub-lead { font-size: 28px; font-weight: 500; line-height: 1.3; color: #b7c0ce; }
+
+    /* SCENE 1: HOOK */
+    .s1-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 28px; }
+    .emblem-wrap { position: relative; width: 220px; height: 220px; display: flex; align-items: center; justify-content: center; }
+    .emblem-ring {
+      position: absolute; inset: 0; border-radius: 50%;
+      border: 2px solid rgba(240,72,72,0.45);
+    }
+    .s1-cards { width: 100%; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 12px; }
+    .s1-card {
+      background: rgba(16,18,24,0.94); border: 1px solid #2b2f3b; border-radius: 16px;
+      padding: 24px 16px; text-align: center; display: flex; flex-direction: column; gap: 8px;
+    }
+    .s1-card strong { font: 800 50px ui-monospace, Consolas, monospace; color: var(--c, #f04848); font-variant-numeric: tabular-nums; }
+    .s1-card span { font-size: 21px; font-weight: 600; color: #d1d5db; }
+
+    /* SCENE 2: 3D TENSOR + LIVE RUSSIAN COCKPIT */
+    .s2-wrap { flex: 1; display: flex; flex-direction: column; gap: 20px; min-height: 0; }
+    .tensor-strip {
+      background: rgba(14,16,22,0.95); border: 1px solid #2b2f3a; border-radius: 16px;
+      padding: 18px 22px; display: flex; flex-direction: column; gap: 14px;
+    }
+    .tensor-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .tensor-top b { font: 700 20px ui-monospace, Consolas, monospace; color: #f3f4f6; }
+    .tensor-badge {
+      padding: 6px 14px; border-radius: 8px; background: #261317; border: 1px solid #f04848;
+      font: 700 18px ui-monospace, Consolas, monospace; color: #ff6b6b;
+    }
+    .axes-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .ax-box { display: flex; flex-direction: column; gap: 6px; }
+    .ax-lbl { display: flex; justify-content: space-between; font: 700 16px ui-monospace, Consolas, monospace; color: #9ca3af; }
+    .ax-lbl em { font-style: normal; color: #f3f4f6; }
+    .ax-track { height: 10px; border-radius: 6px; background: #090b0f; overflow: hidden; border: 1px solid #252834; }
+    .ax-fill { height: 100%; transform-origin: left center; transform: scaleX(0); }
+
+    .device-frame {
+      flex: 1; min-height: 0; background: #0c0d12; border: 1.5px solid #2e3240; border-radius: 18px;
+      overflow: hidden; display: flex; flex-direction: column; position: relative;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.55);
+    }
+    .device-bar {
+      height: 50px; padding: 0 20px; background: #13151c; border-bottom: 1px solid rgba(255,255,255,0.08);
+      display: flex; align-items: center; justify-content: space-between; flex: none;
+    }
+    .dots-3 { display: flex; gap: 8px; }
+    .dots-3 i { width: 12px; height: 12px; border-radius: 50%; display: block; background: #363b48; }
+    .dots-3 i:first-child { background: #f04848; }
+    .device-bar b { font: 700 18px ui-monospace, Consolas, monospace; color: #e5e7eb; }
+    .device-bar span { font: 700 17px ui-monospace, Consolas, monospace; color: #f04848; }
+    .device-body {
+      flex: 1; min-height: 0; background: #08090c; padding: 10px;
+      display: flex; align-items: center; justify-content: center; overflow: hidden;
+    }
+    .device-body img { width: 100%; height: 100%; object-fit: contain; border-radius: 10px; display: block; }
+
+    /* SCENE 3: LIVE RUSSIAN WEBGL2 PROJECT MAP */
+    .s3-wrap { flex: 1; display: flex; flex-direction: column; gap: 18px; min-height: 0; }
+    .lens-pills { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .lens-pill {
+      padding: 12px 10px; border-radius: 10px; text-align: center;
+      background: #12141b; border: 1px solid #2b2f3a;
+      font: 700 17px system-ui, sans-serif; color: #9ca3af;
+    }
+    .lens-pill.active { background: #261317; border-color: #f04848; color: #ffffff; }
+    .map-hud-foot {
+      position: absolute; left: 22px; right: 22px; bottom: 20px; z-index: 5;
+      padding: 12px 18px; border-radius: 12px;
+      background: rgba(10,11,15,0.92); border: 1px solid rgba(240,72,72,0.55);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .map-hud-foot strong { font: 700 20px ui-monospace, Consolas, monospace; color: #ffffff; }
+    .map-hud-foot span { font: 700 18px ui-monospace, Consolas, monospace; color: #3fb950; }
+
+    /* SCENE 4: LOCAL STACK + 59 GUARDRAILS */
+    .s4-wrap { flex: 1; display: flex; flex-direction: column; gap: 18px; justify-content: center; }
+    .stack-list { display: flex; flex-direction: column; gap: 16px; }
+    .stack-row {
+      background: rgba(16,18,24,0.95); border: 1px solid #2b2f3a; border-radius: 16px;
+      padding: 22px 26px; display: flex; align-items: center; justify-content: space-between; gap: 18px;
+      position: relative; overflow: hidden;
+    }
+    .stack-row::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 6px; background: var(--bar, #f04848); }
+    .stack-info { display: flex; flex-direction: column; gap: 6px; }
+    .stack-kicker { font: 700 17px ui-monospace, Consolas, monospace; color: var(--bar, #f04848); letter-spacing: 0.7px; }
+    .stack-name { font-size: 32px; font-weight: 800; color: #ffffff; }
+    .stack-sub { font-size: 21px; color: #a7b0be; }
+    .stack-val {
+      font: 800 34px ui-monospace, Consolas, monospace; color: #ffffff;
+      padding: 12px 18px; border-radius: 12px; background: #0a0b0f; border: 1px solid #2b2f3a;
+      white-space: nowrap; flex: none;
+    }
+
+    /* SCENE 5: OUTRO / CTA */
+    .s5-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 24px; }
+    .os-pills { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
+    .os-pill {
+      padding: 12px 22px; border-radius: 10px; background: #13151c; border: 1px solid #2f3442;
+      font: 700 22px ui-monospace, Consolas, monospace; color: #e5e7eb;
+    }
+    .cmd-box {
+      width: 100%; padding: 24px 28px; border-radius: 16px;
+      background: #101218; border: 2px solid #f04848;
+      font: 700 30px ui-monospace, Consolas, monospace; color: #ffffff;
+    }
+    .cmd-box span { color: #f04848; }
+    .cta-pill {
+      margin-top: 8px; padding: 20px 38px; border-radius: 999px;
+      background: #f04848; color: #ffffff;
+      font-size: 32px; font-weight: 850; letter-spacing: -0.3px;
+      box-shadow: 0 12px 36px rgba(240,72,72,0.45);
+    }
+
+    /* KARAOKE SUBTITLES IN SAFE REELS/SHORTS ZONE (y: 1390..1585, well clear of bottom UI) */
+    .subtitles-dock {
+      position: absolute; left: 54px; right: 54px; top: 1395px; height: 185px; z-index: 50;
+      display: flex; align-items: center; justify-content: center; pointer-events: none;
+    }
+    .sub-pill {
+      display: inline-flex; flex-wrap: wrap; justify-content: center; align-items: center;
+      gap: 10px 14px; padding: 18px 28px; border-radius: 22px;
+      background: rgba(8, 9, 13, 0.92); border: 1.5px solid rgba(255,255,255,0.16);
+      box-shadow: 0 18px 44px rgba(0,0,0,0.68);
+      text-align: center;
+    }
+    .sub-word {
+      font-size: 48px; font-weight: 850; line-height: 1.18; letter-spacing: -0.5px;
+      color: #b8c1cf; padding: 3px 10px; border-radius: 10px;
+      transform-origin: center center;
+    }
+    .sub-word.spoken { color: #f3f4f6; }
+    .sub-word.active {
+      color: #ffffff; background: #f04848; transform: scale(1.07);
+    }
+
+    /* Bottom safe-zone subtle watermark above platform UI */
+    .safe-foot {
+      position: absolute; left: 42px; right: 42px; bottom: 265px; z-index: 30;
+      display: flex; justify-content: space-between; align-items: center;
+      font: 600 18px ui-monospace, Consolas, monospace; color: rgba(209,213,219,0.52);
+    }
+
+    /* Interactive Controls Dock (browser preview only, hidden during capture) */
+    .controls-dock {
+      position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 100;
+      background: rgba(15, 16, 20, 0.94); border: 1px solid #2e323c; border-radius: 10px;
+      padding: 10px 14px; display: flex; align-items: center; gap: 10px;
+    }
+    .ctl-btn {
+      background: #181a20; border: 1px solid #303440; color: #f3f4f6; border-radius: 6px;
+      padding: 6px 12px; font: 600 12px ui-monospace, Consolas, monospace; cursor: pointer;
+    }
+    .ctl-btn.primary { background: #f04848; border-color: #f04848; }
+    .ctl-scrub { width: 200px; accent-color: #f04848; }
+    .ctl-time { font: 700 12px ui-monospace, Consolas, monospace; color: #9ca3af; min-width: 90px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="viewport-wrap">
+    <div id="root" class="stage-shell" data-composition-id="the-tunnel-shorts-ru" data-start="0" data-duration="25" data-width="1080" data-height="1920">
+      <div class="bg-grid"></div>
+      <div class="bg-glow-top"></div>
+      <div class="scan-wipe" id="scanWipe"></div>
+
+      <!-- Top Stories Progress & Brand Bar -->
+      <div class="top-hud">
+        <div class="stories-bars">
+          <div class="story-seg"><div class="story-fill" id="storyFill0"></div></div>
+          <div class="story-seg"><div class="story-fill" id="storyFill1"></div></div>
+          <div class="story-seg"><div class="story-fill" id="storyFill2"></div></div>
+          <div class="story-seg"><div class="story-fill" id="storyFill3"></div></div>
+          <div class="story-seg"><div class="story-fill" id="storyFill4"></div></div>
+        </div>
+        <div class="brand-bar">
+          <div class="brand-left">
+            <svg width="28" height="28" viewBox="0 0 128 128" aria-hidden="true">
+              <rect x="10" y="10" width="108" height="108" rx="20" fill="#0d0e12" stroke="#2a2d35" stroke-width="5"/>
+              <line x1="22" y1="64" x2="43" y2="64" stroke="#9ca3af" stroke-width="7" stroke-linecap="round"/>
+              <line x1="85" y1="64" x2="106" y2="64" stroke="#9ca3af" stroke-width="7" stroke-linecap="round"/>
+              <path d="M64 36 L90 64 L64 92 L38 64 Z" fill="#181215" stroke="#f04848" stroke-width="7" stroke-linejoin="round"/>
+              <path d="M64 51 L75 64 L64 77 L53 64 Z" fill="#f04848"/>
+            </svg>
+            <div>THE TUNNEL <span>v4.0.6</span></div>
+          </div>
+          <div class="brand-right">
+            <span class="live-dot"></span>
+            <span id="hudChapterName">01 · АВТОПИЛОТ</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- SCENE 1: HOOK -->
+      <section class="scene" id="scene0" data-start="0.00" data-duration="4.66">
+        <div class="s1-wrap">
+          <div class="emblem-wrap" id="s1Emblem">
+            <div class="emblem-ring" id="s1Ring"></div>
+            <svg width="164" height="164" viewBox="0 0 128 128">
+              <rect x="8" y="8" width="112" height="112" rx="24" fill="#111319" stroke="#2f3340" stroke-width="3.5"/>
+              <line x1="20" y1="64" x2="42" y2="64" stroke="#9ca3af" stroke-width="6" stroke-linecap="round"/>
+              <line x1="86" y1="64" x2="108" y2="64" stroke="#9ca3af" stroke-width="6" stroke-linecap="round"/>
+              <path d="M64 34 L92 64 L64 94 L36 64 Z" fill="#1f1115" stroke="#f04848" stroke-width="6" stroke-linejoin="round"/>
+              <path d="M64 50 L76 64 L64 78 L52 64 Z" fill="#f04848"/>
+              <circle cx="64" cy="64" r="4" fill="#ffffff"/>
+            </svg>
+          </div>
+          <div class="kicker">Google Antigravity · Плагин</div>
+          <h1 class="h1-big" id="s1Title">А ВЫ ЗНАЛИ?<span><br/>The Tunnel</span></h1>
+          <p class="sub-lead" id="s1Sub">Инженерный 3D-автопилот<br/>и локальный сопроцессор в IDE</p>
+          <div class="s1-cards" id="s1Cards">
+            <div class="s1-card" style="--c:#f04848;"><strong>59</strong><span>Защит канона</span></div>
+            <div class="s1-card" style="--c:#3fb950;"><strong>−35%</strong><span>Расход токенов</span></div>
+            <div class="s1-card" style="--c:#e09f3e;"><strong>0</strong><span>Зависимостей</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SCENE 2: 3D TENSOR + LIVE RUSSIAN COCKPIT -->
+      <section class="scene" id="scene1" data-start="4.66" data-duration="4.50">
+        <div class="s2-wrap">
+          <div class="kicker">3D-роутинг моделей · Умная панель</div>
+          <h2 class="h2-title">Точная модель <span>под каждую задачу</span></h2>
+          <div class="tensor-strip">
+            <div class="tensor-top">
+              <b>Тензор 3D: Ширина × Глубина × Риск</b>
+              <span class="tensor-badge">Orchestrator · Neon High</span>
+            </div>
+            <div class="axes-grid">
+              <div class="ax-box">
+                <div class="ax-lbl"><span>Ширина</span><em>4+ файла</em></div>
+                <div class="ax-track"><div class="ax-fill" id="axFill0" style="background:#f04848;"></div></div>
+              </div>
+              <div class="ax-box">
+                <div class="ax-lbl"><span>Глубина</span><em>Архитектура</em></div>
+                <div class="ax-track"><div class="ax-fill" id="axFill1" style="background:#e09f3e;"></div></div>
+              </div>
+              <div class="ax-box">
+                <div class="ax-lbl"><span>Экономия</span><em>−35%</em></div>
+                <div class="ax-track"><div class="ax-fill" id="axFill2" style="background:#3fb950;"></div></div>
+              </div>
+            </div>
+          </div>
+          <div class="device-frame" id="cockpitDevice">
+            <div class="device-bar">
+              <div class="dots-3"><i></i><i></i><i></i></div>
+              <b>Панель управления · RU</b>
+              <span id="cockpitPhaseBadge">УМНЫЙ ВВОД @FILE</span>
+            </div>
+            <div class="device-body">
+              <img id="cockpitLiveImg" src="/shorts-ru-frames/cockpit/frame-0001.png" alt="Живая панель управления The Tunnel" />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SCENE 3: LIVE RUSSIAN WEBGL2 PROJECT MAP -->
+      <section class="scene" id="scene2" data-start="9.16" data-duration="5.11">
+        <div class="s3-wrap">
+          <div class="kicker">Интерактивная карта проекта · WebGL2</div>
+          <h2 class="h2-title">Волна влияния <span>и граф вызовов</span></h2>
+          <div class="lens-pills">
+            <div class="lens-pill active" id="mapLens0">Архитектура</div>
+            <div class="lens-pill" id="mapLens1">Волна Blast</div>
+            <div class="lens-pill" id="mapLens2">Hotspots</div>
+            <div class="lens-pill" id="mapLens3">AST-символы</div>
+          </div>
+          <div class="device-frame" id="mapDevice">
+            <div class="device-bar">
+              <div class="dots-3"><i></i><i></i><i></i></div>
+              <b>Карта проекта в ОЗУ</b>
+              <span>188 файлов · 419 связей</span>
+            </div>
+            <div class="device-body" style="padding:4px;">
+              <img id="mapLiveImg" src="/shorts-ru-frames/map/frame-0001.png" alt="Интерактивная карта проекта The Tunnel" />
+            </div>
+            <div class="map-hud-foot">
+              <strong id="mapFootMode">Папки → Файлы · Плавный зум</strong>
+              <span>WebGL2 · ОЗУ</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SCENE 4: LOCAL STACK (RAM + CPU + GPU + 59 GUARDRAILS) -->
+      <section class="scene" id="scene3" data-start="14.26" data-duration="4.76">
+        <div class="s4-wrap">
+          <div class="kicker">Локальное ускорение · Безопасность</div>
+          <h2 class="h2-title">Быстро в ОЗУ, <span>0 токенов на GPU</span></h2>
+          <div class="stack-list">
+            <div class="stack-row" id="stackCard0" style="--bar:#f04848;">
+              <div class="stack-info">
+                <div class="stack-kicker">IN-RAM MCP · 4–32 ГБ</div>
+                <div class="stack-name">Срезы и поиск по коду</div>
+                <div class="stack-sub">239 файлов проекта прямо в оперативке</div>
+              </div>
+              <div class="stack-val">0.86 мс</div>
+            </div>
+            <div class="stack-row" id="stackCard1" style="--bar:#e09f3e;">
+              <div class="stack-info">
+                <div class="stack-kicker">OLLAMA GPU · i8bin-v2</div>
+                <div class="stack-name">Сжатие логов и аудит UI</div>
+                <div class="stack-sub">gemma4:12b + qwen3-embedding локально</div>
+              </div>
+              <div class="stack-val">0 токенов</div>
+            </div>
+            <div class="stack-row" id="stackCard2" style="--bar:#3fb950;">
+              <div class="stack-info">
+                <div class="stack-kicker">CPU-ПУЛ ПОТОКОВ</div>
+                <div class="stack-name">Реранкер и TOON-сжатие</div>
+                <div class="stack-sub">RU↔EN поиск без нагрузки на видеокарту</div>
+              </div>
+              <div class="stack-val">−35%</div>
+            </div>
+            <div class="stack-row" id="stackCard3" style="--bar:#9ca3af;">
+              <div class="stack-info">
+                <div class="stack-kicker">МАШИНА ВРЕМЕНИ И СТРАХОВКА</div>
+                <div class="stack-name">Откат шага и Git-песочницы</div>
+                <div class="stack-sub">AgentShield, Wiretap и 56 наборов тестов</div>
+              </div>
+              <div class="stack-val">59 защит</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SCENE 5: OUTRO / CTA -->
+      <section class="scene" id="scene4" data-start="19.03" data-duration="5.97">
+        <div class="s5-wrap">
+          <svg width="150" height="150" viewBox="0 0 128 128" id="s5Logo">
+            <rect x="8" y="8" width="112" height="112" rx="24" fill="#111319" stroke="#2f3340" stroke-width="3.5"/>
+            <line x1="20" y1="64" x2="42" y2="64" stroke="#9ca3af" stroke-width="6" stroke-linecap="round"/>
+            <line x1="86" y1="64" x2="108" y2="64" stroke="#9ca3af" stroke-width="6" stroke-linecap="round"/>
+            <path d="M64 34 L92 64 L64 94 L36 64 Z" fill="#1f1115" stroke="#f04848" stroke-width="6" stroke-linejoin="round"/>
+            <path d="M64 50 L76 64 L64 78 L52 64 Z" fill="#f04848"/>
+          </svg>
+          <div class="kicker">Бесплатно · Открытый код</div>
+          <h2 class="h1-big" style="font-size:68px;">The Tunnel <span>v4.0.6</span></h2>
+          <p class="sub-lead">Установка в один клик на любую ОС</p>
+          <div class="os-pills">
+            <div class="os-pill">Windows · Setup.exe</div>
+            <div class="os-pill">macOS</div>
+            <div class="os-pill">Linux</div>
+          </div>
+          <div class="cmd-box"><span>$</span> node install.js</div>
+          <div class="cta-pill" id="ctaPill">Ссылка в описании ↓</div>
+        </div>
+      </section>
+
+      <!-- Karaoke Subtitles Dock (Safe Vertical Zone) -->
+      <div class="subtitles-dock">
+        <div class="sub-pill" id="subPill"></div>
+      </div>
+
+      <div class="safe-foot">
+        <span>github.com/vaszuevvas-coder/antigravity-model-router</span>
+        <span id="hudClock">00.0 / 25.0s</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls-dock" id="controlsDock">
+    <button type="button" class="ctl-btn primary" id="btnPlayPause">▶ Play</button>
+    <input type="range" class="ctl-scrub" id="timeScrub" min="0" max="25" step="0.04" value="0" />
+    <span class="ctl-time" id="ctlTime">00.0 / 25.0s</span>
+  </div>
+
+  <script>
+    (function () {
+      const DURATION = 25;
+      const CHAPTERS = [{"id":"s1","start":0,"end":4.657},{"id":"s2","start":4.657,"end":9.156},{"id":"s3","start":9.156,"end":14.263},{"id":"s4","start":14.263,"end":19.026},{"id":"s5","start":19.026,"end":25}];
+      const SUBTITLES = [{"segId":"s1","startMs":134,"endMs":744,"words":[{"text":"А","startMs":174,"endMs":334},{"text":"вы","startMs":334,"endMs":494},{"text":"знали,","startMs":494,"endMs":654}]},{"segId":"s1","startMs":799,"endMs":1398,"words":[{"text":"что","startMs":839,"endMs":1039},{"text":"есть","startMs":1039,"endMs":1238},{"text":"крутое","startMs":1238,"endMs":1438}]},{"segId":"s1","startMs":1398,"endMs":2571,"words":[{"text":"расширение","startMs":1438,"endMs":1786},{"text":"для","startMs":1786,"endMs":2133},{"text":"Antigravity,","startMs":2133,"endMs":2481}]},{"segId":"s1","startMs":2634,"endMs":3521,"words":[{"text":"которое","startMs":2674,"endMs":2896},{"text":"делает","startMs":2896,"endMs":3118},{"text":"из","startMs":3118,"endMs":3339},{"text":"него","startMs":3339,"endMs":3561}]},{"segId":"s1","startMs":3521,"endMs":4546,"words":[{"text":"мощный","startMs":3561,"endMs":4009},{"text":"автопилот?","startMs":4009,"endMs":4456}]},{"segId":"s2","startMs":4761,"endMs":5596,"words":[{"text":"Оно","startMs":4801,"endMs":5079},{"text":"само","startMs":5079,"endMs":5358},{"text":"подбирает","startMs":5358,"endMs":5636}]},{"segId":"s2","startMs":5596,"endMs":6349,"words":[{"text":"модель","startMs":5636,"endMs":5887},{"text":"под","startMs":5887,"endMs":6138},{"text":"задачу","startMs":6138,"endMs":6389}]},{"segId":"s2","startMs":6349,"endMs":7990,"words":[{"text":"и","startMs":6389,"endMs":6799},{"text":"экономит","startMs":6799,"endMs":7210},{"text":"35%","startMs":7210,"endMs":7620},{"text":"токенов","startMs":7620,"endMs":8030}]},{"segId":"s2","startMs":7990,"endMs":9045,"words":[{"text":"прямо","startMs":8030,"endMs":8261},{"text":"в","startMs":8261,"endMs":8493},{"text":"живой","startMs":8493,"endMs":8724},{"text":"панели!","startMs":8724,"endMs":8955}]},{"segId":"s3","startMs":9260,"endMs":10158,"words":[{"text":"Строит","startMs":9300,"endMs":9599},{"text":"карту","startMs":9599,"endMs":9899},{"text":"проекта","startMs":9899,"endMs":10198}]},{"segId":"s3","startMs":10158,"endMs":11047,"words":[{"text":"в","startMs":10198,"endMs":10494},{"text":"оперативке:","startMs":10494,"endMs":10791},{"text":"клик","startMs":10791,"endMs":11087}]},{"segId":"s3","startMs":11047,"endMs":11845,"words":[{"text":"по","startMs":11087,"endMs":11287},{"text":"файлу","startMs":11287,"endMs":11486},{"text":"—","startMs":11486,"endMs":11686},{"text":"видно","startMs":11686,"endMs":11885}]},{"segId":"s3","startMs":11845,"endMs":13296,"words":[{"text":"волну","startMs":11885,"endMs":12248},{"text":"влияния,","startMs":12248,"endMs":12611},{"text":"горячие","startMs":12611,"endMs":12974},{"text":"точки","startMs":12974,"endMs":13337}]},{"segId":"s3","startMs":13296,"endMs":14152,"words":[{"text":"и","startMs":13336,"endMs":13578},{"text":"граф","startMs":13578,"endMs":13820},{"text":"вызовов!","startMs":13820,"endMs":14062}]},{"segId":"s4","startMs":14367,"endMs":15594,"words":[{"text":"Срезы","startMs":14407,"endMs":14681},{"text":"кода","startMs":14681,"endMs":14956},{"text":"за","startMs":14956,"endMs":15230},{"text":"миллисекунду,","startMs":15230,"endMs":15504}]},{"segId":"s4","startMs":15700,"endMs":16563,"words":[{"text":"0","startMs":15740,"endMs":16027},{"text":"облачных","startMs":16027,"endMs":16314},{"text":"токенов","startMs":16314,"endMs":16601}]},{"segId":"s4","startMs":16563,"endMs":17143,"words":[{"text":"на","startMs":16603,"endMs":16893},{"text":"видеокарте","startMs":16893,"endMs":17183}]},{"segId":"s4","startMs":17143,"endMs":18168,"words":[{"text":"и","startMs":17183,"endMs":17525},{"text":"59","startMs":17525,"endMs":17866},{"text":"защит","startMs":17866,"endMs":18208}]},{"segId":"s4","startMs":18168,"endMs":18914,"words":[{"text":"на","startMs":18208,"endMs":18413},{"text":"каждый","startMs":18413,"endMs":18619},{"text":"шаг!","startMs":18619,"endMs":18824}]},{"segId":"s5","startMs":19130,"endMs":20547,"words":[{"text":"The","startMs":19170,"endMs":19492},{"text":"Tunnel","startMs":19492,"endMs":19814},{"text":"для","startMs":19814,"endMs":20135},{"text":"Antigravity","startMs":20135,"endMs":20457}]},{"segId":"s5","startMs":20651,"endMs":21581,"words":[{"text":"ставится","startMs":20691,"endMs":20924},{"text":"в","startMs":20924,"endMs":21156},{"text":"1","startMs":21156,"endMs":21389},{"text":"клик","startMs":21389,"endMs":21621}]},{"segId":"s5","startMs":21581,"endMs":22490,"words":[{"text":"на","startMs":21621,"endMs":21881},{"text":"любую","startMs":21881,"endMs":22140},{"text":"ОС!","startMs":22140,"endMs":22400}]},{"segId":"s5","startMs":23049,"endMs":24259,"words":[{"text":"Ссылка","startMs":23089,"endMs":23359},{"text":"в","startMs":23359,"endMs":23629},{"text":"описании","startMs":23629,"endMs":23899},{"text":"↓","startMs":23899,"endMs":24169}]}];
+      const CLIPS = {"cockpitCount":77,"cockpitMilestones":{"composerEndFrame":27,"behaviorStartFrame":28,"hardwareStartFrame":45,"guardStartFrame":62},"mapCount":136,"mapMilestones":{"blastStartFrame":45,"hotspotsStartFrame":79,"symbolsStartFrame":102}};
+
+      const isCapture = new URLSearchParams(location.search).get('capture') === '1';
+      if (isCapture) document.body.classList.add('capture-mode');
+
+      const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+      const easeOut = (x) => 1 - Math.pow(1 - clamp(x, 0, 1), 3);
+      const norm = (t, a, b) => easeOut((t - a) / Math.max(0.001, b - a));
+      const pad4 = (n) => String(Math.max(1, n)).padStart(4, '0');
+
+      const CHAPTER_TITLES = [
+        '01 · АВТОПИЛОТ',
+        '02 · 3D-РОУТИНГ И ПАНЕЛЬ',
+        '03 · КАРТА ПРОЕКТА WebGL2',
+        '04 · RAM / CPU / GPU И ЗАЩИТЫ',
+        '05 · УСТАНОВКА В 1 КЛИК',
+      ];
+      const COCKPIT_LABELS = [
+        'УМНЫЙ ВВОД @FILE',
+        '3D-РОУТИНГ И AUTO-SPEC',
+        'ОЗУ · ЦП · OLLAMA GPU',
+        '59 ЗАЩИТ И SENTINEL',
+      ];
+      const MAP_LABELS = [
+        'Архитектура проекта · Умный зум',
+        'Волна Blast & Diff (1–3 хопа) + Пакет',
+        'Горячие точки Git · Фокус связей',
+        'AST-граф вызовов функций · WebGL2',
+      ];
+
+      let currentTime = 0;
+
+      function fitStage() {
+        if (isCapture) return;
+        const shell = document.getElementById('root');
+        const sx = (window.innerWidth - 20) / 1080;
+        const sy = (window.innerHeight - 86) / 1920;
+        const sc = Math.min(sx, sy, 1);
+        shell.style.transform = 'scale(' + sc.toFixed(4) + ')';
+      }
+      window.addEventListener('resize', fitStage);
+      fitStage();
+
+      function renderSubtitleAtMs(tMs) {
+        const pill = document.getElementById('subPill');
+        if (!pill) return;
+        let activeGrp = null;
+        for (let i = 0; i < SUBTITLES.length; i++) {
+          const g = SUBTITLES[i];
+          if (tMs >= g.startMs && tMs <= g.endMs) { activeGrp = g; break; }
+        }
+        if (!activeGrp) {
+          pill.style.opacity = '0';
+          return;
+        }
+        pill.style.opacity = '1';
+        let html = '';
+        for (const w of activeGrp.words) {
+          const isAct = tMs >= w.startMs && tMs <= w.endMs;
+          const isSpoken = tMs > w.endMs;
+          const cls = isAct ? 'sub-word active' : (isSpoken ? 'sub-word spoken' : 'sub-word');
+          html += '<span class="' + cls + '">' + w.text + '</span>';
+        }
+        if (pill.getAttribute('data-last-html') !== html) {
+          pill.setAttribute('data-last-html', html);
+          pill.innerHTML = html;
+        }
+      }
+
+      function applyTime(tSec) {
+        const t = clamp(Number(tSec) || 0, 0, DURATION);
+        currentTime = t;
+        const tMs = Math.round(t * 1000);
+
+        const clk = document.getElementById('hudClock');
+        if (clk) clk.textContent = t.toFixed(1).padStart(4, '0') + ' / 25.0s';
+        const ctlT = document.getElementById('ctlTime');
+        if (ctlT) ctlT.textContent = t.toFixed(1).padStart(4, '0') + ' / 25.0s';
+        const scrub = document.getElementById('timeScrub');
+        if (scrub && document.activeElement !== scrub) scrub.value = t.toFixed(2);
+
+        // Top 5 stories segments
+        let activeIdx = 0;
+        let scanOp = 0;
+        let scanY = 0;
+        for (let i = 0; i < CHAPTERS.length; i++) {
+          const ch = CHAPTERS[i];
+          const fill = document.getElementById('storyFill' + i);
+          const p = clamp((t - ch.start) / Math.max(0.01, ch.end - ch.start), 0, 1);
+          if (fill) fill.style.transform = 'scaleX(' + p.toFixed(4) + ')';
+
+          const el = document.getElementById('scene' + i);
+          if (!el) continue;
+          const fadeIn = i === 0 ? 1 : clamp((t - ch.start) / 0.22, 0, 1);
+          const fadeOut = i === CHAPTERS.length - 1 ? 1 : clamp((ch.end - t) / 0.18, 0, 1);
+          const inRange = t >= ch.start && (t < ch.end || (i === CHAPTERS.length - 1 && t <= DURATION));
+          const op = inRange ? Math.min(fadeIn, fadeOut) : 0;
+          el.style.opacity = op.toFixed(4);
+          const yShift = inRange ? ((1 - fadeIn) * 28 - (1 - fadeOut) * 18) : 0;
+          const sc = inRange ? (0.96 + 0.04 * fadeIn) : 0.96;
+          el.style.transform = 'translateY(' + yShift.toFixed(1) + 'px) scale(' + sc.toFixed(4) + ')';
+
+          if (inRange) activeIdx = i;
+          if (i > 0 && t >= ch.start - 0.06 && t <= ch.start + 0.24) {
+            const wProg = (t - (ch.start - 0.06)) / 0.30;
+            scanOp = Math.sin(clamp(wProg, 0, 1) * Math.PI) * 0.9;
+            scanY = wProg * 1550;
+          }
+        }
+
+        const wipe = document.getElementById('scanWipe');
+        if (wipe) {
+          wipe.style.opacity = scanOp.toFixed(3);
+          wipe.style.transform = 'translateY(' + scanY.toFixed(1) + 'px)';
+        }
+        const chName = document.getElementById('hudChapterName');
+        if (chName) chName.textContent = CHAPTER_TITLES[activeIdx] || CHAPTER_TITLES[0];
+
+        // Scene 0: Hook
+        if (t < CHAPTERS[0].end + 0.2) {
+          const p0 = norm(t, 0.05, 0.65);
+          const p1 = norm(t, 0.25, 0.85);
+          const p2 = norm(t, 0.95, 1.65);
+          const pulse = (t * 0.9) % 1;
+          document.getElementById('s1Emblem').style.transform = 'scale(' + (0.8 + 0.2 * p0).toFixed(4) + ')';
+          document.getElementById('s1Ring').style.transform = 'scale(' + (0.85 + 0.45 * pulse).toFixed(3) + ')';
+          document.getElementById('s1Ring').style.opacity = (1 - pulse).toFixed(3);
+          document.getElementById('s1Title').style.transform = 'translateY(' + ((1 - p1) * 24).toFixed(1) + 'px)';
+          document.getElementById('s1Title').style.opacity = p1.toFixed(3);
+          document.getElementById('s1Cards').style.transform = 'translateY(' + ((1 - p2) * 32).toFixed(1) + 'px)';
+          document.getElementById('s1Cards').style.opacity = p2.toFixed(3);
+        }
+
+        // Scene 1: 3D Tensor + Live Russian Cockpit
+        if (t >= CHAPTERS[1].start - 0.1 && t < CHAPTERS[1].end + 0.2) {
+          const s = CHAPTERS[1].start;
+          const dur = CHAPTERS[1].end - s;
+          document.getElementById('axFill0').style.transform = 'scaleX(' + (0.84 * norm(t, s + 0.2, s + 1.0)).toFixed(4) + ')';
+          document.getElementById('axFill1').style.transform = 'scaleX(' + (0.92 * norm(t, s + 0.4, s + 1.2)).toFixed(4) + ')';
+          document.getElementById('axFill2').style.transform = 'scaleX(' + (0.78 * norm(t, s + 0.6, s + 1.4)).toFixed(4) + ')';
+
+          const u = clamp((t - s) / Math.max(0.1, dur), 0, 0.9999);
+          const cFrame = Math.min(CLIPS.cockpitCount, 1 + Math.floor(u * CLIPS.cockpitCount));
+          const cImg = document.getElementById('cockpitLiveImg');
+          if (cImg) {
+            const targetSrc = '/shorts-ru-frames/cockpit/frame-' + pad4(cFrame) + '.png';
+            if (cImg.getAttribute('data-cur-src') !== targetSrc) {
+              cImg.setAttribute('data-cur-src', targetSrc);
+              cImg.src = targetSrc;
+            }
+          }
+          const cm = CLIPS.cockpitMilestones || {};
+          let step = 0;
+          if (cFrame >= (cm.guardStartFrame || 62)) step = 3;
+          else if (cFrame >= (cm.hardwareStartFrame || 45)) step = 2;
+          else if (cFrame >= (cm.behaviorStartFrame || 28)) step = 1;
+          const badge = document.getElementById('cockpitPhaseBadge');
+          if (badge) badge.textContent = COCKPIT_LABELS[step];
+        }
+
+        // Scene 2: Live Russian WebGL2 Project Map
+        if (t >= CHAPTERS[2].start - 0.1 && t < CHAPTERS[2].end + 0.2) {
+          const s = CHAPTERS[2].start;
+          const dur = CHAPTERS[2].end - s;
+          const u = clamp((t - s) / Math.max(0.1, dur), 0, 0.9999);
+          const mFrame = Math.min(CLIPS.mapCount, 1 + Math.floor(u * CLIPS.mapCount));
+          const mImg = document.getElementById('mapLiveImg');
+          if (mImg) {
+            const targetSrc = '/shorts-ru-frames/map/frame-' + pad4(mFrame) + '.png';
+            if (mImg.getAttribute('data-cur-src') !== targetSrc) {
+              mImg.setAttribute('data-cur-src', targetSrc);
+              mImg.src = targetSrc;
+            }
+          }
+          const mm = CLIPS.mapMilestones || {};
+          let lensIdx = 0;
+          if (mFrame >= (mm.symbolsStartFrame || 102)) lensIdx = 3;
+          else if (mFrame >= (mm.hotspotsStartFrame || 79)) lensIdx = 2;
+          else if (mFrame >= (mm.blastStartFrame || 45)) lensIdx = 1;
+          for (let i = 0; i < 4; i++) {
+            const pill = document.getElementById('mapLens' + i);
+            if (pill) pill.classList.toggle('active', i === lensIdx);
+          }
+          const foot = document.getElementById('mapFootMode');
+          if (foot) foot.textContent = MAP_LABELS[lensIdx];
+        }
+
+        // Scene 3: Local Stack & 59 Guardrails
+        if (t >= CHAPTERS[3].start - 0.1 && t < CHAPTERS[3].end + 0.2) {
+          const s = CHAPTERS[3].start;
+          for (let i = 0; i < 4; i++) {
+            const p = norm(t, s + i * 0.45, s + 0.65 + i * 0.45);
+            const card = document.getElementById('stackCard' + i);
+            if (card) {
+              card.style.opacity = p.toFixed(3);
+              card.style.transform = 'translateX(' + ((1 - p) * 36).toFixed(1) + 'px)';
+            }
+          }
+        }
+
+        // Scene 4: Outro / CTA
+        if (t >= CHAPTERS[4].start - 0.1) {
+          const s = CHAPTERS[4].start;
+          const p = norm(t, s + 0.05, s + 0.7);
+          document.getElementById('s5Logo').style.transform = 'scale(' + (0.84 + 0.16 * p).toFixed(4) + ')';
+          const pulse = 1 + 0.035 * Math.sin((t - s) * 7.5);
+          document.getElementById('ctaPill').style.transform = 'scale(' + pulse.toFixed(4) + ')';
+        }
+
+        renderSubtitleAtMs(tMs);
+      }
+
+      async function waitVisibleImagesDecoded() {
+        const imgs = [];
+        const cImg = document.getElementById('cockpitLiveImg');
+        const mImg = document.getElementById('mapLiveImg');
+        if (currentTime >= CHAPTERS[1].start - 0.1 && currentTime < CHAPTERS[1].end + 0.2 && cImg) imgs.push(cImg);
+        if (currentTime >= CHAPTERS[2].start - 0.1 && currentTime < CHAPTERS[2].end + 0.2 && mImg) imgs.push(mImg);
+        for (const img of imgs) {
+          if (!img.complete) {
+            await new Promise((res) => {
+              img.addEventListener('load', res, { once: true });
+              img.addEventListener('error', res, { once: true });
+            });
+          }
+          if (typeof img.decode === 'function') {
+            try { await img.decode(); } catch {}
+          }
+        }
+      }
+
+      window.__seek = applyTime;
+      window.__seekAsync = async function (tSec) {
+        applyTime(tSec);
+        await waitVisibleImagesDecoded();
+      };
+      window.__timelines = window.__timelines || {};
+      window.__timelines['the-tunnel-shorts-ru'] = {
+        seek: applyTime,
+        pause(tSec) { if (tSec !== undefined) applyTime(tSec); },
+        duration: () => DURATION,
+      };
+      applyTime(0);
+
+      if (!isCapture) {
+        let playing = false;
+        let lastTs = 0;
+        const tick = (ts) => {
+          if (!playing) return;
+          if (!lastTs) lastTs = ts;
+          const dt = Math.min(0.1, (ts - lastTs) / 1000);
+          lastTs = ts;
+          const next = currentTime + dt;
+          if (next >= DURATION) {
+            applyTime(DURATION);
+            playing = false;
+            document.getElementById('btnPlayPause').textContent = '↻ Replay';
+            return;
+          }
+          applyTime(next);
+          window.requestAnimationFrame(tick);
+        };
+        document.getElementById('btnPlayPause').addEventListener('click', () => {
+          if (currentTime >= DURATION - 0.1) currentTime = 0;
+          playing = !playing;
+          document.getElementById('btnPlayPause').textContent = playing ? '⏸ Pause' : '▶ Play';
+          if (playing) { lastTs = 0; window.requestAnimationFrame(tick); }
+        });
+        document.getElementById('timeScrub').addEventListener('input', (ev) => {
+          applyTime(Number(ev.target.value));
+        });
+      }
+    })();
+  </script>
+</body>
+</html>
