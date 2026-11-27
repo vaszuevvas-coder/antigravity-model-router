@@ -6,6 +6,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 
 process.env.TUNNEL_TEST_ISOLATE_INSTALLED = '1';
 delete process.env.ANTIGRAVITY_LS_ADDRESS;
@@ -551,7 +552,9 @@ test('3. Real Headless CDP: HUD swarm badge, 4-item bg preview cap, EN statusPil
           conversationId: 'cdp-chat-1',
           chatNumber: 1,
           projectName: 'antigravity-model-router',
-          workspaceRoot: 'C:\\repo\\antigravity-model-router',
+          workspaceRoot: (typeof _activeWorkspaceResolved !== 'undefined' && _activeWorkspaceResolved)
+            || (typeof _autoWorkspaceResolved !== 'undefined' && _autoWorkspaceResolved)
+            || 'C:\\repo\\antigravity-model-router',
           status: 'running',
           percent: 60,
           stepTitle: 'Аудит',
@@ -688,4 +691,97 @@ test('5. Panel UI polish regressions: Grill-Me active/hover CSS, in-place bg tas
 
   const collectorsSrc = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'lib', 'panel-telemetry-collectors.mjs'), 'utf8');
   assert.ok(collectorsSrc.includes('RAM_STATUS_GRACE_MS'), 'safeGetRamCacheStatus must guard against transient /health timeouts');
+});
+
+test('6. Regression: __auto__ filters foreign-project tasks before openWorkspaces IPC arrives and does not poison poll cache', async () => {
+  const wizSrc = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui-src', 'js', '01-workspace-wizard.js'), 'utf8');
+  const hudSrc = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui-src', 'js', '05-progress-hud.js'), 'utf8');
+
+  const autoBlockMatch = hudSrc.match(/const autoOpenWsKeys = new Set\(\);[\s\S]*?const chats = pinnedWsKey/);
+  assert.ok(autoBlockMatch, 'autoOpenWsKeys filter block must exist in 05-progress-hud.js');
+  assert.ok(
+    !/if\s*\(_selectedWorkspaceMode === '__auto__'[\s\S]*?_cachedSidecarOpenWorkspaces\.length > 0\)\s*\{[\s\S]*?autoResKey/.test(autoBlockMatch[0]),
+    'autoResKey must not be gated behind _cachedSidecarOpenWorkspaces.length > 0'
+  );
+
+  const filterSnippet = `
+    function normalizeWsClientKey(p) {
+      return String(p || '').trim().replace(/\\\\/g, '/').replace(/\\/+$/, '').toLowerCase();
+    }
+    function normalizeSidecarUriToWsKey(uri) {
+      return normalizeWsClientKey(String(uri || '').replace(/^file:\\/\\/\\//i, ''));
+    }
+    function runFilter(mode, cachedOpen, autoWs, rawChats) {
+      const _selectedWorkspaceMode = mode;
+      const _cachedSidecarOpenWorkspaces = cachedOpen;
+      const _autoWorkspaceResolved = autoWs;
+      const _activeWorkspaceResolved = autoWs;
+      const pinnedWsKey = (_selectedWorkspaceMode !== '__auto__' && _selectedWorkspaceMode !== '__all__')
+        ? normalizeWsClientKey(_selectedWorkspaceMode)
+        : '';
+      ${autoBlockMatch[0]}
+        ? rawChats.filter(function (c) {
+            if (!c) return false;
+            if (c.isUnscopedChat || !c.workspaceRoot) return true;
+            return normalizeWsClientKey(c.workspaceRoot) === pinnedWsKey;
+          })
+        : (autoOpenWsKeys.size > 0
+            ? rawChats.filter(function (c) {
+                if (!c) return false;
+                if (c.isUnscopedChat || !c.workspaceRoot) return true;
+                return autoOpenWsKeys.has(normalizeWsClientKey(c.workspaceRoot));
+              })
+            : rawChats);
+      return chats.map(function (c) { return c.conversationId; });
+    }
+  `;
+  const filterCtx = vm.createContext({});
+  vm.runInContext(filterSnippet, filterCtx);
+  const sampleChats = [
+    { conversationId: 'chat-a', workspaceRoot: 'C:\\Work\\proj-a' },
+    { conversationId: 'chat-b', workspaceRoot: 'C:\\Work\\proj-b' },
+    { conversationId: 'chat-unscoped', workspaceRoot: '', isUnscopedChat: true },
+  ];
+  assert.deepEqual(
+    filterCtx.runFilter('__auto__', [], 'C:\\Work\\proj-a', sampleChats),
+    ['chat-a', 'chat-unscoped'],
+    'Initial __auto__ render with empty _cachedSidecarOpenWorkspaces must filter to _autoWorkspaceResolved without flashing foreign projects'
+  );
+  assert.deepEqual(
+    filterCtx.runFilter('__all__', [], 'C:\\Work\\proj-a', sampleChats),
+    ['chat-a', 'chat-b', 'chat-unscoped'],
+    '__all__ mode must still show tasks from all projects'
+  );
+
+  const fnMatch = wizSrc.match(/async function refreshSidecarOpenWorkspacesFast\(force\)[\s\S]*?finally\s*\{\s*_openWorkspacesInFlight = null;\s*\}\s*\}/);
+  assert.ok(fnMatch, 'refreshSidecarOpenWorkspacesFast must exist in 01-workspace-wizard.js');
+  const ipcCtx = vm.createContext({
+    Date,
+    Promise,
+    setTimeout,
+    clearTimeout,
+    window: {},
+    lastPayloadCache: null,
+    _selectedWorkspaceMode: '__auto__',
+    _cachedSidecarOpenWorkspaces: [],
+    _lastOpenWorkspacesPollAt: 0,
+    _openWorkspacesInFlight: null,
+    _sidecarWsRefreshTimer: null,
+    ensureSidecarWorkspaceSubscription() {},
+    normalizeSidecarWorkspaceUris(res) { return Array.isArray(res) ? res.map((u) => String(u || '').trim()).filter(Boolean) : []; },
+  });
+  vm.runInContext(fnMatch[0], ipcCtx);
+
+  const firstAttempt = await ipcCtx.refreshSidecarOpenWorkspacesFast(true);
+  assert.deepEqual(firstAttempt, []);
+  assert.equal(ipcCtx._lastOpenWorkspacesPollAt, 0, 'Missing window.sidecar must not poison _lastOpenWorkspacesPollAt');
+
+  ipcCtx.window.sidecar = {
+    async getWorkspaceUris() {
+      return ['file:///C:/Work/proj-a'];
+    },
+  };
+  const secondAttempt = await ipcCtx.refreshSidecarOpenWorkspacesFast(false);
+  assert.deepEqual(secondAttempt, ['file:///C:/Work/proj-a'], 'Subsequent non-forced call must immediately query once window.sidecar is ready');
+  assert.ok(ipcCtx._lastOpenWorkspacesPollAt > 0, 'Successful IPC response must stamp _lastOpenWorkspacesPollAt');
 });

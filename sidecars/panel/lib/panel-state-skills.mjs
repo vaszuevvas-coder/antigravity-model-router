@@ -10,7 +10,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { getSubscriptionCapabilities, sanitizeSwarmWorkerTierForSubscription } from '../../../core/model-profile.mjs';
 import { safeReadJsonSync, updateJsonAtomicSync } from '../../../core/safe-json.mjs';
-import { BLOCKED_PROTO_KEYS, isAllowedLoopbackEndpoint, isPidAlive, isValidWorkspaceDir } from './panel-security.mjs';
+import { BLOCKED_PROTO_KEYS, isAllowedLoopbackEndpoint, isPidAlive, isSafeCreatableFolderPath, isValidWorkspaceDir } from './panel-security.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -32,59 +32,35 @@ export const DEPRECATED_STATE_KEYS = [
 ];
 
 export const DEFAULT_PANEL_BLOCK_ORDER = [
-  'smartProjectBanner',
   'agLiveProgressWrap',
   'smartComposerCard',
-  'liteQuickCard',
-  'skillsSectionCard',
+  'fullGuardRailWrap',
+  'unifiedPresetBar',
   'agentModeCard',
   'skillProfilesFieldset',
+  'swarmBehaviorCard',
   'swarmTelemetryCard',
   'gpuRamCard',
+  'expertRamGpuFieldset',
   'sentinelSectionCard',
-  'snapshotsBayesianSpoiler',
-  'expertDetailsBox',
   'checkpointsCard',
   'intelligenceBayesianCard',
   'expertCircuitBox',
-  'expertPitfallsBox',
+  'memoryContextCard',
   'expertKnowledgeBox',
+  'expertPitfallsBox',
+  'skillsSectionCard',
   'expertGuardrailsCard',
   'expertProfileCard',
-  'expertRamGpuFieldset',
 ];
 
 const VALID_PANEL_BLOCK_IDS = new Set(DEFAULT_PANEL_BLOCK_ORDER);
 
-export const COLLAPSIBLE_PANEL_CARD_IDS = new Set([
-  'smartComposerCard',
-  'skillsSectionCard',
-  'agentModeCard',
-  'skillProfilesFieldset',
-  'swarmTelemetryCard',
-  'gpuRamCard',
-  'sentinelSectionCard',
-  'checkpointsCard',
-  'intelligenceBayesianCard',
-  'expertGuardrailsCard',
-  'expertProfileCard',
-  'expertRamGpuFieldset',
-]);
+export const COLLAPSIBLE_PANEL_CARD_IDS = new Set();
 
-export const DEFAULT_COLLAPSED_PANEL_CARDS = {
-  swarmTelemetryCard: true,
-  gpuRamCard: true,
-  sentinelSectionCard: true,
-};
+export const DEFAULT_COLLAPSED_PANEL_CARDS = {};
 
-export const PANEL_SPOILER_IDS = new Set([
-  'snapshotsBayesianSpoiler',
-  'expertDetailsBox',
-  'hwEnginesSpoiler',
-  'sentinelEnginesSpoiler',
-  'intelBudgetSpoiler',
-  'safetyContoursSpoiler',
-]);
+export const PANEL_SPOILER_IDS = new Set();
 
 export function sanitizeBooleanIdMap(rawMap, allowedIds) {
   if (!rawMap || typeof rawMap !== 'object' || Array.isArray(rawMap)) return null;
@@ -143,7 +119,12 @@ export function sanitizePanelBlockOrder(rawOrder) {
   };
   const trimmedList = rawOrder.map((item) => (typeof item === 'string' ? item.trim() : ''));
   const hasExplicitSentinel = trimmedList.includes('sentinelSectionCard');
+  const hasExplicitProgress = trimmedList.includes('agLiveProgressWrap');
   for (const id of trimmedList) {
+    if (id === 'smartProjectBanner') {
+      if (!hasExplicitProgress) pushUnique('agLiveProgressWrap');
+      continue;
+    }
     if (id === 'telemetrySwarmSpoiler') {
       pushUnique('swarmTelemetryCard');
       continue;
@@ -164,13 +145,6 @@ export function sanitizePanelBlockOrder(rawOrder) {
       seen.add(defId);
       if (defId === 'smartComposerCard') {
         const anchorIdx = out.indexOf('agLiveProgressWrap');
-        if (anchorIdx >= 0) {
-          out.splice(anchorIdx + 1, 0, defId);
-          continue;
-        }
-      }
-      if (defId === 'liteQuickCard') {
-        const anchorIdx = out.indexOf('smartComposerCard');
         if (anchorIdx >= 0) {
           out.splice(anchorIdx + 1, 0, defId);
           continue;
@@ -252,20 +226,16 @@ export function resolvePanelFetchSections(queryData = {}, state = {}, options = 
       flags.swarm = true;
       flags.hw = true;
     } else {
-      const snapshotsOpen = Boolean(openSpoilers.snapshotsBayesianSpoiler);
-      const expertOpen = Boolean(openSpoilers.expertDetailsBox);
+      const activeTab = normalizePanelFullTabValue(state?.panelFullTab, 'cockpit');
       flags.core = true;
-      flags.skills = !collapsedCards.skillsSectionCard;
-      flags.swarm = !collapsedCards.swarmTelemetryCard;
-      flags.hw =
-        !collapsedCards.gpuRamCard ||
-        !collapsedCards.sentinelSectionCard ||
-        (expertOpen && !collapsedCards.expertRamGpuFieldset);
-      flags.checkpoints = snapshotsOpen && !collapsedCards.checkpointsCard;
-      flags.bayesian = snapshotsOpen && !collapsedCards.intelligenceBayesianCard;
-      flags.circuit = expertOpen || !collapsedCards.agentModeCard;
-      flags.compaction = expertOpen;
-      flags.pitfalls = expertOpen;
+      flags.skills = activeTab === 'settings';
+      flags.swarm = activeTab === 'behavior' || activeTab === 'economy';
+      flags.hw = activeTab === 'hardware' || activeTab === 'bugs';
+      flags.checkpoints = activeTab === 'bugs';
+      flags.bayesian = activeTab === 'bugs';
+      flags.circuit = activeTab === 'behavior' || activeTab === 'bugs';
+      flags.compaction = activeTab === 'memory' || activeTab === 'settings';
+      flags.pitfalls = activeTab === 'memory';
     }
   } else if (!defaultNone) {
     flags.all = true;
@@ -304,6 +274,7 @@ export const DEFAULT_STATE = {
   swarmQuotaFailover: true,
   panelTheme: 'glass_teal',
   panelViewMode: 'full',
+  panelFullTab: 'cockpit',
   panelUiScale: 'auto',
   uiLanguage: 'en',
   panelBlockOrder: [...DEFAULT_PANEL_BLOCK_ORDER],
@@ -317,6 +288,7 @@ export const DEFAULT_STATE = {
   uiInspirationMode: 'ask',
   grillMode: 'auto',
   autoSpecMode: 'auto',
+  autoSpecOutput: 'thinking',
   leanMode: 'full',
   terseMode: 'off',
   skillModes: {},
@@ -403,12 +375,24 @@ const VALID_SWARM_TIERS = new Set(['hydrogen_auto', 'neon_auto', 'inherit', 'arg
 
 const VALID_THEMES = new Set(['glass_teal']);
 const VALID_PANEL_VIEW_MODES = new Set(['full', 'lite']);
+const VALID_PANEL_FULL_TABS = new Set(['cockpit', 'behavior', 'economy', 'hardware', 'bugs', 'memory', 'settings']);
+const LEGACY_PANEL_FULL_TAB_MAP = {
+  core: 'settings',
+  all: 'cockpit',
+};
 const VALID_PANEL_UI_SCALES = new Set(['auto', '90', '100', '115', '130']);
 const VALID_UI_LANGUAGES = new Set(['en', 'ru']);
 
 export function normalizePanelViewModeValue(rawMode, fallback = null) {
   const s = typeof rawMode === 'string' ? rawMode.trim().toLowerCase() : '';
   if (VALID_PANEL_VIEW_MODES.has(s)) return s;
+  return fallback;
+}
+
+export function normalizePanelFullTabValue(rawTab, fallback = null) {
+  const s = typeof rawTab === 'string' ? rawTab.trim().toLowerCase() : '';
+  const mapped = LEGACY_PANEL_FULL_TAB_MAP[s] || s;
+  if (VALID_PANEL_FULL_TABS.has(mapped)) return mapped;
   return fallback;
 }
 
@@ -448,6 +432,8 @@ const VALID_UI_INSPIRATION_MODES = new Set(['ask', 'showroom', 'web_refs']);
 const VALID_GRILL_MODES = new Set(['off', 'auto', 'always']);
 
 const VALID_AUTO_SPEC_MODES = new Set(['off', 'auto', 'always']);
+
+const VALID_AUTO_SPEC_OUTPUTS = new Set(['thinking', 'chat']);
 
 const VALID_LEAN_MODES = new Set(['off', 'lite', 'full', 'ultra']);
 
@@ -523,6 +509,11 @@ export function sanitizeStatePatch(patch = {}, options = {}) {
         if (normView) out[key] = normView;
         break;
       }
+      case 'panelFullTab': {
+        const normTab = normalizePanelFullTabValue(val);
+        if (normTab) out[key] = normTab;
+        break;
+      }
       case 'panelUiScale': {
         const normScale = normalizePanelUiScaleValue(val);
         if (normScale) out[key] = normScale;
@@ -544,6 +535,9 @@ export function sanitizeStatePatch(patch = {}, options = {}) {
         break;
       case 'autoSpecMode':
         if (VALID_AUTO_SPEC_MODES.has(String(val))) out[key] = String(val);
+        break;
+      case 'autoSpecOutput':
+        if (VALID_AUTO_SPEC_OUTPUTS.has(String(val))) out[key] = String(val);
         break;
       case 'leanMode':
         if (VALID_LEAN_MODES.has(String(val))) out[key] = String(val);
@@ -606,7 +600,7 @@ export function sanitizeStatePatch(patch = {}, options = {}) {
       case 'gpuOllamaDir': {
         if (typeof val === 'string') {
           const clean = val.trim();
-          if (clean.length <= 512 && !/[\r\n\0]/.test(clean)) out[key] = clean;
+          if (clean === '' || isSafeCreatableFolderPath(clean)) out[key] = clean;
         }
         break;
       }
@@ -1204,6 +1198,7 @@ export function loadState(options = {}) {
   const migratedCollapsed = migrateLegacyPanelCollapsedCards(src);
   merged.panelTheme = normalizePanelThemeValue(merged.panelTheme) || 'glass_teal';
   merged.panelViewMode = normalizePanelViewModeValue(merged.panelViewMode) || 'full';
+  merged.panelFullTab = normalizePanelFullTabValue(merged.panelFullTab) || 'cockpit';
   const explicitLang = normalizeUiLanguageValue(src.uiLanguage);
   if (explicitLang) {
     merged.uiLanguage = explicitLang;
@@ -1236,6 +1231,7 @@ export function saveState(patch, options = {}) {
         uiLanguage: normalizeUiLanguageValue(currentRaw.uiLanguage)
           || ((currentRaw.onboardingCompleted === true || currentRaw.hardwareProfiled === true) ? 'ru' : 'en'),
         panelViewMode: normalizePanelViewModeValue(currentRaw.panelViewMode) || 'full',
+        panelFullTab: normalizePanelFullTabValue(currentRaw.panelFullTab) || 'cockpit',
         skillModes: sanitizeSkillModes(currentRaw.skillModes),
       };
       const mergedModes = replaceSkillModes ? {} : { ...(current.skillModes || {}) };
@@ -1666,7 +1662,8 @@ export function isEphemeralPanelCandidatePath(rawPath = '', handoffMod = null) {
     norm === '/tmp' ||
     norm.startsWith('/tmp/') ||
     norm.startsWith('/private/tmp/') ||
-    norm.includes('/var/folders/')
+    norm.includes('/var/folders/') ||
+    /(?:^|\/)(?:\.gemini\/(?:config|antigravity)\/plugins|\.?agents?\/plugins)\/[^/]+(?:\/|$)/i.test(norm)
   ) {
     return true;
   }

@@ -1872,6 +1872,15 @@ export async function generateIdleModuleSymbolCard(rawOpts = {}) {
   }
 }
 
+function trimWordBoundary(text, maxLen = 420) {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (clean.length <= maxLen) return clean;
+  const slice = clean.slice(0, maxLen);
+  const lastSpace = Math.max(slice.lastIndexOf(' '), slice.lastIndexOf(','), slice.lastIndexOf(';'), slice.lastIndexOf('.'));
+  const cut = lastSpace >= Math.floor(maxLen * 0.55) ? slice.slice(0, lastSpace) : slice;
+  return cut.replace(/[,;:\s-]+$/, '') + '…';
+}
+
 /**
  * Audits a git diff hunk locally on idle GPU for high-confidence runtime/logic bugs only.
  * Automatically yields (<5ms) on P0 foreground GPU preemption.
@@ -1993,8 +2002,8 @@ export async function reviewGitDiffHunkLocally(rawOpts = {}) {
         severity: String(f.severity || '').toLowerCase() === 'high' ? 'high' : 'medium',
         file: String(f.file || relPath || '').trim(),
         lineHint: String(f.lineHint || '').trim().slice(0, 64),
-        issueRu: String(f.issueRu || '').trim().slice(0, 260),
-        fixPromptRu: String(f.fixPromptRu || '').trim().slice(0, 320),
+        issueRu: trimWordBoundary(f.issueRu, 420),
+        fixPromptRu: trimWordBoundary(f.fixPromptRu, 420),
       }));
 
     return { ok: true, findings, model: body.model };

@@ -90,8 +90,12 @@ export const DEFAULT_COMBO_CHAINS = {
   budget_fast: ['gemini-4-hydrogen-medium', 'gemini-3-8-flash', 'gpt-oss-120b-medium', 'local_ollama'],
 };
 
+const QUOTA_PACER_SCHEMA_VERSION = 2;
+const QUOTA_WINDOW_HOURS = 5;
+const QUOTA_WINDOW_MS = QUOTA_WINDOW_HOURS * 60 * 60 * 1000;
+
 /**
- * Регистрирует вызов модели в скользящем буфере последних 2 часов.
+ * Регистрирует ход пользователя в скользящем буфере последних 5 часов.
  * @param {object} [opts={}]
  * @returns {{ ok: boolean, samplesCount: number }}
  */
@@ -107,21 +111,23 @@ export function recordQuotaTurnSample(opts = {}) {
 
   let count = 0;
   withFileLockSync(quotaFile, () => {
-    const doc = safeReadJsonSync(quotaFile, () => ({ samples: [] }), { selfHeal: false });
-    const prev = Array.isArray(doc?.samples) ? doc.samples : [];
-    const cutoff = nowMs - 2 * 60 * 60 * 1000;
+    const doc = safeReadJsonSync(quotaFile, () => ({ schemaVersion: QUOTA_PACER_SCHEMA_VERSION, samples: [] }), { selfHeal: false });
+    // Discard pre-v2 samples inflated by per-tool-step counting inside hook-runner
+    const prev = doc?.schemaVersion === QUOTA_PACER_SCHEMA_VERSION && Array.isArray(doc?.samples) ? doc.samples : [];
+    const cutoff = nowMs - QUOTA_WINDOW_MS;
     const kept = prev.filter((s) => s && typeof s.ts === 'number' && s.ts >= cutoff);
     const entry = thinkingLevel ? { ts: nowMs, tier, thinkingLevel, convoId, tokens } : { ts: nowMs, tier, convoId, tokens };
     kept.push(entry);
-    const bounded = kept.slice(-240);
+    const bounded = kept.slice(-600);
     count = bounded.length;
-    atomicWriteJsonSync(quotaFile, { samples: bounded });
+    atomicWriteJsonSync(quotaFile, { schemaVersion: QUOTA_PACER_SCHEMA_VERSION, samples: bounded });
   });
   return { ok: true, samplesCount: count };
 }
 
 /**
- * Рассчитывает темп расхода квоты за последние 30 и 60 минут и формирует прогноз/совет на русском.
+ * Рассчитывает локальную оценку расхода квоты за скользящее 5-часовое окно (плюс темп за 30/60 мин)
+ * и формирует честный прогноз на +1 час и совет на русском/английском.
  * @param {Array<object>|null} [eventsOrSamples=null]
  * @param {object} [state={}]
  * @returns {object}
@@ -136,34 +142,49 @@ export function computeQuotaBurnForecast(eventsOrSamples = null, state = {}) {
   } else {
     const baseCache = asStr(safeState.cacheDir, 1024).trim()
       ? resolve(asStr(safeState.cacheDir, 1024).trim())
-      : DEFAULT_CACHE_DIR;
+      : getDefaultCacheDir();
     const qFile = join(baseCache, 'quota-pacer.json');
     if (existsSync(qFile)) {
-      const doc = safeReadJsonSync(qFile, () => ({ samples: [] }), { selfHeal: false });
-      samples = Array.isArray(doc?.samples) ? doc.samples : [];
+      const doc = safeReadJsonSync(qFile, () => ({ schemaVersion: QUOTA_PACER_SCHEMA_VERSION, samples: [] }), { selfHeal: false });
+      if (doc?.schemaVersion === QUOTA_PACER_SCHEMA_VERSION && Array.isArray(doc?.samples)) {
+        samples = doc.samples;
+      } else {
+        // Migrate legacy bloated per-step cache file cleanly
+        samples = [];
+        try {
+          atomicWriteJsonSync(qFile, { schemaVersion: QUOTA_PACER_SCHEMA_VERSION, samples: [] });
+        } catch {}
+      }
     }
   }
 
   const win30Start = nowMs - 30 * 60 * 1000;
   const win60Start = nowMs - 60 * 60 * 1000;
+  const win5hStart = nowMs - QUOTA_WINDOW_MS;
   let turnsLast30m = 0;
   let turnsLast60m = 0;
+  let turnsLast5h = 0;
   let weight30m = 0;
   let weight60m = 0;
+  let weight5h = 0;
   const tierCounts = new Map();
 
   for (const raw of samples) {
     if (!raw || typeof raw !== 'object') continue;
     const ts = Number(raw.ts || 0);
-    if (!Number.isFinite(ts) || ts < win60Start || ts > nowMs + 60_000) continue;
+    if (!Number.isFinite(ts) || ts < win5hStart || ts > nowMs + 60_000) continue;
     const rawRef = raw.tier || raw.modelTier || raw.modelName || 'hydrogen';
     const tierKey = normalizeTierKey(rawRef);
     const thinkingKey = normalizeThinkingKey(raw.thinkingLevel, raw.modelName || '');
     const mult = thinkingKey && Object.hasOwn(THINKING_MULTIPLIERS, thinkingKey) ? THINKING_MULTIPLIERS[thinkingKey] : 1.0;
     const weight = (TIER_WEIGHTS[tierKey] || TIER_WEIGHTS.unknown) * mult;
-    turnsLast60m += 1;
-    weight60m += weight;
+    turnsLast5h += 1;
+    weight5h += weight;
     tierCounts.set(tierKey, (tierCounts.get(tierKey) || 0) + 1);
+    if (ts >= win60Start) {
+      turnsLast60m += 1;
+      weight60m += weight;
+    }
     if (ts >= win30Start) {
       turnsLast30m += 1;
       weight30m += weight;
@@ -180,27 +201,32 @@ export function computeQuotaBurnForecast(eventsOrSamples = null, state = {}) {
   }
 
   const isUltra = safeState.subscriptionTier === 'ultra';
+  // Realistic local turn-weight budgets over a 5h rolling window + 1h burst ceiling
   const hourlyCeiling = isUltra ? 95 : 38;
+  const window5hCeiling = isUltra ? 240 : 75;
   const burnRatePerHour = Number(Math.max(weight60m, weight30m * 1.85).toFixed(1));
-  const utilizationPct = Math.min(100, Math.round((burnRatePerHour / hourlyCeiling) * 100));
+  const utilizationPct = Math.min(100, Math.round((weight5h / window5hCeiling) * 100));
+  const projectedPct = turnsLast5h > 0
+    ? Math.min(100, Math.max(utilizationPct, Math.round(((weight5h + burnRatePerHour) / window5hCeiling) * 100)))
+    : 0;
 
   let status = 'calm';
-  if (utilizationPct >= 75 || weight30m >= hourlyCeiling * 0.52) {
+  if (utilizationPct >= 80 || weight30m >= hourlyCeiling * 0.52 || burnRatePerHour >= hourlyCeiling * 0.95) {
     status = 'critical';
-  } else if (utilizationPct >= 42 || weight30m >= hourlyCeiling * 0.28) {
+  } else if (utilizationPct >= 45 || projectedPct >= 75 || weight30m >= hourlyCeiling * 0.28) {
     status = 'elevated';
   }
 
-  const remainingBudget = Math.max(0, hourlyCeiling - weight60m);
+  const remaining5hBudget = Math.max(0, window5hCeiling - weight5h);
   const estimatedMinutesLeft = burnRatePerHour > 0
-    ? Math.max(5, Math.min(360, Math.round((remainingBudget / burnRatePerHour) * 60)))
-    : 240;
+    ? Math.max(5, Math.min(300, Math.round((remaining5hBudget / burnRatePerHour) * 60)))
+    : 300;
 
   let recommendationRu = 'Темп квоты спокойный — можно работать в обычном режиме.';
   let recommendationEn = 'Quota burn rate is calm — normal workflow pace is safe.';
   if (status === 'critical') {
     recommendationRu = isUltra
-      ? 'Высокий темп расхода: перенесите рутинные S/M правки на Hydrogen или паузы между тяжёлыми прогонами.'
+      ? 'Высокий темп расхода: перенесите рутинные S/M правки на Hydrogen или сделайте паузу между тяжёлыми прогонами.'
       : 'Критический темп расхода на Pro: переключите рутину S/M на Hydrogen / Orchestrator (Neon), чтобы сберечь лимит.';
     recommendationEn = isUltra
       ? 'High burn rate: offload routine S/M edits to Hydrogen or pause between heavy runs.'
@@ -217,10 +243,15 @@ export function computeQuotaBurnForecast(eventsOrSamples = null, state = {}) {
   return {
     ok: true,
     status,
+    windowHours: QUOTA_WINDOW_HOURS,
+    window5hCeiling,
+    weight5h: Number(weight5h.toFixed(1)),
     turnsLast30m,
     turnsLast60m,
+    turnsLast5h,
     burnRatePerHour,
     utilizationPct,
+    projectedPct,
     estimatedMinutesLeft,
     dominantTier,
     subscriptionTier: isUltra ? 'ultra' : 'pro',

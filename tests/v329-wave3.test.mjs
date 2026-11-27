@@ -693,7 +693,7 @@ test('13. Wave 3.13: New Sidecar Panel API routes & UI parity DOM markers', asyn
     'id="skillRegistryDrawer"',
     'id="comboFailoverRow"',
     'id="expertKnowledgeHeadRow"',
-    'id="sel-compactionThreshold"',
+    'id="compactionThresholdGroup"',
     'id="gatesStatusBadge"',
   ]) {
     assert.ok(uiHtml.includes(marker), `ui.html must include ${marker}`);

@@ -203,8 +203,22 @@ test('3. Quota Burn-Rate Pacer & Prefix Stability Auditor detect burn bursts and
     assert.match(proBurst.recommendationRu, /Hydrogen|Orchestrator/i);
 
     recordQuotaTurnSample({ tier: 'neon', convoId: 'q-c1', tokens: 900, ts: nowMs - 1000, cacheDir: tmpCache });
+    recordQuotaTurnSample({ tier: 'hydrogen', convoId: 'q-c1', tokens: 400, ts: nowMs - 3 * 60 * 60_000, cacheDir: tmpCache });
     const loadedForecast = computeQuotaBurnForecast(null, { subscriptionTier: 'ultra', cacheDir: tmpCache, nowMs });
     assert.equal(loadedForecast.turnsLast30m, 1);
+    assert.equal(loadedForecast.turnsLast5h, 2);
+    assert.equal(loadedForecast.windowHours, 5);
+    assert.ok(loadedForecast.projectedPct >= loadedForecast.utilizationPct);
+
+    // Legacy v1 bloated samples (missing schemaVersion: 2) must reset cleanly on read
+    fs.writeFileSync(
+      path.join(tmpCache, 'quota-pacer.json'),
+      JSON.stringify({ samples: Array.from({ length: 120 }, () => ({ ts: nowMs - 60_000, tier: 'orchestrator_neon' })) })
+    );
+    const migratedForecast = computeQuotaBurnForecast(null, { subscriptionTier: 'ultra', cacheDir: tmpCache, nowMs });
+    assert.equal(migratedForecast.turnsLast5h, 0);
+    assert.equal(migratedForecast.utilizationPct, 0);
+    assert.equal(migratedForecast.status, 'calm');
 
     // Orchestrator tier discount & planner thinking-depth scaling (orchestrator_carbon < standalone carbon; low < xhigh)
     const orchCarbonForecast = computeQuotaBurnForecast(

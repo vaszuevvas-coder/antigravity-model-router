@@ -478,7 +478,7 @@ export class SqliteKnowledgeHub {
       : [];
 
     const normKey = createHash('sha1')
-      .update(`${rawErr.toLowerCase().slice(0, 80)}|${touchedFiles.join(',')}|${rawFix.toLowerCase().slice(0, 80)}`)
+      .update(`${rawErr.toLowerCase().slice(0, 96)}|${rawFix.toLowerCase().slice(0, 96)}`)
       .digest('hex')
       .slice(0, 16);
     const stems = extractSearchStems(`${rawErr} ${rawFix}`, touchedFiles);

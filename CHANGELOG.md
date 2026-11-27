@@ -2,7 +2,26 @@
 
 Все заметные изменения в **The Tunnel** (`antigravity-model-router`) документируются в этом файле в формате [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) и [SemVer](https://semver.org/lang/ru/).
 
-> Хронология с `v3.8.0` по `v4.0.5` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`59` основных / `67` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `48` наборов автотестов).
+> Хронология с `v3.8.0` по `v4.0.6` восстановлена по журналам разработки и проверена по состоянию кодовой базы (`59` основных / `71` всего ESM-модулей ядра, `59` защитных контуров `GUARDRAIL_KEYS`, `15` навыков и `56` наборов автотестов).
+
+---
+
+## [4.0.6] — 2026-11-27
+
+### Добавлено и улучшено (Модульный In-RAM движок, 7-вкладочный кокпит, Карта проекта 2.0, Crimson Diamond брендинг и усиление надёжности)
+- **Декомпозиция In-RAM движка на 4 специализированных подмодуля ([core/ram-memory-engine.mjs](core/ram-memory-engine.mjs), [core/ram/ram-search.mjs](core/ram/ram-search.mjs), [core/ram/ram-slicer.mjs](core/ram/ram-slicer.mjs), [core/ram/ram-graph-queries.mjs](core/ram/ram-graph-queries.mjs), [core/ram/ram-context-packs.mjs](core/ram/ram-context-packs.mjs), [core/ram/ram-index-helpers.mjs](core/ram/ram-index-helpers.mjs), [tests/ram-engine-refactor.test.mjs](tests/ram-engine-refactor.test.mjs))**:
+  - Логика поиска (`BM25F + Trigram + CSR + GPU RRF`), AST-срезов (`LongCodeZip` Knapsack), графовых запросов (`RepoGraph` / blast radius / PageRank) и сборки Zero-Turn пакетов вынесена из монолита `ram-memory-engine.mjs` в 4 чистых подмодуля (`71` ESM-модуль ядра всего) без изменения внешних контрактов.
+- **Интерактивная Карта проекта — богатые тултипы и контекстная отправка связей ([sidecars/panel/ui-src/js/07-project-graph.js](sidecars/panel/ui-src/js/07-project-graph.js), [sidecars/panel/ui-src/js/07b-project-graph-lenses.js](sidecars/panel/ui-src/js/07b-project-graph-lenses.js), [sidecars/panel/graph-icon.svg](sidecars/panel/graph-icon.svg), [tests/project-graph-panel.test.mjs](tests/project-graph-panel.test.mjs))**:
+  - Добавлены информативные hover-тултипы узлов и связей с задержкой `750 / 500 мс`.
+  - При отправке узла или папки из Карты проекта в чат и Smart Composer автоматически прикрепляются связанные модули, файлы папки и выявленные риски (циклы / высокий blast radius / хрупкость).
+- **7-вкладочный кокпит Full-панели, `autoSpecOutput`, `QuotaPacer v2` и прогнозирование прогресса ([sidecars/panel/server.mjs](sidecars/panel/server.mjs), [sidecars/panel/lib/panel-state-skills.mjs](sidecars/panel/lib/panel-state-skills.mjs), [sidecars/panel/ui-src/](sidecars/panel/ui-src/head-body.html), [core/tool-pruner.mjs](core/tool-pruner.mjs), [core/quota-pacer.mjs](core/quota-pacer.mjs), [core/task-progress.mjs](core/task-progress.mjs), [core/progress/progress-parsers.mjs](core/progress/progress-parsers.mjs))**:
+  - Реализована модульная навигация Full-панели (`panelFullTab`: `cockpit | behavior | economy | hardware | bugs | memory | settings`) с адаптивной загрузкой секций.
+  - Добавлены режим вывода внутреннего ТЗ `autoSpecOutput` (`thinking | chat`) и компилятор намерений `compileUserIntentToTechSpec` / `compileVoiceOrLongRuPromptPivot`.
+  - Обновлён `QuotaPacer` до схемы v2 с 5-часовым скользящим окном, а в HUD прогресса добавлена оценка оставшегося времени фоновых задач по истории длительностей (`determinate / estimated / indeterminate`).
+- **Фирменный стиль Crimson Diamond, усиление безопасности и 56 наборов автотестов ([assets/logo.svg](assets/logo.svg), [assets/banner.svg](assets/banner.svg), [scripts/pack-release.mjs](scripts/pack-release.mjs), [core/safe-json.mjs](core/safe-json.mjs), [core/cache-dir.mjs](core/cache-dir.mjs), [install.js](install.js), [sidecars/panel/lib/panel-security.mjs](sidecars/panel/lib/panel-security.mjs), [README.md](README.md))**:
+  - Заменены логотип расширения, favicon и генератор `.ico` установщика на фирменную иконку **Crimson Diamond**; баннер и `README.md` переработаны в стиле `Crimson Rail` с реальными скриншотами, GIF-анимациями и 30-секундным интерактивным видео-шоукейсом со звуком.
+  - Усилены атомарные файловые блокировки и очистка `.tmp` в `safe-json.mjs`, защита путей/симлинков и слияние MCP в `install.js`, а также изоляция запросов через `AsyncLocalStorage` и валидация токенов в `panel-security.mjs`.
+  - Расширена тестовая база с `48` до `56` автоматических наборов (`tests/cache-dir.test.mjs`, `tests/ram-engine-refactor.test.mjs`, `tests/router-composer.test.mjs`, `tests/router-gpu.test.mjs`, `tests/router-panel.test.mjs`, `tests/router-release.test.mjs`, `tests/router-task-progress.test.mjs`, `tests/stress-audit-hardening.test.mjs`).
 
 ---
 

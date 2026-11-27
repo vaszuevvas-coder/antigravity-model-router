@@ -6,7 +6,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { extractFileAllMetadata, stemWord } from '../repo-mapper.mjs';
+import { stemWord } from '../repo-mapper.mjs';
 import { recordCpuCompressionSaving } from '../cpu-worker-pool.mjs';
 import { selectDiverseSlicesMMR } from '../cpu-ast-graph-compressor.mjs';
 
@@ -95,6 +95,9 @@ export function buildLineOffsets(buf) {
  * @returns {string}
  */
 export function sliceBufferLines(buf, lineOffsets, startLine, endLine, { compactLines = false } = {}) {
+  if (!buf || typeof buf.length !== 'number' || !lineOffsets || lineOffsets.length === 0) {
+    return '';
+  }
   const totalLines = lineOffsets.length;
   const s = Math.max(1, Math.min(totalLines, Number(startLine) || 1));
   const e = Math.max(s, Math.min(totalLines, Number(endLine) || totalLines));
@@ -149,6 +152,7 @@ export const MAX_TRIGRAMS_CODE = 4096;
 export const MAX_TRIGRAMS_DOC = 1536;
 export const MAX_TRIGRAMS_PER_FILE = MAX_TRIGRAMS_CODE;
 export const DOC_TRIGRAM_EXTS = new Set(['.md', '.mdx', '.txt', '.rst', '.adoc']);
+const HASH_COMMENT_EXTS = new Set(['.py', '.rb', '.sh', '.bash', '.ps1', '.yaml', '.yml', '.toml', '.ini', '.graphql', '.env.example', '']);
 
 export function resolveMaxTrigramsForExt(ext = '') {
   return DOC_TRIGRAM_EXTS.has(String(ext).toLowerCase()) ? MAX_TRIGRAMS_DOC : MAX_TRIGRAMS_CODE;
@@ -194,11 +198,14 @@ export function tokenizeFieldCounts(text) {
 }
 
 export function buildFileSearchStructures(relPath, ext, text, symbols, exportedSymbols, semanticMeta, enableTrigrams) {
-  const isDocExt = ext === '.md' || ext === '.mdx' || ext === '.txt';
+  const normExt = String(ext || '').toLowerCase();
+  const isDocExt = DOC_TRIGRAM_EXTS.has(normExt);
+  const allowHashComment = HASH_COMMENT_EXTS.has(normExt);
   const bodyLines = [];
   const docLines = [];
   const sigExtras = [];
   const rawLines = text ? text.split(/\r?\n/) : [];
+  let inBlockComment = false;
 
   for (const line of rawLines) {
     const trimmed = line.trim();
@@ -206,7 +213,19 @@ export function buildFileSearchStructures(relPath, ext, text, symbols, exportedS
     if (isDocExt) {
       if (trimmed.startsWith('#')) sigExtras.push(trimmed);
       else docLines.push(trimmed);
-    } else if (/^(?:\/\/|\/\*|\*|#(?!!))/.test(trimmed)) {
+      continue;
+    }
+    if (inBlockComment) {
+      docLines.push(trimmed);
+      if (trimmed.includes('*/')) inBlockComment = false;
+      continue;
+    }
+    if (trimmed.startsWith('/*')) {
+      docLines.push(trimmed);
+      if (!trimmed.includes('*/')) inBlockComment = true;
+      continue;
+    }
+    if (trimmed.startsWith('//') || (allowHashComment && /^#(?!!)/.test(trimmed))) {
       docLines.push(trimmed);
     } else {
       bodyLines.push(line);
@@ -323,13 +342,15 @@ export function loadJsAliasRules(absRoot = '') {
   const result = { baseUrl: '', rules: [] };
   if (!absRoot || typeof absRoot !== 'string') return result;
 
+  const MAX_CONFIG_BYTES = 2 * 1024 * 1024;
   const seenRule = new Set();
   const addRule = (pattern, rawTargets, basePrefix = '') => {
     const pat = String(pattern || '').trim();
     if (!pat) return;
     const starIdx = pat.indexOf('*');
-    const prefix = starIdx === -1 ? pat : pat.slice(0, starIdx);
-    const suffix = starIdx === -1 ? '' : pat.slice(starIdx + 1);
+    const wildcard = starIdx !== -1;
+    const prefix = wildcard ? pat.slice(0, starIdx) : pat;
+    const suffix = wildcard ? pat.slice(starIdx + 1) : '';
     const targets = (Array.isArray(rawTargets) ? rawTargets : [rawTargets])
       .map((t) => {
         const clean = String(t || '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
@@ -338,50 +359,96 @@ export function loadJsAliasRules(absRoot = '') {
       })
       .filter(Boolean);
     if (targets.length === 0) return;
-    const key = `${prefix}|${suffix}|${targets.join(',')}`;
+    const key = `${wildcard ? '1' : '0'}|${prefix}|${suffix}|${targets.join(',')}`;
     if (seenRule.has(key)) return;
     seenRule.add(key);
-    result.rules.push({ prefix, suffix, targets });
+    result.rules.push({ prefix, suffix, wildcard, targets });
+  };
+
+  const readJsoncBounded = (filePath) => {
+    try {
+      const st = fs.statSync(filePath);
+      if (!st.isFile() || st.size > MAX_CONFIG_BYTES) return null;
+      const raw = fs.readFileSync(filePath, 'utf8');
+      return JSON.parse(stripJsonComments(raw));
+    } catch {
+      return null;
+    }
+  };
+
+  const resolveExtendsConfig = (childPath, extRel) => {
+    if (typeof extRel !== 'string' || !extRel.startsWith('.')) return null;
+    const childDir = path.dirname(childPath);
+    const parentLimit = path.dirname(absRoot);
+    const candidates = [path.resolve(childDir, extRel)];
+    if (!extRel.endsWith('.json')) candidates.push(path.resolve(childDir, `${extRel}.json`));
+    for (const cand of candidates) {
+      const normCand = path.resolve(cand);
+      if (!normCand.startsWith(absRoot) && !normCand.startsWith(parentLimit)) continue;
+      const parsed = readJsoncBounded(normCand);
+      if (parsed && typeof parsed === 'object') return parsed;
+    }
+    return null;
   };
 
   for (const cfgName of ['tsconfig.json', 'jsconfig.json']) {
     try {
       const cfgPath = path.join(absRoot, cfgName);
       if (!fs.existsSync(cfgPath)) continue;
-      const raw = fs.readFileSync(cfgPath, 'utf8').slice(0, 64 * 1024);
-      const parsed = JSON.parse(stripJsonComments(raw));
-      const co = parsed?.compilerOptions;
-      if (!co || typeof co !== 'object') continue;
-      const baseUrl = typeof co.baseUrl === 'string'
-        ? co.baseUrl.trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '')
-        : '';
+      const parsed = readJsoncBounded(cfgPath);
+      if (!parsed || typeof parsed !== 'object') continue;
+      const parentParsed = resolveExtendsConfig(cfgPath, parsed.extends);
+      const parentCo = parentParsed?.compilerOptions && typeof parentParsed.compilerOptions === 'object'
+        ? parentParsed.compilerOptions
+        : {};
+      const childCo = parsed?.compilerOptions && typeof parsed.compilerOptions === 'object'
+        ? parsed.compilerOptions
+        : {};
+      if (!Object.keys(parentCo).length && !Object.keys(childCo).length) continue;
+
+      const rawBaseUrl = typeof childCo.baseUrl === 'string'
+        ? childCo.baseUrl
+        : (typeof parentCo.baseUrl === 'string' ? parentCo.baseUrl : '');
+      const baseUrl = rawBaseUrl.trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
       if (baseUrl && baseUrl !== '.' && !result.baseUrl) {
         result.baseUrl = baseUrl;
       }
-      if (co.paths && typeof co.paths === 'object') {
-        for (const [pat, arr] of Object.entries(co.paths)) {
-          addRule(pat, arr, baseUrl && baseUrl !== '.' ? baseUrl : '');
-        }
+      const mergedPaths = {
+        ...(parentCo.paths && typeof parentCo.paths === 'object' ? parentCo.paths : {}),
+        ...(childCo.paths && typeof childCo.paths === 'object' ? childCo.paths : {}),
+      };
+      for (const [pat, arr] of Object.entries(mergedPaths)) {
+        addRule(pat, arr, baseUrl && baseUrl !== '.' ? baseUrl : '');
       }
     } catch {}
   }
 
+  const collectExportTargets = (val, out, depth = 0) => {
+    if (depth > 3 || val == null) return;
+    if (typeof val === 'string') {
+      out.push(val);
+    } else if (Array.isArray(val)) {
+      for (const item of val) collectExportTargets(item, out, depth + 1);
+    } else if (typeof val === 'object') {
+      for (const k of ['default', 'import', 'node', 'require', 'types']) {
+        if (val[k] !== undefined) collectExportTargets(val[k], out, depth + 1);
+      }
+    }
+  };
+
   try {
     const pkgPath = path.join(absRoot, 'package.json');
     if (fs.existsSync(pkgPath)) {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8').slice(0, 64 * 1024));
-      if (pkg?.imports && typeof pkg.imports === 'object') {
-        for (const [pat, val] of Object.entries(pkg.imports)) {
-          if (!pat.startsWith('#')) continue;
-          const targets = [];
-          if (typeof val === 'string') {
-            targets.push(val);
-          } else if (val && typeof val === 'object') {
-            for (const sub of [val.default, val.import, val.node, val.require]) {
-              if (typeof sub === 'string') targets.push(sub);
-            }
+      const st = fs.statSync(pkgPath);
+      if (st.isFile() && st.size <= MAX_CONFIG_BYTES) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        if (pkg?.imports && typeof pkg.imports === 'object') {
+          for (const [pat, val] of Object.entries(pkg.imports)) {
+            if (!pat.startsWith('#')) continue;
+            const targets = [];
+            collectExportTargets(val, targets, 0);
+            addRule(pat, targets, '');
           }
-          addRule(pat, targets, '');
         }
       }
     }
@@ -428,7 +495,7 @@ export function extractMarkdownSection(rawText = '', sectionQuery = '') {
       continue;
     }
     if (inFence) continue;
-    const hM = /^\s*(#{1,6})\s+(.+?)\s*#*\s*$/.exec(ln);
+    const hM = /^\s*(#{1,6})\s+(.+?)(?:\s+#+)?\s*$/.exec(ln);
     if (hM) {
       const title = hM[2].trim();
       headings.push({
@@ -448,9 +515,12 @@ export function extractMarkdownSection(rawText = '', sectionQuery = '') {
 
   const qLower = query.replace(/^#+\s*/, '').trim().toLowerCase();
   const qSlug = slugify(qLower);
-  let matchedIdx = headings.findIndex((h) => h.lower === qLower || (qSlug && h.slug === qSlug));
+  if (!qLower && !qSlug) {
+    return { found: false, heading: '', level: 0, startLine: 1, endLine: lines.length, availableHeadings };
+  }
+  let matchedIdx = headings.findIndex((h) => (qLower && h.lower === qLower) || (qSlug && h.slug === qSlug));
   if (matchedIdx === -1) {
-    matchedIdx = headings.findIndex((h) => h.lower.includes(qLower) || (qSlug && h.slug.includes(qSlug)));
+    matchedIdx = headings.findIndex((h) => (qLower && h.lower.includes(qLower)) || (qSlug && h.slug.includes(qSlug)));
   }
   if (matchedIdx === -1) {
     return { found: false, heading: '', level: 0, startLine: 1, endLine: lines.length, availableHeadings };
@@ -493,7 +563,8 @@ export function buildGraphUncertaintyNote({ mode = '', target = '', ws = null, r
   if (totalFiles === 0) {
     return '⚠️ [Graph Uncertainty] RAM index is empty for this workspace; warm the workspace before relying on 0 results.';
   }
-  if (cleanTarget && !ws.files.has(cleanTarget)) {
+  const hasTarget = ws.files.has(cleanTarget) || Boolean(ws.filesLower?.has(cleanTarget.toLowerCase()));
+  if (cleanTarget && !hasTarget) {
     const ext = path.posix.extname(cleanTarget).toLowerCase();
     if (ext && !TEXT_EXTENSIONS.has(ext)) {
       return `⚠️ [Graph Uncertainty] "${cleanTarget}" uses unindexed extension (${ext}); static graph cannot trace it.`;
@@ -520,24 +591,43 @@ export function resolveImportRel(fromRel, spec, filesMap, options = {}) {
   const cleanSpec = noQuery.startsWith('#') ? noQuery : noQuery.split('#')[0].trim();
   if (!cleanSpec) return null;
 
+  const filesLower = options?.filesLower instanceof Map ? options.filesLower : null;
+  const findInFilesMap = (cand) => {
+    if (!cand) return null;
+    if (filesMap.has(cand)) return cand;
+    if (filesLower) {
+      const mapped = filesLower.get(cand.toLowerCase());
+      if (mapped && filesMap.has(mapped)) return mapped;
+    } else if (process.platform === 'win32' && filesMap.size <= 5000) {
+      const low = cand.toLowerCase();
+      for (const k of filesMap.keys()) {
+        if (k.toLowerCase() === low) return k;
+      }
+    }
+    return null;
+  };
+
   const baseDir = path.posix.dirname(fromRel);
 
   // Python relative and workspace-absolute imports
   if (fromRel.endsWith('.py')) {
     if (cleanSpec.startsWith('.') && !cleanSpec.startsWith('./') && !cleanSpec.startsWith('../')) {
       const dots = cleanSpec.match(/^\.+/)?.[0].length || 1;
-      let pyBase = baseDir;
-      for (let i = 1; i < dots; i++) {
-        pyBase = path.posix.dirname(pyBase);
-      }
+      const baseSegs = !baseDir || baseDir === '.' ? [] : baseDir.split('/').filter(Boolean);
+      if (dots - 1 > baseSegs.length) return null;
+      const pyBase = baseSegs.slice(0, baseSegs.length - (dots - 1)).join('/');
       const modRel = cleanSpec.slice(dots).replace(/\./g, '/');
       const pyRaw = modRel
-        ? [path.posix.join(pyBase, `${modRel}.py`), path.posix.join(pyBase, modRel, '__init__.py')]
-        : [path.posix.join(pyBase, '__init__.py')];
+        ? [
+            pyBase ? path.posix.join(pyBase, `${modRel}.py`) : `${modRel}.py`,
+            pyBase ? path.posix.join(pyBase, modRel, '__init__.py') : `${modRel}/__init__.py`,
+          ]
+        : [pyBase ? path.posix.join(pyBase, '__init__.py') : '__init__.py'];
       for (const rawCand of pyRaw) {
         const normCand = path.posix.normalize(rawCand);
-        if (!normCand.startsWith('../') && filesMap.has(normCand)) {
-          return normCand;
+        if (normCand && normCand !== '..' && !normCand.startsWith('../')) {
+          const hit = findInFilesMap(normCand);
+          if (hit) return hit;
         }
       }
       return null;
@@ -556,7 +646,8 @@ export function resolveImportRel(fromRel, spec, filesMap, options = {}) {
         pyAbsCands.push(`${parentMod}.py`, `src/${parentMod}.py`);
       }
       for (const cand of pyAbsCands) {
-        if (filesMap.has(cand)) return cand;
+        const hit = findInFilesMap(cand);
+        if (hit) return hit;
       }
       return null;
     }
@@ -584,8 +675,19 @@ export function resolveImportRel(fromRel, spec, filesMap, options = {}) {
   }
 
   const probeJoinedCandidates = (joinedRaw) => {
-    const joined = path.posix.normalize(String(joinedRaw || '').replace(/^\/+/, ''));
-    if (!joined || joined.startsWith('../')) return null;
+    const cleanedRaw = String(joinedRaw || '').replace(/^\/+/, '');
+    if (!cleanedRaw) return null;
+    let rawNorm = path.posix.normalize(cleanedRaw);
+    if (rawNorm.length > 1) rawNorm = rawNorm.replace(/\/+$/, '');
+    if (!rawNorm || rawNorm === '..' || rawNorm.startsWith('../')) return null;
+    if (rawNorm === '.') {
+      for (const rootIdx of ['index.mjs', 'index.js', 'index.ts', 'index.tsx', 'index.mts', 'index.d.ts', '__init__.py']) {
+        const hit = findInFilesMap(rootIdx);
+        if (hit) return hit;
+      }
+      return null;
+    }
+    const joined = rawNorm;
     const candidates = [joined];
     // TypeScript NodeNext / ESM convention: `.js`/`.mjs`/`.cjs` import specifiers -> `.ts`/`.tsx`/`.mts`/`.cts`/`.d.ts`
     if (/\.(?:[cm]?js|jsx)$/i.test(joined)) {
@@ -621,12 +723,13 @@ export function resolveImportRel(fromRel, spec, filesMap, options = {}) {
       `${joined}/__init__.py`
     );
     for (const c of candidates) {
-      if (filesMap.has(c)) return c;
+      const hit = findInFilesMap(c);
+      if (hit) return hit;
     }
     return null;
   };
 
-  if (cleanSpec.startsWith('./') || cleanSpec.startsWith('../')) {
+  if (cleanSpec.startsWith('./') || cleanSpec.startsWith('../') || cleanSpec === '.' || cleanSpec === '..') {
     return probeJoinedCandidates(path.posix.join(baseDir, cleanSpec));
   }
 
@@ -636,12 +739,29 @@ export function resolveImportRel(fromRel, spec, filesMap, options = {}) {
     const rawSpec = spec.split('?')[0].trim(); // keep leading `#` for package.json imports
     const rules = Array.isArray(jsAliases.rules) ? jsAliases.rules : [];
     for (const rule of rules) {
-      const hasStar = rule.prefix !== '' || rule.suffix !== '';
-      if (!hasStar) continue;
-      if (rawSpec.startsWith(rule.prefix) && (!rule.suffix || rawSpec.endsWith(rule.suffix))) {
-        const matchedMid = rawSpec.slice(rule.prefix.length, rule.suffix ? rawSpec.length - rule.suffix.length : undefined);
+      const isWildcard = typeof rule.wildcard === 'boolean' ? rule.wildcard : true;
+      if (!isWildcard) {
+        if (rawSpec === rule.prefix) {
+          for (const t of rule.targets) {
+            const hit = probeJoinedCandidates(t);
+            if (hit) return hit;
+          }
+        }
+        continue;
+      }
+      if (
+        rawSpec.length >= rule.prefix.length + rule.suffix.length &&
+        rawSpec.startsWith(rule.prefix) &&
+        (!rule.suffix || rawSpec.endsWith(rule.suffix))
+      ) {
+        const matchedMid = rawSpec.slice(
+          rule.prefix.length,
+          rule.suffix ? rawSpec.length - rule.suffix.length : undefined
+        );
         for (const t of rule.targets) {
-          const expanded = t.includes('*') ? t.replace('*', matchedMid) : (matchedMid ? `${t}/${matchedMid}` : t);
+          const expanded = t.includes('*')
+            ? t.replace(/\*/g, matchedMid)
+            : (matchedMid ? `${t}/${matchedMid}` : t);
           const hit = probeJoinedCandidates(expanded);
           if (hit) return hit;
         }
@@ -810,13 +930,40 @@ const GATED_WORKSPACE_TECH_TERMS = [
   'angular', 'fastapi', 'flask', 'django', 'websocket',
 ];
 
+export function setBoundedRepoMapCache(ws, key, value, maxEntries = 24) {
+  if (!ws?.repoMapCache) return;
+  if (ws.repoMapCache.has(key)) ws.repoMapCache.delete(key);
+  ws.repoMapCache.set(key, value);
+  while (ws.repoMapCache.size > maxEntries) {
+    const oldest = ws.repoMapCache.keys().next().value;
+    if (oldest === undefined) break;
+    ws.repoMapCache.delete(oldest);
+  }
+}
+
+function cloneInventory(inv) {
+  const symCopy = Object.create(null);
+  for (const [k, v] of Object.entries(inv.symbolsByFile || {})) {
+    symCopy[k] = Array.isArray(v) ? [...v] : v;
+  }
+  return {
+    repoFiles: [...(inv.repoFiles || [])],
+    repoSymbols: [...(inv.repoSymbols || [])],
+    symbolsByFile: symCopy,
+    repoTechTerms: [...(inv.repoTechTerms || [])],
+  };
+}
+
 export function collectWorkspaceGroundingInventory(ws, { maxRepoFiles = 500, maxRepoSymbols = 2500 } = {}) {
   if (!ws || !ws.files || ws.files.size === 0) {
     return { repoFiles: [], repoSymbols: [], symbolsByFile: {}, repoTechTerms: [] };
   }
   const cacheKey = `__grounding_inv_${maxRepoFiles}_${maxRepoSymbols}__`;
   if (ws.repoMapCache?.has(cacheKey)) {
-    return ws.repoMapCache.get(cacheKey);
+    const cached = ws.repoMapCache.get(cacheKey);
+    ws.repoMapCache.delete(cacheKey);
+    ws.repoMapCache.set(cacheKey, cached);
+    return cloneInventory(cached);
   }
 
   const allRels = Array.from(ws.files.keys());
@@ -912,8 +1059,8 @@ export function collectWorkspaceGroundingInventory(ws, { maxRepoFiles = 500, max
     symbolsByFile,
     repoTechTerms: Array.from(foundTechSet),
   };
-  ws.repoMapCache?.set(cacheKey, inv);
-  return inv;
+  setBoundedRepoMapCache(ws, cacheKey, inv, 24);
+  return cloneInventory(inv);
 }
 
 export function extractExplicitFileMatches(text = '', filesMap) {
@@ -982,24 +1129,149 @@ export function augmentJsMethodSymbols(ext, text, baseSymbols = []) {
 
     let depth = 0;
     let foundBody = false;
+    let inQuote = '';
+    let escaped = false;
+    let inBlockComment = false;
+    let closeLine = -1;
+    let closeCol = -1;
+
     for (let j = i; j < Math.min(lines.length, i + 16); j++) {
       const ln = lines[j];
       const startCol = j === i ? openIdx : 0;
       for (let c = startCol; c < ln.length; c++) {
         const ch = ln[c];
+        const next = ln[c + 1];
+        if (inBlockComment) {
+          if (ch === '*' && next === '/') {
+            inBlockComment = false;
+            c++;
+          }
+          continue;
+        }
+        if (inQuote) {
+          if (escaped) escaped = false;
+          else if (ch === '\\') escaped = true;
+          else if (ch === inQuote) inQuote = '';
+          continue;
+        }
+        if (ch === '/' && next === '/') break;
+        if (ch === '/' && next === '*') {
+          inBlockComment = true;
+          c++;
+          continue;
+        }
+        if (ch === '\'' || ch === '"' || ch === '`') {
+          inQuote = ch;
+          continue;
+        }
         if (ch === '(') depth++;
         else if (ch === ')') {
           depth--;
           if (depth === 0) {
-            const rest = ln.slice(c + 1);
-            if (/^\s*(?::[^\{;]+)?\{\s*(?:\/\/.*)?$/.test(rest)) {
-              foundBody = true;
-            }
+            closeLine = j;
+            closeCol = c + 1;
             break;
           }
         }
       }
-      if (depth <= 0) break;
+      if (depth <= 0 && closeLine !== -1) break;
+    }
+
+    if (closeLine !== -1 && depth === 0) {
+      let retAngle = 0;
+      let retParen = 0;
+      let retBrace = 0;
+      let retBracket = 0;
+      let sawTypeColon = false;
+      let bQuote = '';
+      let bEscaped = false;
+      let bBlock = false;
+      let done = false;
+      for (let k = closeLine; k < Math.min(lines.length, closeLine + 3) && !done; k++) {
+        const ln = lines[k];
+        const c0 = k === closeLine ? closeCol : 0;
+        for (let c = c0; c < ln.length; c++) {
+          const ch = ln[c];
+          const next = ln[c + 1];
+          if (bBlock) {
+            if (ch === '*' && next === '/') {
+              bBlock = false;
+              c++;
+            }
+            continue;
+          }
+          if (bQuote) {
+            if (bEscaped) bEscaped = false;
+            else if (ch === '\\') bEscaped = true;
+            else if (ch === bQuote) bQuote = '';
+            continue;
+          }
+          if (ch === '/' && next === '/') break;
+          if (ch === '/' && next === '*') {
+            bBlock = true;
+            c++;
+            continue;
+          }
+          if (ch === '\'' || ch === '"' || ch === '`') {
+            bQuote = ch;
+            continue;
+          }
+          if (/\s/.test(ch)) continue;
+          if (ch === ':' && !sawTypeColon && retParen === 0 && retBrace === 0 && retAngle === 0 && retBracket === 0) {
+            sawTypeColon = true;
+            continue;
+          }
+          if (sawTypeColon) {
+            if (ch === '<') { retAngle++; continue; }
+            if (ch === '>') {
+              if (c > 0 && ln[c - 1] === '=') continue; // => inside type
+              retAngle = Math.max(0, retAngle - 1);
+              continue;
+            }
+            if (ch === '(') { retParen++; continue; }
+            if (ch === ')') { retParen = Math.max(0, retParen - 1); continue; }
+            if (ch === '[') { retBracket++; continue; }
+            if (ch === ']') { retBracket = Math.max(0, retBracket - 1); continue; }
+            if (ch === '{') {
+              // Inside TS object return type only if previous non-space token was ':' or type operator, OR check if matching '}' precedes '{'
+              const restOnLine = ln.slice(c + 1);
+              const looksLikeTsReturnObj = !/^\s*(?:\/\/.*)?$/.test(restOnLine) && !/\breturn\b/.test(restOnLine);
+              if (retBrace === 0 && !looksLikeTsReturnObj) {
+                foundBody = true;
+                done = true;
+                break;
+              }
+              retBrace++;
+              continue;
+            }
+            if (ch === '}') {
+              retBrace = Math.max(0, retBrace - 1);
+              continue;
+            }
+            if (ch === ';' && retBrace === 0 && retParen === 0) {
+              done = true;
+              break;
+            }
+          } else {
+            if (ch === '{') {
+              foundBody = true;
+              done = true;
+              break;
+            }
+            if (ch === '=' && next === '>') {
+              done = true;
+              break;
+            }
+            if (ch === ';') {
+              done = true;
+              break;
+            }
+            // Any unexpected token right after `)` (not `:` or `{`) means a call, not a method declaration
+            done = true;
+            break;
+          }
+        }
+      }
     }
 
     if (foundBody) {
@@ -1022,17 +1294,19 @@ export function augmentJsMethodSymbols(ext, text, baseSymbols = []) {
  * destructured parameters where regex extractors set `sym.endLine === sym.startLine`.
  */
 export function inferEffectiveSymbolEndLine(entry, syms, symStart, rawSymEnd, fallbackEndHint = 0, cap = 55) {
-  const totalLines = entry.lineCount || 1;
+  const totalLines = entry?.lineCount || 1;
   if (rawSymEnd > symStart + 1) {
     return Math.min(totalLines, rawSymEnd);
   }
 
+  const buf = entry?.buf;
+  const lineOffsets = entry?.lineOffsets;
   const measureLineIndent = (lineNo) => {
-    if (!entry.buf || !entry.lineOffsets || lineNo < 1 || lineNo > totalLines) return 0;
-    const bStart = entry.lineOffsets[lineNo - 1] || 0;
+    if (!buf || !lineOffsets || lineNo < 1 || lineNo > totalLines) return 0;
+    const bStart = lineOffsets[lineNo - 1] || 0;
     let indent = 0;
-    while (bStart + indent < entry.buf.length) {
-      const ch = entry.buf[bStart + indent];
+    while (bStart + indent < buf.length) {
+      const ch = buf[bStart + indent];
       if (ch === 32 || ch === 9) indent++;
       else break;
     }
@@ -1051,26 +1325,50 @@ export function inferEffectiveSymbolEndLine(entry, syms, symStart, rawSymEnd, fa
   }
 
   const scanEnd = Math.min(totalLines, nextBoundary, symStart + 360);
-  if (scanEnd > symStart && entry.buf && entry.lineOffsets) {
-    const startByte = entry.lineOffsets[symStart - 1] || 0;
+  if (scanEnd > symStart && buf && lineOffsets) {
+    const startByte = lineOffsets[symStart - 1] || 0;
     const endByte = scanEnd < totalLines
-      ? Math.max(startByte, entry.lineOffsets[scanEnd] - 1)
-      : entry.buf.length;
-    const rawChunk = entry.buf.toString('utf8', startByte, endByte);
+      ? Math.max(startByte, lineOffsets[scanEnd] - 1)
+      : buf.length;
+    const rawChunk = buf.toString('utf8', startByte, endByte);
     const chunkLines = rawChunk.split(/\r?\n/);
     const firstLine = chunkLines[0] || '';
-    const closeBraceRe = declIndent === 0
-      ? /^}\s*;?\s*$/
-      : new RegExp(`^[ \\t]{0,${declIndent}}}\\s*;?\\s*$`);
 
-    let sawOpenBrace = firstLine.includes('{');
-    for (let i = 1; i < chunkLines.length; i++) {
-      const ln = chunkLines[i];
-      if (!sawOpenBrace && ln.includes('{')) {
-        sawOpenBrace = true;
+    if (entry?.ext === '.py') {
+      let sawColon = /:\s*(?:#.*)?$/.test(firstLine);
+      let lastBodyIdx = 0;
+      for (let i = 1; i < chunkLines.length; i++) {
+        const ln = chunkLines[i];
+        const trimmed = ln.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const lineIndent = ln.match(/^[ \t]*/)?.[0].length || 0;
+        if (!sawColon) {
+          if (/:\s*(?:#.*)?$/.test(ln)) sawColon = true;
+          lastBodyIdx = i;
+          continue;
+        }
+        if (lineIndent <= declIndent) {
+          break;
+        }
+        lastBodyIdx = i;
       }
-      if (sawOpenBrace && closeBraceRe.test(ln)) {
-        return Math.min(totalLines, symStart + i);
+      if (lastBodyIdx > 0) {
+        return Math.min(totalLines, symStart + lastBodyIdx);
+      }
+    } else {
+      const closeBraceRe = declIndent === 0
+        ? /^}\s*;?\s*$/
+        : new RegExp(`^[ \\t]{0,${declIndent}}}\\s*;?\\s*$`);
+
+      let sawOpenBrace = firstLine.includes('{');
+      for (let i = 1; i < chunkLines.length; i++) {
+        const ln = chunkLines[i];
+        if (!sawOpenBrace && ln.includes('{')) {
+          sawOpenBrace = true;
+        }
+        if (sawOpenBrace && closeBraceRe.test(ln)) {
+          return Math.min(totalLines, symStart + i);
+        }
       }
     }
   }
@@ -1081,9 +1379,15 @@ export function inferEffectiveSymbolEndLine(entry, syms, symStart, rawSymEnd, fa
 
 export function expandSliceToWholeAstSymbol(entry, rawStart, rawEnd, focusLine = 0, query = '', maxSliceLines = 55) {
   const cap = Math.max(16, Math.min(80, Number(maxSliceLines) || 55));
-  const totalLines = entry.lineCount || 1;
+  const totalLines = entry?.lineCount || 1;
   const sRaw = Math.max(1, Math.min(totalLines, Number(rawStart) || 1));
   const eRaw = Math.max(sRaw, Math.min(totalLines, Number(rawEnd) || sRaw));
+  const buf = entry?.buf;
+  const lineOffsets = entry?.lineOffsets;
+  if (!buf || !lineOffsets || lineOffsets.length === 0) {
+    return { startLine: sRaw, endLine: eRaw, symbol: '', signature: '', snippetText: '' };
+  }
+  const entrySnapshot = { ...entry, buf, lineOffsets };
   const focus = focusLine > 0 ? Math.max(1, Math.min(totalLines, Number(focusLine))) : Math.round((sRaw + eRaw) / 2);
   const queryLower = String(query || '').toLowerCase();
 
@@ -1093,7 +1397,7 @@ export function expandSliceToWholeAstSymbol(entry, rawStart, rawEnd, focusLine =
     const symStart = Number(sym?.startLine) || 0;
     if (symStart < 1) continue;
     const rawSymEnd = Math.max(symStart, Math.min(totalLines, Number(sym?.endLine) || symStart));
-    const symEnd = inferEffectiveSymbolEndLine(entry, syms, symStart, rawSymEnd, eRaw + 24, cap);
+    const symEnd = inferEffectiveSymbolEndLine(entrySnapshot, syms, symStart, rawSymEnd, eRaw + 24, cap);
     if (symStart <= eRaw + 3 && symEnd >= sRaw - 3) {
       candidates.push({ sym, symStart, symEnd, span: symEnd - symStart + 1 });
     }
@@ -1128,13 +1432,13 @@ export function expandSliceToWholeAstSymbol(entry, rawStart, rawEnd, focusLine =
         endLine: symEnd,
         symbol: sym.name || '',
         signature: sym.signature || '',
-        snippetText: sliceBufferLines(entry.buf, entry.lineOffsets, symStart, symEnd),
+        snippetText: sliceBufferLines(buf, lineOffsets, symStart, symEnd),
       };
     }
 
     const extractControlOutline = (fromLine, toLine, maxItems = 4) => {
-      if (!entry.buf || !entry.lineOffsets || toLine < fromLine) return [];
-      const rawRange = sliceBufferLines(entry.buf, entry.lineOffsets, fromLine, Math.min(toLine, fromLine + 160));
+      if (!buf || !lineOffsets || toLine < fromLine) return [];
+      const rawRange = sliceBufferLines(buf, lineOffsets, fromLine, Math.min(toLine, fromLine + 160));
       const hits = [];
       for (const line of rawRange.split('\n')) {
         const m = /^(L\d+):\s*(.+)$/.exec(line);
@@ -1150,7 +1454,7 @@ export function expandSliceToWholeAstSymbol(entry, rawStart, rawEnd, focusLine =
 
     if (eRaw <= symStart + cap - 1) {
       const endBounded = Math.min(symEnd, symStart + cap - 1);
-      let headSnippet = sliceBufferLines(entry.buf, entry.lineOffsets, symStart, endBounded);
+      let headSnippet = sliceBufferLines(buf, lineOffsets, symStart, endBounded);
       if (symEnd - endBounded > 10) {
         const tailOutline = extractControlOutline(endBounded + 1, symEnd, 4);
         if (tailOutline.length > 0) {
@@ -1170,11 +1474,11 @@ export function expandSliceToWholeAstSymbol(entry, rawStart, rawEnd, focusLine =
     let detectedSigLines = 3;
     const maxSigProbe = Math.min(totalLines, symStart + 14, sRaw - 1);
     if (maxSigProbe > symStart) {
-      const sigProbeRaw = entry.buf.toString(
-        'utf8',
-        entry.lineOffsets[symStart - 1] || 0,
-        maxSigProbe < totalLines ? entry.lineOffsets[maxSigProbe] - 1 : entry.buf.length
-      );
+      const sigStartByte = lineOffsets[symStart - 1] || 0;
+      const sigEndByte = maxSigProbe < totalLines
+        ? Math.max(sigStartByte, lineOffsets[maxSigProbe] - 1)
+        : buf.length;
+      const sigProbeRaw = buf.toString('utf8', sigStartByte, sigEndByte);
       const sigProbeArr = sigProbeRaw.split(/\r?\n/);
       for (let si = 0; si < sigProbeArr.length; si++) {
         if (/\)\s*(?::[^{=]+)?\{\s*$/.test(sigProbeArr[si])) {
@@ -1192,8 +1496,8 @@ export function expandSliceToWholeAstSymbol(entry, rawStart, rawEnd, focusLine =
       winStart = Math.max(symStart + sigHeadLines, winEnd - bodyBudget + 1);
     }
 
-    const headText = sliceBufferLines(entry.buf, entry.lineOffsets, symStart, symStart + sigHeadLines - 1);
-    const bodyText = sliceBufferLines(entry.buf, entry.lineOffsets, winStart, winEnd);
+    const headText = sliceBufferLines(buf, lineOffsets, symStart, symStart + sigHeadLines - 1);
+    const bodyText = sliceBufferLines(buf, lineOffsets, winStart, winEnd);
 
     const hasGap = winStart > symStart + sigHeadLines;
     let gapLine = '\n';
@@ -1227,6 +1531,6 @@ export function expandSliceToWholeAstSymbol(entry, rawStart, rawEnd, focusLine =
     endLine: endL,
     symbol: '',
     signature: '',
-    snippetText: sliceBufferLines(entry.buf, entry.lineOffsets, startL, endL),
+    snippetText: sliceBufferLines(buf, lineOffsets, startL, endL),
   };
 }

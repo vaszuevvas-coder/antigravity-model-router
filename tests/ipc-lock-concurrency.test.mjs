@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   safeReadJsonSync,
+  sleepSync,
   updateJsonAtomicSync,
   withFileLockSync,
 } from '../core/safe-json.mjs';
@@ -259,5 +260,155 @@ test('4. Abrupt daemon socket drop resilience handles ECONNRESET without unhandl
     await new Promise((resolveClose) => server.close(resolveClose));
     fs.rmSync(tmpCache, { recursive: true, force: true });
     fs.rmSync(tmpWs, { recursive: true, force: true });
+  }
+});
+
+test('5. safeReadJsonSync handles UTF-8 BOM, invalid args, EISDIR fast-fail, and JSON null contract safely', () => {
+  const tmpDir = makeTempDir('amr-safe-read-hardening-');
+  try {
+    // 5a. UTF-8 BOM file must parse cleanly and NOT be overwritten by selfHeal
+    const bomFile = path.join(tmpDir, 'bom.json');
+    const bomPayload = '\uFEFF{"subscriptionTier":"ultra","count":42}';
+    fs.writeFileSync(bomFile, bomPayload, 'utf8');
+    let factoryCalls = 0;
+    const bomParsed = safeReadJsonSync(bomFile, () => {
+      factoryCalls++;
+      return { wiped: true };
+    }, { selfHeal: true });
+    assert.deepEqual(bomParsed, { subscriptionTier: 'ultra', count: 42 });
+    assert.equal(factoryCalls, 0, 'Default factory must not run on valid UTF-8 BOM JSON');
+    assert.equal(fs.readFileSync(bomFile, 'utf8'), bomPayload, 'UTF-8 BOM file must remain untouched');
+
+    // 5b. Directory path (EISDIR) must fail fast without sleeping 84ms or self-healing
+    const dirTarget = path.join(tmpDir, 'subdir');
+    fs.mkdirSync(dirTarget);
+    const tDir = performance.now();
+    const dirRes = safeReadJsonSync(dirTarget, () => ({ fallback: true }), { selfHeal: true });
+    const dirElapsedMs = performance.now() - tDir;
+    assert.deepEqual(dirRes, { fallback: true });
+    assert.ok(dirElapsedMs < 40, `EISDIR should fail fast (<40ms), took ${Math.round(dirElapsedMs)}ms`);
+    assert.equal(fs.statSync(dirTarget).isDirectory(), true);
+
+    // 5c. Null options, bad paths, and circular non-cloneable object defaults must never throw
+    assert.deepEqual(safeReadJsonSync(bomFile, () => ({}), null), { subscriptionTier: 'ultra', count: 42 });
+    assert.deepEqual(safeReadJsonSync('', () => ({ empty: true }), null), { empty: true });
+    assert.deepEqual(safeReadJsonSync(null, { nullPath: true }, null), { nullPath: true });
+    assert.deepEqual(safeReadJsonSync('bad\0path.json', { bad: true }, null), { bad: true });
+    const circularDef = { ok: true, fn: () => 1 };
+    circularDef.self = circularDef;
+    const circOut = safeReadJsonSync(path.join(tmpDir, 'missing.json'), circularDef, { selfHeal: false });
+    assert.equal(circOut.ok, true);
+    assert.notEqual(circOut, circularDef);
+
+    // 5d. JSON literal `null` returns object/array default in-memory without wiping disk, but preserves null when default is null
+    const nullFile = path.join(tmpDir, 'null.json');
+    fs.writeFileSync(nullFile, 'null', 'utf8');
+    assert.deepEqual(safeReadJsonSync(nullFile, () => ({ safe: true }), { selfHeal: true }), { safe: true });
+    assert.deepEqual(safeReadJsonSync(nullFile, () => [1, 2], { selfHeal: true }), [1, 2]);
+    assert.equal(safeReadJsonSync(nullFile, null, { selfHeal: true }), null);
+    assert.equal(safeReadJsonSync(nullFile, () => null, { selfHeal: true }), null);
+    assert.equal(fs.readFileSync(nullFile, 'utf8'), 'null', 'Valid JSON null file must not be overwritten');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('6. safeReadJsonSync retries torn writes, never resurrects deleted files, respects lockWaitMs, and sweeps old orphans', async () => {
+  const tmpDir = makeTempDir('amr-safe-read-races-');
+  try {
+    // 6a. Torn write recovery: partial JSON completed by concurrent process within retry window
+    const tornFile = path.join(tmpDir, 'torn.json');
+    const writer = runNodeChild(
+      `
+        import fs from 'node:fs';
+        const target = process.argv[1];
+        fs.writeFileSync(target, '{"ok":', 'utf8');
+        setTimeout(() => {
+          fs.writeFileSync(target, '{"ok":true,"recovered":7}', 'utf8');
+        }, 12);
+      `,
+      [tornFile]
+    );
+    const tornReadyDeadline = Date.now() + 3000;
+    while (!fs.existsSync(tornFile) && Date.now() < tornReadyDeadline) {
+      sleepSync(2);
+    }
+    assert.equal(fs.existsSync(tornFile), true, 'Child should create torn file');
+    const tornRes = safeReadJsonSync(tornFile, () => ({ healed: true }), { selfHeal: true });
+    const writerOut = await writer;
+    assert.equal(writerOut.code, 0, writerOut.stderr);
+    assert.deepEqual(tornRes, { ok: true, recovered: 7 });
+    assert.deepEqual(JSON.parse(fs.readFileSync(tornFile, 'utf8')), { ok: true, recovered: 7 });
+
+    // 6b. Concurrent deletion while lock is held must NOT resurrect the deleted file
+    const delFile = path.join(tmpDir, 'deleted.json');
+    const delLock = `${delFile}.lock`;
+    const delReady = path.join(tmpDir, 'del.ready');
+    const deleter = runNodeChild(
+      `
+        import fs from 'node:fs';
+        import path from 'node:path';
+        const target = process.argv[1];
+        const lockDir = process.argv[2];
+        const readyFile = process.argv[3];
+        fs.writeFileSync(target, '{"broken":', 'utf8');
+        fs.mkdirSync(lockDir);
+        fs.writeFileSync(path.join(lockDir, 'owner'), \`\${process.pid}:\${Date.now()}:holder\`, 'utf8');
+        fs.writeFileSync(readyFile, '1', 'utf8');
+        setTimeout(() => {
+          try { fs.unlinkSync(target); } catch {}
+          try { fs.rmSync(lockDir, { recursive: true, force: true }); } catch {}
+        }, 70);
+      `,
+      [delFile, delLock, delReady]
+    );
+    const delReadyDeadline = Date.now() + 3000;
+    while (!fs.existsSync(delReady) && Date.now() < delReadyDeadline) {
+      sleepSync(2);
+    }
+    assert.equal(fs.existsSync(delReady), true, 'Child should arm lock and file');
+    const delRes = safeReadJsonSync(delFile, () => ({ recreated: true }), { selfHeal: true, lockWaitMs: 500 });
+    const deleterOut = await deleter;
+    assert.equal(deleterOut.code, 0, deleterOut.stderr);
+    assert.deepEqual(delRes, { recreated: true });
+    assert.equal(fs.existsSync(delFile), false, 'Deleted file must NOT be resurrected by selfHeal');
+
+    // 6c. Bounded lockWaitMs avoids 5s freeze when another live holder keeps the lock
+    const busyFile = path.join(tmpDir, 'busy.json');
+    const busyLock = `${busyFile}.lock`;
+    fs.writeFileSync(busyFile, '{"broken":', 'utf8');
+    fs.mkdirSync(busyLock);
+    fs.writeFileSync(path.join(busyLock, 'owner'), `${process.pid}:${Date.now()}:alive`, 'utf8');
+    const tBusy = performance.now();
+    const busyRes = safeReadJsonSync(busyFile, () => ({ timedOut: true }), { selfHeal: true, lockWaitMs: 60 });
+    const busyElapsedMs = performance.now() - tBusy;
+    assert.deepEqual(busyRes, { timedOut: true });
+    assert.ok(busyElapsedMs < 500, `Bounded lockWaitMs=60 should finish quickly, took ${Math.round(busyElapsedMs)}ms`);
+    assert.equal(fs.readFileSync(busyFile, 'utf8'), '{"broken":', 'Busy lock timeout must not overwrite file');
+    fs.rmSync(busyLock, { recursive: true, force: true });
+
+    // 6d. Stale lock eviction sweeps old (>30s) .lock.stale.* and .tmp orphans while sparing fresh .tmp files
+    const orphanTarget = path.join(tmpDir, 'orphan.json');
+    const staleLockDir = `${orphanTarget}.lock`;
+    const oldStaleDir = `${orphanTarget}.lock.stale.99999.1.abcd`;
+    const oldTmpFile = `${orphanTarget}.99999.abcde.tmp`;
+    const freshTmpFile = `${orphanTarget}.${process.pid}.fresh1.tmp`;
+    fs.mkdirSync(staleLockDir);
+    fs.writeFileSync(path.join(staleLockDir, 'owner'), '999999:1:dead', 'utf8');
+    fs.mkdirSync(oldStaleDir);
+    fs.writeFileSync(oldTmpFile, '{}', 'utf8');
+    fs.writeFileSync(freshTmpFile, '{}', 'utf8');
+    const backdated = new Date(Date.now() - 60_000);
+    fs.utimesSync(staleLockDir, backdated, backdated);
+    fs.utimesSync(oldStaleDir, backdated, backdated);
+    fs.utimesSync(oldTmpFile, backdated, backdated);
+
+    const swept = withFileLockSync(orphanTarget, () => 'ok', { staleLockMs: 1000, maxWaitMs: 3000 });
+    assert.equal(swept, 'ok');
+    assert.equal(fs.existsSync(oldStaleDir), false, 'Old .lock.stale.* orphan should be swept');
+    assert.equal(fs.existsSync(oldTmpFile), false, 'Old .tmp orphan should be swept');
+    assert.equal(fs.existsSync(freshTmpFile), true, 'Fresh .tmp file must NOT be deleted');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });

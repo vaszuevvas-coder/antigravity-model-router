@@ -42,12 +42,16 @@ export function resolveUserLanguage(state = {}) {
   return 'ru';
 }
 
+function resolveTaskProgressWorkspace(payload = {}) {
+  return payload.workspacePaths?.[0] || payload.workspacePath || payload.cwd || '';
+}
+
 function buildStaticSessionStartHeader(state = {}) {
   const isEn = resolveUserLanguage(state) === 'en';
   const lines = [
     isEn
-      ? '# The Tunnel v4.0.5 (EN-Internal / EN-Chat)'
-      : '# The Tunnel v4.0.5 (EN-Internal / RU-Chat)',
+      ? '# The Tunnel v4.0.6 (EN-Internal / EN-Chat)'
+      : '# The Tunnel v4.0.6 (EN-Internal / RU-Chat)',
     isEn
       ? '- User replies/UI/Role/toolSummary: 100% English.'
       : '- User replies/UI/Role/toolSummary: 100% Russian.',
@@ -73,11 +77,18 @@ function buildStaticSessionStartHeader(state = {}) {
     );
   }
   const autoSpec = typeof state?.autoSpecMode === 'string' ? state.autoSpecMode.trim().toLowerCase() : 'auto';
+  const autoSpecOutput = state?.autoSpecOutput === 'chat' ? 'chat' : 'thinking';
   if (autoSpec === 'auto' || autoSpec === 'always') {
     const scopeLabel = autoSpec === 'always' ? 'all coding tasks' : 'M/L/XL & Deep tasks';
-    lines.push(
-      `- Internal Spec-First (${autoSpec}): on ${scopeLabel}, scout target slices first and silently compile an internal execution prompt in <thinking> (FILES+LINES | CONTRACTS | BLAST RADIUS | EDGE CASES | VERIFY) before planning or editing.`
-    );
+    if (autoSpecOutput === 'chat') {
+      lines.push(
+        `- Internal Spec-First (${autoSpec} · chat): on ${scopeLabel}, scout target slices first and output a compact detailed execution prompt in chat (FILES+LINES | SYMBOLS & CONTRACTS | BLAST RADIUS | EDGE CASES | VERIFY) before planning or editing.`
+      );
+    } else {
+      lines.push(
+        `- Internal Spec-First (${autoSpec}): on ${scopeLabel}, scout target slices first and silently compile an internal execution prompt in <thinking> (FILES+LINES | CONTRACTS | BLAST RADIUS | EDGE CASES | VERIFY) before planning or editing.`
+      );
+    }
   }
   return lines;
 }
@@ -691,12 +702,12 @@ export function buildZeroTokenUserBadgeStep(rawOpts = {}) {
         ? `Pro Architect${subSuffix}`
         : strat === 'flash_dispatcher' || strat === 'economy'
           ? `Flash Dispatcher${subSuffix}`
-          : `Autopilot v4.0.5${subSuffix}`)
+          : `Autopilot v4.0.6${subSuffix}`)
     : (strat === 'pro_architect' || strat === 'performance'
         ? `Pro-Архитектор${subSuffix}`
         : strat === 'flash_dispatcher' || strat === 'economy'
           ? `Flash-Диспетчер${subSuffix}`
-          : `Автопилот v4.0.5${subSuffix}`);
+          : `Автопилот v4.0.6${subSuffix}`);
   const executor = isEn
     ? (modelProfile?.displayEn || modelProfile?.shortLabel || modelProfile?.displayRu || modelProfile?.displayNameRu || 'Current executor')
     : (modelProfile?.displayRu || modelProfile?.displayNameRu || modelProfile?.shortLabel || 'Текущий исполнитель');
@@ -1239,7 +1250,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
       }
     }
 
-    // 2. Когнитивный ИИ-Автопилот v4.0.5 (3D-матрица Breadth × Depth × Risk + безлимитное EN-мышление на Gemini 4)
+    // 2. Когнитивный ИИ-Автопилот v4.0.6 (3D-матрица Breadth × Depth × Risk + безлимитное EN-мышление на Gemini 4)
     if (baseState.thinkingLimiter !== false && toolPruner && typeof toolPruner.estimateTaskGradeAndThinkingBudget === 'function') {
       try {
         const budgetRes = toolPruner.estimateTaskGradeAndThinkingBudget(userInput, effectiveState, {
@@ -1365,9 +1376,17 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
       } catch {}
     }
 
-    if (!isReadOnlyQuestion && !isContinuationMetaTurn && toolPruner?.compileVoiceOrLongRuPromptPivot) {
+    const effAutoSpecMode = toolPruner?.resolveAutoSpecMode
+      ? toolPruner.resolveAutoSpecMode(userInput, effectiveState)
+      : (typeof effectiveState?.autoSpecMode === 'string' ? effectiveState.autoSpecMode.trim().toLowerCase() : 'auto');
+    const hasExplicitSpecOverride = /(?:^|\s)\/(?:spec|autospec\s+always)\b/i.test(userInput);
+    if (!isReadOnlyQuestion && (!isContinuationMetaTurn || hasExplicitSpecOverride) && toolPruner?.compileVoiceOrLongRuPromptPivot) {
       try {
-        const pivot = toolPruner.compileVoiceOrLongRuPromptPivot(userInput, { wsPath, repoMapper });
+        const pivot = toolPruner.compileVoiceOrLongRuPromptPivot(userInput, {
+          wsPath,
+          repoMapper,
+          forceAlways: effAutoSpecMode === 'always',
+        });
         if (pivot?.triggered && pivot.formattedPivot) {
           thinkingBudgetHint = thinkingBudgetHint
             ? `${thinkingBudgetHint}\n${pivot.formattedPivot}`
@@ -1382,7 +1401,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
         if (taskProgress?.initTaskProgressFromPrompt) {
           taskProgress.initTaskProgressFromPrompt({
             conversationId: convoId,
-            workspaceRoot: wsPath,
+            workspaceRoot: resolveTaskProgressWorkspace(payload),
             transcriptPath: payload.transcriptPath || '',
             userPrompt: userInput,
             grade: budgetGrade || 'M',
@@ -1800,7 +1819,7 @@ export async function handlePreInvocation(payload = {}, rawState = {}) {
   if (baseState.quotaPacerEnabled !== false) {
     try {
       await loadDepsByNames(['quotaPacer']);
-      if (quotaPacerMod?.recordQuotaTurnSample) {
+      if (isFirstStepOfTurn && quotaPacerMod?.recordQuotaTurnSample) {
         quotaPacerMod.recordQuotaTurnSample({
           tier: activeModelProfile?.tier || (activeModelProfile?.isOrchestrator ? 'orchestrator' : 'hydrogen'),
           thinkingLevel: activeModelProfile?.thinkingLevel || undefined,
@@ -2305,7 +2324,7 @@ export async function handlePreToolUse(payload = {}, rawState = {}) {
     try {
       taskProgress.advanceTaskProgressOnPreTool({
         conversationId: String(payload.conversationId || 'default'),
-        workspaceRoot: wsPath,
+        workspaceRoot: resolveTaskProgressWorkspace(payload),
         transcriptPath: payload.transcriptPath || '',
         toolName,
         filePath,
@@ -2826,7 +2845,34 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
       })
     : String(payload.conversationId || 'default');
 
-  // 0. Автоматическая фиксация выборов пользователя из опросов ask_question (Decision Pinning + Variant 1B Model-Switch Pause)
+  // 0. Автоматическая фиксация выборов пользователя из опросов ask_question (Decision Pinning + Variant 1B Model-Switch Pause + Fallback при отмене IDE)
+  if (payload.error && toolName === 'ask_question') {
+    const errText = String(payload.error || '');
+    if (/(?:user\s+cancelled\s+ask_question|cancel|abort)/i.test(errText)) {
+      const isEnHook = resolveUserLanguage(state) === 'en';
+      try {
+        const turnFile = join(getCacheDir(), 'pre-invocation-turn.json');
+        updateJsonAtomicSync(turnFile, () => ({ turns: {} }), (tState) => {
+          const turns = tState?.turns && typeof tState.turns === 'object' ? tState.turns : {};
+          const prev = Object.hasOwn(turns, postConvoKey) ? turns[postConvoKey] : { hash: '', ts: Date.now() };
+          turns[postConvoKey] = {
+            ...prev,
+            askQuestionCalled: true,
+            askQuestionCancelledFallback: true,
+            preTaskGateRequired: false,
+          };
+          return { turns };
+        });
+      } catch {}
+      return {
+        systemMessage: isEnHook
+          ? '⚠️ [ask_question Fallback] The IDE cancelled the popup (`user cancelled ask_question`). Do NOT claim edits were cancelled unless the user explicitly cancelled them; print the 3 numbered options directly in chat, ask the user to reply with `1`, `2`, or `3`, and end the turn.'
+          : '⚠️ [ask_question Fallback] IDE сбросила всплывающее окно (`user cancelled ask_question`). НЕ пиши «Запуск правок отменён» — выведи 3 пронумерованных варианта прямо в чат, попроси пользователя ответить цифрой `1`, `2` или `3` и заверши ход.',
+      };
+    }
+    return {};
+  }
+
   if (!payload.error && toolName === 'ask_question') {
     const rawOutput = String(payload.output || payload.result || payload.response || '');
     const isModelSwitchPauseReply = /(?:пауз[аеыу].*модел|заверш(?:ить|и)\s+ход.*модел|смен[иыуть].*модел|переключ[иыуть].*модел|end\s+turn.*switch.*model|pause.*switch.*model)/i.test(rawOutput);
@@ -3012,7 +3058,7 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
       try {
         taskProgress.recordTaskProgressOnPostTool({
           conversationId: String(payload.conversationId || 'default'),
-          workspaceRoot: wsPath,
+          workspaceRoot: resolveTaskProgressWorkspace(payload),
           transcriptPath: payload.transcriptPath || '',
           toolName: 'run_command',
           commandLine: args.CommandLine || args.command || args.cmd || '',
@@ -3755,9 +3801,12 @@ export async function handlePostToolUse(payload = {}, rawState = {}) {
 
     if (taskProgress?.recordTaskProgressOnPostTool) {
       try {
+        const taskProgressWs = (filePath && shadowGuard?.resolveEffectiveProjectRoot)
+          ? shadowGuard.resolveEffectiveProjectRoot(filePath, resolveTaskProgressWorkspace(payload))
+          : resolveTaskProgressWorkspace(payload);
         taskProgress.recordTaskProgressOnPostTool({
           conversationId: String(payload.conversationId || 'default'),
-          workspaceRoot: effectiveFileWs,
+          workspaceRoot: taskProgressWs,
           transcriptPath: payload.transcriptPath || '',
           toolName,
           filePath,
@@ -3831,7 +3880,7 @@ export async function handleStop(payload = {}, rawState = {}) {
     if (taskProgress?.finalizeTaskProgressOnStop) {
       taskProgress.finalizeTaskProgressOnStop({
         conversationId: stopConvoKey,
-        workspaceRoot: wsPath,
+        workspaceRoot: resolveTaskProgressWorkspace(payload),
         transcriptPath: payload.transcriptPath || '',
         terminationReason: termReason,
         hasError: hasErr,

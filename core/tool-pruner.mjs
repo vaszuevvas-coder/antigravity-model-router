@@ -1,6 +1,6 @@
 /**
  * @file tool-pruner.mjs
- * @description Когнитивный 3D-маршрутизатор The Tunnel (3D Cognitive Router v4.0.5):
+ * @description Когнитивный 3D-маршрутизатор The Tunnel (3D Cognitive Router v4.0.6):
  * Оценивает реальный охват графа кода (Scope-Scout + PageRank), строит 3D-тензор
  * Ширина × Глубина × Неопределённость/Риск, генерирует адаптивные варианты плана и проверяет селектор модели Gemini 4.
  */
@@ -366,13 +366,13 @@ export function estimateCodebaseScope(userPrompt = '', { wsPath = '', repoMapper
 /**
  * Транслирует пользовательский промпт в компактное структурное досье для CLI (ag-cli context).
  * @param {string} [userPrompt=''] Текст запроса пользователя
- * @param {object} [options={}] Дополнительный контекст (wsPath, repoMapper)
- * @returns {{ matchedIds: string[], specs: string[], targetFiles: string[], formattedSpec: string, formatted: string }}
+ * @param {object} [options={}] Дополнительный контекст (wsPath, repoMapper, forceAlways)
+ * @returns {{ matchedIds: string[], specs: string[], targetFiles: string[], contracts: string[], verifyHints: string[], formattedSpec: string, formatted: string }}
  */
-export function compileUserIntentToTechSpec(userPrompt = '', { wsPath = '', repoMapper = null } = {}) {
+export function compileUserIntentToTechSpec(userPrompt = '', { wsPath = '', repoMapper = null, forceAlways = false } = {}) {
   const promptText = typeof userPrompt === 'string' ? userPrompt.trim() : '';
-  if (promptText.length < 12 || detectPromptIntentSignals(promptText).isReadOnlyQuestion) {
-    return { matchedIds: [], specs: [], targetFiles: [], formattedSpec: '', formatted: '' };
+  if (!promptText || (!forceAlways && promptText.length < 12) || detectPromptIntentSignals(promptText).isReadOnlyQuestion) {
+    return { matchedIds: [], specs: [], targetFiles: [], contracts: [], verifyHints: [], formattedSpec: '', formatted: '' };
   }
 
   const matchedIds = [];
@@ -386,36 +386,78 @@ export function compileUserIntentToTechSpec(userPrompt = '', { wsPath = '', repo
   }
 
   const targetFiles = [];
+  const targetFileSet = new Set();
+  const contracts = [];
+  const contractSet = new Set();
+  const verifyHints = [];
+  const verifySet = new Set();
+
   if (wsPath && repoMapper && typeof repoMapper.rankRepoByPageRank === 'function') {
     try {
       const ranked = repoMapper.rankRepoByPageRank(wsPath, promptText, { topK: 5 });
-      for (const hit of (ranked?.rankedFiles || []).filter((rf) => rf.seedHits > 0).slice(0, 3)) {
-        const syms = (hit.matchedSymbols || []).slice(0, 2).map((s) => s.name).filter(Boolean);
-        targetFiles.push(syms.length > 0 ? `${hit.file}(${syms.join(',')})` : hit.file);
+      for (const hit of (ranked?.rankedFiles || []).filter((rf) => rf.seedHits > 0).slice(0, 4)) {
+        const syms = (hit.matchedSymbols || []).slice(0, 3).map((s) => s.name).filter(Boolean);
+        for (const sym of syms) {
+          if (!contractSet.has(sym) && contracts.length < 6) {
+            contractSet.add(sym);
+            contracts.push(sym);
+          }
+        }
+        if (hit.file && !targetFileSet.has(hit.file) && targetFiles.length < 3) {
+          targetFileSet.add(hit.file);
+          targetFiles.push(syms.length > 0 ? `${hit.file}(${syms.slice(0, 2).join(',')})` : hit.file);
+        }
+        if (hit.file && /(?:^|\/)tests?\/|\.test\.|\.spec\./i.test(hit.file) && !verifySet.has(hit.file)) {
+          verifySet.add(hit.file);
+          verifyHints.push(hit.file);
+        }
       }
     } catch {}
   }
 
-  if (specs.length === 0 && targetFiles.length === 0) {
-    return { matchedIds: [], specs: [], targetFiles: [], formattedSpec: '', formatted: '' };
+  if (targetFiles.length < 4) {
+    const explicitFiles = promptText.match(/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_./-]+\.[a-zA-Z]{1,6}/g) || [];
+    for (const fileRef of explicitFiles) {
+      if (!targetFileSet.has(fileRef) && targetFiles.length < 4) {
+        targetFileSet.add(fileRef);
+        targetFiles.push(fileRef);
+      }
+      if (/(?:^|\/)tests?\/|\.test\.|\.spec\./i.test(fileRef) && !verifySet.has(fileRef)) {
+        verifySet.add(fileRef);
+        verifyHints.push(fileRef);
+      }
+    }
+  }
+
+  if (contracts.length < 6) {
+    const explicitSyms = promptText.match(/\b(?:[a-z][a-zA-Z0-9]{2,}[A-Z][a-zA-Z0-9]*|[a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b/g) || [];
+    for (const sym of explicitSyms) {
+      if (!contractSet.has(sym) && contracts.length < 6) {
+        contractSet.add(sym);
+        contracts.push(sym);
+      }
+    }
+  }
+
+  if (verifyHints.length === 0 && (targetFiles.length > 0 || specs.length > 0 || forceAlways)) {
+    verifyHints.push('run targeted unit tests / syntax check for touched files');
+  }
+
+  if (!forceAlways && specs.length === 0 && targetFiles.length === 0) {
+    return { matchedIds: [], specs: [], targetFiles: [], contracts: [], verifyHints: [], formattedSpec: '', formatted: '' };
   }
 
   const lines = ['🧭 [Auto Tech Spec]:'];
   if (specs.length > 0) lines.push(`  • SPEC: ${specs.join(' ')}`);
   if (targetFiles.length > 0) lines.push(`  • TARGETS: ${targetFiles.join(', ')}`);
+  if (contracts.length > 0) lines.push(`  • CONTRACTS: ${contracts.join(', ')}`);
+  if (verifyHints.length > 0) lines.push(`  • VERIFY: ${verifyHints.join('; ')}`);
   const formattedSpec = lines.join('\n');
-  return { matchedIds, specs, targetFiles, formattedSpec, formatted: formattedSpec };
+  return { matchedIds, specs, targetFiles, contracts, verifyHints, formattedSpec, formatted: formattedSpec };
 }
 
 const VOICE_FILLER_RX = /(?:^|[\s,.;:!?])(?:короче|смотри|слушай|в\s+общем|собственно|грубо\s+говоря|как[-\s]?то\s+так|и\s+так\s+далее|не\s+знаю\s+как\s+правильно|давай\s+сделаем\s+так|по\s+сути|типа|ну\s+вот)(?=$|[\s,.;:!?])/gi;
 
-/**
- * Compresses verbose conversational/voice-dictated Russian prompts into a compact English Execution Pivot
- * for subagent / Swarm delegation while leaving short prompts and read-only questions untouched.
- * @param {string} [userPrompt='']
- * @param {{ wsPath?: string, repoMapper?: object|null, maxChars?: number }} [options={}]
- * @returns {{ triggered: boolean, cyrillicChars: number, enTerms: string[], targetFiles: string[], formattedPivot: string, formatted: string }}
- */
 const ENTITY_PIVOT_RULES = [
   { rx: /(?:кэш|кеш|implicit\s*cache)/i, entities: ['metricCacheHitBadge', 'ramCacheEnabled'] },
   { rx: /(?:ревизор|критик|дифф)/i, entities: ['gpuPostEditCritic', 'chk-gpuPostEditCritic'] },
@@ -427,23 +469,32 @@ const ENTITY_PIVOT_RULES = [
   { rx: /(?:срез|озу|памят)/i, entities: ['ram_slice', 'ram_context_pack'] },
 ];
 
-export function compileVoiceOrLongRuPromptPivot(userPrompt = '', { wsPath = '', repoMapper = null, maxChars = 460 } = {}) {
+/**
+ * Compresses verbose conversational/voice-dictated Russian prompts (or any non-read-only task prompt when forceAlways=true)
+ * into a compact English Execution Pivot with TARGETS, CONTRACTS, and VERIFY criteria.
+ * @param {string} [userPrompt='']
+ * @param {{ wsPath?: string, repoMapper?: object|null, maxChars?: number, forceAlways?: boolean }} [options={}]
+ * @returns {{ triggered: boolean, cyrillicChars: number, enTerms: string[], targetFiles: string[], contracts: string[], verifyHints: string[], anchoredEntities: string[], formattedPivot: string, formatted: string }}
+ */
+export function compileVoiceOrLongRuPromptPivot(userPrompt = '', { wsPath = '', repoMapper = null, maxChars = 0, forceAlways = false } = {}) {
   const promptText = typeof userPrompt === 'string' ? userPrompt.trim() : '';
   const cyrMatches = promptText.match(/[а-яёА-ЯЁ]/g);
   const cyrillicChars = cyrMatches ? cyrMatches.length : 0;
-  if (!promptText || cyrillicChars < 60 || detectPromptIntentSignals(promptText).isReadOnlyQuestion) {
-    return { triggered: false, cyrillicChars, enTerms: [], targetFiles: [], anchoredEntities: [], formattedPivot: '', formatted: '' };
+  if (!promptText || (!forceAlways && cyrillicChars < 60) || detectPromptIntentSignals(promptText).isReadOnlyQuestion) {
+    return { triggered: false, cyrillicChars, enTerms: [], targetFiles: [], contracts: [], verifyHints: [], anchoredEntities: [], formattedPivot: '', formatted: '' };
   }
 
-  const fillerMatches = promptText.match(VOICE_FILLER_RX) || [];
-  const isLongRu = cyrillicChars >= 550;
-  const isVoiceRu = promptText.length >= 260 && fillerMatches.length >= 2;
-  if (!isLongRu && !isVoiceRu) {
-    return { triggered: false, cyrillicChars, enTerms: [], targetFiles: [], anchoredEntities: [], formattedPivot: '', formatted: '' };
+  if (!forceAlways) {
+    const fillerMatches = promptText.match(VOICE_FILLER_RX) || [];
+    const isLongRu = cyrillicChars >= 550;
+    const isVoiceRu = promptText.length >= 260 && fillerMatches.length >= 2;
+    if (!isLongRu && !isVoiceRu) {
+      return { triggered: false, cyrillicChars, enTerms: [], targetFiles: [], contracts: [], verifyHints: [], anchoredEntities: [], formattedPivot: '', formatted: '' };
+    }
   }
 
   const lex = expandRuQueryToEnTerms(promptText, { maxTerms: 14 });
-  const tech = compileUserIntentToTechSpec(promptText, { wsPath, repoMapper });
+  const tech = compileUserIntentToTechSpec(promptText, { wsPath, repoMapper, forceAlways });
   const asciiTerms = Array.from(new Set(promptText.match(/\b[a-zA-Z_][a-zA-Z0-9_./-]{2,}\b/g) || [])).slice(0, 8);
   const enConceptList = Array.from(new Set([...lex.enTerms, ...asciiTerms])).slice(0, 12);
 
@@ -468,13 +519,20 @@ export function compileVoiceOrLongRuPromptPivot(userPrompt = '', { wsPath = '', 
   if (tech.targetFiles.length > 0) {
     parts.push(`  • TARGETS: ${tech.targetFiles.join(', ')}`);
   }
-  if (enConceptList.length === 0 && tech.specs.length === 0 && tech.targetFiles.length === 0) {
+  if (tech.contracts.length > 0) {
+    parts.push(`  • CONTRACTS: ${tech.contracts.join(', ')}`);
+  }
+  if (tech.verifyHints.length > 0) {
+    parts.push(`  • VERIFY: ${tech.verifyHints.join('; ')}`);
+  }
+  if (enConceptList.length === 0 && tech.specs.length === 0 && tech.targetFiles.length === 0 && tech.contracts.length === 0) {
     const stripped = promptText.replace(VOICE_FILLER_RX, ' ').replace(/\s+/g, ' ').trim();
     parts.push(`  • DISTILLED: ${stripped.slice(0, 160)}`);
   }
 
   let formattedPivot = parts.join('\n');
-  const cap = Math.max(180, Number(maxChars) || 460);
+  const defaultCap = forceAlways ? 640 : 460;
+  const cap = Math.max(180, Number(maxChars) || defaultCap);
   if (formattedPivot.length > cap) {
     formattedPivot = `${formattedPivot.slice(0, cap - 3)}...`;
   }
@@ -483,6 +541,8 @@ export function compileVoiceOrLongRuPromptPivot(userPrompt = '', { wsPath = '', 
     cyrillicChars,
     enTerms: enConceptList,
     targetFiles: tech.targetFiles,
+    contracts: tech.contracts,
+    verifyHints: tech.verifyHints,
     anchoredEntities,
     formattedPivot,
     formatted: formattedPivot,
@@ -1329,15 +1389,21 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
   const gatePolicy = !signals.isReadOnlyQuestion
     ? resolveEffectivePreTaskGatePolicy({ state, modelProfile, grade })
     : { shouldAskModelGate: false, effectiveThreshold: 'OFF', orchestratorBypassSM: false };
+  const autoSpecMode = resolveAutoSpecMode(promptText, state);
+  const autoSpecOutput = resolveAutoSpecOutput(promptText, state);
   const compiledSpec = !signals.isReadOnlyQuestion
-    ? compileUserIntentToTechSpec(promptText, { wsPath: context?.wsPath || '', repoMapper: context?.repoMapper || null })
-    : { matchedIds: [], specs: [], targetFiles: [], formattedSpec: '', formatted: '' };
+    ? compileUserIntentToTechSpec(promptText, {
+        wsPath: context?.wsPath || '',
+        repoMapper: context?.repoMapper || null,
+        forceAlways: autoSpecMode === 'always',
+      })
+    : { matchedIds: [], specs: [], targetFiles: [], contracts: [], verifyHints: [], formattedSpec: '', formatted: '' };
 
   const grillSignal = detectGrillMeSignals(promptText, matrix3D, state);
   const grillDirective = buildGrillMeDirective({ grillSignal, grade, matrix3D, lang: uiLang });
-  const autoSpecMode = resolveAutoSpecMode(promptText, state);
   const autoSpecDirective = buildAutoSpecDirective({
     mode: autoSpecMode,
+    output: autoSpecOutput,
     grade,
     isReadOnlyQuestion: Boolean(signals.isReadOnlyQuestion),
     isDeepAuditOrArch: Boolean(isDeepAuditOrArch),
@@ -1461,6 +1527,7 @@ export function estimateTaskGradeAndThinkingBudget(userPrompt = '', state = {}, 
     compiledSpec,
     grillMe: grillSignal,
     autoSpecMode,
+    autoSpecOutput,
     isReadOnlyQuestion: Boolean(signals.isReadOnlyQuestion),
     isModalAnalyticalQuestion: Boolean(signals.isModalAnalyticalQuestion),
     isApprovalFollowUp: false,
@@ -1536,16 +1603,36 @@ export function resolveAutoSpecMode(promptText = '', state = {}) {
 }
 
 /**
- * Builds the Internal Spec-First directive so the agent silently compiles an exact file/line/contract
- * execution prompt in <thinking> after scouting and executes against it without dumping raw prompts to chat.
- * @param {{ mode?: 'off'|'auto'|'always', grade?: string, isReadOnlyQuestion?: boolean, isDeepAuditOrArch?: boolean }} [opts={}]
+ * Resolves Internal Spec-First output destination (`thinking | chat`) from prompt overrides or persisted state.
+ * @param {string} [promptText='']
+ * @param {object} [state={}]
+ * @returns {'thinking'|'chat'}
+ */
+export function resolveAutoSpecOutput(promptText = '', state = {}) {
+  const text = String(promptText || '');
+  const m = /(?:^|\s)\/autospec\s+(chat|thinking)\b/i.exec(text);
+  if (m) return m[1].toLowerCase();
+  if (/(?:^|\s)\/spec\s+chat\b/i.test(text)) return 'chat';
+  if (/(?:^|\s)\/spec\s+thinking\b/i.test(text)) return 'thinking';
+  const raw = typeof state?.autoSpecOutput === 'string' ? state.autoSpecOutput.trim().toLowerCase() : 'thinking';
+  return raw === 'chat' ? 'chat' : 'thinking';
+}
+
+/**
+ * Builds the Internal Spec-First directive so the agent compiles an exact file/line/contract
+ * execution prompt in <thinking> (or outputs a compact prompt in chat when output='chat').
+ * @param {{ mode?: 'off'|'auto'|'always', output?: 'thinking'|'chat', grade?: string, isReadOnlyQuestion?: boolean, isDeepAuditOrArch?: boolean }} [opts={}]
  * @returns {string}
  */
-export function buildAutoSpecDirective({ mode = 'auto', grade = 'M', isReadOnlyQuestion = false, isDeepAuditOrArch = false } = {}) {
+export function buildAutoSpecDirective({ mode = 'auto', output = 'thinking', grade = 'M', isReadOnlyQuestion = false, isDeepAuditOrArch = false } = {}) {
   if (isReadOnlyQuestion) return '';
   const clean = (mode === 'off' || mode === 'always') ? mode : 'auto';
   if (clean === 'off') return '';
   if (clean === 'auto' && grade === 'S' && !isDeepAuditOrArch) return '';
+  const cleanOutput = output === 'chat' ? 'chat' : 'thinking';
+  if (cleanOutput === 'chat') {
+    return `📐 [Internal Spec-First (${clean} · ${grade} · chat)] Before proposing a plan or editing, scout target files via ram_search/ram_slice and output a compact detailed execution prompt in chat (FILES+LINES | SYMBOLS & CONTRACTS | BLAST RADIUS | EDGE CASES | VERIFY), then execute directly against it.`;
+  }
   return `📐 [Internal Spec-First (${clean} · ${grade})] Before proposing a plan or editing, scout target files via ram_search/ram_slice and silently compile an internal execution prompt in <thinking> (FILES+LINES | SYMBOLS & CONTRACTS | BLAST RADIUS | EDGE CASES | VERIFY), then execute directly against it without dumping the raw prompt to chat.`;
 }
 

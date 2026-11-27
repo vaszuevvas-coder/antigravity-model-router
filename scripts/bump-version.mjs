@@ -191,6 +191,10 @@ const COMPANION_VERSION_RULES = [
       [/(alt="The Tunnel v)\d+\.\d+(?:\.\d+)?(\s+—)/, (v) => `$1${v}$2`],
       [/(Полная история изменений \(v1\.0\.0 — v)\d+\.\d+(?:\.\d+)?(\))/, (v) => `$1${v}$2`],
       [/(The-Tunnel-v)\d+\.\d+(?:\.\d+)?(-Setup\.exe|\.zip)/g, (v) => `$1${v}$2`],
+      [/(the-tunnel-demo-v)\d+\.\d+(?:\.\d+)?(\.mp4)/g, (v) => `$1${v}$2`],
+      [/(releases\/download\/v)\d+\.\d+(?:\.\d+)?(\/)/g, (v) => `$1${v}$2`],
+      [/(badge\/release-v)\d+\.\d+(?:\.\d+)?(-)/g, (v) => `$1${v}$2`],
+      [/(Release v)\d+\.\d+(?:\.\d+)?/g, (v) => `$1${v}`],
     ],
   },
   {
@@ -199,7 +203,7 @@ const COMPANION_VERSION_RULES = [
       [/(Диспетчер моделей ИИ \((?:Liquid Glass\s+)?v)\d+\.\d+(?:\.\d+)?(\))/g, (v) => `$1${v}$2`],
       [/(панели The Tunnel \((?:Liquid Glass\s+)?v)\d+\.\d+(?:\.\d+)?(\))/g, (v) => `$1${v}$2`],
       [/(THE TUNNEL\s+·\s+v)\d+\.\d+(?:\.\d+)?/g, (v) => `$1${v}`],
-      [/(<tspan fill="#38bdf8">v)\d+\.\d+(?:\.\d+)?(<\/tspan>)/g, (v) => `$1${v}$2`],
+      [/(<tspan fill="(?:#38bdf8|#f04848)">v)\d+\.\d+(?:\.\d+)?(<\/tspan>)/g, (v) => `$1${v}$2`],
     ],
   },
   {

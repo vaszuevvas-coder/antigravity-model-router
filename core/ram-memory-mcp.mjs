@@ -110,7 +110,8 @@ export function loadRamSettings() {
     typeof process.env.TUNNEL_TEST_STATE_PATH === 'string' && process.env.TUNNEL_TEST_STATE_PATH.trim()
       ? path.resolve(process.env.TUNNEL_TEST_STATE_PATH.trim())
       : STATE_FILE;
-  const st = safeReadJsonSync(activeStateFile, () => ({}), { selfHeal: true });
+  const rawSt = safeReadJsonSync(activeStateFile, () => ({}), { selfHeal: false });
+  const st = rawSt && typeof rawSt === 'object' && !Array.isArray(rawSt) ? rawSt : {};
   const rawEnvProf = typeof process.env.TUNNEL_HOOK_PROFILE === 'string' ? process.env.TUNNEL_HOOK_PROFILE.trim().toLowerCase() : '';
   const rawStateProf = typeof st.hookProfile === 'string' ? st.hookProfile.trim().toLowerCase() : '';
   const effectiveProfile = (rawEnvProf === 'minimal' || rawEnvProf === 'standard' || rawEnvProf === 'strict')
@@ -150,9 +151,13 @@ const engine = new RamMemoryEngine({
 });
 const ipcToken = randomBytes(16).toString('hex');
 const warmingWorkspaces = new Set();
+const MAX_REGISTERED_WORKSPACES = 32;
+const MAX_GPU_WARM_COOLDOWN = 64;
 const registeredWorkspaces = new Map();
 const gpuWarmCooldown = new Map();
+const activeGpuWarmTimers = new Set();
 const debouncedReindexTimers = new Map();
+let daemonShuttingDown = false;
 let activeChatIpcCount = 0;
 let ipcPort = 0;
 let ipcStartedAt = '';
@@ -303,25 +308,42 @@ function writeDaemonRegistration() {
   } catch {}
 }
 
-export function registerDaemonWorkspace(wsRoot) {
+export function registerDaemonWorkspace(wsRoot, options = {}) {
   if (!wsRoot || typeof wsRoot !== 'string') return;
   try {
     const abs = path.resolve(wsRoot);
     if (isEphemeralOrScratchWorkspace(abs)) return;
+    const makeActive = options?.makeActive !== false;
     const norm = normWsKey(abs);
     const prevLastKey = registeredWorkspaces.size > 0 ? Array.from(registeredWorkspaces.keys()).pop() : '';
     if (registeredWorkspaces.has(norm)) {
-      // Refresh recency order in Map and persist if LRU tail changed
-      registeredWorkspaces.delete(norm);
-      registeredWorkspaces.set(norm, abs);
-      if (prevLastKey !== norm) {
-        writeDaemonRegistration();
+      if (makeActive) {
+        // Refresh recency order in Map and persist if LRU tail changed
+        registeredWorkspaces.delete(norm);
+        registeredWorkspaces.set(norm, abs);
+        if (prevLastKey !== norm) {
+          writeDaemonRegistration();
+        }
       }
     } else {
-      registeredWorkspaces.set(norm, abs);
+      if (makeActive) {
+        registeredWorkspaces.set(norm, abs);
+      } else {
+        const prevEntries = Array.from(registeredWorkspaces.entries());
+        registeredWorkspaces.clear();
+        registeredWorkspaces.set(norm, abs);
+        for (const [k, v] of prevEntries) {
+          registeredWorkspaces.set(k, v);
+        }
+      }
+      while (registeredWorkspaces.size > MAX_REGISTERED_WORKSPACES) {
+        const oldestKey = registeredWorkspaces.keys().next().value;
+        if (oldestKey === undefined) break;
+        registeredWorkspaces.delete(oldestKey);
+      }
       writeDaemonRegistration();
     }
-    if (!isEphemeralTestWorkspace(abs)) {
+    if (makeActive && !isEphemeralTestWorkspace(abs)) {
       latestActiveWorkspace = abs;
     }
   } catch {}
@@ -517,7 +539,7 @@ function fallbackRecallCompactionFacts({ convoId = 'default', wsPath = '', query
 }
 
 function scheduleBackgroundGpuWarm(wsPath, delayMs = 200) {
-  if (!wsPath) return;
+  if (!wsPath || daemonShuttingDown) return;
   try {
     const st = loadRamSettings();
     const gpuCfg = loadGpuConfig();
@@ -527,33 +549,46 @@ function scheduleBackgroundGpuWarm(wsPath, delayMs = 200) {
     const now = Date.now();
     const lastTs = gpuWarmCooldown.get(key) || 0;
     if ((now - lastTs) < 120_000) return;
+    if (gpuWarmCooldown.has(key)) gpuWarmCooldown.delete(key);
     gpuWarmCooldown.set(key, now);
+    while (gpuWarmCooldown.size > MAX_GPU_WARM_COOLDOWN) {
+      const oldestKey = gpuWarmCooldown.keys().next().value;
+      if (oldestKey === undefined) break;
+      gpuWarmCooldown.delete(oldestKey);
+    }
 
     if (st.ramSotaEngines !== false && st.gpuWarmHostRamCache !== false && typeof localGpuNs?.warmGgufModelsInHostRam === 'function') {
       const hostTimer = setTimeout(() => {
+        activeGpuWarmTimers.delete(hostTimer);
+        if (daemonShuttingDown) return;
         localGpuNs.warmGgufModelsInHostRam().catch(() => {});
       }, 1800);
       if (typeof hostTimer?.unref === 'function') hostTimer.unref();
+      activeGpuWarmTimers.add(hostTimer);
     }
 
     const timer = setTimeout(async () => {
+      activeGpuWarmTimers.delete(timer);
+      if (daemonShuttingDown || !registeredWorkspaces.has(key)) return;
       try {
         const hw = probeNvidiaGpu();
         const bgGuard = evaluateGpuThermalAndLoadGuard(hw, { isBackground: true });
         if (bgGuard.throttled) return;
         if (hw?.available && hw.freeMb < 1500) return;
         const ready = await ensureOllamaRunning(gpuCfg);
-        if (!ready?.ok) return;
+        if (!ready?.ok || daemonShuttingDown) return;
         await enforceVramCapInOllama({ cfgOverride: gpuCfg }).catch(() => {});
-        if (!gpuCfg.gpuSemanticSearch) return;
+        if (!gpuCfg.gpuSemanticSearch || daemonShuttingDown) return;
         await indexSkillVectors({ cfgOverride: gpuCfg }).catch(() => {});
+        if (daemonShuttingDown || !registeredWorkspaces.has(key)) return;
         const ws = await engine.warmWorkspaceAsync(absRoot);
-        if (ws && ws.files.size > 0) {
+        if (ws && ws.files.size > 0 && !daemonShuttingDown) {
           await warmWorkspaceVectorsOnce(ws.absRoot, ws.files, { maxNewFiles: 180, ensureEmbed: true });
         }
       } catch {}
     }, delayMs);
     if (typeof timer.unref === 'function') timer.unref();
+    activeGpuWarmTimers.add(timer);
   } catch {}
 }
 
@@ -850,7 +885,7 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
   if (method === 'POST' && url === '/graph/overview') {
     const wsPath = body.wsPath || latestActiveWorkspace || stdioClientWorkspace || process.cwd();
     if (!st.enabled || !wsPath) return { status: 200, body: { ok: false } };
-    registerDaemonWorkspace(wsPath);
+    registerDaemonWorkspace(wsPath, { makeActive: false });
     const res = targetEngine.queryKnowledgeGraph(wsPath, {
       mode: 'report',
       maxClusters: Number(body.maxClusters) || 8,
@@ -863,7 +898,7 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
     const wsPath = body.wsPath || latestActiveWorkspace || stdioClientWorkspace || process.cwd();
     if (!st.enabled || !wsPath) return { status: 200, body: { ok: false } };
     const isEphemeral = isEphemeralOrScratchWorkspace(wsPath) || isEphemeralTestWorkspace(wsPath);
-    if (!isEphemeral) registerDaemonWorkspace(wsPath);
+    if (!isEphemeral) registerDaemonWorkspace(wsPath, { makeActive: false });
     const payload = buildProjectGraphPayload(targetEngine, wsPath, {
       focus: body.focus,
       depth: body.depth,
@@ -880,7 +915,7 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
     const wsPath = body.wsPath || latestActiveWorkspace || stdioClientWorkspace || process.cwd();
     if (!st.enabled || !wsPath) return { status: 200, body: { ok: false, found: false } };
     const isEphemeral = isEphemeralOrScratchWorkspace(wsPath) || isEphemeralTestWorkspace(wsPath);
-    if (!isEphemeral) registerDaemonWorkspace(wsPath);
+    if (!isEphemeral) registerDaemonWorkspace(wsPath, { makeActive: false });
     const maxDepth = Math.max(1, Math.min(8, Math.floor(Number(body.maxDepth) || 6)));
     const direction = body.direction === 'directed' ? 'directed' : 'both';
     const res = targetEngine.findGraphPath(wsPath, body.from || '', body.to || '', {
@@ -896,7 +931,7 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
       return { status: 200, body: { ok: false, isSymbolsView: true, nodes: [], edges: [] } };
     }
     const isEphemeral = isEphemeralOrScratchWorkspace(wsPath) || isEphemeralTestWorkspace(wsPath);
-    if (!isEphemeral) registerDaemonWorkspace(wsPath);
+    if (!isEphemeral) registerDaemonWorkspace(wsPath, { makeActive: false });
     const payload = buildFileSymbolGraphPayload(targetEngine, wsPath, body.file, {
       startWatcher: !isEphemeral,
       maxExternal: body.maxExternal,
@@ -912,7 +947,7 @@ export async function dispatchIpcRoute(method, url, body = {}, opts = {}) {
       return { status: 200, body: { ok: false, query, scoresByFile: {}, matches: [] } };
     }
     const isEphemeral = isEphemeralOrScratchWorkspace(wsPath) || isEphemeralTestWorkspace(wsPath);
-    if (!isEphemeral) registerDaemonWorkspace(wsPath);
+    if (!isEphemeral) registerDaemonWorkspace(wsPath, { makeActive: false });
     const maxResults = Math.max(4, Math.min(30, Math.floor(Number(body.maxResults) || 14)));
     const semRes = await targetEngine.searchSemantic(wsPath, query, {
       maxResults,
@@ -1568,6 +1603,15 @@ function startIpcServer() {
 }
 
 function cleanupDaemonFile() {
+  daemonShuttingDown = true;
+  for (const t of activeGpuWarmTimers) {
+    try { clearTimeout(t); } catch {}
+  }
+  activeGpuWarmTimers.clear();
+  for (const t of debouncedReindexTimers.values()) {
+    try { clearTimeout(t); } catch {}
+  }
+  debouncedReindexTimers.clear();
   try {
     loadedSentinel?.stopDaemonLoop?.();
   } catch {}

@@ -4,6 +4,7 @@
  */
 
 import { execFile, spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
@@ -34,7 +35,7 @@ import {
   parseGitChurnOutput,
   aggregateSemanticGraphHits,
 } from '../../core/project-graph-builder.mjs';
-import { attachSidecarSecurityMiddleware, isValidWorkspaceDir, startSidecarHostWatchdog, validateRequestOrigin } from './lib/panel-security.mjs';
+import { attachSidecarSecurityMiddleware, getActiveSidecarRequest, isSafeCreatableFolderPath, isValidSidecarToken, isValidWorkspaceDir, startSidecarHostWatchdog, validateRequestOrigin } from './lib/panel-security.mjs';
 import {
   STATE_PATH,
   resolvePanelStatePath,
@@ -113,10 +114,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export {
   isAllowedLoopbackEndpoint,
+  isSafeCreatableFolderPath,
+  isValidSidecarToken,
   isValidWorkspaceDir,
   isAllowedLoopbackHost,
   validateRequestOrigin,
   attachSidecarSecurityMiddleware,
+  getActiveSidecarRequest,
   parseLoopbackHostPort,
   probeLoopbackTcpPort,
   startSidecarHostWatchdog,
@@ -205,10 +209,16 @@ if (!Response) {
       return new FallbackResponse(body, { status, contentType: 'text/html; charset=utf-8' });
     }
     static json(data, status = 200) {
-      return { status, body: data };
+      return new FallbackResponse(JSON.stringify(data), {
+        status,
+        contentType: 'application/json; charset=utf-8',
+      });
     }
     static error(message, status = 500) {
-      return { status, error: message };
+      return new FallbackResponse(JSON.stringify({ ok: false, error: message }), {
+        status,
+        contentType: 'application/json; charset=utf-8',
+      });
     }
   };
 }
@@ -223,7 +233,7 @@ function getPluginVersion() {
     const ver = typeof meta?.version === 'string' ? meta.version.trim() : '';
     if (ver) return ver;
   } catch {}
-  return '4.0.5';
+  return '4.0.6';
 }
 
 const PANEL_SERVER_STARTED_AT = Date.now();
@@ -251,24 +261,81 @@ function isMainEntry() {
 }
 
 export async function startSidecarPanel(options = {}) {
+  const resolveUpdaterRoot = () => (
+    typeof options?.pluginRoot === 'string' && options.pluginRoot.trim()
+      ? resolve(options.pluginRoot.trim())
+      : join(__dirname, '..', '..')
+  );
+  const logServerErr = (event, err, level = 'warn') => {
+    try {
+      appendDebugLog({
+        level,
+        source: 'panel-server',
+        event,
+        message: err?.message || String(err || event),
+      }, { pluginRoot: resolveUpdaterRoot() });
+    } catch {}
+  };
+  const clampFiniteInt = (raw, min, max, fallback) => {
+    const n = Number(raw);
+    return Number.isFinite(n) ? Math.max(min, Math.min(max, Math.floor(n))) : fallback;
+  };
   const AppCtor = options?.SidecarAppClass || SidecarApp;
   if (!AppCtor) return null;
   let app = null;
   try {
     app = new AppCtor();
-  } catch {
+  } catch (err) {
+    logServerErr('sidecar_app_init_failed', err, 'error');
     return null;
   }
   let securityMiddlewareActive = false;
   let activeHttpServer = null;
+  const resolveReq = (req) => req || getActiveSidecarRequest() || null;
   const ensurePostReq = (req) => (req && typeof req === 'object' ? (req.method ? req : { ...req, method: 'POST' }) : req);
-  const isRouteAuthorized = (req) => (req ? validateRequestOrigin(ensurePostReq(req)) : securityMiddlewareActive);
+  const isRouteAuthorized = (req) => {
+    const activeReq = resolveReq(req);
+    return activeReq ? validateRequestOrigin(ensurePostReq(activeReq)) : securityMiddlewareActive;
+  };
 
-  app.page('/', () => {
-    const html = readFileSync(UI_HTML_PATH, 'utf-8');
-    return new Response(html, {
-      contentType: 'text/html; charset=utf-8',
-      headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' },
+  let uiHtmlCache = { key: '', html: '' };
+  const servePanelHtmlPage = () => {
+    try {
+      const st = statSync(UI_HTML_PATH);
+      const cacheKey = `${Math.round(st.mtimeMs)}-${st.size}`;
+      if (uiHtmlCache.key !== cacheKey || !uiHtmlCache.html) {
+        uiHtmlCache = { key: cacheKey, html: readFileSync(UI_HTML_PATH, 'utf-8') };
+      }
+      return new Response(uiHtmlCache.html, {
+        contentType: 'text/html; charset=utf-8',
+        headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' },
+      });
+    } catch (err) {
+      logServerErr('serve_ui_html_failed', err, 'error');
+      return new Response('<!doctype html><html><body><h1>Panel UI unavailable</h1></body></html>', {
+        status: 503,
+        contentType: 'text/html; charset=utf-8',
+        headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' },
+      });
+    }
+  };
+
+  app.page('/', servePanelHtmlPage);
+  app.page('/graph', servePanelHtmlPage);
+
+  const GRAPH_ICON_PATH = join(__dirname, 'graph-icon.svg');
+  const GRAPH_ICON_FALLBACK_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.2" stroke="#f04848" stroke-width="1.5"/><circle cx="3" cy="3.5" r="1.6" stroke="#f04848" stroke-width="1.4"/><circle cx="13" cy="4" r="1.6" stroke="#f04848" stroke-width="1.4"/><circle cx="12.5" cy="12.5" r="1.6" stroke="#f04848" stroke-width="1.4"/><circle cx="3.5" cy="12.5" r="1.6" stroke="#f04848" stroke-width="1.4"/><path d="M4.2 4.6L6.4 6.6M11.7 5L9.7 6.8M9.6 9.5L11.4 11.3M6.3 9.5L4.6 11.4" stroke="#f04848" stroke-width="1.3" stroke-linecap="round"/></svg>';
+
+  app.page('/graph-icon.svg', () => {
+    let svg = GRAPH_ICON_FALLBACK_SVG;
+    try {
+      if (existsSync(GRAPH_ICON_PATH)) svg = readFileSync(GRAPH_ICON_PATH, 'utf-8');
+    } catch (err) {
+      logServerErr('serve_graph_icon_failed', err);
+    }
+    return new Response(svg, {
+      contentType: 'image/svg+xml; charset=utf-8',
+      headers: { 'Cache-Control': 'public, max-age=86400' },
     });
   });
 
@@ -281,6 +348,7 @@ export async function startSidecarPanel(options = {}) {
   });
 
   function parseOpenWorkspacesFromRequest(data, req) {
+    const activeReq = resolveReq(req);
     const out = [];
     const seen = new Set();
     const pushItem = (raw) => {
@@ -294,7 +362,7 @@ export async function startSidecarPanel(options = {}) {
     } else if (typeof data?.openWorkspaces === 'string' && data.openWorkspaces.trim()) {
       for (const item of data.openWorkspaces.split('|')) pushItem(item);
     }
-    const hdr = req?.headers?.['x-open-workspaces'] || req?.headers?.['X-Open-Workspaces'] || '';
+    const hdr = activeReq?.headers?.['x-open-workspaces'] || activeReq?.headers?.['X-Open-Workspaces'] || '';
     if (typeof hdr === 'string' && hdr.trim()) {
       let decoded = hdr;
       try { decoded = decodeURIComponent(hdr); } catch {}
@@ -303,460 +371,589 @@ export async function startSidecarPanel(options = {}) {
     return out.slice(0, 24);
   }
 
+  function parseActiveConversationIdFromRequest(data, req) {
+    const activeReq = resolveReq(req);
+    const fromData = typeof data?.activeConversationId === 'string' ? data.activeConversationId.trim() : '';
+    if (fromData) return fromData.slice(0, 128);
+    const hdr = activeReq?.headers?.['x-active-conversation-id'] || activeReq?.headers?.['X-Active-Conversation-Id'] || '';
+    return typeof hdr === 'string' ? hdr.trim().slice(0, 128) : '';
+  }
+
+  function resolvePanelWorkspaceFromRequest(data, req, extraOpts = {}) {
+    const rawReqRoot = typeof data?.rootDir === 'string' ? data.rootDir.trim() : '';
+    const openWorkspaces = Array.isArray(extraOpts.openWorkspaces)
+      ? extraOpts.openWorkspaces
+      : parseOpenWorkspacesFromRequest(data, req);
+    const activeConversationId = typeof extraOpts.activeConversationId === 'string'
+      ? extraOpts.activeConversationId
+      : parseActiveConversationIdFromRequest(data, req);
+    return resolveActiveWorkspaceForPanel(rawReqRoot, {
+      ...extraOpts,
+      openWorkspaces,
+      activeConversationId,
+    });
+  }
+
   let mcpStartupSynced = false;
+  let hardwareCalibInFlight = null;
+  let gpuVramPatchSeq = 0;
+  let composerHandoffSeq = 0;
+  let latestComposerHandoff = null;
+  const COMPOSER_HANDOFF_TTL_MS = 60_000;
+
+  function getActiveComposerHandoff() {
+    if (!latestComposerHandoff) return null;
+    if (Date.now() - latestComposerHandoff.ts > COMPOSER_HANDOFF_TTL_MS) {
+      latestComposerHandoff = null;
+      return null;
+    }
+    return latestComposerHandoff;
+  }
+
+  app.api('/api/composer/handoff', async (data, req) => {
+    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const rawTokens = Array.isArray(data?.tokens) ? data.tokens : [];
+    const tokens = rawTokens
+      .map((t) => String(t || '').trim().slice(0, 512))
+      .filter(Boolean)
+      .slice(0, 32);
+    const prompt = typeof data?.prompt === 'string' ? data.prompt.trim().slice(0, 6000) : '';
+    const text = typeof data?.text === 'string' ? data.text.trim().slice(0, 8000) : '';
+    if (tokens.length === 0 && !prompt && !text) {
+      return { ok: false, error: 'Empty composer handoff payload' };
+    }
+    composerHandoffSeq += 1;
+    latestComposerHandoff = {
+      seq: composerHandoffSeq,
+      tokens,
+      prompt,
+      text,
+      ts: Date.now(),
+    };
+    return { ok: true, seq: composerHandoffSeq };
+  }, 'POST');
+
   app.api('/api/state', async (data, req) => {
     let state = loadState();
-    const panelPluginRoot = join(__dirname, '..', '..');
-    if (state.onboardingCompleted === false && state.hardwareProfiled !== true && panelRuntime.hardwareProfilerSync?.ensureHardwareCalibratedOnce) {
-      try {
-        const cal = await panelRuntime.hardwareProfilerSync.ensureHardwareCalibratedOnce({
-          pluginRoot: panelPluginRoot,
-          statePath: resolvePanelStatePath(),
-        });
-        if (cal?.calibrated && cal.state) {
-          state = loadState();
-          mcpStartupSynced = true;
+    const lang = normalizeLang(state?.uiLanguage, 'en');
+    try {
+      const panelPluginRoot = join(__dirname, '..', '..');
+      if (state.onboardingCompleted === false && state.hardwareProfiled !== true && panelRuntime.hardwareProfilerSync?.ensureHardwareCalibratedOnce) {
+        try {
+          if (!hardwareCalibInFlight) {
+            hardwareCalibInFlight = Promise.resolve(
+              panelRuntime.hardwareProfilerSync.ensureHardwareCalibratedOnce({
+                pluginRoot: panelPluginRoot,
+                statePath: resolvePanelStatePath(),
+              })
+            ).finally(() => {
+              hardwareCalibInFlight = null;
+            });
+          }
+          const cal = await hardwareCalibInFlight;
+          if (cal?.calibrated && cal.state) {
+            state = loadState();
+            mcpStartupSynced = true;
+          }
+        } catch (err) {
+          logServerErr('hardware_calib_once_failed', err);
         }
-      } catch {}
+      }
+      if (
+        !mcpStartupSynced &&
+        !process.env.TUNNEL_TEST_STATE_PATH &&
+        process.env.TUNNEL_TEST_ISOLATE_INSTALLED !== '1' &&
+        panelRuntime.hardwareProfilerSync?.syncMcpRamBudget
+      ) {
+        try {
+          panelRuntime.hardwareProfilerSync.syncMcpRamBudget(panelPluginRoot, state.ramMaxBudgetMb || 4096, {
+            resolveAbsoluteEntry: true,
+            gpuEnabled: Boolean(state.gpuEnabled),
+          });
+          mcpStartupSynced = true;
+        } catch (err) {
+          logServerErr('mcp_startup_sync_failed', err);
+        }
+      }
+      const rawReqRoot = typeof data?.rootDir === 'string' ? data.rootDir.trim() : '';
+      const isAllScope = data?.workspaceScope === 'all' || rawReqRoot === '__all__';
+      const isPinned = Boolean(rawReqRoot && rawReqRoot !== '__all__' && rawReqRoot !== '__auto__' && isValidWorkspaceDir(rawReqRoot));
+      const openWorkspaces = parseOpenWorkspacesFromRequest(data, req);
+      const activeConversationId = parseActiveConversationIdFromRequest(data, req);
+      const hudPack = await safeGetHudAndProgressStatus(state, isPinned ? resolve(rawReqRoot) : '');
+      const autoWs = await resolveActiveWorkspaceForPanel('', {
+        taskProgress: hudPack.progress,
+        openWorkspaces,
+        activeConversationId,
+      });
+      const activeWs = isPinned ? resolve(rawReqRoot) : autoWs;
+      const cpWs = resolveCheckpointScopeWs(data, activeWs);
+      const sec = resolvePanelFetchSections(data, state, { endpoint: 'state' });
+      const needHwProfile = sec.all || sec.hw || state.onboardingCompleted === false;
+      const telemetry = collectTelemetry(state.compactionTokenThreshold || 120000, { workspaceRoot: activeWs });
+      const [checkpoints, turnCheckpoints, shadowWorktrees, wiretapFaults, quotaPacer, circuitBreaker, compaction, pitfalls, bayesian, ramStatusForTelemetry, gpu, hardwareProfile, sentinel, knowledgeSnap] = await Promise.all([
+        sec.checkpoints ? safeListCheckpoints(isAllScope ? 20 : 10, cpWs) : Promise.resolve(undefined),
+        sec.checkpoints ? safeListTurnCheckpoints(isAllScope ? 16 : 10, cpWs) : Promise.resolve(undefined),
+        sec.checkpoints && state.shadowWorktreeEnabled !== false ? safeListShadowWorktrees(activeWs) : Promise.resolve(undefined),
+        safeGetWiretapFaults(activeWs, state),
+        safeGetQuotaForecast(state),
+        sec.circuit ? safeGetCircuitState(activeWs) : Promise.resolve(undefined),
+        sec.compaction
+          ? safeCheckCompaction(telemetry.compactionThresholdTokens || state.compactionTokenThreshold || 120000, telemetry)
+          : Promise.resolve(undefined),
+        sec.pitfalls ? safeListPitfalls(10, activeWs) : Promise.resolve(undefined),
+        sec.bayesian ? safeGetBayesianSummary(activeWs) : Promise.resolve(undefined),
+        safeGetRamCacheStatus(state),
+        sec.hw ? safeGetGpuStatus() : Promise.resolve(undefined),
+        needHwProfile ? safeGetHardwareProfile(state, false) : Promise.resolve(undefined),
+        fetchSentinelPanelStatus(activeWs, state),
+        sec.pitfalls ? safeGetKnowledgeSnapshot(activeWs, state) : Promise.resolve(undefined),
+      ]);
+      const ramCache = sec.hw ? ramStatusForTelemetry : undefined;
+      const knownWorkspaces = await collectKnownWorkspacesForPanel({
+        activeWs,
+        autoWs,
+        openWorkspaces,
+        taskProgress: hudPack.progress,
+        ramCache: ramStatusForTelemetry,
+      });
+      const mergedTelemetry = ramStatusForTelemetry ? mergeRamSavingsIntoTelemetry(telemetry, ramStatusForTelemetry) : telemetry;
+      const roiTimeline = collectRoiTimeline({
+        currentTelemetry: mergedTelemetry,
+        quotaPacer,
+        workspaceRoot: activeWs,
+      });
+      const skills = sec.skills ? discoverSkills(activeWs) : undefined;
+      const cpu = sec.hw ? safeGetCpuStatus(state, ramCache) : undefined;
+      const guardPulse = await safeGetGuardPulse(activeWs, state, {
+        sentinel,
+        wiretapFaults,
+        circuitBreaker,
+        pitfalls,
+        bayesian,
+        gpu,
+        ramCache,
+        shadowWorktrees,
+      });
+      return {
+        state,
+        activeWorkspace: activeWs,
+        autoWorkspace: autoWs,
+        workspaceScope: isAllScope ? 'all' : (isPinned ? 'pinned' : 'auto'),
+        knownWorkspaces,
+        ...(skills !== undefined ? { skills } : {}),
+        projectDetection: detectProjectProfile(activeWs),
+        telemetry: mergedTelemetry,
+        roiTimeline,
+        ...(checkpoints !== undefined ? { checkpoints } : {}),
+        ...(turnCheckpoints !== undefined ? { turnCheckpoints } : {}),
+        ...(shadowWorktrees !== undefined ? { shadowWorktrees } : {}),
+        wiretapFaults,
+        quotaPacer,
+        ...(circuitBreaker !== undefined ? { circuitBreaker } : {}),
+        ...(compaction !== undefined ? { compaction } : {}),
+        ...(pitfalls !== undefined ? { pitfalls } : {}),
+        ...(knowledgeSnap !== undefined ? { victoryRecipes: knowledgeSnap.recipes, federatedPeers: knowledgeSnap.peers, knowledgeStats: knowledgeSnap.stats } : {}),
+        ...(bayesian !== undefined ? { bayesian } : {}),
+        ...(ramCache !== undefined ? { ramCache } : {}),
+        ...(gpu !== undefined ? { gpu } : {}),
+        ...(cpu !== undefined ? { cpu } : {}),
+        sentinel,
+        guardPulse,
+        ...(hardwareProfile !== undefined ? { hardwareProfile } : {}),
+        hardwareCeilings: hardwareProfile?.hardwareCeilings || getRuntimeHardwareCeilings(),
+        subscriptionCapabilities: getSubscriptionCapabilities(state?.subscriptionTier),
+        pricingPhase: getPricingPhaseStatus(),
+        floatingHud: hudPack.hud,
+        taskProgress: hudPack.progress,
+        pluginVersion: getPluginVersion(),
+        uiBuildVersion: getUiBuildVersion(),
+        debugLogStatus: getDebugLogStatus({ pluginRoot: resolveUpdaterRoot(), state }),
+        includedSections: sec.included,
+        deferredSections: sec.deferred,
+      };
+    } catch (err) {
+      logServerErr('api_state_get_failed', err, 'error');
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка загрузки состояния панели', 'Failed to load panel state') };
     }
-    if (
-      !mcpStartupSynced &&
-      !process.env.TUNNEL_TEST_STATE_PATH &&
-      process.env.TUNNEL_TEST_ISOLATE_INSTALLED !== '1' &&
-      panelRuntime.hardwareProfilerSync?.syncMcpRamBudget
-    ) {
-      mcpStartupSynced = true;
-      try {
-        panelRuntime.hardwareProfilerSync.syncMcpRamBudget(panelPluginRoot, state.ramMaxBudgetMb || 4096, {
-          resolveAbsoluteEntry: true,
-          gpuEnabled: Boolean(state.gpuEnabled),
-        });
-      } catch {}
-    }
-    const rawReqRoot = typeof data?.rootDir === 'string' ? data.rootDir.trim() : '';
-    const isAllScope = data?.workspaceScope === 'all' || rawReqRoot === '__all__';
-    const isPinned = Boolean(rawReqRoot && rawReqRoot !== '__all__' && rawReqRoot !== '__auto__' && isValidWorkspaceDir(rawReqRoot));
-    const hudPack = await safeGetHudAndProgressStatus(state, isPinned ? resolve(rawReqRoot) : '');
-    const autoWs = await resolveActiveWorkspaceForPanel('', { taskProgress: hudPack.progress });
-    const activeWs = isPinned ? resolve(rawReqRoot) : autoWs;
-    const cpWs = resolveCheckpointScopeWs(data, activeWs);
-    const sec = resolvePanelFetchSections(data, state, { endpoint: 'state' });
-    const needHwProfile = sec.all || sec.hw || state.onboardingCompleted === false;
-    const telemetry = collectTelemetry(state.compactionTokenThreshold || 120000, { workspaceRoot: activeWs });
-    const [checkpoints, turnCheckpoints, shadowWorktrees, wiretapFaults, quotaPacer, circuitBreaker, compaction, pitfalls, bayesian, ramCache, gpu, hardwareProfile, sentinel, knowledgeSnap] = await Promise.all([
-      sec.checkpoints ? safeListCheckpoints(isAllScope ? 20 : 10, cpWs) : Promise.resolve(undefined),
-      sec.checkpoints ? safeListTurnCheckpoints(isAllScope ? 16 : 10, cpWs) : Promise.resolve(undefined),
-      sec.checkpoints && state.shadowWorktreeEnabled !== false ? safeListShadowWorktrees(activeWs) : Promise.resolve(undefined),
-      safeGetWiretapFaults(activeWs, state),
-      safeGetQuotaForecast(state),
-      sec.circuit ? safeGetCircuitState(activeWs) : Promise.resolve(undefined),
-      sec.compaction
-        ? safeCheckCompaction(telemetry.compactionThresholdTokens || state.compactionTokenThreshold || 120000, telemetry)
-        : Promise.resolve(undefined),
-      sec.pitfalls ? safeListPitfalls(10, activeWs) : Promise.resolve(undefined),
-      sec.bayesian ? safeGetBayesianSummary(activeWs) : Promise.resolve(undefined),
-      sec.hw ? safeGetRamCacheStatus(state) : Promise.resolve(undefined),
-      sec.hw ? safeGetGpuStatus() : Promise.resolve(undefined),
-      needHwProfile ? safeGetHardwareProfile(state, false) : Promise.resolve(undefined),
-      fetchSentinelPanelStatus(activeWs, state),
-      sec.pitfalls ? safeGetKnowledgeSnapshot(activeWs, state) : Promise.resolve(undefined),
-    ]);
-    const openWorkspaces = parseOpenWorkspacesFromRequest(data, req);
-    const knownWorkspaces = await collectKnownWorkspacesForPanel({
-      activeWs,
-      autoWs,
-      openWorkspaces,
-      taskProgress: hudPack.progress,
-      ramCache,
-    });
-    const mergedTelemetry = ramCache ? mergeRamSavingsIntoTelemetry(telemetry, ramCache) : telemetry;
-    const roiTimeline = collectRoiTimeline({
-      currentTelemetry: mergedTelemetry,
-      quotaPacer,
-      workspaceRoot: activeWs,
-    });
-    const skills = sec.skills ? discoverSkills(activeWs) : undefined;
-    const cpu = sec.hw ? safeGetCpuStatus(state, ramCache) : undefined;
-    const guardPulse = await safeGetGuardPulse(activeWs, state, {
-      sentinel,
-      wiretapFaults,
-      circuitBreaker,
-      pitfalls,
-      bayesian,
-      gpu,
-      ramCache,
-      shadowWorktrees,
-    });
-    return {
-      state,
-      activeWorkspace: activeWs,
-      autoWorkspace: autoWs,
-      workspaceScope: isAllScope ? 'all' : (isPinned ? 'pinned' : 'auto'),
-      knownWorkspaces,
-      ...(skills !== undefined ? { skills } : {}),
-      projectDetection: detectProjectProfile(activeWs),
-      telemetry: mergedTelemetry,
-      roiTimeline,
-      ...(checkpoints !== undefined ? { checkpoints } : {}),
-      ...(turnCheckpoints !== undefined ? { turnCheckpoints } : {}),
-      ...(shadowWorktrees !== undefined ? { shadowWorktrees } : {}),
-      wiretapFaults,
-      quotaPacer,
-      ...(circuitBreaker !== undefined ? { circuitBreaker } : {}),
-      ...(compaction !== undefined ? { compaction } : {}),
-      ...(pitfalls !== undefined ? { pitfalls } : {}),
-      ...(knowledgeSnap !== undefined ? { victoryRecipes: knowledgeSnap.recipes, federatedPeers: knowledgeSnap.peers, knowledgeStats: knowledgeSnap.stats } : {}),
-      ...(bayesian !== undefined ? { bayesian } : {}),
-      ...(ramCache !== undefined ? { ramCache } : {}),
-      ...(gpu !== undefined ? { gpu } : {}),
-      ...(cpu !== undefined ? { cpu } : {}),
-      sentinel,
-      guardPulse,
-      ...(hardwareProfile !== undefined ? { hardwareProfile } : {}),
-      hardwareCeilings: hardwareProfile?.hardwareCeilings || getRuntimeHardwareCeilings(),
-      subscriptionCapabilities: getSubscriptionCapabilities(state?.subscriptionTier),
-      pricingPhase: getPricingPhaseStatus(),
-      floatingHud: hudPack.hud,
-      taskProgress: hudPack.progress,
-      pluginVersion: getPluginVersion(),
-      uiBuildVersion: getUiBuildVersion(),
-      debugLogStatus: getDebugLogStatus({ pluginRoot: resolveUpdaterRoot(), state }),
-      includedSections: sec.included,
-      deferredSections: sec.deferred,
-    };
   }, 'GET');
 
   app.api('/api/telemetry', async (data, req) => {
     const state = loadState();
-    const rawReqRoot = typeof data?.rootDir === 'string' ? data.rootDir.trim() : '';
-    const isAllScope = data?.workspaceScope === 'all' || rawReqRoot === '__all__';
-    const isPinned = Boolean(rawReqRoot && rawReqRoot !== '__all__' && rawReqRoot !== '__auto__' && isValidWorkspaceDir(rawReqRoot));
-    const hudPack = await safeGetHudAndProgressStatus(state, isPinned ? resolve(rawReqRoot) : '');
-    const autoWs = await resolveActiveWorkspaceForPanel('', { taskProgress: hudPack.progress });
-    const activeWs = isPinned ? resolve(rawReqRoot) : autoWs;
-    const sec = resolvePanelFetchSections(data, state, { endpoint: 'telemetry' });
-    const telemetry = collectTelemetry(state.compactionTokenThreshold || 120000, { workspaceRoot: activeWs });
-    const [circuitBreaker, compaction, ramCache, gpu, bayesian, sentinel, wiretapFaults, quotaPacer] = await Promise.all([
-      sec.circuit ? safeGetCircuitState(activeWs) : Promise.resolve(undefined),
-      sec.compaction
-        ? safeCheckCompaction(telemetry.compactionThresholdTokens || state.compactionTokenThreshold || 120000, telemetry)
-        : Promise.resolve(undefined),
-      sec.hw ? safeGetRamCacheStatus(state) : Promise.resolve(undefined),
-      sec.hw ? safeGetGpuStatus() : Promise.resolve(undefined),
-      sec.bayesian ? safeGetBayesianSummary(activeWs) : Promise.resolve(undefined),
-      fetchSentinelPanelStatus(activeWs, state),
-      safeGetWiretapFaults(activeWs, state),
-      safeGetQuotaForecast(state),
-    ]);
-    const openWorkspaces = parseOpenWorkspacesFromRequest(data, req);
-    const knownWorkspaces = await collectKnownWorkspacesForPanel({
-      activeWs,
-      autoWs,
-      openWorkspaces,
-      taskProgress: hudPack.progress,
-      ramCache,
-    });
-    const mergedTelemetry = ramCache ? mergeRamSavingsIntoTelemetry(telemetry, ramCache) : telemetry;
-    const cpu = sec.hw ? safeGetCpuStatus(state, ramCache) : undefined;
-    const guardPulse = await safeGetGuardPulse(activeWs, state, {
-      sentinel,
-      wiretapFaults,
-      circuitBreaker,
-      bayesian,
-      gpu,
-      ramCache,
-    });
-    return {
-      ok: true,
-      activeWorkspace: activeWs,
-      autoWorkspace: autoWs,
-      workspaceScope: isAllScope ? 'all' : (isPinned ? 'pinned' : 'auto'),
-      knownWorkspaces,
-      projectDetection: detectProjectProfile(activeWs),
-      telemetry: mergedTelemetry,
-      wiretapFaults,
-      quotaPacer,
-      ...(circuitBreaker !== undefined ? { circuitBreaker } : {}),
-      ...(compaction !== undefined ? { compaction } : {}),
-      ...(ramCache !== undefined ? { ramCache } : {}),
-      ...(gpu !== undefined ? { gpu } : {}),
-      ...(cpu !== undefined ? { cpu } : {}),
-      sentinel,
-      guardPulse,
-      hardwareCeilings: getRuntimeHardwareCeilings(),
-      ...(bayesian !== undefined ? { bayesian } : {}),
-      floatingHud: hudPack.hud,
-      taskProgress: hudPack.progress,
-      pricingPhase: getPricingPhaseStatus(),
-      pluginVersion: getPluginVersion(),
-      uiBuildVersion: getUiBuildVersion(),
-      includedSections: sec.included,
-      ts: Date.now(),
-    };
+    const lang = normalizeLang(state?.uiLanguage, 'en');
+    try {
+      const rawReqRoot = typeof data?.rootDir === 'string' ? data.rootDir.trim() : '';
+      const isAllScope = data?.workspaceScope === 'all' || rawReqRoot === '__all__';
+      const isPinned = Boolean(rawReqRoot && rawReqRoot !== '__all__' && rawReqRoot !== '__auto__' && isValidWorkspaceDir(rawReqRoot));
+      const openWorkspaces = parseOpenWorkspacesFromRequest(data, req);
+      const activeConversationId = parseActiveConversationIdFromRequest(data, req);
+      const hudPack = await safeGetHudAndProgressStatus(state, isPinned ? resolve(rawReqRoot) : '');
+      const autoWs = await resolveActiveWorkspaceForPanel('', {
+        taskProgress: hudPack.progress,
+        openWorkspaces,
+        activeConversationId,
+      });
+      const activeWs = isPinned ? resolve(rawReqRoot) : autoWs;
+      const sec = resolvePanelFetchSections(data, state, { endpoint: 'telemetry' });
+      const telemetry = collectTelemetry(state.compactionTokenThreshold || 120000, { workspaceRoot: activeWs });
+      const [circuitBreaker, compaction, ramStatusForTelemetry, gpu, bayesian, sentinel, wiretapFaults, quotaPacer] = await Promise.all([
+        sec.circuit ? safeGetCircuitState(activeWs) : Promise.resolve(undefined),
+        sec.compaction
+          ? safeCheckCompaction(telemetry.compactionThresholdTokens || state.compactionTokenThreshold || 120000, telemetry)
+          : Promise.resolve(undefined),
+        safeGetRamCacheStatus(state),
+        sec.hw ? safeGetGpuStatus() : Promise.resolve(undefined),
+        sec.bayesian ? safeGetBayesianSummary(activeWs) : Promise.resolve(undefined),
+        fetchSentinelPanelStatus(activeWs, state),
+        safeGetWiretapFaults(activeWs, state),
+        safeGetQuotaForecast(state),
+      ]);
+      const ramCache = sec.hw ? ramStatusForTelemetry : undefined;
+      const knownWorkspaces = await collectKnownWorkspacesForPanel({
+        activeWs,
+        autoWs,
+        openWorkspaces,
+        taskProgress: hudPack.progress,
+        ramCache: ramStatusForTelemetry,
+      });
+      const mergedTelemetry = ramStatusForTelemetry ? mergeRamSavingsIntoTelemetry(telemetry, ramStatusForTelemetry) : telemetry;
+      const roiTimeline = collectRoiTimeline({
+        currentTelemetry: mergedTelemetry,
+        quotaPacer,
+        workspaceRoot: activeWs,
+      });
+      const cpu = sec.hw ? safeGetCpuStatus(state, ramCache) : undefined;
+      const guardPulse = await safeGetGuardPulse(activeWs, state, {
+        sentinel,
+        wiretapFaults,
+        circuitBreaker,
+        bayesian,
+        gpu,
+        ramCache,
+      });
+      return {
+        ok: true,
+        activeWorkspace: activeWs,
+        autoWorkspace: autoWs,
+        workspaceScope: isAllScope ? 'all' : (isPinned ? 'pinned' : 'auto'),
+        knownWorkspaces,
+        projectDetection: detectProjectProfile(activeWs),
+        telemetry: mergedTelemetry,
+        roiTimeline,
+        wiretapFaults,
+        quotaPacer,
+        ...(circuitBreaker !== undefined ? { circuitBreaker } : {}),
+        ...(compaction !== undefined ? { compaction } : {}),
+        ...(ramCache !== undefined ? { ramCache } : {}),
+        ...(gpu !== undefined ? { gpu } : {}),
+        ...(cpu !== undefined ? { cpu } : {}),
+        sentinel,
+        guardPulse,
+        hardwareCeilings: getRuntimeHardwareCeilings(),
+        ...(bayesian !== undefined ? { bayesian } : {}),
+        floatingHud: hudPack.hud,
+        taskProgress: hudPack.progress,
+        composerHandoff: getActiveComposerHandoff(),
+        pricingPhase: getPricingPhaseStatus(),
+        pluginVersion: getPluginVersion(),
+        uiBuildVersion: getUiBuildVersion(),
+        includedSections: sec.included,
+        ts: Date.now(),
+      };
+    } catch (err) {
+      logServerErr('api_telemetry_failed', err);
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка сбора телеметрии', 'Failed to collect telemetry') };
+    }
   }, 'GET');
 
-  app.api('/api/panel-sections', async (data) => {
+  app.api('/api/panel-sections', async (data, req) => {
     const state = loadState();
-    const rawReqRoot = typeof data?.rootDir === 'string' ? data.rootDir.trim() : '';
-    const isAllScope = data?.workspaceScope === 'all' || rawReqRoot === '__all__';
-    const activeWs = await resolveActiveWorkspaceForPanel(rawReqRoot);
-    const cpWs = resolveCheckpointScopeWs(data, activeWs);
-    const sec = resolvePanelFetchSections(data, state, { endpoint: 'sections', defaultNone: true });
-    const telemetry = sec.compaction ? collectTelemetry(state.compactionTokenThreshold || 120000, { workspaceRoot: activeWs }) : null;
-    const [checkpoints, turnCheckpoints, shadowWorktrees, circuitBreaker, compaction, pitfalls, bayesian, ramCache, gpu, hardwareProfile, sentinel, knowledgeSnap] = await Promise.all([
-      sec.checkpoints ? safeListCheckpoints(isAllScope ? 20 : 10, cpWs) : Promise.resolve(undefined),
-      sec.checkpoints ? safeListTurnCheckpoints(isAllScope ? 16 : 10, cpWs) : Promise.resolve(undefined),
-      sec.checkpoints && state.shadowWorktreeEnabled !== false ? safeListShadowWorktrees(activeWs) : Promise.resolve(undefined),
-      sec.circuit ? safeGetCircuitState(activeWs) : Promise.resolve(undefined),
-      sec.compaction && telemetry
-        ? safeCheckCompaction(telemetry.compactionThresholdTokens || state.compactionTokenThreshold || 120000, telemetry)
-        : Promise.resolve(undefined),
-      sec.pitfalls ? safeListPitfalls(10, activeWs) : Promise.resolve(undefined),
-      sec.bayesian ? safeGetBayesianSummary(activeWs) : Promise.resolve(undefined),
-      sec.hw ? safeGetRamCacheStatus(state) : Promise.resolve(undefined),
-      sec.hw ? safeGetGpuStatus() : Promise.resolve(undefined),
-      sec.hw ? safeGetHardwareProfile(state, false) : Promise.resolve(undefined),
-      sec.hw ? fetchSentinelPanelStatus(activeWs, state) : Promise.resolve(undefined),
-      sec.pitfalls ? safeGetKnowledgeSnapshot(activeWs, state) : Promise.resolve(undefined),
-    ]);
-    const skills = sec.skills ? discoverSkills(activeWs) : undefined;
-    const cpu = sec.hw ? safeGetCpuStatus(state, ramCache) : undefined;
-    return {
-      ok: true,
-      includedSections: sec.included,
-      ...(skills !== undefined ? { skills } : {}),
-      ...(checkpoints !== undefined ? { checkpoints } : {}),
-      ...(turnCheckpoints !== undefined ? { turnCheckpoints } : {}),
-      ...(shadowWorktrees !== undefined ? { shadowWorktrees } : {}),
-      ...(circuitBreaker !== undefined ? { circuitBreaker } : {}),
-      ...(compaction !== undefined ? { compaction } : {}),
-      ...(pitfalls !== undefined ? { pitfalls } : {}),
-      ...(knowledgeSnap !== undefined ? { victoryRecipes: knowledgeSnap.recipes, federatedPeers: knowledgeSnap.peers, knowledgeStats: knowledgeSnap.stats } : {}),
-      ...(bayesian !== undefined ? { bayesian } : {}),
-      ...(ramCache !== undefined ? { ramCache } : {}),
-      ...(gpu !== undefined ? { gpu } : {}),
-      ...(cpu !== undefined ? { cpu } : {}),
-      ...(sentinel !== undefined ? { sentinel } : {}),
-      ...(hardwareProfile !== undefined ? { hardwareProfile } : {}),
-      ...(hardwareProfile?.hardwareCeilings ? { hardwareCeilings: hardwareProfile.hardwareCeilings } : {}),
-      ts: Date.now(),
-    };
+    const lang = normalizeLang(state?.uiLanguage, 'en');
+    try {
+      const rawReqRoot = typeof data?.rootDir === 'string' ? data.rootDir.trim() : '';
+      const isAllScope = data?.workspaceScope === 'all' || rawReqRoot === '__all__';
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
+      const cpWs = resolveCheckpointScopeWs(data, activeWs);
+      const sec = resolvePanelFetchSections(data, state, { endpoint: 'sections', defaultNone: true });
+      const telemetry = sec.compaction ? collectTelemetry(state.compactionTokenThreshold || 120000, { workspaceRoot: activeWs }) : null;
+      const [checkpoints, turnCheckpoints, shadowWorktrees, circuitBreaker, compaction, pitfalls, bayesian, ramCache, gpu, hardwareProfile, sentinel, knowledgeSnap] = await Promise.all([
+        sec.checkpoints ? safeListCheckpoints(isAllScope ? 20 : 10, cpWs) : Promise.resolve(undefined),
+        sec.checkpoints ? safeListTurnCheckpoints(isAllScope ? 16 : 10, cpWs) : Promise.resolve(undefined),
+        sec.checkpoints && state.shadowWorktreeEnabled !== false ? safeListShadowWorktrees(activeWs) : Promise.resolve(undefined),
+        sec.circuit ? safeGetCircuitState(activeWs) : Promise.resolve(undefined),
+        sec.compaction && telemetry
+          ? safeCheckCompaction(telemetry.compactionThresholdTokens || state.compactionTokenThreshold || 120000, telemetry)
+          : Promise.resolve(undefined),
+        sec.pitfalls ? safeListPitfalls(10, activeWs) : Promise.resolve(undefined),
+        sec.bayesian ? safeGetBayesianSummary(activeWs) : Promise.resolve(undefined),
+        sec.hw ? safeGetRamCacheStatus(state) : Promise.resolve(undefined),
+        sec.hw ? safeGetGpuStatus() : Promise.resolve(undefined),
+        sec.hw ? safeGetHardwareProfile(state, false) : Promise.resolve(undefined),
+        sec.hw ? fetchSentinelPanelStatus(activeWs, state) : Promise.resolve(undefined),
+        sec.pitfalls ? safeGetKnowledgeSnapshot(activeWs, state) : Promise.resolve(undefined),
+      ]);
+      const skills = sec.skills ? discoverSkills(activeWs) : undefined;
+      const cpu = sec.hw ? safeGetCpuStatus(state, ramCache) : undefined;
+      return {
+        ok: true,
+        includedSections: sec.included,
+        ...(skills !== undefined ? { skills } : {}),
+        ...(checkpoints !== undefined ? { checkpoints } : {}),
+        ...(turnCheckpoints !== undefined ? { turnCheckpoints } : {}),
+        ...(shadowWorktrees !== undefined ? { shadowWorktrees } : {}),
+        ...(circuitBreaker !== undefined ? { circuitBreaker } : {}),
+        ...(compaction !== undefined ? { compaction } : {}),
+        ...(pitfalls !== undefined ? { pitfalls } : {}),
+        ...(knowledgeSnap !== undefined ? { victoryRecipes: knowledgeSnap.recipes, federatedPeers: knowledgeSnap.peers, knowledgeStats: knowledgeSnap.stats } : {}),
+        ...(bayesian !== undefined ? { bayesian } : {}),
+        ...(ramCache !== undefined ? { ramCache } : {}),
+        ...(gpu !== undefined ? { gpu } : {}),
+        ...(cpu !== undefined ? { cpu } : {}),
+        ...(sentinel !== undefined ? { sentinel } : {}),
+        ...(hardwareProfile !== undefined ? { hardwareProfile } : {}),
+        ...(hardwareProfile?.hardwareCeilings ? { hardwareCeilings: hardwareProfile.hardwareCeilings } : {}),
+        ts: Date.now(),
+      };
+    } catch (err) {
+      logServerErr('api_panel_sections_failed', err);
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка загрузки секций панели', 'Failed to load panel sections') };
+    }
   }, 'GET');
 
   const handleStateUpdate = async (data, req) => {
-    if (!isRouteAuthorized(req)) {
+    const activeReq = resolveReq(req);
+    if (!isRouteAuthorized(activeReq)) {
       return { ok: false, status: 403, error: 'Forbidden origin' };
     }
-    let next = saveState(data);
-    const rawReqRoot = typeof data?.rootDir === 'string' ? data.rootDir.trim() : '';
-    const isFastUpdate =
-      data?.fast === '1' ||
-      data?.fast === true ||
-      data?.fast === 'true' ||
-      String(req?.headers?.['x-panel-fast-update'] || '') === '1';
-    const canUseFastPath = Boolean(
-      isFastUpdate &&
-      !rawReqRoot &&
-      !data?.workspaceScope &&
-      !data?.skillModes &&
-      !data?.replaceSkillModes
-    );
-    const patchKeys = data && typeof data === 'object' ? Object.keys(data) : [];
-    const hasGpuPatch = patchKeys.some((k) => k.startsWith('gpu'));
-    const touchesVramOrModel = Boolean(
-      data &&
-      typeof data === 'object' &&
-      (
-        Object.hasOwn(data, 'gpuMaxVramMb') ||
-        Object.hasOwn(data, 'gpuChatModel') ||
-        Object.hasOwn(data, 'gpuEmbedModel') ||
-        Object.hasOwn(data, 'gpuEnabled')
-      )
-    );
-    let capEnforcement = null;
-    if (touchesVramOrModel && process.env.TUNNEL_TEST_ISOLATE_INSTALLED !== '1') {
-      try {
-        const gpuMod = await getLocalGpuMod();
-        if (next.gpuEnabled === false) {
-          if (gpuMod?.unloadAllModels) await gpuMod.unloadAllModels().catch(() => {});
-        } else if (
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      let next = saveState(data);
+      const rawReqRoot = typeof data?.rootDir === 'string' ? data.rootDir.trim() : '';
+      const isFastUpdate =
+        data?.fast === '1' ||
+        data?.fast === true ||
+        data?.fast === 'true' ||
+        String(activeReq?.headers?.['x-panel-fast-update'] || '') === '1';
+      const canUseFastPath = Boolean(
+        isFastUpdate &&
+        !rawReqRoot &&
+        !data?.workspaceScope &&
+        !data?.skillModes &&
+        !data?.replaceSkillModes
+      );
+      const patchKeys = data && typeof data === 'object' ? Object.keys(data) : [];
+      const hasGpuPatch = patchKeys.some((k) => k.startsWith('gpu'));
+      const touchesVramOrModel = Boolean(
+        data &&
+        typeof data === 'object' &&
+        (
           Object.hasOwn(data, 'gpuMaxVramMb') ||
           Object.hasOwn(data, 'gpuChatModel') ||
-          Object.hasOwn(data, 'gpuEmbedModel')
-        ) {
-          if (
-            Object.hasOwn(data, 'gpuMaxVramMb') &&
-            gpuMod?.selectBestInstalledPairForCap &&
-            (!Object.hasOwn(data, 'gpuChatModel') || !Object.hasOwn(data, 'gpuEmbedModel'))
+          Object.hasOwn(data, 'gpuEmbedModel') ||
+          Object.hasOwn(data, 'gpuEnabled')
+        )
+      );
+      let capEnforcement = null;
+      if (touchesVramOrModel && process.env.TUNNEL_TEST_ISOLATE_INSTALLED !== '1') {
+        const myVramSeq = ++gpuVramPatchSeq;
+        try {
+          const gpuMod = await getLocalGpuMod();
+          if (next.gpuEnabled === false) {
+            if (gpuMod?.unloadAllModels) await gpuMod.unloadAllModels().catch(() => {});
+          } else if (
+            Object.hasOwn(data, 'gpuMaxVramMb') ||
+            Object.hasOwn(data, 'gpuChatModel') ||
+            Object.hasOwn(data, 'gpuEmbedModel')
           ) {
-            const preSnap = gpuMod.getGpuStatusSnapshot
-              ? await gpuMod.getGpuStatusSnapshot({ force: true }).catch(() => null)
-              : null;
-            const bestPair = gpuMod.selectBestInstalledPairForCap({
-              capMb: next.gpuMaxVramMb,
-              tagModels: preSnap?.ollama?.downloadedModels || null,
-              loadedModels: preSnap?.ollama?.loadedModels || [],
-              hw: preSnap?.hardware || null,
-            });
-            const pairPatch = {};
-            if (!Object.hasOwn(data, 'gpuChatModel') && bestPair?.gpuChatModel && bestPair.gpuChatModel !== next.gpuChatModel) {
-              pairPatch.gpuChatModel = bestPair.gpuChatModel;
-            }
-            if (!Object.hasOwn(data, 'gpuEmbedModel') && bestPair?.gpuEmbedModel && bestPair.gpuEmbedModel !== next.gpuEmbedModel) {
-              pairPatch.gpuEmbedModel = bestPair.gpuEmbedModel;
-            }
-            if (!Object.hasOwn(data, 'gpuContextTokens') && bestPair?.gpuContextTokens && bestPair.gpuContextTokens !== next.gpuContextTokens) {
-              pairPatch.gpuContextTokens = bestPair.gpuContextTokens;
-            }
-            if (Object.keys(pairPatch).length > 0) {
-              next = saveState(pairPatch);
-            }
-          }
-          if (gpuMod?.enforceVramCapInOllama) {
-            capEnforcement = await gpuMod.enforceVramCapInOllama({ cfgOverride: next }).catch(() => null);
             if (
               Object.hasOwn(data, 'gpuMaxVramMb') &&
-              !Object.hasOwn(data, 'gpuChatModel') &&
-              capEnforcement?.vramFit &&
-              !capEnforcement.vramFit.selectedChatFits &&
-              capEnforcement.vramFit.bestFallbackChatModel
+              gpuMod?.selectBestInstalledPairForCap &&
+              (!Object.hasOwn(data, 'gpuChatModel') || !Object.hasOwn(data, 'gpuEmbedModel'))
             ) {
-              next = saveState({ gpuChatModel: capEnforcement.vramFit.bestFallbackChatModel });
+              const preSnap = gpuMod.getGpuStatusSnapshot
+                ? await gpuMod.getGpuStatusSnapshot({ force: true }).catch(() => null)
+                : null;
+              if (myVramSeq === gpuVramPatchSeq) {
+                const bestPair = gpuMod.selectBestInstalledPairForCap({
+                  capMb: next.gpuMaxVramMb,
+                  tagModels: preSnap?.ollama?.downloadedModels || null,
+                  loadedModels: preSnap?.ollama?.loadedModels || [],
+                  hw: preSnap?.hardware || null,
+                });
+                const pairPatch = {};
+                if (!Object.hasOwn(data, 'gpuChatModel') && bestPair?.gpuChatModel && bestPair.gpuChatModel !== next.gpuChatModel) {
+                  pairPatch.gpuChatModel = bestPair.gpuChatModel;
+                }
+                if (!Object.hasOwn(data, 'gpuEmbedModel') && bestPair?.gpuEmbedModel && bestPair.gpuEmbedModel !== next.gpuEmbedModel) {
+                  pairPatch.gpuEmbedModel = bestPair.gpuEmbedModel;
+                }
+                if (!Object.hasOwn(data, 'gpuContextTokens') && bestPair?.gpuContextTokens && bestPair.gpuContextTokens !== next.gpuContextTokens) {
+                  pairPatch.gpuContextTokens = bestPair.gpuContextTokens;
+                }
+                if (Object.keys(pairPatch).length > 0) {
+                  next = saveState(pairPatch);
+                }
+              }
+            }
+            if (myVramSeq === gpuVramPatchSeq && gpuMod?.enforceVramCapInOllama) {
+              capEnforcement = await gpuMod.enforceVramCapInOllama({ cfgOverride: next }).catch(() => null);
+              if (
+                myVramSeq === gpuVramPatchSeq &&
+                Object.hasOwn(data, 'gpuMaxVramMb') &&
+                !Object.hasOwn(data, 'gpuChatModel') &&
+                capEnforcement?.vramFit &&
+                !capEnforcement.vramFit.selectedChatFits &&
+                capEnforcement.vramFit.bestFallbackChatModel
+              ) {
+                next = saveState({ gpuChatModel: capEnforcement.vramFit.bestFallbackChatModel });
+              }
             }
           }
+        } catch (err) {
+          logServerErr('gpu_vram_enforce_failed', err);
         }
-      } catch {}
-      gpuStatusPanelCache.ts = 0;
-    } else if (hasGpuPatch) {
-      gpuStatusPanelCache.ts = 0;
-    }
-    const hasSentinelPatch = patchKeys.some((k) => k.startsWith('sentinel')) || Boolean(data && typeof data === 'object' && Object.hasOwn(data, 'hookProfile'));
-    if (hasSentinelPatch) {
-      sentinelPanelCache.ts = 0;
-    }
-    const touchesEnvDoctorSettings = Boolean(
-      data &&
-      typeof data === 'object' &&
-      (
-        Object.hasOwn(data, 'gpuEnabled') ||
-        Object.hasOwn(data, 'gpuMaxVramMb') ||
-        Object.hasOwn(data, 'gpuChatModel') ||
-        Object.hasOwn(data, 'gpuEmbedModel') ||
-        Object.hasOwn(data, 'ramCacheEnabled') ||
-        Object.hasOwn(data, 'ramMaxBudgetMb') ||
-        Object.hasOwn(data, 'shadowWorktreeEnabled')
-      )
-    );
-    if (touchesEnvDoctorSettings) {
-      invalidateGuardPulseCache('', ['env']);
-    }
-    if (
-      process.env.TUNNEL_TEST_ISOLATE_INSTALLED !== '1' &&
-      data &&
-      typeof data === 'object' &&
-      (
-        Object.hasOwn(data, 'ramCacheEnabled') ||
-        Object.hasOwn(data, 'ramMaxBudgetMb') ||
-        Object.hasOwn(data, 'hookProfile') ||
-        Object.hasOwn(data, 'lspBridgeEnabled')
-      )
-    ) {
-      await Promise.all(readRamDaemonCandidates().map((c) => querySingleRamDaemon(c))).catch(() => {});
-    }
-
-    if (canUseFastPath) {
-      const hasRamOrCpuPatch = patchKeys.some(
-        (k) => k.startsWith('ram') || k.startsWith('cpu') || k === 'hookProfile' || k === 'lspBridgeEnabled'
+        gpuStatusPanelCache.ts = 0;
+      } else if (hasGpuPatch) {
+        gpuStatusPanelCache.ts = 0;
+      }
+      const hasSentinelPatch = patchKeys.some((k) => k.startsWith('sentinel')) || Boolean(data && typeof data === 'object' && Object.hasOwn(data, 'hookProfile'));
+      if (hasSentinelPatch) {
+        sentinelPanelCache.ts = 0;
+      }
+      const touchesEnvDoctorSettings = Boolean(
+        data &&
+        typeof data === 'object' &&
+        (
+          Object.hasOwn(data, 'gpuEnabled') ||
+          Object.hasOwn(data, 'gpuMaxVramMb') ||
+          Object.hasOwn(data, 'gpuChatModel') ||
+          Object.hasOwn(data, 'gpuEmbedModel') ||
+          Object.hasOwn(data, 'ramCacheEnabled') ||
+          Object.hasOwn(data, 'ramMaxBudgetMb') ||
+          Object.hasOwn(data, 'shadowWorktreeEnabled')
+        )
       );
-      const [gpu, sentinel, ramCache] = await Promise.all([
-        hasGpuPatch ? safeGetGpuStatus({ force: true }) : Promise.resolve(undefined),
-        hasSentinelPatch
-          ? resolveActiveWorkspaceForPanel('').then((ws) => fetchSentinelPanelStatus(ws, next, { force: true }))
-          : Promise.resolve(undefined),
-        hasRamOrCpuPatch ? safeGetRamCacheStatus(next) : Promise.resolve(undefined),
+      if (touchesEnvDoctorSettings) {
+        invalidateGuardPulseCache('', ['env']);
+      }
+      if (
+        process.env.TUNNEL_TEST_ISOLATE_INSTALLED !== '1' &&
+        data &&
+        typeof data === 'object' &&
+        (
+          Object.hasOwn(data, 'ramCacheEnabled') ||
+          Object.hasOwn(data, 'ramMaxBudgetMb') ||
+          Object.hasOwn(data, 'hookProfile') ||
+          Object.hasOwn(data, 'lspBridgeEnabled')
+        )
+      ) {
+        await Promise.all(readRamDaemonCandidates().map((c) => querySingleRamDaemon(c))).catch(() => {});
+      }
+
+      if (canUseFastPath) {
+        const hasRamOrCpuPatch = patchKeys.some(
+          (k) => k.startsWith('ram') || k.startsWith('cpu') || k === 'hookProfile' || k === 'lspBridgeEnabled'
+        );
+        const [gpu, sentinel, ramCache] = await Promise.all([
+          hasGpuPatch ? safeGetGpuStatus({ force: true }) : Promise.resolve(undefined),
+          hasSentinelPatch
+            ? resolvePanelWorkspaceFromRequest({ ...data, rootDir: '' }, req).then((ws) => fetchSentinelPanelStatus(ws, next, { force: true }))
+            : Promise.resolve(undefined),
+          hasRamOrCpuPatch ? safeGetRamCacheStatus(next) : Promise.resolve(undefined),
+        ]);
+        const cpu = hasRamOrCpuPatch ? safeGetCpuStatus(next, ramCache) : undefined;
+        return {
+          ok: true,
+          fast: true,
+          state: next,
+          ...(gpu !== undefined ? { gpu } : {}),
+          ...(capEnforcement ? { capEnforcement } : {}),
+          ...(sentinel !== undefined ? { sentinel } : {}),
+          ...(ramCache !== undefined ? { ramCache } : {}),
+          ...(cpu !== undefined ? { cpu } : {}),
+          subscriptionCapabilities: getSubscriptionCapabilities(next?.subscriptionTier),
+          pluginVersion: getPluginVersion(),
+          uiBuildVersion: getUiBuildVersion(),
+        };
+      }
+
+      const isAllScope = data?.workspaceScope === 'all' || rawReqRoot === '__all__';
+      const isPinned = Boolean(rawReqRoot && rawReqRoot !== '__all__' && rawReqRoot !== '__auto__' && isValidWorkspaceDir(rawReqRoot));
+      const openWorkspaces = parseOpenWorkspacesFromRequest(data, req);
+      const activeConversationId = parseActiveConversationIdFromRequest(data, req);
+      const autoWs = await resolveActiveWorkspaceForPanel('', { openWorkspaces, activeConversationId });
+      const activeWs = isPinned ? resolve(rawReqRoot) : autoWs;
+      const cpWs = resolveCheckpointScopeWs(data, activeWs);
+      const telemetry = collectTelemetry(next.compactionTokenThreshold || 120000, { workspaceRoot: activeWs });
+      const [checkpoints, turnCheckpoints, shadowWorktrees, wiretapFaults, quotaPacer, circuitBreaker, compaction, pitfalls, bayesian, ramCache, gpu, hardwareProfile, hudPack, sentinel, knowledgeSnap] = await Promise.all([
+        safeListCheckpoints(isAllScope ? 20 : 10, cpWs),
+        safeListTurnCheckpoints(isAllScope ? 16 : 10, cpWs),
+        next.shadowWorktreeEnabled !== false ? safeListShadowWorktrees(activeWs) : Promise.resolve([]),
+        safeGetWiretapFaults(activeWs, next),
+        safeGetQuotaForecast(next),
+        safeGetCircuitState(activeWs),
+        safeCheckCompaction(telemetry.compactionThresholdTokens || next.compactionTokenThreshold || 120000, telemetry),
+        safeListPitfalls(10, activeWs),
+        safeGetBayesianSummary(activeWs),
+        safeGetRamCacheStatus(next),
+        safeGetGpuStatus({ force: hasGpuPatch }),
+        safeGetHardwareProfile(next, false),
+        safeGetHudAndProgressStatus(next, activeWs),
+        fetchSentinelPanelStatus(activeWs, next, { force: hasSentinelPatch }),
+        safeGetKnowledgeSnapshot(activeWs, next),
       ]);
-      const cpu = hasRamOrCpuPatch ? safeGetCpuStatus(next, ramCache) : undefined;
+      const knownWorkspaces = await collectKnownWorkspacesForPanel({
+        activeWs,
+        autoWs,
+        openWorkspaces,
+        taskProgress: hudPack.progress,
+        ramCache,
+      });
+      const mergedTelemetry = mergeRamSavingsIntoTelemetry(telemetry, ramCache);
+      const roiTimeline = collectRoiTimeline({
+        currentTelemetry: mergedTelemetry,
+        quotaPacer,
+        workspaceRoot: activeWs,
+      });
       return {
-        ok: true,
-        fast: true,
         state: next,
-        ...(gpu !== undefined ? { gpu } : {}),
-        ...(capEnforcement ? { capEnforcement } : {}),
-        ...(sentinel !== undefined ? { sentinel } : {}),
-        ...(ramCache !== undefined ? { ramCache } : {}),
-        ...(cpu !== undefined ? { cpu } : {}),
+        activeWorkspace: activeWs,
+        autoWorkspace: autoWs,
+        workspaceScope: isAllScope ? 'all' : (isPinned ? 'pinned' : 'auto'),
+        knownWorkspaces,
+        skills: discoverSkills(activeWs),
+        projectDetection: detectProjectProfile(activeWs),
+        telemetry: mergedTelemetry,
+        roiTimeline,
+        checkpoints,
+        turnCheckpoints,
+        shadowWorktrees,
+        wiretapFaults,
+        quotaPacer,
+        circuitBreaker,
+        compaction,
+        pitfalls,
+        victoryRecipes: knowledgeSnap.recipes,
+        federatedPeers: knowledgeSnap.peers,
+        knowledgeStats: knowledgeSnap.stats,
+        bayesian,
+        ramCache,
+        gpu,
+        capEnforcement,
+        cpu: safeGetCpuStatus(next, ramCache),
+        sentinel,
+        hardwareProfile,
+        hardwareCeilings: hardwareProfile?.hardwareCeilings || getRuntimeHardwareCeilings(),
         subscriptionCapabilities: getSubscriptionCapabilities(next?.subscriptionTier),
+        floatingHud: hudPack.hud,
+        taskProgress: hudPack.progress,
         pluginVersion: getPluginVersion(),
         uiBuildVersion: getUiBuildVersion(),
       };
+    } catch (err) {
+      logServerErr('api_state_post_failed', err, 'error');
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка обновления настроек панели', 'Failed to update panel settings') };
     }
-
-    const isAllScope = data?.workspaceScope === 'all' || rawReqRoot === '__all__';
-    const isPinned = Boolean(rawReqRoot && rawReqRoot !== '__all__' && rawReqRoot !== '__auto__' && isValidWorkspaceDir(rawReqRoot));
-    const autoWs = await resolveActiveWorkspaceForPanel('');
-    const activeWs = isPinned ? resolve(rawReqRoot) : autoWs;
-    const cpWs = resolveCheckpointScopeWs(data, activeWs);
-    const telemetry = collectTelemetry(next.compactionTokenThreshold || 120000, { workspaceRoot: activeWs });
-    const [checkpoints, turnCheckpoints, shadowWorktrees, wiretapFaults, quotaPacer, circuitBreaker, compaction, pitfalls, bayesian, ramCache, gpu, hardwareProfile, hudPack, sentinel, knowledgeSnap] = await Promise.all([
-      safeListCheckpoints(isAllScope ? 20 : 10, cpWs),
-      safeListTurnCheckpoints(isAllScope ? 16 : 10, cpWs),
-      next.shadowWorktreeEnabled !== false ? safeListShadowWorktrees(activeWs) : Promise.resolve([]),
-      safeGetWiretapFaults(activeWs, next),
-      safeGetQuotaForecast(next),
-      safeGetCircuitState(activeWs),
-      safeCheckCompaction(telemetry.compactionThresholdTokens || next.compactionTokenThreshold || 120000, telemetry),
-      safeListPitfalls(10, activeWs),
-      safeGetBayesianSummary(activeWs),
-      safeGetRamCacheStatus(next),
-      safeGetGpuStatus({ force: hasGpuPatch }),
-      safeGetHardwareProfile(next, false),
-      safeGetHudAndProgressStatus(next, activeWs),
-      fetchSentinelPanelStatus(activeWs, next, { force: hasSentinelPatch }),
-      safeGetKnowledgeSnapshot(activeWs, next),
-    ]);
-    const openWorkspaces = parseOpenWorkspacesFromRequest(data, req);
-    const knownWorkspaces = await collectKnownWorkspacesForPanel({
-      activeWs,
-      autoWs,
-      openWorkspaces,
-      taskProgress: hudPack.progress,
-      ramCache,
-    });
-    const mergedTelemetry = mergeRamSavingsIntoTelemetry(telemetry, ramCache);
-    return {
-      state: next,
-      activeWorkspace: activeWs,
-      autoWorkspace: autoWs,
-      workspaceScope: isAllScope ? 'all' : (isPinned ? 'pinned' : 'auto'),
-      knownWorkspaces,
-      skills: discoverSkills(activeWs),
-      projectDetection: detectProjectProfile(activeWs),
-      telemetry: mergedTelemetry,
-      checkpoints,
-      turnCheckpoints,
-      shadowWorktrees,
-      wiretapFaults,
-      quotaPacer,
-      circuitBreaker,
-      compaction,
-      pitfalls,
-      victoryRecipes: knowledgeSnap.recipes,
-      federatedPeers: knowledgeSnap.peers,
-      knowledgeStats: knowledgeSnap.stats,
-      bayesian,
-      ramCache,
-      gpu,
-      capEnforcement,
-      cpu: safeGetCpuStatus(next, ramCache),
-      sentinel,
-      hardwareProfile,
-      hardwareCeilings: hardwareProfile?.hardwareCeilings || getRuntimeHardwareCeilings(),
-      subscriptionCapabilities: getSubscriptionCapabilities(next?.subscriptionTier),
-      floatingHud: hudPack.hud,
-      taskProgress: hudPack.progress,
-      pluginVersion: getPluginVersion(),
-      uiBuildVersion: getUiBuildVersion(),
-    };
   };
 
   app.api('/api/state', handleStateUpdate, 'POST');
@@ -766,7 +963,7 @@ export async function startSidecarPanel(options = {}) {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     try {
       sentinelPanelCache.ts = 0;
-      const wsRoot = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const wsRoot = await resolvePanelWorkspaceFromRequest(data, req);
       const curState = loadState();
       const ALLOWED_SENTINEL_ACTIONS = new Set(['run_now', 'clear_findings', 'speculative_warm', 'preempt', 'prepare_commit']);
       const ALLOWED_SENTINEL_MODES = new Set(['all', 'shadow_guard', 'bugbot', 'symbol_cards', 'shadow_tests']);
@@ -829,220 +1026,337 @@ export async function startSidecarPanel(options = {}) {
 
   app.api('/api/rollback', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
-    const cpWs = resolveCheckpointScopeWs(data, activeWs);
-    return await safeRollbackCheckpoint(data?.checkpointId || 'latest', cpWs, { lang: normalizeLang(loadState()?.uiLanguage, 'en') });
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
+      const cpWs = resolveCheckpointScopeWs(data, activeWs);
+      return await safeRollbackCheckpoint(data?.checkpointId || 'latest', cpWs, { lang });
+    } catch (err) {
+      logServerErr('api_rollback_failed', err);
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка отката контрольной точки', 'Failed to rollback checkpoint') };
+    }
   }, 'POST');
 
-  app.api('/api/checkpoints/turns', async (data) => {
-    const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
-    const cpWs = resolveCheckpointScopeWs(data, activeWs);
+  app.api('/api/checkpoints/turns', async (data, req) => {
     const curState = loadState();
-    const [turns, worktrees] = await Promise.all([
-      safeListTurnCheckpoints(cpWs === '__all__' ? 20 : 15, cpWs),
-      curState.shadowWorktreeEnabled !== false ? safeListShadowWorktrees(activeWs) : Promise.resolve([]),
-    ]);
-    return { ok: true, turns, worktrees };
+    const lang = normalizeLang(curState?.uiLanguage, 'en');
+    try {
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
+      const cpWs = resolveCheckpointScopeWs(data, activeWs);
+      const [turns, worktrees] = await Promise.all([
+        safeListTurnCheckpoints(cpWs === '__all__' ? 20 : 15, cpWs),
+        curState.shadowWorktreeEnabled !== false ? safeListShadowWorktrees(activeWs) : Promise.resolve([]),
+      ]);
+      return { ok: true, turns, worktrees };
+    } catch (err) {
+      logServerErr('api_checkpoints_turns_failed', err);
+      return { ok: false, turns: [], worktrees: [], error: err?.message || pickLang(lang, 'Ошибка чтения снимков ходов', 'Failed to list turn checkpoints') };
+    }
   }, 'GET');
 
   app.api('/api/checkpoints/turn-diff', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
-    const cpWs = resolveCheckpointScopeWs(data, activeWs);
-    return await safeGetTurnDiffSummary(data?.turnId || 'latest', cpWs, { lang: normalizeLang(loadState()?.uiLanguage, 'en') });
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
+      const cpWs = resolveCheckpointScopeWs(data, activeWs);
+      return await safeGetTurnDiffSummary(data?.turnId || 'latest', cpWs, { lang });
+    } catch (err) {
+      logServerErr('api_turn_diff_failed', err);
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка чтения diff хода', 'Failed to load turn diff') };
+    }
   }, 'POST');
 
   app.api('/api/checkpoints/rollback-turn', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
-    const cpWs = resolveCheckpointScopeWs(data, activeWs);
-    return await safeRollbackTurn(data?.turnId || 'latest', cpWs, { lang: normalizeLang(loadState()?.uiLanguage, 'en') });
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
+      const cpWs = resolveCheckpointScopeWs(data, activeWs);
+      return await safeRollbackTurn(data?.turnId || 'latest', cpWs, { lang });
+    } catch (err) {
+      logServerErr('api_rollback_turn_failed', err);
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка отката хода', 'Failed to rollback turn') };
+    }
   }, 'POST');
 
   app.api('/api/worktree/action', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
     const curState = loadState();
     const lang = normalizeLang(curState?.uiLanguage, 'en');
-    const mod = await getShadowWorktreeMod();
-    if (!mod) return { ok: false, error: pickLang(lang, 'Модуль Git-песочницы недоступен', 'Git sandbox module unavailable') };
-    const act = String(data?.action || 'list').trim();
-    if (act === 'create') {
-      const created = mod.createShadowWorktree({ workspaceRoot: activeWs, label: data?.label || '', state: curState, lang });
-      return { ...created, worktrees: mod.listShadowWorktrees(activeWs) };
+    try {
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
+      const mod = await getShadowWorktreeMod();
+      if (!mod) return { ok: false, error: pickLang(lang, 'Модуль Git-песочницы недоступен', 'Git sandbox module unavailable') };
+      const act = String(data?.action || 'list').trim();
+      if (act === 'create') {
+        const created = mod.createShadowWorktree({ workspaceRoot: activeWs, label: data?.label || '', state: curState, lang });
+        return { ...created, worktrees: mod.listShadowWorktrees(activeWs) };
+      }
+      if (act === 'diff') {
+        return mod.getShadowWorktreeDiff({ id: data?.id || '', workspaceRoot: activeWs, lang });
+      }
+      if (act === 'promote') {
+        const res = mod.promoteShadowWorktree({ id: data?.id || '', workspaceRoot: activeWs, cleanup: data?.cleanup !== false, lang });
+        return { ...res, worktrees: mod.listShadowWorktrees(activeWs) };
+      }
+      if (act === 'discard') {
+        const res = mod.discardShadowWorktree({ id: data?.id || '', workspaceRoot: activeWs, lang });
+        return { ...res, worktrees: mod.listShadowWorktrees(activeWs) };
+      }
+      return { ok: true, worktrees: mod.listShadowWorktrees(activeWs) };
+    } catch (err) {
+      logServerErr('api_worktree_action_failed', err);
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка операции Git-песочницы', 'Git sandbox action failed') };
     }
-    if (act === 'diff') {
-      return mod.getShadowWorktreeDiff({ id: data?.id || '', workspaceRoot: activeWs, lang });
-    }
-    if (act === 'promote') {
-      const res = mod.promoteShadowWorktree({ id: data?.id || '', workspaceRoot: activeWs, cleanup: data?.cleanup !== false, lang });
-      return { ...res, worktrees: mod.listShadowWorktrees(activeWs) };
-    }
-    if (act === 'discard') {
-      const res = mod.discardShadowWorktree({ id: data?.id || '', workspaceRoot: activeWs, lang });
-      return { ...res, worktrees: mod.listShadowWorktrees(activeWs) };
-    }
-    return { ok: true, worktrees: mod.listShadowWorktrees(activeWs) };
   }, 'POST');
 
-  app.api('/api/wiretap/faults', async (data) => {
-    const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
-    return { ok: true, faults: await safeGetWiretapFaults(activeWs, loadState()) };
+  app.api('/api/wiretap/faults', async (data, req) => {
+    const curState = loadState();
+    const lang = normalizeLang(curState?.uiLanguage, 'en');
+    try {
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
+      return { ok: true, faults: await safeGetWiretapFaults(activeWs, curState) };
+    } catch (err) {
+      logServerErr('api_wiretap_faults_failed', err);
+      return { ok: false, faults: [], error: err?.message || pickLang(lang, 'Ошибка чтения журнала Wiretap', 'Failed to read Wiretap faults') };
+    }
   }, 'GET');
 
   app.api('/api/wiretap/fault', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
     const curState = loadState();
     const lang = normalizeLang(curState?.uiLanguage, 'en');
-    const mod = await getRuntimeWiretapMod();
-    if (!mod) return { ok: false, error: pickLang(lang, 'Модуль Wiretap недоступен', 'Runtime Wiretap module unavailable') };
-    const ingestRes = mod.ingestRuntimeFault({
-      workspaceRoot: activeWs,
-      source: data?.source || 'panel',
-      command: data?.command || '',
-      rawError: data?.rawError || data?.error || '',
-      exitCode: data?.exitCode ?? 1,
-      state: curState,
-      lang,
-    });
-    return { ...ingestRes, faults: await safeGetWiretapFaults(activeWs, curState) };
+    try {
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
+      const mod = await getRuntimeWiretapMod();
+      if (!mod) return { ok: false, error: pickLang(lang, 'Модуль Wiretap недоступен', 'Runtime Wiretap module unavailable') };
+      const ingestRes = mod.ingestRuntimeFault({
+        workspaceRoot: activeWs,
+        source: data?.source || 'panel',
+        command: data?.command || '',
+        rawError: data?.rawError || data?.error || '',
+        exitCode: data?.exitCode ?? 1,
+        state: curState,
+        lang,
+      });
+      return { ...ingestRes, faults: await safeGetWiretapFaults(activeWs, curState) };
+    } catch (err) {
+      logServerErr('api_wiretap_ingest_failed', err);
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка регистрации сбоя Wiretap', 'Failed to ingest Wiretap fault') };
+    }
   }, 'POST');
 
   app.api('/api/wiretap/clear', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
-    const mod = await getRuntimeWiretapMod();
-    if (!mod) return { ok: false, error: pickLang(lang, 'Модуль Wiretap недоступен', 'Runtime Wiretap module unavailable') };
-    return mod.clearWiretapFaults(activeWs);
+    try {
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
+      const mod = await getRuntimeWiretapMod();
+      if (!mod) return { ok: false, error: pickLang(lang, 'Модуль Wiretap недоступен', 'Runtime Wiretap module unavailable') };
+      return mod.clearWiretapFaults(activeWs);
+    } catch (err) {
+      logServerErr('api_wiretap_clear_failed', err);
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка очистки Wiretap', 'Failed to clear Wiretap faults') };
+    }
   }, 'POST');
 
   app.api('/api/repomap', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    const root = data?.rootDir ? String(data.rootDir) : await resolveActiveWorkspaceForPanel();
-    if (!isValidWorkspaceDir(root)) {
-      return new Response(JSON.stringify({ ok: false, status: 400, error: 'Invalid workspace directory' }), {
-        status: 400,
-        contentType: 'application/json',
-        headers: { 'Content-Type': 'application/json; charset=utf-8' },
-      });
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      const root = (typeof data?.rootDir === 'string' && data.rootDir.trim())
+        ? data.rootDir.trim()
+        : await resolvePanelWorkspaceFromRequest(data, req);
+      if (!isValidWorkspaceDir(root)) {
+        return new Response(JSON.stringify({ ok: false, status: 400, error: 'Invalid workspace directory' }), {
+          status: 400,
+          contentType: 'application/json',
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        });
+      }
+      return await safeGetCachedRepoMap(root, true);
+    } catch (err) {
+      logServerErr('api_repomap_failed', err);
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка обновления карты репозитория', 'Failed to refresh RepoMap') };
     }
-    return await safeGetCachedRepoMap(root, true);
   }, 'POST');
 
   app.api('/api/circuit-reset', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
-    const res = await safeResetCircuitBreaker(activeWs);
-    invalidateGuardPulseCache(activeWs, ['fast']);
-    return res;
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
+      const res = await safeResetCircuitBreaker(activeWs);
+      invalidateGuardPulseCache(activeWs, ['fast']);
+      return res;
+    } catch (err) {
+      logServerErr('api_circuit_reset_failed', err);
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка сброса предохранителя', 'Failed to reset circuit breaker') };
+    }
   }, 'POST');
 
   app.api('/api/bayesian-reset', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
-    const res = await safeResetBayesianPriors(activeWs, Boolean(data?.onlyFragility));
-    invalidateGuardPulseCache(activeWs, ['fast']);
-    return res;
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
+      const res = await safeResetBayesianPriors(activeWs, Boolean(data?.onlyFragility));
+      invalidateGuardPulseCache(activeWs, ['fast']);
+      return res;
+    } catch (err) {
+      logServerErr('api_bayesian_reset_failed', err);
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка сброса байесовской статистики', 'Failed to reset Bayesian priors') };
+    }
   }, 'POST');
 
   app.api('/api/compact-digest', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    return await safeTriggerManualCompactionDigest(data);
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      return await safeTriggerManualCompactionDigest(data);
+    } catch (err) {
+      logServerErr('api_compact_digest_failed', err);
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка сборки дайджеста контекста', 'Failed to trigger compaction digest') };
+    }
   }, 'POST');
 
   app.api('/api/pitfalls-clear', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
-    const res = await safeClearPitfalls(activeWs);
-    invalidateGuardPulseCache(activeWs, ['fast']);
-    return res;
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
+      const res = await safeClearPitfalls(activeWs);
+      invalidateGuardPulseCache(activeWs, ['fast']);
+      return res;
+    } catch (err) {
+      logServerErr('api_pitfalls_clear_failed', err);
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка очистки журнала граблей', 'Failed to clear pitfalls') };
+    }
   }, 'POST');
 
   app.api('/api/knowledge/recipes', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
-    const mod = await getKnowledgeHubMod();
-    const hub = mod?.knowledgeHub;
-    if (!hub) return { ok: false, error: 'Knowledge hub unavailable' };
-    return { ok: true, recipes: hub.listVictoryRecipes(activeWs, 15), stats: hub.getStats(activeWs) };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
+      const mod = await getKnowledgeHubMod();
+      const hub = mod?.knowledgeHub;
+      if (!hub) return { ok: false, error: 'Knowledge hub unavailable' };
+      return { ok: true, recipes: hub.listVictoryRecipes(activeWs, 15), stats: hub.getStats(activeWs) };
+    } catch (err) {
+      logServerErr('api_knowledge_recipes_get_failed', err);
+      return { ok: false, recipes: [], error: err?.message || pickLang(lang, 'Ошибка чтения рецептов побед', 'Failed to read victory recipes') };
+    }
   }, 'GET');
 
   app.api('/api/knowledge/recipes', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
-    const mod = await getKnowledgeHubMod();
-    const hub = mod?.knowledgeHub;
-    if (!hub) return { ok: false, error: 'Knowledge hub unavailable' };
-    if (data?.action === 'clear') {
-      hub.clearVictoryRecipes(activeWs);
-    } else if (data?.fixSummary || data?.errorExcerpt) {
-      hub.recordVictoryRecipe({
-        workspaceRoot: activeWs,
-        errorExcerpt: data.errorExcerpt || '',
-        touchedFiles: Array.isArray(data.touchedFiles) ? data.touchedFiles : [],
-        fixSummary: data.fixSummary || '',
-      });
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
+      const mod = await getKnowledgeHubMod();
+      const hub = mod?.knowledgeHub;
+      if (!hub) return { ok: false, error: 'Knowledge hub unavailable' };
+      if (data?.action === 'clear') {
+        hub.clearVictoryRecipes(activeWs);
+      } else if (data?.fixSummary || data?.errorExcerpt) {
+        hub.recordVictoryRecipe({
+          workspaceRoot: activeWs,
+          errorExcerpt: data.errorExcerpt || '',
+          touchedFiles: Array.isArray(data.touchedFiles) ? data.touchedFiles : [],
+          fixSummary: data.fixSummary || '',
+        });
+      }
+      return { ok: true, recipes: hub.listVictoryRecipes(activeWs, 15), stats: hub.getStats(activeWs) };
+    } catch (err) {
+      logServerErr('api_knowledge_recipes_post_failed', err);
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка обновления рецептов побед', 'Failed to update victory recipes') };
     }
-    return { ok: true, recipes: hub.listVictoryRecipes(activeWs, 15), stats: hub.getStats(activeWs) };
   }, 'POST');
 
   app.api('/api/knowledge/federation', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
-    const mod = await getKnowledgeHubMod();
-    const hub = mod?.knowledgeHub;
-    if (!hub) return { ok: false, error: 'Knowledge hub unavailable' };
-    const normPeer = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
-    const activeNorm = normPeer(resolve(activeWs));
-    let targetPeers = Array.isArray(data?.peers) ? data.peers : null;
-    if (!targetPeers && typeof data?.addPeer === 'string' && data.addPeer.trim()) {
-      const rawAdd = data.addPeer.trim();
-      const candAbs = isAbsolute(rawAdd) ? resolve(rawAdd) : resolve(activeWs, rawAdd);
-      let isDir = false;
-      try {
-        isDir = existsSync(candAbs) && statSync(candAbs).isDirectory() && isValidWorkspaceDir(candAbs);
-      } catch {
-        isDir = false;
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
+      const mod = await getKnowledgeHubMod();
+      const hub = mod?.knowledgeHub;
+      if (!hub) return { ok: false, error: 'Knowledge hub unavailable' };
+      const normPeer = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
+      const activeNorm = normPeer(resolve(activeWs));
+      let targetPeers = null;
+      if (Array.isArray(data?.peers)) {
+        const seenPeers = new Set();
+        targetPeers = [];
+        for (const rawPeer of data.peers.slice(0, 24)) {
+          if (typeof rawPeer !== 'string' || !rawPeer.trim()) continue;
+          const candAbs = isAbsolute(rawPeer.trim()) ? resolve(rawPeer.trim()) : resolve(activeWs, rawPeer.trim());
+          const candNorm = normPeer(candAbs);
+          if (candNorm === activeNorm || seenPeers.has(candNorm)) continue;
+          let isDir = false;
+          try {
+            isDir = existsSync(candAbs) && statSync(candAbs).isDirectory() && isValidWorkspaceDir(candAbs);
+          } catch {
+            isDir = false;
+          }
+          if (isDir) {
+            seenPeers.add(candNorm);
+            targetPeers.push(candAbs);
+          }
+        }
       }
-      if (!isDir || normPeer(candAbs) === activeNorm) {
-        const lang = normalizeLang(loadState()?.uiLanguage, 'en');
-        return {
-          ok: false,
-          error: pickLang(lang, 'Папка репозитория не найдена или совпадает с текущим проектом', 'Repository folder not found or matches current workspace'),
-          peers: hub.getFederatedWorkspaces(activeWs),
-          stats: hub.getStats(activeWs),
-        };
+      if (!targetPeers && typeof data?.addPeer === 'string' && data.addPeer.trim()) {
+        const rawAdd = data.addPeer.trim();
+        const candAbs = isAbsolute(rawAdd) ? resolve(rawAdd) : resolve(activeWs, rawAdd);
+        let isDir = false;
+        try {
+          isDir = existsSync(candAbs) && statSync(candAbs).isDirectory() && isValidWorkspaceDir(candAbs);
+        } catch {
+          isDir = false;
+        }
+        if (!isDir || normPeer(candAbs) === activeNorm) {
+          return {
+            ok: false,
+            error: pickLang(lang, 'Папка репозитория не найдена или совпадает с текущим проектом', 'Repository folder not found or matches current workspace'),
+            peers: hub.getFederatedWorkspaces(activeWs),
+            stats: hub.getStats(activeWs),
+          };
+        }
+        const existing = hub.getFederatedWorkspaces(activeWs).map((p) => p.path);
+        const candNorm = normPeer(candAbs);
+        const alreadyLinked = existing.some((p) => normPeer(resolve(activeWs, p)) === candNorm);
+        targetPeers = alreadyLinked ? existing : [...existing, candAbs];
+      } else if (!targetPeers && typeof data?.removePeer === 'string' && data.removePeer.trim()) {
+        const rawRm = data.removePeer.trim();
+        const rmAbs = isAbsolute(rawRm) ? resolve(rawRm) : resolve(activeWs, rawRm);
+        const rmRawNorm = normPeer(rawRm);
+        const rmAbsNorm = normPeer(rmAbs);
+        targetPeers = hub
+          .getFederatedWorkspaces(activeWs)
+          .map((p) => p.path)
+          .filter((p) => {
+            const pn = normPeer(resolve(activeWs, p));
+            return pn !== rmAbsNorm && normPeer(p) !== rmRawNorm;
+          });
       }
-      const existing = hub.getFederatedWorkspaces(activeWs).map((p) => p.path);
-      targetPeers = [...existing, candAbs];
-    } else if (!targetPeers && typeof data?.removePeer === 'string' && data.removePeer.trim()) {
-      const rawRm = data.removePeer.trim();
-      const rmAbs = isAbsolute(rawRm) ? resolve(rawRm) : resolve(activeWs, rawRm);
-      const rmRawNorm = normPeer(rawRm);
-      const rmAbsNorm = normPeer(rmAbs);
-      targetPeers = hub
-        .getFederatedWorkspaces(activeWs)
-        .map((p) => p.path)
-        .filter((p) => {
-          const pn = normPeer(resolve(activeWs, p));
-          return pn !== rmAbsNorm && normPeer(p) !== rmRawNorm;
-        });
+      if (!targetPeers) targetPeers = hub.getFederatedWorkspaces(activeWs).map((p) => p.path);
+      const res = hub.setFederatedWorkspaces(activeWs, targetPeers);
+      const nextState = saveState({
+        federatedWorkspaces: Array.isArray(res.peers) ? res.peers.map((p) => p.path) : [],
+      });
+      return { ok: true, peers: res.peers, state: nextState, stats: hub.getStats(activeWs) };
+    } catch (err) {
+      logServerErr('api_knowledge_federation_failed', err);
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка обновления федерации репозиториев', 'Failed to update repository federation') };
     }
-    if (!targetPeers) targetPeers = hub.getFederatedWorkspaces(activeWs).map((p) => p.path);
-    const res = hub.setFederatedWorkspaces(activeWs, targetPeers);
-    const nextState = saveState({
-      federatedWorkspaces: Array.isArray(res.peers) ? res.peers.map((p) => p.path) : [],
-    });
-    return { ok: true, peers: res.peers, state: nextState, stats: hub.getStats(activeWs) };
   }, 'POST');
 
   app.api('/api/shield', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const { auditAgentEnvironment } = await import('../../core/agent-shield.mjs');
       const includeGlobal = !(data?.workspaceOnly === '1' || data?.workspaceOnly === true || data?.workspaceOnly === 'true');
       const report = auditAgentEnvironment({ workspaceRoot: activeWs, includeGlobal, lang });
@@ -1058,7 +1372,7 @@ export async function startSidecarPanel(options = {}) {
     const curState = loadState();
     const lang = normalizeLang(curState?.uiLanguage, 'en');
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const force = data?.force === '1' || data?.force === true || data?.force === 'true';
       const [sentinel, wiretapFaults, gpu, ramCache, shadowWorktrees] = await Promise.all([
         fetchSentinelPanelStatus(activeWs, curState, { force }),
@@ -1089,7 +1403,7 @@ export async function startSidecarPanel(options = {}) {
     const rawScope = typeof data?.scope === 'string' ? data.scope.trim().toLowerCase() : 'all';
     const scope = ALLOWED_SCOPES.has(rawScope) ? rawScope : 'all';
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       if (scope === 'all') {
         invalidateGuardPulseCache(activeWs);
       } else if (scope === 'shield') {
@@ -1170,7 +1484,7 @@ export async function startSidecarPanel(options = {}) {
     const curState = loadState();
     const lang = normalizeLang(curState?.uiLanguage, 'en');
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const { recommendProjectSetup } = await import('../../core/project-setup-recommender.mjs');
       return recommendProjectSetup({ workspaceRoot: activeWs, currentState: curState });
     } catch (err) {
@@ -1183,13 +1497,14 @@ export async function startSidecarPanel(options = {}) {
     const curState = loadState();
     const lang = normalizeLang(curState?.uiLanguage, 'en');
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const kind = typeof data?.kind === 'string' ? data.kind.trim().toLowerCase() : '';
       const { recommendProjectSetup } = await import('../../core/project-setup-recommender.mjs');
       const rec = recommendProjectSetup({ workspaceRoot: activeWs, currentState: curState });
       let applied = false;
       let detail = '';
 
+      let alreadyExists = false;
       if (kind === 'hook_profile') {
         const patch = {
           hookProfile: rec.recommendedHookProfile || 'standard',
@@ -1207,9 +1522,12 @@ export async function startSidecarPanel(options = {}) {
           });
         } catch (wErr) {
           if (wErr?.code !== 'EEXIST') throw wErr;
+          alreadyExists = true;
         }
         applied = true;
-        detail = pickLang(lang, 'Создан файл .agentignore (UTF-8)', 'Created .agentignore (UTF-8)');
+        detail = alreadyExists
+          ? pickLang(lang, '.agentignore уже существует (без перезаписи)', '.agentignore already exists (not overwritten)')
+          : pickLang(lang, 'Создан файл .agentignore (UTF-8)', 'Created .agentignore (UTF-8)');
       } else if (kind === 'design_md') {
         const { generateDesignMdFromCode } = await import('../../skills/ui-ux-design-system/scripts/extract-design-md.mjs');
         const mdRes = generateDesignMdFromCode(activeWs, { write: true, overwrite: Boolean(data?.overwrite) });
@@ -1234,6 +1552,7 @@ export async function startSidecarPanel(options = {}) {
         applied,
         kind,
         detail,
+        ...(kind === 'agentignore' ? { exists: true, alreadyExists } : {}),
         recommendation: freshRec,
         state: loadState(),
       };
@@ -1247,7 +1566,7 @@ export async function startSidecarPanel(options = {}) {
     const curState = loadState();
     const lang = normalizeLang(curState?.uiLanguage, 'en');
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const { diagnoseRuntimeHealth } = await import('../../core/health-doctor.mjs');
       const [gpuStatus, ramStatus, worktrees] = await Promise.all([
         safeGetGpuStatus(),
@@ -1271,7 +1590,7 @@ export async function startSidecarPanel(options = {}) {
     const curState = loadState();
     const lang = normalizeLang(curState?.uiLanguage, 'en');
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const fixAction = typeof data?.fixAction === 'string' ? data.fixAction.trim() : 'fix_all';
       const { diagnoseRuntimeHealth, applyHealthDoctorFix } = await import('../../core/health-doctor.mjs');
       const [gpuStatus, ramStatus, worktrees] = await Promise.all([
@@ -1315,7 +1634,9 @@ export async function startSidecarPanel(options = {}) {
             try {
               const r = mod.discardShadowWorktree({ id: ow.id, workspaceRoot: activeWs, lang });
               if (r?.ok) pruned += 1;
-            } catch {}
+            } catch (pruneErr) {
+              logServerErr('health_doctor_prune_worktree_failed', pruneErr);
+            }
           }
           return { pruned };
         },
@@ -1345,13 +1666,13 @@ export async function startSidecarPanel(options = {}) {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const { searchSkillsCatalog } = await import('../../core/skill-registry-bridge.mjs');
       return await searchSkillsCatalog({
         query: typeof data?.query === 'string' ? data.query : '',
         workspaceRoot: activeWs,
         includeRemote: data?.includeRemote !== false,
-        limit: Number(data?.limit) || 8,
+        limit: clampFiniteInt(data?.limit, 1, 50, 8),
         lang,
       });
     } catch (err) {
@@ -1363,7 +1684,7 @@ export async function startSidecarPanel(options = {}) {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const { importSkillFromSource } = await import('../../core/skill-registry-bridge.mjs');
       const res = await importSkillFromSource({
         source: typeof data?.source === 'string' ? data.source : '',
@@ -1388,7 +1709,7 @@ export async function startSidecarPanel(options = {}) {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const mod = await getKnowledgeHubMod();
       const hub = mod?.knowledgeHub;
       if (!hub || typeof hub.listInstincts !== 'function') {
@@ -1406,7 +1727,7 @@ export async function startSidecarPanel(options = {}) {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const mod = await getKnowledgeHubMod();
       const hub = mod?.knowledgeHub;
       if (!hub) return { ok: false, error: 'Knowledge hub unavailable' };
@@ -1435,7 +1756,7 @@ export async function startSidecarPanel(options = {}) {
     const curState = loadState();
     const lang = normalizeLang(curState?.uiLanguage, 'en');
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const mod = await getKnowledgeHubMod();
       const hub = mod?.knowledgeHub;
       if (!hub) return { ok: false, error: 'Knowledge hub unavailable' };
@@ -1467,7 +1788,7 @@ export async function startSidecarPanel(options = {}) {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const mod = await getKnowledgeHubMod();
       const hub = mod?.knowledgeHub;
       if (!hub || typeof hub.deleteInstinct !== 'function') {
@@ -1488,7 +1809,7 @@ export async function startSidecarPanel(options = {}) {
   app.api('/api/knowledge/episodes', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const mod = await getKnowledgeHubMod();
       const hub = mod?.knowledgeHub;
       if (!hub || typeof hub.searchSessionEpisodes !== 'function') {
@@ -1497,7 +1818,7 @@ export async function startSidecarPanel(options = {}) {
       const res = hub.searchSessionEpisodes({
         workspaceRoot: activeWs,
         query: typeof data?.query === 'string' ? data.query : '',
-        limit: Number(data?.limit) || 15,
+        limit: clampFiniteInt(data?.limit, 1, 100, 15),
       });
       return { ok: true, items: res.items || [], stats: hub.getStats(activeWs) };
     } catch (err) {
@@ -1509,7 +1830,7 @@ export async function startSidecarPanel(options = {}) {
   app.api('/api/gates', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const gatesPath = join(activeWs, 'GATES.md');
       if (!existsSync(gatesPath)) {
         return { ok: true, exists: false, gatesPath, total: 0, metCount: 0, unmetCount: 0, items: [] };
@@ -1536,7 +1857,7 @@ export async function startSidecarPanel(options = {}) {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const { initAcceptanceGatesMarkdown, parseAcceptanceGatesMarkdown } = await import('../../core/completion-gates.mjs');
       const initRes = initAcceptanceGatesMarkdown(activeWs, { overwrite: Boolean(data?.overwrite), lang });
       invalidateGuardPulseCache(activeWs, ['env']);
@@ -1573,7 +1894,7 @@ export async function startSidecarPanel(options = {}) {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const { RamMemoryEngine } = await import('../../core/ram-memory-engine.mjs');
       const { computeCacheWarmthStatus } = await import('../../core/quota-pacer.mjs');
       const { getSessionReuseSummary, getSessionVerificationFreshness } = await import('../../core/completion-gates.mjs');
@@ -1615,9 +1936,75 @@ export async function startSidecarPanel(options = {}) {
   const FALLBACK_GRAPH_TTL_MS = 30_000;
   const GIT_DIFF_TTL_MS = 15_000;
   const GIT_CHURN_TTL_MS = 60_000;
-  let fallbackGraphState = { engine: null, wsPath: '', updatedAt: 0 };
+  const MAX_GRAPH_AUX_CACHE = 64;
+  let fallbackGraphEntry = null;
+  let fallbackGraphEvictTimer = null;
+  let fallbackGraphInitPromise = null;
+  let fallbackGraphInitWs = '';
   const gitDiffCache = new Map();
   const gitChurnCache = new Map();
+
+  const setBoundedCacheEntry = (cacheMap, key, value, maxEntries = MAX_GRAPH_AUX_CACHE) => {
+    if (!cacheMap || !key) return;
+    if (cacheMap.has(key)) cacheMap.delete(key);
+    cacheMap.set(key, value);
+    while (cacheMap.size > maxEntries) {
+      const oldestKey = cacheMap.keys().next().value;
+      if (oldestKey === undefined) break;
+      cacheMap.delete(oldestKey);
+    }
+  };
+
+  const retireFallbackEntry = (entry) => {
+    if (!entry) return;
+    entry.retired = true;
+    if (entry.activeUsers <= 0) {
+      try { entry.engine?.evict?.('all'); } catch {}
+    }
+  };
+
+  const clearFallbackGraphEvictTimer = () => {
+    if (fallbackGraphEvictTimer) {
+      clearTimeout(fallbackGraphEvictTimer);
+      fallbackGraphEvictTimer = null;
+    }
+  };
+
+  const scheduleFallbackGraphEvict = (entry) => {
+    clearFallbackGraphEvictTimer();
+    if (!entry || entry.retired || fallbackGraphEntry !== entry) return;
+    const elapsed = Math.max(0, Date.now() - entry.updatedAt);
+    const delayMs = Math.max(50, FALLBACK_GRAPH_TTL_MS - elapsed);
+    fallbackGraphEvictTimer = setTimeout(() => {
+      fallbackGraphEvictTimer = null;
+      if (fallbackGraphEntry === entry && entry.activeUsers <= 0 && (Date.now() - entry.updatedAt >= FALLBACK_GRAPH_TTL_MS)) {
+        fallbackGraphEntry = null;
+        retireFallbackEntry(entry);
+      }
+    }, delayMs);
+    fallbackGraphEvictTimer.unref?.();
+  };
+
+  const acquireFallbackEntryHandle = (entry) => {
+    entry.activeUsers += 1;
+    entry.updatedAt = Date.now();
+    clearFallbackGraphEvictTimer();
+    let released = false;
+    return {
+      engine: entry.engine,
+      ephemeral: false,
+      release: () => {
+        if (released) return;
+        released = true;
+        entry.activeUsers = Math.max(0, entry.activeUsers - 1);
+        if (entry.retired && entry.activeUsers <= 0) {
+          try { entry.engine?.evict?.('all'); } catch {}
+        } else if (!entry.retired && fallbackGraphEntry === entry && entry.activeUsers <= 0) {
+          scheduleFallbackGraphEvict(entry);
+        }
+      },
+    };
+  };
 
   const shouldBypassHostDaemonForGraph = (wsPath) =>
     process.env.TUNNEL_TEST_ISOLATE_INSTALLED === '1' || isEphemeralPanelCandidatePath(wsPath);
@@ -1642,22 +2029,53 @@ export async function startSidecarPanel(options = {}) {
   };
 
   const getOrCreateFallbackGraphEngine = async (activeWs, { forceRefresh = false } = {}) => {
-    const { RamMemoryEngine } = await import('../../core/ram-memory-engine.mjs');
     if (shouldBypassHostDaemonForGraph(activeWs)) {
-      return { engine: new RamMemoryEngine({ budgetMb: 256 }), ephemeral: true };
+      const { RamMemoryEngine } = await import('../../core/ram-memory-engine.mjs');
+      const ephEngine = new RamMemoryEngine({ budgetMb: 256 });
+      let released = false;
+      return {
+        engine: ephEngine,
+        ephemeral: true,
+        release: () => {
+          if (released) return;
+          released = true;
+          try { ephEngine.evict('all'); } catch {}
+        },
+      };
+    }
+    if (!forceRefresh && fallbackGraphInitPromise && fallbackGraphInitWs === activeWs) {
+      try {
+        await fallbackGraphInitPromise;
+      } catch {}
     }
     const now = Date.now();
-    const sameWs = fallbackGraphState.wsPath === activeWs;
-    const isFresh = sameWs && fallbackGraphState.engine && !forceRefresh && (now - fallbackGraphState.updatedAt < FALLBACK_GRAPH_TTL_MS);
+    const cur = fallbackGraphEntry;
+    const sameWs = Boolean(cur && cur.wsPath === activeWs);
+    const isFresh = Boolean(sameWs && cur?.engine && !cur.retired && !forceRefresh && (now - cur.updatedAt < FALLBACK_GRAPH_TTL_MS));
     if (isFresh) {
-      return { engine: fallbackGraphState.engine, ephemeral: false };
+      return acquireFallbackEntryHandle(cur);
     }
+    const initPromise = (async () => {
+      const { RamMemoryEngine } = await import('../../core/ram-memory-engine.mjs');
+      const prev = fallbackGraphEntry;
+      clearFallbackGraphEvictTimer();
+      retireFallbackEntry(prev);
+      const nextEngine = new RamMemoryEngine({ budgetMb: 256 });
+      const entry = { engine: nextEngine, wsPath: activeWs, updatedAt: Date.now(), activeUsers: 0, retired: false };
+      fallbackGraphEntry = entry;
+      return entry;
+    })();
+    fallbackGraphInitWs = activeWs;
+    fallbackGraphInitPromise = initPromise;
     try {
-      fallbackGraphState.engine?.evict?.('all');
-    } catch {}
-    const engine = new RamMemoryEngine({ budgetMb: 256 });
-    fallbackGraphState = { engine, wsPath: activeWs, updatedAt: now };
-    return { engine, ephemeral: false };
+      const entry = await initPromise;
+      return acquireFallbackEntryHandle(entry);
+    } finally {
+      if (fallbackGraphInitPromise === initPromise) {
+        fallbackGraphInitPromise = null;
+        fallbackGraphInitWs = '';
+      }
+    }
   };
 
   const unquoteGitPath = (rawPath = '') => {
@@ -1672,7 +2090,7 @@ export async function startSidecarPanel(options = {}) {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const focusRaw = typeof data?.focus === 'string' ? data.focus.trim().replace(/\\/g, '/').replace(/^\.\//, '') : '';
       const depth = Math.max(1, Math.min(3, Math.floor(Number(data?.depth) || 2)));
       const maxNodes = Math.max(30, Math.min(25000, Math.floor(Number(data?.maxNodes) || 220)));
@@ -1702,7 +2120,7 @@ export async function startSidecarPanel(options = {}) {
         }
       }
 
-      const { engine, ephemeral } = await getOrCreateFallbackGraphEngine(activeWs, { forceRefresh });
+      const { engine, release } = await getOrCreateFallbackGraphEngine(activeWs, { forceRefresh });
       try {
         return buildProjectGraphPayload(engine, activeWs, {
           focus: focusRaw,
@@ -1715,9 +2133,7 @@ export async function startSidecarPanel(options = {}) {
           source: 'local_cache',
         });
       } finally {
-        if (ephemeral) {
-          try { engine.evict('all'); } catch {}
-        }
+        release();
       }
     } catch (err) {
       return { ok: false, error: err?.message || pickLang(lang, 'Ошибка построения карты проекта', 'Failed to build project graph') };
@@ -1737,7 +2153,7 @@ export async function startSidecarPanel(options = {}) {
           error: pickLang(lang, 'Укажите оба узла для поиска пути (from и to)', 'Both "from" and "to" nodes are required'),
         };
       }
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const maxDepth = Math.max(1, Math.min(8, Math.floor(Number(data?.maxDepth) || 6)));
       const direction = data?.direction === 'directed' ? 'directed' : 'both';
 
@@ -1763,7 +2179,7 @@ export async function startSidecarPanel(options = {}) {
         }
       }
 
-      const { engine, ephemeral } = await getOrCreateFallbackGraphEngine(activeWs, { forceRefresh: false });
+      const { engine, release } = await getOrCreateFallbackGraphEngine(activeWs, { forceRefresh: false });
       try {
         const res = engine.findGraphPath(activeWs, from, to, { maxDepth, direction });
         return {
@@ -1779,9 +2195,7 @@ export async function startSidecarPanel(options = {}) {
           source: 'local_cache',
         };
       } finally {
-        if (ephemeral) {
-          try { engine.evict('all'); } catch {}
-        }
+        release();
       }
     } catch (err) {
       return { ok: false, found: false, error: err?.message || pickLang(lang, 'Ошибка поиска пути в графе', 'Failed to find graph path') };
@@ -1791,15 +2205,16 @@ export async function startSidecarPanel(options = {}) {
   app.api('/api/project-graph/git-diff', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const forceRefresh = data?.refresh === true || data?.refresh === '1' || data?.refresh === 'true';
       const now = Date.now();
       const cached = gitDiffCache.get(activeWs);
-      if (!forceRefresh && cached && (now - cached.ts < GIT_DIFF_TTL_MS)) {
+      if (!forceRefresh && cached && (now - cached.ts < (cached.ttlMs || GIT_DIFF_TTL_MS))) {
         return cached.payload;
       }
 
       let payload;
+      let cacheTtlMs = GIT_DIFF_TTL_MS;
       try {
         const { stdout } = await execFileAsync('git', ['status', '--porcelain=v1', '-uall'], {
           cwd: activeWs,
@@ -1842,7 +2257,11 @@ export async function startSidecarPanel(options = {}) {
           unstagedFiles: Array.from(unstagedSet).sort(),
           untrackedFiles: Array.from(untrackedSet).sort(),
         };
-      } catch {
+      } catch (gitErr) {
+        const isTransient = Boolean(gitErr?.killed || gitErr?.signal === 'SIGTERM' || gitErr?.code === 'ETIMEDOUT');
+        const isConfirmedNoGit = gitErr?.code === 'ENOENT' || /not a git repository/i.test(String(gitErr?.stderr || gitErr?.message || ''));
+        cacheTtlMs = isTransient ? 0 : (isConfirmedNoGit ? GIT_DIFF_TTL_MS : 2000);
+        if (isTransient) logServerErr('git_diff_timeout', gitErr);
         payload = {
           ok: true,
           available: false,
@@ -1854,7 +2273,9 @@ export async function startSidecarPanel(options = {}) {
         };
       }
 
-      gitDiffCache.set(activeWs, { ts: now, payload });
+      if (cacheTtlMs > 0) {
+        setBoundedCacheEntry(gitDiffCache, activeWs, { ts: now, ttlMs: cacheTtlMs, payload });
+      }
       return payload;
     } catch {
       return {
@@ -1882,7 +2303,7 @@ export async function startSidecarPanel(options = {}) {
           error: pickLang(lang, 'Укажите файл для графа символов', 'Target file is required for symbols view'),
         };
       }
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const maxExternal = Math.max(8, Math.min(60, Math.floor(Number(data?.maxExternal) || 36)));
 
       if (!shouldBypassHostDaemonForGraph(activeWs)) {
@@ -1896,7 +2317,7 @@ export async function startSidecarPanel(options = {}) {
         }
       }
 
-      const { engine, ephemeral } = await getOrCreateFallbackGraphEngine(activeWs, { forceRefresh: false });
+      const { engine, release } = await getOrCreateFallbackGraphEngine(activeWs, { forceRefresh: false });
       try {
         return buildFileSymbolGraphPayload(engine, activeWs, file, {
           maxExternal,
@@ -1904,9 +2325,7 @@ export async function startSidecarPanel(options = {}) {
           source: 'local_cache',
         });
       } finally {
-        if (ephemeral) {
-          try { engine.evict('all'); } catch {}
-        }
+        release();
       }
     } catch (err) {
       return {
@@ -1922,17 +2341,18 @@ export async function startSidecarPanel(options = {}) {
   app.api('/api/project-graph/git-churn', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const days = Math.max(7, Math.min(365, Math.floor(Number(data?.days) || 90)));
       const forceRefresh = data?.refresh === true || data?.refresh === '1' || data?.refresh === 'true';
       const cacheKey = `${activeWs}|${days}`;
       const now = Date.now();
       const cached = gitChurnCache.get(cacheKey);
-      if (!forceRefresh && cached && (now - cached.ts < GIT_CHURN_TTL_MS)) {
+      if (!forceRefresh && cached && (now - cached.ts < (cached.ttlMs || GIT_CHURN_TTL_MS))) {
         return cached.payload;
       }
 
       let payload;
+      let cacheTtlMs = GIT_CHURN_TTL_MS;
       try {
         const { stdout } = await execFileAsync('git', ['log', `--since=${days} days ago`, '--name-only', '--pretty=format:'], {
           cwd: activeWs,
@@ -1950,7 +2370,11 @@ export async function startSidecarPanel(options = {}) {
           maxChurn: parsed.maxChurn,
           churnByFile: parsed.churnByFile,
         };
-      } catch {
+      } catch (gitErr) {
+        const isTransient = Boolean(gitErr?.killed || gitErr?.signal === 'SIGTERM' || gitErr?.code === 'ETIMEDOUT');
+        const isConfirmedNoGit = gitErr?.code === 'ENOENT' || /not a git repository/i.test(String(gitErr?.stderr || gitErr?.message || ''));
+        cacheTtlMs = isTransient ? 0 : (isConfirmedNoGit ? GIT_CHURN_TTL_MS : 2000);
+        if (isTransient) logServerErr('git_churn_timeout', gitErr);
         payload = {
           ok: true,
           available: false,
@@ -1962,7 +2386,9 @@ export async function startSidecarPanel(options = {}) {
         };
       }
 
-      gitChurnCache.set(cacheKey, { ts: now, payload });
+      if (cacheTtlMs > 0) {
+        setBoundedCacheEntry(gitChurnCache, cacheKey, { ts: now, ttlMs: cacheTtlMs, payload });
+      }
       return payload;
     } catch {
       return {
@@ -1979,7 +2405,7 @@ export async function startSidecarPanel(options = {}) {
   app.api('/api/project-graph/semantic-search', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const q = typeof data?.q === 'string' ? data.q.trim() : '';
       if (q.length < 2) {
         return { ok: true, query: q, mode: 'empty', scoresByFile: {}, matches: [] };
@@ -1996,7 +2422,7 @@ export async function startSidecarPanel(options = {}) {
         }
       }
 
-      const { engine, ephemeral } = await getOrCreateFallbackGraphEngine(activeWs, { forceRefresh: false });
+      const { engine, release } = await getOrCreateFallbackGraphEngine(activeWs, { forceRefresh: false });
       try {
         const semRes = await engine.searchSemantic(activeWs, q, {
           maxResults: 14,
@@ -2005,9 +2431,7 @@ export async function startSidecarPanel(options = {}) {
         });
         return aggregateSemanticGraphHits(semRes, q, 'local_cache');
       } finally {
-        if (ephemeral) {
-          try { engine.evict('all'); } catch {}
-        }
+        release();
       }
     } catch (err) {
       return {
@@ -2070,20 +2494,23 @@ export async function startSidecarPanel(options = {}) {
             stdio: 'ignore',
           }
         );
+        child.on('error', (spawnErr) => { logServerErr('graph_window_spawn_failed', spawnErr); });
         child.unref();
         return { ok: true, mode: 'app_window' };
       }
       if (process.platform === 'win32') {
-        const child = spawn('cmd', ['/c', 'start', '""', targetUrl], {
+        const child = spawn('rundll32.exe', ['url.dll,FileProtocolHandler', targetUrl], {
           detached: true,
           stdio: 'ignore',
           windowsHide: true,
         });
+        child.on('error', (spawnErr) => { logServerErr('graph_window_spawn_failed', spawnErr); });
         child.unref();
         return { ok: true, mode: 'browser_tab' };
       }
       const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
       const child = spawn(opener, [targetUrl], { detached: true, stdio: 'ignore' });
+      child.on('error', (spawnErr) => { logServerErr('graph_window_spawn_failed', spawnErr); });
       child.unref();
       return { ok: true, mode: 'browser_tab' };
     } catch (err) {
@@ -2091,11 +2518,39 @@ export async function startSidecarPanel(options = {}) {
     }
   };
 
+  const MAX_GRAPH_AUTH_CODES = 16;
+  const GRAPH_AUTH_CODE_TTL_MS = 30_000;
+  const graphAuthCodes = new Map();
+  const pruneGraphAuthCodes = (now = Date.now()) => {
+    for (const [k, entry] of graphAuthCodes.entries()) {
+      if (!entry || entry.expiresAt <= now) graphAuthCodes.delete(k);
+    }
+    while (graphAuthCodes.size >= MAX_GRAPH_AUTH_CODES) {
+      const oldestKey = graphAuthCodes.keys().next().value;
+      if (oldestKey === undefined) break;
+      graphAuthCodes.delete(oldestKey);
+    }
+  };
+
+  app.api('/api/project-graph/exchange-auth', async (data, req) => {
+    if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    pruneGraphAuthCodes();
+    const code = typeof data?.authCode === 'string' ? data.authCode.trim() : '';
+    if (!code) return { ok: false, error: 'Missing authCode' };
+    const entry = graphAuthCodes.get(code);
+    graphAuthCodes.delete(code);
+    if (!entry || entry.expiresAt <= Date.now()) {
+      return { ok: false, error: 'Invalid or expired authCode' };
+    }
+    return { ok: true, token: entry.token };
+  }, 'POST');
+
   app.api('/api/project-graph/open-window', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeReq = resolveReq(req);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       let port = 0;
       try {
         const addr = activeHttpServer && typeof activeHttpServer.address === 'function' ? activeHttpServer.address() : null;
@@ -2103,8 +2558,8 @@ export async function startSidecarPanel(options = {}) {
           port = addr.port;
         }
       } catch {}
-      if (!port && req?.headers?.host) {
-        const rawHost = String(req.headers.host).trim();
+      if (!port && activeReq?.headers?.host) {
+        const rawHost = String(activeReq.headers.host).trim();
         const m = /^(?:127\.0\.0\.1|localhost|\[::1\]):(\d{1,5})$/i.exec(rawHost);
         if (m) {
           const p = Number(m[1]);
@@ -2112,7 +2567,7 @@ export async function startSidecarPanel(options = {}) {
         }
       }
       if (!port) {
-        const envPort = Number(process.env.SIDECAR_PORT || process.env.PORT || 0);
+        const envPort = Number(process.env.SIDECAR_PORT || process.env.ANTIGRAVITY_SIDECAR_WEB_PORT || process.env.PORT || 0);
         if (Number.isInteger(envPort) && envPort >= 1 && envPort <= 65535) port = envPort;
       }
       if (!port) {
@@ -2124,9 +2579,10 @@ export async function startSidecarPanel(options = {}) {
       }
 
       const rawToken =
-        (req?.headers && (req.headers['x-sidecar-token'] || req.headers['x-antigravity-token'])) ||
+        (activeReq?.headers && (activeReq.headers['x-sidecar-token'] || activeReq.headers['x-antigravity-token'])) ||
         (typeof data?.token === 'string' ? data.token : '') ||
         process.env.SIDECAR_TOKEN ||
+        process.env.ANTIGRAVITY_SIDECAR_UI_TOKEN ||
         '';
       const rawFocus = typeof data?.focus === 'string' ? data.focus.trim().replace(/\\/g, '/').replace(/^\.\//, '') : '';
       const cleanFocus = (
@@ -2140,9 +2596,19 @@ export async function startSidecarPanel(options = {}) {
       ) ? rawFocus : '';
       const urlParams = new URLSearchParams();
       urlParams.set('view', 'graph');
+      urlParams.set('lang', lang);
       if (activeWs) urlParams.set('rootDir', activeWs);
       if (cleanFocus) urlParams.set('focus', cleanFocus);
-      if (rawToken) urlParams.set('token', String(rawToken).trim());
+      const cleanToken = String(rawToken || '').trim();
+      if (cleanToken) {
+        pruneGraphAuthCodes();
+        const authCode = randomBytes(18).toString('hex');
+        graphAuthCodes.set(authCode, {
+          token: cleanToken,
+          expiresAt: Date.now() + GRAPH_AUTH_CODE_TTL_MS,
+        });
+        urlParams.set('authCode', authCode);
+      }
       const targetUrl = `http://127.0.0.1:${port}/?${urlParams.toString()}`;
 
       if (data?.dryRun === true) {
@@ -2170,16 +2636,17 @@ export async function startSidecarPanel(options = {}) {
       const state = loadState();
       const rawReqRoot = typeof data?.rootDir === 'string' ? data.rootDir.trim() : '';
       const isPinnedReq = Boolean(rawReqRoot && rawReqRoot !== '__all__' && rawReqRoot !== '__auto__' && isValidWorkspaceDir(rawReqRoot));
+      const openWorkspaces = parseOpenWorkspacesFromRequest(data, req);
+      const activeConversationId = parseActiveConversationIdFromRequest(data, req);
       const [activeWs, autoWs, ramCache, hudPack] = await Promise.all([
-        resolveActiveWorkspaceForPanel(rawReqRoot),
-        resolveActiveWorkspaceForPanel(''),
+        resolveActiveWorkspaceForPanel(rawReqRoot, { openWorkspaces, activeConversationId }),
+        resolveActiveWorkspaceForPanel('', { openWorkspaces, activeConversationId }),
         safeGetRamCacheStatus(state).catch(() => null),
         safeGetHudAndProgressStatus(state, isPinnedReq ? resolve(rawReqRoot) : '').catch(() => null),
       ]);
       const extraRoots = Array.isArray(data?.extraRoots)
         ? data.extraRoots
         : (typeof data?.extraRoots === 'string' ? data.extraRoots.split('|').filter(Boolean) : []);
-      const openWorkspaces = parseOpenWorkspacesFromRequest(data, req);
       const workspaces = await discoverUserProjectsForGraph({
         activeWs,
         autoWs,
@@ -2216,7 +2683,7 @@ export async function startSidecarPanel(options = {}) {
     if (typeof rawPath === 'string') {
       const clean = rawPath.trim();
       if (allowCreatablePath) {
-        if (!clean || clean.length > 512 || /[\r\n\0<>|"?*]/.test(clean.replace(/^[A-Za-z]:/, ''))) {
+        if (!isSafeCreatableFolderPath(clean)) {
           return {
             ok: false,
             error: pickLang(lang, 'Указан некорректный путь к папке', 'Specified folder path is invalid'),
@@ -2412,7 +2879,7 @@ export async function startSidecarPanel(options = {}) {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
-      const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
       const { scanShortcutDebt } = await import('../../core/shortcut-debt-ledger.mjs');
       const res = scanShortcutDebt(activeWs, {
         marker: typeof data?.marker === 'string' ? data.marker : '',
@@ -2609,7 +3076,7 @@ export async function startSidecarPanel(options = {}) {
         return { ...u, gpu: snap };
       }
       if (action === 'warm') {
-        const wsRoot = await resolveActiveWorkspaceForPanel(data?.rootDir);
+        const wsRoot = await resolvePanelWorkspaceFromRequest(data, req);
         if (!isValidWorkspaceDir(wsRoot)) {
           return new Response(
             JSON.stringify({ ok: false, status: 400, error: pickLang(lang, 'Рабочая папка не найдена или недопустима', 'Workspace directory not found or invalid') }),
@@ -2757,6 +3224,8 @@ export async function startSidecarPanel(options = {}) {
   }, 'POST');
 
   let activeAutocompleteAbort = null;
+  let autocompleteOrderSeq = 0;
+  let latestAutocompleteOrderSeq = 0;
   const chatMessageQueue = new Queue({
     maxSize: DEFAULT_CHAT_QUEUE_MAX_SIZE,
     maxAgeMs: 45000,
@@ -2773,13 +3242,21 @@ export async function startSidecarPanel(options = {}) {
     taskTimeoutMs: 6800,
     parallelBatchSize: 2,
     autoProcess: true,
+    onError: (err) => {
+      if (err?.code !== 'AUTOCOMPLETE_SUPERSEDED') {
+        logServerErr('autocomplete_queue_error', err);
+      }
+    },
   });
 
   app.api('/api/autocomplete', async (data, req) => {
     if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const seq = Number(data?.seq) || 0;
+    const mode = String(data?.mode || 'suggest');
+    const stage = data?.stage === 'fast' ? 'fast' : 'gpu';
+    const reqOrder = (mode !== 'context' && stage !== 'fast') ? ++autocompleteOrderSeq : 0;
+    if (reqOrder > 0) latestAutocompleteOrderSeq = reqOrder;
     try {
-      const mode = String(data?.mode || 'suggest');
       const ctx = await getAutocompleteWorkspaceContext(data?.rootDir, {
         allowStaleWhileRevalidate: mode !== 'context',
       });
@@ -2797,7 +3274,6 @@ export async function startSidecarPanel(options = {}) {
 
       const draft = String(data?.draft || '').slice(0, 1200);
       const scopedCtx = prioritizeContextForDraft(draft, ctx);
-      const stage = data?.stage === 'fast' ? 'fast' : 'gpu';
       const curState = loadState();
       const autocompleteLang = normalizeLang(curState?.uiLanguage, 'en');
       const allowFollowUp = data?.allowFollowUp !== false;
@@ -2838,6 +3314,10 @@ export async function startSidecarPanel(options = {}) {
           latencyMs: 1,
           chips: ctx.chips,
         };
+      }
+
+      if (reqOrder > 0 && reqOrder !== latestAutocompleteOrderSeq) {
+        return { ok: false, aborted: true, seq, continuation: '' };
       }
 
       if (activeAutocompleteAbort) {
@@ -3074,7 +3554,8 @@ export async function startSidecarPanel(options = {}) {
   }, 'POST');
 
   app.api('/api/local-chat', async (data, req) => {
-    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    const activeReq = resolveReq(req);
+    if (!isRouteAuthorized(activeReq)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const curLocalState = loadState();
     const lang = normalizeLang(curLocalState?.uiLanguage, 'en');
     const reqAbort = new AbortController();
@@ -3090,13 +3571,21 @@ export async function startSidecarPanel(options = {}) {
     const triggerClientAbort = () => {
       if (!reqAbort.signal.aborted) reqAbort.abort('client_disconnected');
     };
-    if (req?.aborted || req?.destroyed || req?.socket?.destroyed) {
+    if (activeReq?.aborted || activeReq?.destroyed || activeReq?.socket?.destroyed) {
       triggerClientAbort();
     }
     const onReqAborted = () => triggerClientAbort();
     const onSocketClose = () => triggerClientAbort();
-    if (req && typeof req.on === 'function') req.on('aborted', onReqAborted);
-    if (req?.socket && typeof req.socket.on === 'function') req.socket.on('close', onSocketClose);
+    if (activeReq && typeof activeReq.on === 'function') activeReq.on('aborted', onReqAborted);
+    if (activeReq?.socket && typeof activeReq.socket.on === 'function') activeReq.socket.on('close', onSocketClose);
+
+    const maxLifetimeTimer = setTimeout(() => {
+      if (!reqAbort.signal.aborted) reqAbort.abort('local_chat_max_lifetime');
+      if (activeLocalChatControllers.get(requestId) === reqAbort) {
+        activeLocalChatControllers.delete(requestId);
+      }
+    }, 180_000);
+    maxLifetimeTimer.unref?.();
 
     const abortedResponse = (viaDaemon) => ({
       ok: false,
@@ -3126,7 +3615,7 @@ export async function startSidecarPanel(options = {}) {
             }))
         : [];
 
-      const wsRoot = await resolveActiveWorkspaceForPanel(typeof data?.rootDir === 'string' ? data.rootDir : '');
+      const wsRoot = await resolvePanelWorkspaceFromRequest(data, req);
       if (reqAbort.signal.aborted) return abortedResponse();
       const focusFile = typeof data?.focusFile === 'string' ? data.focusFile.trim().slice(0, 512) : '';
       const daemonRes = (process.env.TUNNEL_TEST_ISOLATE_INSTALLED === '1' || curLocalState.gpuEnabled === false)
@@ -3311,18 +3800,19 @@ export async function startSidecarPanel(options = {}) {
         error: err?.message || pickLang(lang, 'Ошибка локального RAG-чата', 'Local RAG chat failed'),
       };
     } finally {
+      clearTimeout(maxLifetimeTimer);
       if (activeLocalChatControllers.get(requestId) === reqAbort) {
         activeLocalChatControllers.delete(requestId);
       }
-      if (req && typeof req.off === 'function') {
-        req.off('aborted', onReqAborted);
-      } else if (req && typeof req.removeListener === 'function') {
-        req.removeListener('aborted', onReqAborted);
+      if (activeReq && typeof activeReq.off === 'function') {
+        activeReq.off('aborted', onReqAborted);
+      } else if (activeReq && typeof activeReq.removeListener === 'function') {
+        activeReq.removeListener('aborted', onReqAborted);
       }
-      if (req?.socket && typeof req.socket.off === 'function') {
-        req.socket.off('close', onSocketClose);
-      } else if (req?.socket && typeof req.socket.removeListener === 'function') {
-        req.socket.removeListener('close', onSocketClose);
+      if (activeReq?.socket && typeof activeReq.socket.off === 'function') {
+        activeReq.socket.off('close', onSocketClose);
+      } else if (activeReq?.socket && typeof activeReq.socket.removeListener === 'function') {
+        activeReq.socket.removeListener('close', onSocketClose);
       }
     }
   }, 'POST');
@@ -3332,7 +3822,7 @@ export async function startSidecarPanel(options = {}) {
     const curState = loadState();
     const lang = normalizeLang(curState?.uiLanguage, 'en');
     try {
-      const wsRoot = await resolveActiveWorkspaceForPanel(typeof data?.rootDir === 'string' ? data.rootDir : '');
+      const wsRoot = await resolvePanelWorkspaceFromRequest(data, req);
       const [repoMap, wiretapFaults, knowledgeSnap] = await Promise.all([
         safeGetCachedRepoMap(wsRoot, false).catch(() => null),
         safeGetWiretapFaults(wsRoot, curState),
@@ -3385,7 +3875,7 @@ export async function startSidecarPanel(options = {}) {
         symbols,
         wiretapFaults,
         federatedPeers: knowledgeSnap?.peers || [],
-        limit: Number(data?.limit || 10),
+        limit: clampFiniteInt(data?.limit, 1, 50, 10),
         lang,
       });
     } catch (err) {
@@ -3405,7 +3895,7 @@ export async function startSidecarPanel(options = {}) {
       return await gpuMod.analyzeUiScreenshotLocally({
         imageBase64: typeof data?.imageBase64 === 'string' ? data.imageBase64 : '',
         userHint: typeof data?.userHint === 'string' ? data.userHint : '',
-        timeoutMs: Number(data?.timeoutMs || 18000),
+        timeoutMs: clampFiniteInt(data?.timeoutMs, 1000, 60000, 18000),
         lang,
       });
     } catch (err) {
@@ -3418,7 +3908,7 @@ export async function startSidecarPanel(options = {}) {
     const curState = loadState();
     const lang = normalizeLang(curState?.uiLanguage, 'en');
     try {
-      const wsRoot = await resolveActiveWorkspaceForPanel(typeof data?.rootDir === 'string' ? data.rootDir : '');
+      const wsRoot = await resolvePanelWorkspaceFromRequest(data, req);
       const gpuMod = await getLocalGpuMod();
       if (!gpuMod || typeof gpuMod.structureVoiceTranscriptLocally !== 'function') {
         return { ok: false, error: pickLang(lang, 'Модуль обработки голоса недоступен', 'Voice structuring module unavailable') };
@@ -3449,11 +3939,6 @@ export async function startSidecarPanel(options = {}) {
   const updateHandlers = options?.updateHandlers && typeof options.updateHandlers === 'object'
     ? options.updateHandlers
     : null;
-  const resolveUpdaterRoot = () => (
-    typeof options?.pluginRoot === 'string' && options.pluginRoot.trim()
-      ? resolve(options.pluginRoot.trim())
-      : join(__dirname, '..', '..')
-  );
 
   let lastPluginUpdateCheck = null;
 
@@ -3549,29 +4034,41 @@ export async function startSidecarPanel(options = {}) {
 
   app.api('/api/plugin/changelog', async (_data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    const pluginRoot = resolveUpdaterRoot();
-    return loadPluginChangelog({
-      pluginRoot,
-      currentVersion: PANEL_LOADED_VERSION,
-      remoteRelease: lastPluginUpdateCheck,
-    });
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      const pluginRoot = resolveUpdaterRoot();
+      return loadPluginChangelog({
+        pluginRoot,
+        currentVersion: PANEL_LOADED_VERSION,
+        remoteRelease: lastPluginUpdateCheck,
+      });
+    } catch (err) {
+      logServerErr('plugin_changelog_failed', err);
+      return { ok: false, versions: [], error: err?.message || pickLang(lang, 'Ошибка загрузки истории изменений', 'Failed to load changelog') };
+    }
   }, 'GET');
 
   app.api('/api/debug/status', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    const pluginRoot = resolveUpdaterRoot();
     const state = loadState();
-    const rawLimit = Number(data?.limit);
-    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(300, Math.round(rawLimit))) : 60;
-    const rawLevel = typeof data?.level === 'string' ? data.level.trim().toLowerCase() : 'all';
-    const level = ['all', 'error', 'warn', 'info', 'debug'].includes(rawLevel) ? rawLevel : 'all';
-    const status = getDebugLogStatus({ pluginRoot, state });
-    const logData = readDebugLogEntries({ pluginRoot, limit, level });
-    return {
-      ...status,
-      entries: logData.entries,
-      filteredEntries: logData.filteredEntries,
-    };
+    const lang = normalizeLang(state?.uiLanguage, 'en');
+    try {
+      const pluginRoot = resolveUpdaterRoot();
+      const rawLimit = Number(data?.limit);
+      const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(300, Math.round(rawLimit))) : 60;
+      const rawLevel = typeof data?.level === 'string' ? data.level.trim().toLowerCase() : 'all';
+      const level = ['all', 'error', 'warn', 'info', 'debug'].includes(rawLevel) ? rawLevel : 'all';
+      const status = getDebugLogStatus({ pluginRoot, state });
+      const logData = readDebugLogEntries({ pluginRoot, limit, level });
+      return {
+        ...status,
+        entries: logData.entries,
+        filteredEntries: logData.filteredEntries,
+      };
+    } catch (err) {
+      logServerErr('debug_status_failed', err);
+      return { ok: false, entries: [], filteredEntries: [], error: err?.message || pickLang(lang, 'Ошибка чтения дебаг-лога', 'Failed to read debug log status') };
+    }
   }, 'GET');
 
   app.api('/api/debug/mode', async (data, req) => {
@@ -3579,126 +4076,170 @@ export async function startSidecarPanel(options = {}) {
     const pluginRoot = resolveUpdaterRoot();
     const curState = loadState();
     const lang = normalizeLang(curState?.uiLanguage, 'en');
-    const mode = typeof data?.mode === 'string' ? data.mode.trim().toLowerCase() : '';
-    if (!VALID_DEBUG_LOG_MODES.has(mode)) {
+    try {
+      const mode = typeof data?.mode === 'string' ? data.mode.trim().toLowerCase() : '';
+      if (!VALID_DEBUG_LOG_MODES.has(mode)) {
+        return {
+          ok: false,
+          status: 400,
+          error: pickLang(lang, 'Недопустимый режим дебаг-лога', 'Invalid debug log mode'),
+        };
+      }
+      const nextState = saveState({ debugLogMode: mode });
+      appendDebugLog({
+        level: 'info',
+        source: 'panel-server',
+        event: 'debug_mode_changed',
+        message: `Debug log mode set to ${mode}`,
+      }, { state: nextState, pluginRoot });
       return {
-        ok: false,
-        status: 400,
-        error: pickLang(lang, 'Недопустимый режим дебаг-лога', 'Invalid debug log mode'),
+        ok: true,
+        mode,
+        state: nextState,
+        status: getDebugLogStatus({ pluginRoot, state: nextState }),
       };
+    } catch (err) {
+      logServerErr('debug_mode_failed', err);
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка переключения режима дебаг-лога', 'Failed to switch debug log mode') };
     }
-    const nextState = saveState({ ...curState, debugLogMode: mode });
-    appendDebugLog({
-      level: 'info',
-      source: 'panel-server',
-      event: 'debug_mode_changed',
-      message: `Debug log mode set to ${mode}`,
-    }, { state: nextState, pluginRoot });
-    return {
-      ok: true,
-      mode,
-      state: nextState,
-      status: getDebugLogStatus({ pluginRoot, state: nextState }),
-    };
   }, 'POST');
 
   app.api('/api/debug/client-log', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    const pluginRoot = resolveUpdaterRoot();
     const state = loadState();
-    const rawLvl = typeof data?.level === 'string' ? data.level.trim().toLowerCase() : 'error';
-    const level = ['debug', 'info', 'warn', 'error'].includes(rawLvl) ? rawLvl : 'error';
-    const event = typeof data?.event === 'string' ? data.event.trim().slice(0, 80) : 'client_error';
-    const message = typeof data?.message === 'string' ? data.message.trim().slice(0, 600) : '';
-    if (!message) {
-      return { ok: false, logged: false, error: 'Empty log message' };
+    const lang = normalizeLang(state?.uiLanguage, 'en');
+    try {
+      const pluginRoot = resolveUpdaterRoot();
+      const rawLvl = typeof data?.level === 'string' ? data.level.trim().toLowerCase() : 'error';
+      const level = ['debug', 'info', 'warn', 'error'].includes(rawLvl) ? rawLvl : 'error';
+      const event = typeof data?.event === 'string' ? data.event.trim().slice(0, 80) : 'client_error';
+      const message = typeof data?.message === 'string' ? data.message.trim().slice(0, 600) : '';
+      if (!message) {
+        return { ok: false, logged: false, error: 'Empty log message' };
+      }
+      const logged = appendDebugLog({
+        level,
+        source: 'panel-ui',
+        event: event || 'client_error',
+        message,
+        meta: data?.meta,
+      }, { state, pluginRoot });
+      return { ok: true, logged };
+    } catch (err) {
+      logServerErr('debug_client_log_failed', err);
+      return { ok: false, logged: false, error: err?.message || pickLang(lang, 'Ошибка записи клиентского лога', 'Failed to write client log') };
     }
-    const logged = appendDebugLog({
-      level,
-      source: 'panel-ui',
-      event: event || 'client_error',
-      message,
-      meta: data?.meta,
-    }, { state, pluginRoot });
-    return { ok: true, logged };
   }, 'POST');
 
   app.api('/api/debug/clear', async (_data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    const pluginRoot = resolveUpdaterRoot();
-    clearDebugLog({ pluginRoot });
-    return {
-      ok: true,
-      status: getDebugLogStatus({ pluginRoot, state: loadState() }),
-    };
+    const lang = normalizeLang(loadState()?.uiLanguage, 'en');
+    try {
+      const pluginRoot = resolveUpdaterRoot();
+      clearDebugLog({ pluginRoot });
+      return {
+        ok: true,
+        status: getDebugLogStatus({ pluginRoot, state: loadState() }),
+      };
+    } catch (err) {
+      logServerErr('debug_clear_failed', err);
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка очистки дебаг-лога', 'Failed to clear debug log') };
+    }
   }, 'POST');
 
   app.api('/api/debug/export', async (data, req) => {
     if (req && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
-    const pluginRoot = resolveUpdaterRoot();
     const state = loadState();
     const lang = normalizeLang(state?.uiLanguage, 'en');
-    const activeWs = await resolveActiveWorkspaceForPanel(data?.rootDir);
-    const [gpuStatus, ramStatus, worktrees] = await Promise.all([
-      safeGetGpuStatus(),
-      safeGetRamCacheStatus(state),
-      safeListShadowWorktrees(activeWs),
-    ]);
-    let healthReport = null;
     try {
-      const { diagnoseRuntimeHealth } = await import('../../core/health-doctor.mjs');
-      healthReport = diagnoseRuntimeHealth({
-        workspaceRoot: activeWs,
+      const pluginRoot = resolveUpdaterRoot();
+      const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
+      const [gpuStatus, ramStatus, worktrees] = await Promise.all([
+        safeGetGpuStatus(),
+        safeGetRamCacheStatus(state),
+        safeListShadowWorktrees(activeWs),
+      ]);
+      let healthReport = null;
+      try {
+        const { diagnoseRuntimeHealth } = await import('../../core/health-doctor.mjs');
+        healthReport = diagnoseRuntimeHealth({
+          workspaceRoot: activeWs,
+          state,
+          gpuStatus,
+          ramStatus,
+          worktrees,
+        });
+      } catch (healthErr) {
+        logServerErr('debug_export_health_failed', healthErr);
+      }
+      const updateStatus = getPluginUpdateStatus(pluginRoot, getUpdateRuntimeCtx());
+      const bundle = buildDiagnosticBundle({
+        pluginRoot,
         state,
-        gpuStatus,
+        healthReport,
+        updateStatus,
         ramStatus,
-        worktrees,
+        gpuStatus,
+        limit: 400,
       });
-    } catch {}
-    const updateStatus = getPluginUpdateStatus(pluginRoot, getUpdateRuntimeCtx());
-    const bundle = buildDiagnosticBundle({
-      pluginRoot,
-      state,
-      healthReport,
-      updateStatus,
-      ramStatus,
-      gpuStatus,
-      limit: 400,
-    });
-    const markdownSummary = formatDiagnosticBundleSummary(bundle, lang);
-    const isoDate = new Date().toISOString().slice(0, 10);
-    return {
-      ok: true,
-      filename: `the-tunnel-debug-v${PANEL_LOADED_VERSION}-${isoDate}.json`,
-      bundle,
-      markdownSummary,
-    };
+      const markdownSummary = formatDiagnosticBundleSummary(bundle, lang);
+      const isoDate = new Date().toISOString().slice(0, 10);
+      return {
+        ok: true,
+        filename: `the-tunnel-debug-v${PANEL_LOADED_VERSION}-${isoDate}.json`,
+        bundle,
+        markdownSummary,
+      };
+    } catch (err) {
+      logServerErr('debug_export_failed', err);
+      return { ok: false, error: err?.message || pickLang(lang, 'Ошибка экспорта диагностического пакета', 'Failed to export diagnostic bundle') };
+    }
   }, 'GET');
 
-  const server = await app.run();
+  const cleanupPanelResources = () => {
+    try { chatMessageQueue.dispose(); } catch {}
+    try { autocompleteGpuQueue.dispose(); } catch {}
+    for (const [id, ac] of activeLocalChatControllers.entries()) {
+      try { ac.abort('panel_closing'); } catch {}
+      activeLocalChatControllers.delete(id);
+    }
+    clearFallbackGraphEvictTimer();
+    retireFallbackEntry(fallbackGraphEntry);
+    fallbackGraphEntry = null;
+    fallbackGraphInitPromise = null;
+    fallbackGraphInitWs = '';
+    gitDiffCache.clear();
+    gitChurnCache.clear();
+    graphAuthCodes.clear();
+  };
+
+  let server = null;
+  try {
+    server = await app.run();
+  } catch (err) {
+    cleanupPanelResources();
+    throw err;
+  }
   if (server) {
     activeHttpServer = server;
     attachSidecarSecurityMiddleware(server);
     securityMiddlewareActive = true;
     if (typeof server.once === 'function') {
-      server.once('close', () => {
-        chatMessageQueue.dispose();
-        autocompleteGpuQueue.dispose();
-        try { fallbackGraphState.engine?.evict?.('all'); } catch {}
-        fallbackGraphState = { engine: null, wsPath: '', updatedAt: 0 };
-        gitDiffCache.clear();
-        gitChurnCache.clear();
-      });
+      server.once('close', cleanupPanelResources);
     }
+  } else {
+    cleanupPanelResources();
   }
   return app;
 }
 
 if (isMainEntry() && SidecarApp) {
   let sidecarShutdownPromise = null;
+  let shutdownRequested = false;
   let activeSidecarApp = null;
   let hostWatchdog = null;
   const triggerSidecarExitCleanup = () => {
+    shutdownRequested = true;
     if (sidecarShutdownPromise) return sidecarShutdownPromise;
     try { hostWatchdog?.stop(); } catch {}
     const forceTimer = setTimeout(() => process.exit(0), 2500);
@@ -3724,6 +4265,10 @@ if (isMainEntry() && SidecarApp) {
   startSidecarPanel()
     .then((app) => {
       activeSidecarApp = app;
+      if (shutdownRequested) {
+        try { app?.close?.().catch?.(() => {}); } catch {}
+        return;
+      }
       if (app) {
         getTaskProgressMod()
           .then((progMod) => progMod?.markHostRestartAndReapActiveTasks?.({ bootAt: Date.now() }))

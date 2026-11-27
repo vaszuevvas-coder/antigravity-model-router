@@ -363,14 +363,13 @@ test('Module 7 (4-Pillar Token & Cache Meter): server telemetry savingsBreakdown
     assert.equal(tel.cacheHitRate, 80);
     assert.equal(tel.cpuSavedTokens, 0);
     assert.ok(tel.savingsBreakdown && typeof tel.savingsBreakdown === 'object');
-    assert.equal(tel.savingsBreakdown.cache, Math.round(4000 * 0.95));
-    assert.equal(tel.savingsBreakdown.cacheHitRate, 80);
+    // Google built-in Implicit Cache is excluded from extension savingsBreakdown & totalSavedTokens
+    assert.equal(tel.savingsBreakdown.cache, undefined);
+    assert.equal(tel.totalSavedTokens, tel.ramSavedTokens + tel.cpuSavedTokens + tel.gpuSavedTokens);
 
     const uiHtml = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
     for (const id of [
-      'metricCacheHitBadge',
       'metricSavedBreakdownGrid',
-      'metricSavedCacheVal',
       'metricSavedRamVal',
       'metricSavedCpuVal',
       'metricSavedGpuVal',
@@ -378,6 +377,8 @@ test('Module 7 (4-Pillar Token & Cache Meter): server telemetry savingsBreakdown
     ]) {
       assert.ok(uiHtml.includes(`id="${id}"`), `Missing DOM id="${id}" in ui.html`);
     }
+    assert.equal(uiHtml.includes('id="metricCacheHitBadge"'), false, 'metricCacheHitBadge should be removed from ui.html');
+    assert.equal(uiHtml.includes('id="metricSavedCacheVal"'), false, 'metricSavedCacheVal should be removed from ui.html');
 
     const semCheck = verifySemanticContracts(ROOT_DIR, path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'));
     assert.equal(semCheck.valid, true, `Semantic DOM check failed: ${semCheck.formattedAlert}`);

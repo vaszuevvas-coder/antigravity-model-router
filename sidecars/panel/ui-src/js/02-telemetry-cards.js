@@ -172,15 +172,6 @@
 
     function syncSwarmHeaderPills(t, s) {
       const st = s || currentState || {};
-      if (t) {
-        const bk = t.savingsBreakdown || {};
-        const hitRate = Number(bk.cacheHitRate ?? t.cacheHitRate ?? 0);
-        const cacheHitBadgeEl = document.getElementById('metricCacheHitBadge');
-        if (cacheHitBadgeEl) {
-          cacheHitBadgeEl.textContent = L('Кэш: ', 'Cache: ') + hitRate + '%';
-          cacheHitBadgeEl.className = 'swarm-pill ' + (hitRate >= 50 ? 'active' : 'idle');
-        }
-      }
       const badgeEl = document.getElementById('swarmStatusBadge');
       if (badgeEl) {
         const sw = t ? t.swarm : null;
@@ -204,30 +195,22 @@
       const ac = t.activeChat || null;
       const savedTotalEl = document.getElementById('metricTotalSaved');
       const bk = t.savingsBreakdown || {};
-      const cacheSaved = Number(bk.cache ?? t.cacheSavedTokens ?? 0);
       const ramSaved = Number(bk.ram ?? t.ramSavedTokens ?? 0);
       const cpuSaved = Number(bk.cpu ?? t.cpuSavedTokens ?? 0);
       const gpuSaved = Number(bk.gpu ?? t.gpuSavedTokens ?? 0);
-      const hitRate = Number(bk.cacheHitRate ?? t.cacheHitRate ?? 0);
+      const localSavedTotal = Number(t.totalSavedTokens ?? (ramSaved + cpuSaved + gpuSaved));
       if (savedTotalEl) {
-        savedTotalEl.textContent = '~' + formatK(t.totalSavedTokens || 0) + L(' ток.', ' tok');
+        savedTotalEl.textContent = '~' + formatK(localSavedTotal) + L(' ток.', ' tok');
         savedTotalEl.title =
-          L('Сэкономлено всего: ~', 'Total saved: ~') + formatExactInt(t.totalSavedTokens || 0) + L(' ток. ', ' tok ') +
-          L('(кэш промптов ~', '(prompt cache ~') + formatExactInt(cacheSaved) +
-          ' + RAM ~' + formatExactInt(ramSaved) +
+          L('Сэкономлено расширением: ~', 'Saved by extension: ~') + formatExactInt(localSavedTotal) + L(' ток. ', ' tok ') +
+          '(RAM ~' + formatExactInt(ramSaved) +
           ' + CPU ~' + formatExactInt(cpuSaved) +
           ' + GPU ~' + formatExactInt(gpuSaved) + L(' ток.)', ' tok)');
-      }
-      const cacheHitBadgeEl = document.getElementById('metricCacheHitBadge');
-      if (cacheHitBadgeEl) {
-        cacheHitBadgeEl.textContent = L('Кэш: ', 'Cache: ') + hitRate + '%';
-        cacheHitBadgeEl.className = 'swarm-pill ' + (hitRate >= 50 ? 'active' : 'idle');
       }
       const setBkCell = (id, val) => {
         const el = document.getElementById(id);
         if (el) el.textContent = formatK(val || 0);
       };
-      setBkCell('metricSavedCacheVal', cacheSaved);
       setBkCell('metricSavedRamVal', ramSaved);
       setBkCell('metricSavedCpuVal', cpuSaved);
       setBkCell('metricSavedGpuVal', gpuSaved);
@@ -235,7 +218,7 @@
       const summaryEl = document.getElementById('allChatsSummaryLabel');
       if (summaryEl) {
         if (ac && ac.steps > 0) {
-          const acSaved = Number(ac.cacheSavedTokens || 0) + Number(ac.ramSavedTokens || 0);
+          const acSaved = Number(ac.ramSavedTokens || 0);
           summaryEl.textContent =
             L('Текущий чат: ~', 'Current chat: ~') + formatExactInt(acSaved) +
             L(' ток. сэкономлено (контекст ', ' tok saved (context ') + formatK(ac.lastContextTokens || 0) + ')';
@@ -259,7 +242,6 @@
 
     function getRoiLayerColors() {
       return {
-        cache: '#4d8b8c',
         ram: '#8ec5c6',
         cpu: '#c87d55',
         gpu: '#f04848',
@@ -279,11 +261,14 @@
       }
       if (_roiHoverIdx >= 0 && _roiHoverIdx < buckets.length) {
         const b = buckets[_roiHoverIdx];
-        const lbl = isRu() ? (b.labelRu || b.labelEn || '') : (b.labelEn || b.labelRu || '');
+        const lbl = isRu() ? (b.periodLabelRu || b.labelRu || '') : (b.periodLabelEn || b.labelEn || '');
+        if (b.beforeInstall && !(b.total > 0)) {
+          readoutEl.textContent = lbl + ' · ' + L('До запуска расширения (0 ток.)', 'Before extension activity (0 tok)');
+          return;
+        }
         readoutEl.textContent =
           lbl + ' · ' + L('Всего ~', 'Total ~') + formatK(b.total || 0) +
-          ' (' + L('Кэш ', 'Cache ') + formatK(b.cache || 0) +
-          ' · RAM ' + formatK(b.ram || 0) +
+          ' (RAM ' + formatK(b.ram || 0) +
           ' · CPU ' + formatK(b.cpu || 0) +
           ' · GPU ' + formatK(b.gpu || 0) + ')';
         return;
@@ -349,7 +334,6 @@
         ctx.globalAlpha = (_roiHoverIdx === -1 || _roiHoverIdx === i) ? 1 : 0.4;
         if (rawTotal > 0 && totalH > 0.5) {
           const segs = [
-            { val: Number(b.cache || 0), col: pal.cache },
             { val: Number(b.ram || 0), col: pal.ram },
             { val: Number(b.cpu || 0), col: pal.cpu },
             { val: Number(b.gpu || 0), col: pal.gpu },
@@ -370,7 +354,8 @@
         ctx.globalAlpha = 1;
         const lbl = isRu() ? (b.labelRu || b.labelEn || '') : (b.labelEn || b.labelRu || '');
         ctx.fillStyle = _roiHoverIdx === i ? pal.tickActive : pal.tick;
-        ctx.font = (_roiHoverIdx === i ? '700 ' : '600 ') + '9.5px ui-monospace, SFMono-Regular, Menlo, monospace';
+        const fontPx = lbl.length > 7 ? '8.5px' : '9.5px';
+        ctx.font = (_roiHoverIdx === i ? '700 ' : '600 ') + fontPx + ' ui-monospace, SFMono-Regular, Menlo, monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
         ctx.fillText(lbl, x + barW * 0.5, h - 2);
@@ -410,17 +395,30 @@
       const qb = (roiData && roiData.quotaBullet) || {};
       const qp = quotaPacer || _lastQuotaPacerSnap || {};
       const pct = Math.max(0, Math.min(100, Math.round(Number(qb.utilizationPct ?? qp.utilizationPct ?? 0))));
-      const proj = Math.max(pct, Math.min(100, Math.round(Number(qb.projectedPct ?? Math.round(pct * 1.25)))));
+      const rawProj = qb.projectedPct ?? qp.projectedPct;
+      const proj = Number.isFinite(Number(rawProj))
+        ? Math.max(pct, Math.min(100, Math.round(Number(rawProj))))
+        : pct;
       const status = qb.status || qp.status || 'calm';
       const minsLeft = Number.isFinite(Number(qb.estimatedMinutesLeft ?? qp.estimatedMinutesLeft))
         ? Number(qb.estimatedMinutesLeft ?? qp.estimatedMinutesLeft)
-        : 240;
+        : 300;
+      const turns5h = Math.max(0, Math.round(Number(qb.turnsLast5h ?? qp.turnsLast5h ?? qb.turnsLast60m ?? qp.turnsLast60m ?? 0)));
+      const turns60m = Math.max(0, Math.round(Number(qb.turnsLast60m ?? qp.turnsLast60m ?? 0)));
+      const tierLabel = (qb.subscriptionTier || qp.subscriptionTier) === 'ultra' ? 'Ultra' : 'Pro';
 
+      const wrapEl = document.getElementById('roiQuotaBullet');
       const statusEl = document.getElementById('roiQuotaStatusLabel');
       const valEl = document.getElementById('roiQuotaValueLabel');
       const fillEl = document.getElementById('roiQuotaFill');
       const markEl = document.getElementById('roiQuotaProjMark');
 
+      if (wrapEl) {
+        wrapEl.title = L(
+          'Локальная оценка темпа за 5 ч (не прямой API Google): ' + turns5h + ' ходов за 5 ч (' + turns60m + ' за час) · тариф ' + tierLabel + '. Считает реальные ходы пользователя с учётом веса модели.',
+          'Local 5h pace estimate (not Google API quota): ' + turns5h + ' turns in 5h (' + turns60m + '/h) · ' + tierLabel + ' tier. Counts real user turns weighted by model.'
+        );
+      }
       if (statusEl) {
         const stLabel = status === 'critical'
           ? L('Критично', 'Critical')
@@ -428,10 +426,16 @@
         statusEl.textContent = L('Окно квоты (5 ч) · ', 'Quota window (5h) · ') + stLabel;
       }
       if (valEl) {
-        const etaH = Math.floor(minsLeft / 60);
-        const etaM = minsLeft % 60;
-        const etaStr = etaH > 0 ? (etaH + L('ч ', 'h ') + etaM + L('м', 'm')) : (etaM + L('м', 'm'));
-        valEl.textContent = pct + '% · ' + L('Прогноз ', 'Est. ') + proj + '% · ~' + etaStr;
+        if (turns5h === 0 && pct === 0) {
+          valEl.textContent = '0% · ' + L('0 ходов за 5 ч', '0 turns / 5h');
+        } else {
+          const etaH = Math.floor(minsLeft / 60);
+          const etaM = minsLeft % 60;
+          const etaStr = minsLeft >= 300
+            ? L('>5ч', '>5h')
+            : (etaH > 0 ? ('~' + etaH + L('ч ', 'h ') + etaM + L('м', 'm')) : ('~' + etaM + L('м', 'm')));
+          valEl.textContent = pct + '% · ' + L('+1ч: ', '+1h: ') + proj + '% · ' + etaStr;
+        }
       }
       if (fillEl) {
         fillEl.style.width = pct + '%';
@@ -439,7 +443,12 @@
         fillEl.classList.toggle('is-critical', status === 'critical');
       }
       if (markEl) {
-        markEl.style.left = Math.min(98, proj) + '%';
+        if (proj > pct && pct < 100) {
+          markEl.style.display = 'block';
+          markEl.style.left = Math.min(98, proj) + '%';
+        } else {
+          markEl.style.display = 'none';
+        }
       }
     }
 
@@ -712,7 +721,7 @@
 
         rowsHtml +=
           '<div class="skill-item" data-skill-id="' + escapeHtml(sk.id) + '" data-search="' + escapeHtml(searchHay) + '">' +
-            '<div class="skill-info">' +
+            '<div class="skill-info" title="' + escapeHtml(humanHint) + '">' +
               '<div class="skill-title">' +
                 '<span>' + escapeHtml(humanTitle) + '</span>' +
                 '<span class="skill-id-tag">' + escapeHtml(sk.id) + '</span>' +
@@ -720,7 +729,7 @@
               '<div class="skill-hint">' + escapeHtml(humanHint) + '</div>' +
             '</div>' +
             '<div class="skill-mode-group">' +
-              '<button type="button" class="skill-btn' + (mode === 'auto' ? ' active-auto' : '') + '" data-action="setSkillMode" data-skill="' + escapeHtml(sk.id) + '" data-mode="auto" title="' + L('ИИ сам включает этот навык только тогда, когда вы просите подходящую задачу', 'AI activates this skill automatically only when your task matches') + '">' + L('Авто (ИИ сам)', 'Auto (AI)') + '</button>' +
+              '<button type="button" class="skill-btn' + (mode === 'auto' ? ' active-auto' : '') + '" data-action="setSkillMode" data-skill="' + escapeHtml(sk.id) + '" data-mode="auto" title="' + L('ИИ сам включает этот навык только тогда, когда вы просите подходящую задачу', 'AI activates this skill automatically only when your task matches') + '">' + L('Авто', 'Auto') + '</button>' +
               '<button type="button" class="skill-btn' + (mode === 'off' ? ' active-off' : '') + '" data-action="setSkillMode" data-skill="' + escapeHtml(sk.id) + '" data-mode="off" title="' + L('Временно запретить использование этого навыка', 'Temporarily disable this skill') + '">' + L('Выкл', 'Off') + '</button>' +
             '</div>' +
           '</div>';
@@ -745,16 +754,19 @@
         dot.className = 'circuit-dot tripped';
         badge.textContent = L('БЛОКИРОВКА ЦИКЛА (', 'LOOP TRIPPED (') + (count || 3) + '/3)';
         badge.style.color = 'var(--status-err)';
+        reasonEl.hidden = false;
         reasonEl.textContent = reason || L('Автомат сработал: обнаружено 3-кратное зацикливание правок!', 'Circuit tripped: 3 consecutive edit loops detected!');
       } else if (st === 'WARNING') {
         dot.className = 'circuit-dot warning';
         badge.textContent = L('ВНИМАНИЕ (', 'WARNING (') + count + '/3)';
         badge.style.color = 'var(--status-warn)';
+        reasonEl.hidden = false;
         reasonEl.textContent = reason || L('Повторяющиеся ошибки в шагах: риск срабатывания стоп-крана.', 'Repeated step errors: risk of tripping circuit breaker.');
       } else {
         dot.className = 'circuit-dot closed';
         badge.textContent = L('НОРМА (', 'OK (') + count + '/3)';
         badge.style.color = 'var(--status-ok)';
+        reasonEl.hidden = true;
         reasonEl.textContent = reason || L('Автомат замкнут. Защита от зацикливания правок активна.', 'Circuit closed. Edit-loop protection is active.');
       }
     }
@@ -774,6 +786,37 @@
       label.textContent = L('Эпоха #', 'Epoch #') + epoch + ' · ' + fill + L('% от ', '% of ') + threshK + totalSuffix;
       bar.style.width = fill + '%';
       bar.style.setProperty('--fill-scale', (fill / 100).toFixed(4));
+      bar.classList.toggle('is-crit', fill >= 90);
+      bar.classList.toggle('is-warn', fill >= 70 && fill < 90);
+      bar.classList.toggle('is-ok', fill < 70);
+
+      const topEpochPill = document.getElementById('topEpochAlertPill');
+      const wsCapsule = document.getElementById('wsSwitcherCapsule');
+      if (topEpochPill) {
+        if (fill >= 70) {
+          topEpochPill.style.display = 'inline-flex';
+          topEpochPill.className = 'ws-epoch-seg ' + (fill >= 90 ? 'is-crit' : 'is-warn');
+          topEpochPill.textContent = fill + '%';
+          topEpochPill.style.setProperty('--epoch-fill', fill + '%');
+          const epochTip = L(
+            'Контекст эпохи #' + epoch + ': ' + fill + '% от ' + threshK + totalSuffix + ' — нажмите, чтобы открыть настройки порога сжатия',
+            'Epoch #' + epoch + ' context: ' + fill + '% of ' + threshK + totalSuffix + ' — click to open compaction settings'
+          );
+          if (typeof setTooltipTitle === 'function') setTooltipTitle(topEpochPill, epochTip);
+          else topEpochPill.title = epochTip;
+          topEpochPill.setAttribute('aria-label', epochTip);
+        } else {
+          topEpochPill.style.display = 'none';
+        }
+      }
+      if (wsCapsule) {
+        wsCapsule.classList.toggle('has-epoch', fill >= 70);
+      }
+      const coreTabDot = document.getElementById('fullTabCoreDot');
+      if (coreTabDot) {
+        coreTabDot.style.display = fill >= 70 ? 'inline-block' : 'none';
+        coreTabDot.className = 'full-tab-alert-dot' + (fill >= 90 ? '' : ' is-warn');
+      }
     }
 
     function syncFooterPluginVersion(pluginVersion) {
@@ -800,7 +843,7 @@
         html +=
           '<div class="pitfall-item">' +
             '<span class="pitfall-bullet">!</span>' +
-            '<span>' + escapeHtml(text) + '</span>' +
+            '<span class="pitfall-text">' + escapeHtml(text) + '</span>' +
           '</div>';
       }
       container.innerHTML = html;
@@ -860,9 +903,32 @@
         } else if (rList.length === 0) {
           recBox.innerHTML = '<div style="color: var(--text-sub); font-size: 10.5px; padding: 2px;">' + L('Рецепты записываются автоматически при починке тестов', 'Win recipes are recorded automatically when failing tests pass') + '</div>';
         } else {
-          recBox.innerHTML = rList.slice(0, 8).map(function (r) {
-            const label = (r.errorExcerpt ? r.errorExcerpt + ' → ' : '') + (r.fixSummary || '');
-            return '<div class="pitfall-item"><span class="pitfall-bullet">✓</span><span>' + escapeHtml(label) + '</span></div>';
+          const dedupMap = new Map();
+          for (let i = 0; i < rList.length; i++) {
+            const r = rList[i] || {};
+            const errTxt = String(r.errorExcerpt || '').trim();
+            const fixTxt = String(r.fixSummary || '').trim();
+            const key = errTxt.toLowerCase().slice(0, 96) + '|' + fixTxt.toLowerCase().slice(0, 96);
+            const curHits = Math.max(1, Number(r.hits || 1));
+            if (dedupMap.has(key)) {
+              const prev = dedupMap.get(key);
+              prev.hits += curHits;
+            } else {
+              dedupMap.set(key, { errorExcerpt: errTxt, fixSummary: fixTxt, hits: curHits });
+            }
+          }
+          const uniqueRecipes = Array.from(dedupMap.values()).slice(0, 8);
+          recBox.innerHTML = uniqueRecipes.map(function (r) {
+            let fixDisplay = r.fixSummary;
+            if (isRu()) {
+              const m = fixDisplay.match(/^Passing verification \(([^)]+)\) cleared (\d+) pitfall\(s\)$/i);
+              if (m) {
+                fixDisplay = 'Проверка (' + m[1] + ') закрыла граблей: ' + m[2];
+              }
+            }
+            const label = (r.errorExcerpt ? r.errorExcerpt + ' → ' : '') + fixDisplay;
+            const hitsBadge = r.hits > 1 ? '<span class="recipe-hits-badge">×' + r.hits + '</span>' : '';
+            return '<div class="pitfall-item"><span class="pitfall-bullet is-win">✓</span><span class="pitfall-text">' + escapeHtml(label) + hitsBadge + '</span></div>';
           }).join('');
         }
       }
@@ -887,18 +953,18 @@
     const BLOCK_REQUIRED_SECTIONS = {
       skillsSectionCard: ['skills'],
       agentModeCard: ['circuit'],
+      swarmBehaviorCard: ['swarm'],
       swarmTelemetryCard: ['swarm'],
       gpuRamCard: ['hw'],
+      expertRamGpuFieldset: ['hw'],
       sentinelSectionCard: ['hw'],
-      snapshotsBayesianSpoiler: ['checkpoints', 'bayesian'],
       checkpointsCard: ['checkpoints'],
-      intelligenceBayesianCard: ['bayesian'],
-      expertDetailsBox: ['circuit', 'compaction', 'pitfalls'],
+      intelligenceBayesianCard: ['bayesian', 'circuit'],
       expertCircuitBox: ['circuit'],
+      memoryContextCard: ['compaction'],
       expertPitfallsBox: ['pitfalls'],
       expertKnowledgeBox: ['pitfalls'],
       expertGuardrailsCard: ['compaction'],
-      expertRamGpuFieldset: ['hw'],
     };
     const _visibleBlockIds = new Set();
     let _blockIntersectionObserver = null;
@@ -912,18 +978,16 @@
       const el = document.getElementById(blockId);
       if (!el) return false;
       if (el.classList.contains('is-collapsed')) return false;
-      const collapsedAncestor = el.closest && el.closest('.lg-card.is-collapsed');
-      if (collapsedAncestor) return false;
-      if (el.tagName === 'DETAILS') {
-        if (!el.open) return false;
-      } else {
-        const parentDetails = el.closest && el.closest('details');
-        if (parentDetails && !parentDetails.open) return false;
+      if (document.body && document.body.getAttribute('data-panel-view') === 'full') {
+        const curTab = normalizePanelFullTab(document.body.getAttribute('data-full-tab'));
+        const tabHost = el.closest ? el.closest('[data-tab-panel]') : null;
+        const ownTab = tabHost && typeof tabHost.getAttribute === 'function' ? tabHost.getAttribute('data-tab-panel') : '';
+        if (ownTab && ownTab !== curTab) return false;
       }
       if (_blockObserverReady && _visibleBlockIds.size > 0) {
         if (_visibleBlockIds.has(blockId)) return true;
-        const parentDetails = el.closest && el.closest('details');
-        if (parentDetails && parentDetails.id && _visibleBlockIds.has(parentDetails.id)) {
+        const tabHost = el.closest ? el.closest('[data-tab-panel]') : null;
+        if (tabHost && tabHost.id && _visibleBlockIds.has(tabHost.id)) {
           return true;
         }
         return false;
@@ -962,6 +1026,9 @@
       if (isLiteView || isBlockRenderable('gpuRamCard') || isBlockRenderable('expertRamGpuFieldset')) {
         runHwOnce();
         return;
+      }
+      if (typeof syncHeaderHardwareLivePills === 'function') {
+        syncHeaderHardwareLivePills(gpu, ramCache, s, cpu);
       }
       _pendingBlockRenders.gpuRamCard = runHwOnce;
       _pendingBlockRenders.expertRamGpuFieldset = runHwOnce;
@@ -1081,7 +1148,7 @@
           updateAutopilotLiveText(currentState, data.circuitBreaker);
         }
         if (data.compaction !== undefined) {
-          scheduleBlockRender('expertGuardrailsCard', function () {
+          scheduleBlockRender('memoryContextCard', function () {
             renderCompaction(data.compaction);
           });
         }
@@ -1119,26 +1186,23 @@
       if (document.body && document.body.getAttribute('data-panel-view') === 'lite') {
         return ['core', 'swarm', 'hw'];
       }
-      const secs = ['core'];
-      if (isBlockRenderable('swarmTelemetryCard')) {
+      const curTab = normalizePanelFullTab(document.body && document.body.getAttribute('data-full-tab'));
+      const secs = ['core', 'hw'];
+      if (curTab === 'behavior' || curTab === 'economy') {
         secs.push('swarm');
       }
-      if (isBlockRenderable('expertCircuitBox') || isBlockRenderable('agentModeCard')) {
+      if (curTab === 'behavior' || curTab === 'bugs') {
         secs.push('circuit');
       }
-      if (isBlockRenderable('expertDetailsBox') || isBlockRenderable('expertGuardrailsCard')) {
+      if (curTab === 'bugs') {
+        secs.push('checkpoints');
+        secs.push('bayesian');
+      }
+      if (curTab === 'memory' || curTab === 'settings') {
         secs.push('compaction');
       }
-      if (
-        isBlockRenderable('gpuRamCard') ||
-        isBlockRenderable('sentinelSectionCard') ||
-        isBlockRenderable('expertRamGpuFieldset') ||
-        _gpuPullActiveUi
-      ) {
-        secs.push('hw');
-      }
-      if (isBlockRenderable('intelligenceBayesianCard')) {
-        secs.push('bayesian');
+      if (curTab === 'memory') {
+        secs.push('pitfalls');
       }
       return secs;
     }
@@ -1220,11 +1284,7 @@
       const isAdvisor = s.confirmBeforeRun !== false;
       const confirmThr = s.confirmThreshold || 'M';
 
-      document.getElementById('mode-advisor').className = 'mode-card' + (isAdvisor ? ' active-card' : '');
-      document.getElementById('mode-autopilot').className = 'mode-card' + (!isAdvisor ? ' active-card' : '');
-
-      document.getElementById('advisorBox').className = 'sub-settings' + (isAdvisor ? ' visible' : '');
-      document.getElementById('autopilotBox').className = 'sub-settings' + (!isAdvisor ? ' visible' : '');
+      applyAgentModeBoxes(isAdvisor);
 
       document.querySelectorAll('#confirmThresholdGroup button, #liteConfirmThresholdGroup button').forEach((btn) => {
         btn.classList.toggle('active', btn.dataset.val === confirmThr);
@@ -1270,6 +1330,15 @@
         ? normalizePanelViewMode(wizDraft.panelViewMode || s.panelViewMode)
         : normalizePanelViewMode(s.panelViewMode);
       applyPanelViewModeDom(activeViewMode, !(wizModalOpen && wizViewModePreviewDirty));
+
+      if (_panelFullTabUserSelected && _panelFullTabActiveLocal) {
+        if (currentState && typeof currentState === 'object') {
+          currentState.panelFullTab = _panelFullTabActiveLocal;
+        }
+        applyPanelFullTabDom(_panelFullTabActiveLocal, false);
+      } else {
+        applyPanelFullTabDom(s.panelFullTab, Boolean(s.panelFullTab));
+      }
 
       if (typeof applyPanelUiScaleDom === 'function') {
         applyPanelUiScaleDom(s.panelUiScale || 'auto', true);
@@ -1326,11 +1395,21 @@
       });
 
       const activeAutoSpecMode = (s.autoSpecMode === 'off' || s.autoSpecMode === 'always') ? s.autoSpecMode : 'auto';
+      const activeAutoSpecOutput = s.autoSpecOutput === 'chat' ? 'chat' : 'thinking';
       document.querySelectorAll('#autoSpecModeGroup button').forEach((btn) => {
         btn.classList.toggle('active', btn.dataset.val === activeAutoSpecMode);
       });
+      document.querySelectorAll('#autoSpecOutputGroup button').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.val === activeAutoSpecOutput);
+      });
       const autoSpecHintEl = document.getElementById('autoSpecModeHint');
       if (autoSpecHintEl) {
+        const outSuffixRu = activeAutoSpecOutput === 'chat'
+          ? ' Вывод промпта: компактным блоком в чат перед выполнением.'
+          : ' Вывод промпта: скрытно в размышлениях (<thinking>).';
+        const outSuffixEn = activeAutoSpecOutput === 'chat'
+          ? ' Output: compact prompt shown in chat before executing.'
+          : ' Output: silent in <thinking>.';
         if (activeAutoSpecMode === 'off') {
           autoSpecHintEl.textContent = L(
             'Режим «Выкл»: скрытый внутренний промпт не собирается (можно включить разово через /spec в чате).',
@@ -1338,13 +1417,13 @@
           );
         } else if (activeAutoSpecMode === 'always') {
           autoSpecHintEl.textContent = L(
-            'Режим «Всегда»: перед любыми правками агент скрытно компилирует точный промпт по строкам, контрактам и тестам.',
-            '"Always" mode: before any code edit, the agent silently compiles an exact file/line/contract prompt.'
+            'Режим «Всегда»: перед любыми правками агент компилирует детальный промпт по файлам, контрактам и проверкам.' + outSuffixRu,
+            '"Always" mode: before any code edit, the agent compiles a detailed file/contract/verify prompt.' + outSuffixEn
           );
         } else {
           autoSpecHintEl.textContent = L(
-            'Режим «Авто M+»: на задачах M/L/XL агент сам собирает внутренний промпт по файлам, строкам и контрактам и сразу идёт по нему.',
-            '"Auto M+" mode: on M/L/XL tasks the agent silently compiles an internal file/line/contract prompt and executes against it.'
+            'Режим «Авто M+»: на задачах M/L/XL агент сам собирает промпт по файлам, строкам и контрактам и сразу идёт по нему.' + outSuffixRu,
+            '"Auto M+" mode: on M/L/XL tasks the agent compiles a file/line/contract prompt and executes against it.' + outSuffixEn
           );
         }
       }
@@ -1353,11 +1432,54 @@
       document.querySelectorAll('#leanModeGroup button').forEach((btn) => {
         btn.classList.toggle('active', btn.dataset.val === activeLeanMode);
       });
+      const leanHintEl = document.getElementById('leanModeHint');
+      if (leanHintEl) {
+        if (activeLeanMode === 'off') {
+          leanHintEl.textContent = L(
+            'Режим «Выкл»: правила экономии нового кода Ponytail отключены.',
+            '"Off" mode: Ponytail code-reuse ladder is disabled.'
+          );
+        } else if (activeLeanMode === 'lite') {
+          leanHintEl.textContent = L(
+            'Режим «Lite»: подсказывает компактные альтернативы на базе существующих функций проекта.',
+            '"Lite" mode: suggests compact alternatives reusing existing repo helpers.'
+          );
+        } else if (activeLeanMode === 'ultra') {
+          leanHintEl.textContent = L(
+            'Режим «Ultra»: жёстко оспаривает лишние абстракции и новые зависимости до правок.',
+            '"Ultra" mode: strictly challenges redundant abstractions and deps before editing.'
+          );
+        } else {
+          leanHintEl.textContent = L(
+            'Режим «Full»: 7-ступенчатая лестница переиспользования кода и метки shortcut:.',
+            '"Full" mode: 7-step code-reuse ladder with explicit shortcut: markers.'
+          );
+        }
+      }
 
       const activeTerseMode = (s.terseMode === 'caveman' || s.terseMode === 'ultracave') ? s.terseMode : 'off';
       document.querySelectorAll('#terseModeGroup button').forEach((btn) => {
         btn.classList.toggle('active', btn.dataset.val === activeTerseMode);
       });
+      const terseHintEl = document.getElementById('terseModeHint');
+      if (terseHintEl) {
+        if (activeTerseMode === 'caveman') {
+          terseHintEl.textContent = L(
+            'Режим «Caveman»: стандарт ASD-STE100 (до 20 слов во фразе, без воды; код не сокращается).',
+            '"Caveman" mode: ASD-STE100 brevity (<=20 words/sentence, zero filler; code untouched).'
+          );
+        } else if (activeTerseMode === 'ultracave') {
+          terseHintEl.textContent = L(
+            'Режим «Ultra»: сверхплотный телеграфный ответ до 12 слов во фразе (код без сокращений).',
+            '"Ultra" mode: ultra-dense <=12 words/sentence telegraphic replies (code untouched).'
+          );
+        } else {
+          terseHintEl.textContent = L(
+            'Режим «Выкл»: стандартный лаконичный стиль ответов без жёсткого лимита слов.',
+            '"Off" mode: standard concise replies without strict per-sentence word cap.'
+          );
+        }
+      }
       const grillHintEl = document.getElementById('grillModeHint');
       if (grillHintEl) {
         if (activeGrillMode === 'off') {
@@ -1483,7 +1605,7 @@
         });
       }
       if (payload && payload.compaction !== undefined) {
-        scheduleBlockRender('expertGuardrailsCard', function () {
+        scheduleBlockRender('memoryContextCard', function () {
           renderCompaction(payload.compaction);
         });
       }
@@ -1503,13 +1625,12 @@
         });
       }
       syncSentinelCheckboxes(s);
-      const selCompThresh = document.getElementById('sel-compactionThreshold');
-      if (selCompThresh && document.activeElement !== selCompThresh) {
-        const curThresh = String(s.compactionTokenThreshold || 120000);
-        if (selCompThresh.querySelector('option[value="' + curThresh + '"]')) {
-          selCompThresh.value = curThresh;
-        }
-      }
+      const curThresh = String(s.compactionTokenThreshold || 120000);
+      document.querySelectorAll('#compactionThresholdGroup button').forEach(function (btn) {
+        const isActive = btn.dataset.val === curThresh;
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
       applyHookProfileOverridesToUi(activeHookProfile, s);
       const hwSnapCtx = typeof _lastHwRenderCtx !== 'undefined' ? _lastHwRenderCtx : null;
       const resolvedGpuForRender = (payload && payload.gpu !== undefined)
@@ -1525,7 +1646,6 @@
       if (typeof syncHwHeaderSummaryBadge === 'function') {
         syncHwHeaderSummaryBadge(s, resolvedGpuForRender, resolvedRamForRender);
       }
-      const isLiteViewHw = document.body && document.body.getAttribute('data-panel-view') === 'lite';
       const hasAnyHwData = Boolean(
         (payload && (payload.gpu !== undefined || payload.ramCache !== undefined || payload.cpu !== undefined)) ||
         resolvedGpuForRender ||
@@ -1534,12 +1654,7 @@
       );
       if (
         !(payload && payload._uiLayoutOnly === true) &&
-        hasAnyHwData &&
-        (
-          (payload && (payload.gpu !== undefined || payload.ramCache !== undefined || payload.cpu !== undefined)) ||
-          isLiteViewHw ||
-          isBlockRenderable('expertRamGpuFieldset')
-        )
+        hasAnyHwData
       ) {
         scheduleHwBlockRender(
           resolvedGpuForRender,
@@ -1586,8 +1701,8 @@
           );
         } else {
           healthTitleEl.textContent = L(
-            'Разведка ИИ-Пилота активна (' + activeCount + ' из ' + guardrailModules.length + ' систем защиты включено)',
-            'AI Pilot scouting active (' + activeCount + ' of ' + guardrailModules.length + ' guardrails enabled)'
+            'Разведка ИИ-Пилота активна (' + activeCount + ' из ' + guardrailModules.length + ' ключевых контуров включено)',
+            'AI Pilot scouting active (' + activeCount + ' of ' + guardrailModules.length + ' core contours enabled)'
           );
         }
 
@@ -1595,6 +1710,9 @@
       }
       if (typeof syncDebugLoggerHeaderUi === 'function') {
         syncDebugLoggerHeaderUi(s, payload ? payload.debugLogStatus : null);
+      }
+      if (typeof scheduleSyncAllSlidingPills === 'function') {
+        scheduleSyncAllSlidingPills();
       }
     }
 
@@ -1644,6 +1762,8 @@
         t.inputTokens || 0,
         t.outputTokens || 0,
         t.totalSavedTokens || 0,
+        t.ramSavedTokens || 0,
+        t.cpuSavedTokens || 0,
         t.gpuSavedTokens || 0,
         t.cacheHitRate || 0,
         t.totalChats || 0,
@@ -1686,12 +1806,21 @@
         cpuTel.workerBatches || 0,
         cpuTel.lastRerankMs || 0,
         (cpuTel.sbflLocalizations || 0) + (cpuTel.bitapHealedPatches || 0) + (cpuTel.pprBridgeQueries || 0),
+        (cpu.liveActivity && cpu.liveActivity.opSeq) || 0,
+        (cpu.liveActivity && cpu.liveActivity.inFlightCount) || 0,
+        (cpu.liveActivity && cpu.liveActivity.isWorking) ? 1 : 0,
+        (cpu.liveActivity && cpu.liveActivity.isAfterglow) ? 1 : 0,
+        (cpu.liveActivity && cpu.liveActivity.currentOp) || '',
+        (cpu.pool && cpu.pool.busyWorkers) || 0,
+        ram.active ? 1 : 0,
         ram.cacheUsedMb || 0,
         ram.hits || 0,
         ram.slices || 0,
         ram.searches || 0,
         (ram.liveActivity && ram.liveActivity.opSeq) || 0,
+        (ram.liveActivity && ram.liveActivity.activeOps) || 0,
         (ram.liveActivity && ram.liveActivity.isWorking) ? 1 : 0,
+        (ram.liveActivity && ram.liveActivity.lastOp) || '',
         (data.hardwareCeilings && data.hardwareCeilings.maxVramMb) || 0,
         (data.hardwareCeilings && data.hardwareCeilings.maxRamBudgetMb) || 0,
         (data.hardwareCeilings && data.hardwareCeilings.maxCpuThreads) || 0,
@@ -1744,16 +1873,12 @@
     }
 
     function renderSmartPilotBanner(info) {
-      const bannerTextEl = document.getElementById('smartBannerText');
-      if (!bannerTextEl || !info) return;
-      const profileLbl = pickText(info, 'label', 'labelEn', '');
-      if (!profileLbl) return;
-      bannerTextEl.innerHTML =
-        '<strong>' + L('ИИ-Пилот активен', 'AI Pilot Active') + '</strong>' +
-        '<span class="smart-banner-sub"> · ' +
-        L('Профиль воркспейса: ', 'Workspace profile: ') + '<strong>' +
-        L('«', '"') + escHtml(profileLbl) + L('»', '"') +
-        '</strong> · ' + L('Навыки в Авто-режиме', 'Skills in Auto mode') + '</span>';
+      if (info && typeof info === 'object') {
+        detectedProjectInfo = info;
+      }
+      if (typeof syncWorkspaceSwitcherBadge === 'function') {
+        syncWorkspaceSwitcherBadge();
+      }
     }
 
     let _knownUiBuildVersion = null;
@@ -1810,6 +1935,7 @@
       syncLoadedSectionsFromPayload(data);
       if (lastPayloadCache) {
         lastPayloadCache.telemetry = data.telemetry;
+        if (data.roiTimeline !== undefined) lastPayloadCache.roiTimeline = data.roiTimeline;
         if (data.wiretapFaults !== undefined) lastPayloadCache.wiretapFaults = data.wiretapFaults;
         if (data.quotaPacer !== undefined) lastPayloadCache.quotaPacer = data.quotaPacer;
         if (data.circuitBreaker !== undefined) lastPayloadCache.circuitBreaker = data.circuitBreaker;
@@ -1838,6 +1964,9 @@
       syncSwarmHeaderPills(data.telemetry, currentState);
       scheduleBlockRender('swarmTelemetryCard', function () {
         renderTelemetry(data.telemetry);
+        if (data.roiTimeline || _lastRoiTimeline) {
+          renderRoiTimeline(data.roiTimeline || _lastRoiTimeline, data.quotaPacer || _lastQuotaPacerSnap, false);
+        }
       });
       if (data.circuitBreaker !== undefined) {
         scheduleBlockRender('expertCircuitBox', function () {
@@ -1846,7 +1975,7 @@
         updateAutopilotLiveText(currentState, data.circuitBreaker);
       }
       if (data.compaction !== undefined) {
-        scheduleBlockRender('expertGuardrailsCard', function () {
+        scheduleBlockRender('memoryContextCard', function () {
           renderCompaction(data.compaction);
         });
       }
@@ -1875,6 +2004,9 @@
       if (data.taskProgress || data.floatingHud) {
         renderTaskProgressAndHud(data.taskProgress, data.floatingHud, currentState);
       }
+      if (data.composerHandoff && typeof applyExternalComposerHandoff === 'function') {
+        applyExternalComposerHandoff(data.composerHandoff);
+      }
     }
 
     let _agHasLiveTasks = false;
@@ -1894,6 +2026,9 @@
       if (telemetryPollInFlight || document.visibilityState === 'hidden') return;
       telemetryPollInFlight = true;
       try {
+        if (typeof refreshSidecarOpenWorkspacesFast === 'function') {
+          await refreshSidecarOpenWorkspacesFast(false);
+        }
         const activeSections = computeActiveTelemetrySections();
         const res = await panelFetch('/api/telemetry?sections=' + encodeURIComponent(activeSections.join(',')), { method: 'GET' });
         if (res && res.ok) {
@@ -1911,15 +2046,95 @@
     }
 
     let flashStatusTimer = null;
+    let pgStatusToastTimer = null;
+    let _lastComposerHandoffSeq = 0;
+
+    function insertIntoLocalSmartComposer(opts) {
+      const safe = opts && typeof opts === 'object' ? opts : {};
+      const tokens = Array.isArray(safe.tokens) ? safe.tokens.filter(Boolean) : [];
+      const draftQ = String(safe.prompt || '').trim();
+      const rawText = String(safe.text || '').trim();
+      if (document.body && document.body.getAttribute('data-panel-view') === 'full' && typeof setPanelFullTab === 'function') {
+        const curTab = document.body.getAttribute('data-full-tab') || 'cockpit';
+        if (curTab !== 'cockpit') {
+          setPanelFullTab('cockpit', { silent: true, skipAutoExpand: true });
+        }
+      }
+      const compCard = document.getElementById('smartComposerCard');
+      if (compCard && compCard.classList.contains('is-collapsed')) {
+        compCard.classList.remove('is-collapsed');
+      }
+      const compInput = document.getElementById('smartComposerInput');
+      if (!compInput) return false;
+      let cur = compInput.value || '';
+      if (tokens.length > 0 || draftQ) {
+        for (let i = 0; i < tokens.length; i++) {
+          const tok = tokens[i];
+          if (cur.indexOf(tok) === -1) {
+            const sep = cur && !/\s$/.test(cur) ? (draftQ ? '\n' : ' ') : '';
+            cur = cur + sep + tok;
+          }
+        }
+        if (draftQ && cur.indexOf(draftQ) === -1) {
+          const sep = cur && !/\s$/.test(cur) ? ' ' : '';
+          cur = cur + sep + draftQ;
+        }
+        compInput.value = (draftQ || !cur || /\s$/.test(cur)) ? cur : (cur + ' ');
+      } else if (rawText) {
+        const sep = cur && !/\s$/.test(cur) ? '\n' : '';
+        compInput.value = cur.indexOf(rawText) !== -1 ? cur : (cur + sep + rawText);
+      }
+      if (typeof _smartLastDraft !== 'undefined') {
+        _smartLastDraft = compInput.value;
+      }
+      if (typeof renderSmartComposerMirror === 'function') {
+        renderSmartComposerMirror();
+      }
+      if (compCard && typeof compCard.scrollIntoView === 'function') {
+        try { compCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch {}
+      }
+      try { compInput.focus(); } catch {}
+      return true;
+    }
+
+    function applyExternalComposerHandoff(handoff) {
+      if (!handoff || typeof handoff !== 'object') return false;
+      if (typeof pgIsStandaloneView === 'function' && pgIsStandaloneView()) return false;
+      const seq = Number(handoff.seq || 0);
+      if (!seq || seq <= _lastComposerHandoffSeq) return false;
+      _lastComposerHandoffSeq = seq;
+      const ok = insertIntoLocalSmartComposer(handoff);
+      if (ok) {
+        flashStatus(L('Вопрос из Карты проекта добавлен в Композер ✓', 'Project Map question added to Composer ✓'));
+      }
+      return ok;
+    }
+
     function flashStatus(text) {
       const pill = document.getElementById('statusPill');
-      if (!pill) return;
-      pill.textContent = text;
-      if (flashStatusTimer) clearTimeout(flashStatusTimer);
-      flashStatusTimer = setTimeout(() => {
-        flashStatusTimer = null;
-        pill.textContent = L('Готово · Синхронизировано', 'Ready · Synced');
-      }, 2500);
+      if (pill) {
+        pill.textContent = text;
+        if (flashStatusTimer) clearTimeout(flashStatusTimer);
+        flashStatusTimer = setTimeout(() => {
+          flashStatusTimer = null;
+          pill.textContent = L('Готово · Синхронизировано', 'Ready · Synced');
+        }, 2500);
+      }
+      const pgToast = document.getElementById('pgStatusToast');
+      const pgModal = document.getElementById('projectGraphModal');
+      const isPgVisible = Boolean(
+        (document.body && document.body.classList && document.body.classList.contains('pg-standalone')) ||
+        (pgModal && pgModal.classList && pgModal.classList.contains('open'))
+      );
+      if (pgToast && isPgVisible) {
+        pgToast.textContent = text;
+        pgToast.hidden = false;
+        if (pgStatusToastTimer) clearTimeout(pgStatusToastTimer);
+        pgStatusToastTimer = setTimeout(() => {
+          pgStatusToastTimer = null;
+          pgToast.hidden = true;
+        }, 3200);
+      }
     }
 
     let _pendingUpdatePatch = null;
@@ -1990,12 +2205,13 @@
             if (!updated || updated.ok === false || !updated.state) {
               throw new Error((updated && updated.error) ? updated.error : L('Ответ сервера без state', 'Server response missing state'));
             }
+            if (patchToSend && patchToSend.panelFullTab && updated.state && updated.state.panelFullTab !== patchToSend.panelFullTab) {
+              updated.state.panelFullTab = normalizePanelFullTab(patchToSend.panelFullTab);
+            }
             // Refresh rollback baseline to confirmed server state for any trailing queued batch.
             _batchRollbackSnap = cloneRollbackSnap(updated.state);
             const sentKeys = patchToSend && typeof patchToSend === 'object' ? Object.keys(patchToSend) : [];
-            const isLayoutOnlySent = sentKeys.length > 0 && sentKeys.every(function (k) {
-              return k === 'panelCollapsedCards' || k === 'panelOpenSpoilers' || k === 'panelBlockOrder';
-            });
+            const isLayoutOnlySent = isUiLayoutOnlyPatch(patchToSend);
             const payloadForRender = updated.fast === true && lastPayloadCache
               ? Object.assign({}, lastPayloadCache, updated, isLayoutOnlySent ? { _uiLayoutOnly: true } : null)
               : Object.assign({}, updated, (updated.fast === true && isLayoutOnlySent) ? { _uiLayoutOnly: true } : null);
@@ -2004,7 +2220,9 @@
             }
             if (!_pendingUpdatePatch) {
               renderPayload(payloadForRender);
-              flashStatus(L('Сохранено в router-state.json ✓', 'Saved to router-state.json ✓'));
+              if (!(sentKeys.length === 1 && sentKeys[0] === 'panelFullTab')) {
+                flashStatus(L('Сохранено в router-state.json ✓', 'Saved to router-state.json ✓'));
+              }
             } else if (updated.state) {
               currentState = mergeStatePatches(updated.state, _pendingUpdatePatch);
             }
@@ -2031,7 +2249,7 @@
       if (!patch || typeof patch !== 'object') return false;
       const keys = Object.keys(patch);
       return keys.length > 0 && keys.every(function (k) {
-        return k === 'panelCollapsedCards' || k === 'panelOpenSpoilers' || k === 'panelBlockOrder';
+        return k === 'panelCollapsedCards' || k === 'panelOpenSpoilers' || k === 'panelBlockOrder' || k === 'panelFullTab';
       });
     }
 
@@ -2061,6 +2279,134 @@
         _updateBatchWaiters.push(resolve);
         void flushPendingStateUpdates();
       });
+    }
+
+    let _agentModeLastAdvisor = null;
+
+    function animateSubSettingsBox(box, shouldShow) {
+      if (!box) return;
+      const seq = (box._subSettingsSeq || 0) + 1;
+      box._subSettingsSeq = seq;
+      let inFlightH = 0;
+      let inFlightOpacity = null;
+      if (box._subSettingsAnim) {
+        inFlightH = typeof uiMeasureLayoutHeight === 'function' ? uiMeasureLayoutHeight(box) : 0;
+        if (typeof getComputedStyle === 'function') {
+          try { inFlightOpacity = getComputedStyle(box).opacity; } catch {}
+        }
+        try { box._subSettingsAnim.cancel(); } catch {}
+        box._subSettingsAnim = null;
+      }
+
+      if (typeof uiCanAnimateEl !== 'function' || !uiCanAnimateEl(box)) {
+        box.classList.remove('is-animating');
+        box.classList.toggle('visible', shouldShow);
+        box.style.overflow = '';
+        return;
+      }
+
+      if (shouldShow) {
+        box.classList.add('visible', 'is-animating');
+        const cs = typeof getComputedStyle === 'function' ? getComputedStyle(box) : null;
+        const targetH = typeof uiMeasureLayoutHeight === 'function' ? uiMeasureLayoutHeight(box) : 0;
+        if (targetH <= 0) {
+          box.classList.remove('is-animating');
+          return;
+        }
+        const mt = cs ? cs.marginTop : '8px';
+        const pt = cs ? cs.paddingTop : '8px';
+        const startH = inFlightH > 0 ? inFlightH : 0;
+        const startOpacity = inFlightOpacity !== null ? inFlightOpacity : 0;
+        try {
+          const anim = box.animate(
+            [
+              {
+                height: startH + 'px',
+                opacity: startOpacity,
+                marginTop: inFlightH > 0 ? mt : '0px',
+                paddingTop: inFlightH > 0 ? pt : '0px',
+                transform: 'translate3d(0, -4px, 0)'
+              },
+              {
+                height: targetH + 'px',
+                opacity: 1,
+                marginTop: mt,
+                paddingTop: pt,
+                transform: 'translate3d(0, 0, 0)'
+              }
+            ],
+            { duration: 240, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' }
+          );
+          box._subSettingsAnim = anim;
+          anim.onfinish = function () {
+            if (box._subSettingsSeq !== seq) return;
+            box._subSettingsAnim = null;
+            box.classList.remove('is-animating');
+            box.style.overflow = '';
+            if (typeof scheduleSyncAllSlidingPills === 'function') scheduleSyncAllSlidingPills();
+            if (typeof syncFullLeftRailStickyOffset === 'function') syncFullLeftRailStickyOffset();
+          };
+        } catch {
+          box.classList.remove('is-animating');
+        }
+        return;
+      }
+
+      const cs = typeof getComputedStyle === 'function' ? getComputedStyle(box) : null;
+      const startH = inFlightH > 0 ? inFlightH : (typeof uiMeasureLayoutHeight === 'function' ? uiMeasureLayoutHeight(box) : 0);
+      box.classList.remove('visible');
+      if (startH <= 0) {
+        box.classList.remove('is-animating');
+        return;
+      }
+      box.classList.add('is-animating');
+      const mt = cs ? cs.marginTop : '8px';
+      const pt = cs ? cs.paddingTop : '8px';
+      const startOpacity = inFlightOpacity !== null ? inFlightOpacity : 1;
+      try {
+        const anim = box.animate(
+          [
+            { height: startH + 'px', opacity: startOpacity, marginTop: mt, paddingTop: pt, transform: 'translate3d(0, 0, 0)' },
+            { height: '0px', opacity: 0, marginTop: '0px', paddingTop: '0px', transform: 'translate3d(0, -4px, 0)' }
+          ],
+          { duration: 200, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' }
+        );
+        box._subSettingsAnim = anim;
+        anim.onfinish = function () {
+          if (box._subSettingsSeq !== seq) return;
+          box._subSettingsAnim = null;
+          box.classList.remove('is-animating');
+          box.style.overflow = '';
+          if (typeof syncFullLeftRailStickyOffset === 'function') syncFullLeftRailStickyOffset();
+        };
+      } catch {
+        box.classList.remove('is-animating');
+      }
+    }
+
+    function applyAgentModeBoxes(isAdvisor) {
+      const advCard = document.getElementById('mode-advisor');
+      const autoCard = document.getElementById('mode-autopilot');
+      const advBox = document.getElementById('advisorBox');
+      const autoBox = document.getElementById('autopilotBox');
+      if (advCard) advCard.className = 'mode-card' + (isAdvisor ? ' active-card' : '');
+      if (autoCard) autoCard.className = 'mode-card' + (!isAdvisor ? ' active-card' : '');
+      const shouldAnimate = _agentModeLastAdvisor !== null && _agentModeLastAdvisor !== isAdvisor;
+      if (advBox) {
+        if (shouldAnimate) animateSubSettingsBox(advBox, isAdvisor);
+        else {
+          advBox.classList.remove('is-animating');
+          advBox.classList.toggle('visible', isAdvisor);
+        }
+      }
+      if (autoBox) {
+        if (shouldAnimate) animateSubSettingsBox(autoBox, !isAdvisor);
+        else {
+          autoBox.classList.remove('is-animating');
+          autoBox.classList.toggle('visible', !isAdvisor);
+        }
+      }
+      _agentModeLastAdvisor = isAdvisor;
     }
 
     function setAdvisorMode(confirmBeforeRun) {
@@ -2171,13 +2517,10 @@
     let _liteLastHwMask = null;
 
     function applyPanelViewModeDom(mode, syncStorage) {
-      const valid = normalizePanelViewMode(mode);
+      const valid = 'full';
       if (document.body) {
         document.body.setAttribute('data-panel-view', valid);
       }
-      document.querySelectorAll('#panelViewModeGroup button').forEach((btn) => {
-        btn.classList.toggle('active', btn.dataset.view === valid);
-      });
       if (syncStorage) {
         try {
           localStorage.setItem(PANEL_VIEW_STORAGE_KEY, valid);
@@ -2189,26 +2532,149 @@
       return valid;
     }
 
-    function setPanelViewMode(mode) {
-      const valid = applyPanelViewModeDom(mode, true);
+    function setPanelViewMode() {
+      const valid = applyPanelViewModeDom('full', true);
       wizDraft.panelViewMode = valid;
       wizViewModePreviewDirty = false;
       void updateState({ panelViewMode: valid });
-      if (valid === 'full') {
-        flushVisibleBlockRenders();
-        for (let i = 0; i < DEFAULT_PANEL_BLOCK_ORDER.length; i++) {
-          maybeLoadMissingSectionsForBlock(DEFAULT_PANEL_BLOCK_ORDER[i]);
-        }
-        void pollTelemetryTick();
-      } else if (lastPayloadCache && lastPayloadCache.sentinel !== undefined) {
-        renderSentinelStatus(lastPayloadCache.sentinel, currentState);
+      flushVisibleBlockRenders();
+      for (let i = 0; i < DEFAULT_PANEL_BLOCK_ORDER.length; i++) {
+        maybeLoadMissingSectionsForBlock(DEFAULT_PANEL_BLOCK_ORDER[i]);
       }
+      void pollTelemetryTick();
       if (typeof renderGuardDock === 'function') {
         renderGuardDock(lastPayloadCache ? lastPayloadCache.guardPulse : null);
       }
-      flashStatus(valid === 'lite'
-        ? L('Включён краткий режим Lite ✓', 'Switched to Lite mode ✓')
-        : L('Включён полный режим Full ✓', 'Switched to Full mode ✓'));
+    }
+
+    const PANEL_FULL_TAB_STORAGE_KEY = 'tunnel.panelFullTab';
+    let _panelFullTabUserSelected = false;
+    let _panelFullTabActiveLocal = null;
+    const VALID_PANEL_FULL_TABS = new Set(['cockpit', 'behavior', 'economy', 'hardware', 'bugs', 'memory', 'settings']);
+    const LEGACY_PANEL_FULL_TAB_MAP = {
+      core: 'settings',
+      all: 'cockpit',
+    };
+    const FULL_TAB_OWNED_BLOCKS = {
+      cockpit: ['smartComposerCard'],
+      behavior: ['agentModeCard', 'skillProfilesFieldset', 'swarmBehaviorCard'],
+      economy: ['swarmTelemetryCard'],
+      hardware: ['gpuRamCard', 'expertRamGpuFieldset'],
+      bugs: ['sentinelSectionCard', 'checkpointsCard', 'intelligenceBayesianCard', 'expertCircuitBox'],
+      memory: ['memoryContextCard', 'expertKnowledgeBox', 'expertPitfallsBox'],
+      settings: ['skillsSectionCard', 'expertGuardrailsCard', 'expertProfileCard'],
+    };
+
+    function normalizePanelFullTab(rawTab) {
+      const s = typeof rawTab === 'string' ? rawTab.trim().toLowerCase() : '';
+      const mapped = LEGACY_PANEL_FULL_TAB_MAP[s] || s;
+      return VALID_PANEL_FULL_TABS.has(mapped) ? mapped : 'cockpit';
+    }
+
+    function getFullTabForElementId(elId) {
+      const id = String(elId || '').trim();
+      if (!id) return 'cockpit';
+      const el = document.getElementById(id);
+      if (el && typeof el.closest === 'function') {
+        const host = el.closest('[data-tab-panel]');
+        const attrTab = host && typeof host.getAttribute === 'function' ? host.getAttribute('data-tab-panel') : '';
+        if (attrTab && VALID_PANEL_FULL_TABS.has(attrTab)) return attrTab;
+      }
+      const tabKeys = Object.keys(FULL_TAB_OWNED_BLOCKS);
+      for (let i = 0; i < tabKeys.length; i++) {
+        if (FULL_TAB_OWNED_BLOCKS[tabKeys[i]].indexOf(id) !== -1) {
+          return tabKeys[i];
+        }
+      }
+      let cur = el ? el.parentElement : null;
+      while (cur) {
+        if (cur.id) {
+          for (let i = 0; i < tabKeys.length; i++) {
+            if (FULL_TAB_OWNED_BLOCKS[tabKeys[i]].indexOf(cur.id) !== -1) {
+              return tabKeys[i];
+            }
+          }
+        }
+        cur = cur.parentElement;
+      }
+      return 'cockpit';
+    }
+
+    function applyPanelFullTabDom(tab, syncStorage) {
+      let raw = tab;
+      if (!raw) {
+        try {
+          raw = localStorage.getItem(PANEL_FULL_TAB_STORAGE_KEY) || '';
+        } catch {}
+      }
+      const valid = normalizePanelFullTab(raw);
+      _panelFullTabActiveLocal = valid;
+      if (document.body) {
+        document.body.setAttribute('data-full-tab', valid);
+      }
+      document.querySelectorAll('#fullTabsBar [data-full-tab]').forEach(function (btn) {
+        const active = btn.getAttribute('data-full-tab') === valid;
+        btn.classList.toggle('is-active', active);
+        btn.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      if (syncStorage) {
+        try {
+          localStorage.setItem(PANEL_FULL_TAB_STORAGE_KEY, valid);
+        } catch {}
+      }
+      if (valid === 'cockpit' && typeof syncSmartComposerSizeAndScroll === 'function') {
+        syncSmartComposerSizeAndScroll();
+      }
+      if (typeof scheduleSyncAllSlidingPills === 'function') {
+        scheduleSyncAllSlidingPills();
+      }
+      if (typeof ensureHwB4Loop === 'function') {
+        ensureHwB4Loop();
+      }
+      return valid;
+    }
+
+    function setPanelFullTab(tab, opts) {
+      _panelFullTabUserSelected = true;
+      const valid = applyPanelFullTabDom(tab, true);
+      _panelFullTabActiveLocal = valid;
+      if (!opts || !opts.preserveScroll) {
+        const wbScroller = document.querySelector('.full-workspace-shell > .window-body');
+        if (wbScroller) wbScroller.scrollTop = 0;
+      }
+      if (currentState && typeof currentState === 'object') {
+        currentState.panelFullTab = valid;
+      }
+      void updateState({ panelFullTab: valid });
+      if (typeof refreshBlockVisibilityObserver === 'function') refreshBlockVisibilityObserver();
+      if (typeof flushVisibleBlockRenders === 'function') flushVisibleBlockRenders();
+      if (typeof maybeLoadMissingSectionsForBlock === 'function') {
+        const owned = FULL_TAB_OWNED_BLOCKS[valid] || [];
+        for (let i = 0; i < owned.length; i++) {
+          maybeLoadMissingSectionsForBlock(owned[i]);
+        }
+      }
+      if (valid === 'memory' && typeof loadProjectInstincts === 'function') {
+        void loadProjectInstincts({ silent: true });
+      }
+      if (valid === 'bugs' && typeof refreshGatesStatus === 'function') {
+        void refreshGatesStatus({ silent: true });
+      }
+      if (valid !== 'cockpit' && typeof pollTelemetryTick === 'function') {
+        void pollTelemetryTick();
+      }
+      if (!opts || !opts.silent) {
+        const tabLabels = {
+          cockpit: L('Раздел: Умный чат ✓', 'Tab: Smart Chat ✓'),
+          behavior: L('Раздел: Поведение ✓', 'Tab: Behavior ✓'),
+          economy: L('Раздел: Статистика ✓', 'Tab: Stats ✓'),
+          hardware: L('Раздел: ПК ✓', 'Tab: PC ✓'),
+          bugs: L('Раздел: Баги ✓', 'Tab: Bugs ✓'),
+          memory: L('Раздел: Память ✓', 'Tab: Memory ✓'),
+          settings: L('Раздел: Настройки ✓', 'Tab: Settings ✓'),
+        };
+        flashStatus(tabLabels[valid] || tabLabels.cockpit);
+      }
     }
 
     const PANEL_UI_SCALE_STORAGE_KEY = 'tunnel.panelUiScale';
@@ -2287,6 +2753,9 @@
       }
       if (typeof syncSmartComposerSizeAndScroll === 'function') {
         syncSmartComposerSizeAndScroll();
+      }
+      if (typeof syncFullLeftRailStickyOffset === 'function') {
+        syncFullLeftRailStickyOffset();
       }
       if (typeof pgState === 'object' && pgState && pgState.open) {
         try {
@@ -2432,6 +2901,9 @@
     async function refreshAll(opts) {
       const silent = Boolean(opts && opts.silent);
       try {
+        if (typeof refreshSidecarOpenWorkspacesFast === 'function') {
+          await refreshSidecarOpenWorkspacesFast(false);
+        }
         _loadedPanelSections.clear();
         const res = await panelFetch('/api/state?adaptive=1', { method: 'GET' });
         const data = await res.json();
@@ -2440,6 +2912,9 @@
         }
         renderPayload(data);
         telemetryLastSig = buildTelemetrySignature(data);
+        if (!_loadedPanelSections.has('hw')) {
+          void ensurePanelSectionsLoaded(['hw']);
+        }
         if (!silent) {
           flashStatus(L('Телеметрия, ROI и скиллы обновлены ✓', 'Telemetry, ROI & skills updated ✓'));
         }
@@ -2637,7 +3112,7 @@
         fragileEl.innerHTML = '<span style="color: var(--status-ok); font-weight:600;">' + L('✓ Хрупких файлов с повторными сбоями не зафиксировано', '✓ No fragile files with repeat failures recorded') + '</span>';
       } else {
         fragileEl.innerHTML =
-          '<div style="color: var(--status-warn); font-weight:700; margin-bottom:2px;">' + L('Матрица хрупкости (Топ-', 'Fragility Matrix (Top-') + fragile.length + '):</div>' +
+          '<div style="color: var(--status-warn); font-weight:700; margin-bottom:2px;" title="' + L('Отсортировано от самых рискованных (меньше % надёжности — выше хрупкость)', 'Sorted riskiest first (lower reliability % = higher fragility)') + '">' + L('Матрица хрупкости (Топ-', 'Fragility Matrix (Top-') + fragile.length + '):</div>' +
           fragile
             .map((f) => {
               const relColor = f.reliabilityPercent < 60 ? 'var(--status-err)' : 'var(--status-warn)';
@@ -2645,7 +3120,7 @@
               return (
                 '<div style="display:flex; justify-content:space-between; gap:8px;">' +
                   '<code style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + escHtml(f.file) + '</code>' +
-                  '<span style="color:' + relColor + '; white-space:nowrap;">' + Number(f.reliabilityPercent) + '% (' + Number(f.failures || 0) + '/' + Number(f.runs || 0) + deps + ')</span>' +
+                  '<span style="color:' + relColor + '; white-space:nowrap;">' + L('надёжн. ', 'rel. ') + Number(f.reliabilityPercent) + '% · ' + L('сбоев ', 'fails ') + Number(f.failures || 0) + '/' + Number(f.runs || 0) + deps + '</span>' +
                 '</div>'
               );
             })
@@ -2894,12 +3369,15 @@
       if (typeof syncTogglePresetsUi === 'function') {
         syncTogglePresetsUi(st);
       }
+      if (typeof syncUnifiedPresetUi === 'function') {
+        syncUnifiedPresetUi(st);
+      }
     }
 
     const TOGGLE_PRESET_GROUPS = {
       hw: {
-        groupElId: 'hwPresetGroup',
-        customPillId: 'hwPresetCustomPill',
+        groupElId: null,
+        customPillId: null,
         badgeElId: 'hwEnginesCountBadge',
         keys: [
           'gpuSemanticSearch', 'gpuAutoDistillLogs', 'gpuPostEditCritic',
@@ -3170,16 +3648,181 @@
           }
         }
 
-        const btnGroup = document.getElementById(cfg.groupElId);
+        const btnGroup = cfg.groupElId ? document.getElementById(cfg.groupElId) : null;
         if (btnGroup) {
           btnGroup.querySelectorAll('button').forEach((btn) => {
             btn.classList.toggle('active', Boolean(matchedPreset) && btn.dataset.val === matchedPreset);
           });
         }
-        const customPill = document.getElementById(cfg.customPillId);
+        const customPill = cfg.customPillId ? document.getElementById(cfg.customPillId) : null;
         if (customPill) {
           customPill.style.display = matchedPreset ? 'none' : 'inline-flex';
         }
+      }
+      syncUnifiedPresetUi(st);
+      if (typeof scheduleSyncAllSlidingPills === 'function') {
+        scheduleSyncAllSlidingPills();
+      }
+    }
+
+    const UNIFIED_PRESETS = {
+      eco: {
+        hw: 'eco',
+        sentinel: 'quiet',
+        intel: 'base',
+        safety: 'light',
+        hookProfile: 'minimal',
+        labelRu: 'Эконом',
+        labelEn: 'Eco',
+        summaryRu: 'Ускорение: Эконом · Дозор: Тихий · Хуки: Лёгкий · Разведка: Базовый · Защита: Лёгкий',
+        summaryEn: 'Accel: Eco · Sentinel: Quiet · Hooks: Minimal · Intel: Basic · Safety: Light',
+      },
+      balance: {
+        hw: 'balanced',
+        sentinel: 'full',
+        intel: 'full',
+        safety: 'standard',
+        hookProfile: 'standard',
+        labelRu: 'Баланс',
+        labelEn: 'Balance',
+        summaryRu: 'Ускорение: Баланс · Дозор: Полный · Хуки: Стандарт · Разведка: Полный · Защита: Стандарт',
+        summaryEn: 'Accel: Balanced · Sentinel: Full · Hooks: Standard · Intel: Full · Safety: Standard',
+      },
+      turbo: {
+        hw: 'max',
+        sentinel: 'max',
+        intel: 'full',
+        safety: 'strict',
+        hookProfile: 'strict',
+        labelRu: 'Турбо',
+        labelEn: 'Turbo',
+        summaryRu: 'Ускорение: Максимум · Дозор: Максимум · Хуки: Строгий · Разведка: Полный · Защита: Параноик',
+        summaryEn: 'Accel: Max · Sentinel: Max · Hooks: Strict · Intel: Full · Safety: Paranoid',
+      },
+    };
+
+    function detectUnifiedPreset(stateObj) {
+      const st = (stateObj && typeof stateObj === 'object') ? stateObj : (currentState || {});
+      const activeHookProf = (st.hookProfile === 'minimal' || st.hookProfile === 'strict') ? st.hookProfile : 'standard';
+      const hookOverrides = HOOK_PROFILE_UI_OVERRIDES[activeHookProf] || {};
+      const keys = ['eco', 'balance', 'turbo'];
+      for (let idx = 0; idx < keys.length; idx++) {
+        const pKey = keys[idx];
+        const def = UNIFIED_PRESETS[pKey];
+        if (def.hookProfile !== activeHookProf) continue;
+        let matchesAll = true;
+        const groups = ['hw', 'sentinel', 'intel', 'safety'];
+        for (let g = 0; g < groups.length; g++) {
+          const gName = groups[g];
+          const cfg = TOGGLE_PRESET_GROUPS[gName];
+          const targetMap = cfg && cfg.presets ? cfg.presets[def[gName]] : null;
+          if (!cfg || !targetMap) {
+            matchesAll = false;
+            break;
+          }
+          for (let kIdx = 0; kIdx < cfg.keys.length; kIdx++) {
+            const flagKey = cfg.keys[kIdx];
+            const expectedVal = Object.prototype.hasOwnProperty.call(hookOverrides, flagKey)
+              ? Boolean(hookOverrides[flagKey])
+              : Boolean(targetMap[flagKey]);
+            const actualVal = getEffectiveToggleFlag(flagKey, st);
+            if (actualVal !== expectedVal) {
+              matchesAll = false;
+              break;
+            }
+          }
+          if (!matchesAll) break;
+        }
+        if (matchesAll) return pKey;
+      }
+      return null;
+    }
+
+    function syncUnifiedPresetUi(stateObj) {
+      const st = (stateObj && typeof stateObj === 'object') ? stateObj : (currentState || {});
+      const matched = detectUnifiedPreset(st);
+      document.querySelectorAll('#unifiedPresetGroup button[data-unified-preset]').forEach((btn) => {
+        btn.classList.toggle('active', Boolean(matched) && btn.getAttribute('data-unified-preset') === matched);
+      });
+      const customPill = document.getElementById('unifiedPresetCustomPill');
+      if (customPill) {
+        customPill.style.display = matched ? 'none' : 'inline-flex';
+      }
+      const sumEl = document.getElementById('unifiedPresetSummary');
+      const summaryText = (matched && UNIFIED_PRESETS[matched])
+        ? L(UNIFIED_PRESETS[matched].summaryRu, UNIFIED_PRESETS[matched].summaryEn)
+        : L('Своя связка · ', 'Custom mix · ') + (st.hookProfile === 'minimal'
+            ? L('Хуки: Лёгкий', 'Hooks: Minimal')
+            : (st.hookProfile === 'strict' ? L('Хуки: Строгий', 'Hooks: Strict') : L('Хуки: Стандарт', 'Hooks: Standard')));
+      if (sumEl) {
+        sumEl.textContent = summaryText;
+      }
+      const presetBarEl = document.getElementById('unifiedPresetBar');
+      if (presetBarEl) {
+        const tipVal = L('Единый профиль', 'Unified Profile') + ' · ' + summaryText;
+        if (typeof setTooltipTitle === 'function') setTooltipTitle(presetBarEl, tipVal);
+        else presetBarEl.title = tipVal;
+      }
+      if (typeof scheduleSyncAllSlidingPills === 'function') {
+        scheduleSyncAllSlidingPills();
+      }
+    }
+
+    function applyUnifiedPreset(presetKey) {
+      const def = UNIFIED_PRESETS[presetKey];
+      if (!def) return;
+      const patch = Object.assign(
+        {},
+        TOGGLE_PRESET_GROUPS.hw.presets[def.hw],
+        TOGGLE_PRESET_GROUPS.sentinel.presets[def.sentinel],
+        TOGGLE_PRESET_GROUPS.intel.presets[def.intel],
+        TOGGLE_PRESET_GROUPS.safety.presets[def.safety],
+        { hookProfile: def.hookProfile }
+      );
+      if (currentState && typeof currentState === 'object') {
+        Object.assign(currentState, patch);
+      }
+      const patchKeys = Object.keys(patch);
+      for (let i = 0; i < patchKeys.length; i++) {
+        const k = patchKeys[i];
+        if (k === 'hookProfile') continue;
+        const chk = document.getElementById('chk-' + k);
+        if (chk) {
+          chk.checked = Boolean(patch[k]);
+        }
+      }
+      document.querySelectorAll('#hookProfileGroup button').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.val === def.hookProfile);
+      });
+      const hookProfileHintEl = document.getElementById('hookProfileHint');
+      if (hookProfileHintEl) {
+        if (def.hookProfile === 'minimal') {
+          hookProfileHintEl.textContent = L(
+            'Профиль «Лёгкий»: оставлены базовые щиты для максимальной скорости на простых правках.',
+            '"Minimal" profile: keeps essential guards for maximum speed on quick edits.'
+          );
+        } else if (def.hookProfile === 'strict') {
+          hookProfileHintEl.textContent = L(
+            'Профиль «Строгий»: принудительно активны все щиты, LSP и защита конфигов линтеров.',
+            '"Strict" profile: forces all shields, LSP, and linter config protection ON.'
+          );
+        } else {
+          hookProfileHintEl.textContent = L(
+            'Профиль «Стандарт»: действуют ваши индивидуальные переключатели контуров.',
+            '"Standard" profile: uses your individual contour toggles below.'
+          );
+        }
+      }
+      applyHookProfileOverridesToUi(def.hookProfile, currentState);
+      if (typeof syncSentinelCheckboxes === 'function') {
+        syncSentinelCheckboxes(currentState);
+      } else {
+        syncTogglePresetsUi(currentState);
+      }
+      syncUnifiedPresetUi(currentState);
+      void updateState(patch);
+      if (typeof flashStatus === 'function') {
+        flashStatus(L('Профиль «' + def.labelRu + '» применён ✓', 'Profile "' + def.labelEn + '" applied ✓'));
       }
     }
 
@@ -3254,6 +3897,15 @@
     function setCompactionThreshold(rawVal) {
       const n = Math.round(Number(rawVal) || 120000);
       const clean = Math.max(16000, Math.min(500000, n));
+      const cleanStr = String(clean);
+      document.querySelectorAll('#compactionThresholdGroup button').forEach(function (btn) {
+        const isActive = btn.dataset.val === cleanStr;
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
+      if (typeof scheduleSyncAllSlidingPills === 'function') {
+        scheduleSyncAllSlidingPills();
+      }
       void updateState({ compactionTokenThreshold: clean });
       flashStatus(L('Порог сжатия эпохи: ', 'Epoch compaction threshold: ') + Math.round(clean / 1000) + 'k ✓');
     }
@@ -3277,6 +3929,7 @@
         badge.className = 'swarm-pill ' + ((data.counts && data.counts.critical > 0) ? 'warn' : (data.score >= 90 ? 'idle' : 'active'));
       }
       if (sumEl) {
+        sumEl.hidden = false;
         const findings = Array.isArray(data.findings) ? data.findings : [];
         const summaryTxt = pickText(data, 'summaryRu', 'summaryEn', '');
         if (findings.length === 0) {
@@ -3312,7 +3965,10 @@
           badge.textContent = L('Ошибка', 'Error');
           badge.className = 'swarm-pill warn';
         }
-        if (sumEl) sumEl.textContent = (err && err.message) ? err.message : L('Сбой запуска AgentShield', 'Failed to run AgentShield');
+        if (sumEl) {
+          sumEl.hidden = false;
+          sumEl.textContent = (err && err.message) ? err.message : L('Сбой запуска AgentShield', 'Failed to run AgentShield');
+        }
       }
     }
 
@@ -3331,11 +3987,56 @@
           ? '<button type="button" class="win-btn" style="padding:1px 6px;font-size:10px;" data-action="promoteInstinct" data-arg="' + escapeHtml(it.id) + '" title="' + L('Что делает: превращает этот накопленный паттерн в постоянный файл навыка SKILL.md.\nЗачем: правило закрепится в проекте навсегда, а не только как наблюдение.', 'What it does: promotes this learned pattern into a permanent SKILL.md skill.\nWhy: locks the habit into the project permanently.') + '">' + L('В навык', 'Promote') + '</button>'
           : (it.promotedSkill ? '<span style="color:var(--status-ok);" title="' + L('Этот инстинкт уже сохранён как постоянный навык проекта', 'This instinct is already promoted to a permanent project skill') + '">✓ ' + escapeHtml(it.promotedSkill) + '</span>' : '');
         const delBtn = '<button type="button" class="win-btn" style="padding:1px 5px;font-size:10px;" data-action="deleteInstinct" data-arg="' + escapeHtml(it.id) + '" title="' + L('Удалить этот инстинкт из памяти проекта', 'Remove this instinct from project memory') + '">✕</button>';
+        let patternText = String(it.pattern || '');
+        if (isRu()) {
+          const m = patternText.match(/^Inspect surrounding callers and invariants in ([^\s]+) once before applying multi-pass edits$/i);
+          if (m) {
+            patternText = 'Перед многошаговой правкой ' + m[1] + ' проверять вызывающий код и инварианты за один проход';
+          }
+        }
         return '<div class="pitfall-item" style="justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;" title="' + L('Накопленный паттерн работы в проекте: процент — уверенность модели, (xN) — сколько раз правило подтвердилось. При готовности появится кнопка «В навык».', 'Learned workspace pattern: % is confidence, (xN) is observation count. When ready, a Promote button appears.') + '">' +
-          '<span style="min-width:0;flex:1 1 160px;word-break:break-word;"><strong>' + pct + '%</strong> (x' + Number(it.evidenceCount || 1) + ') ' + escapeHtml(it.pattern || '') + '</span>' +
+          '<span style="min-width:0;flex:1 1 160px;word-break:break-word;"><strong>' + pct + '%</strong> (x' + Number(it.evidenceCount || 1) + ') ' + escapeHtml(patternText) + '</span>' +
           '<span style="display:inline-flex;align-items:center;gap:4px;flex-shrink:0;">' + promoBtn + delBtn + '</span>' +
           '</div>';
       }).join('');
+    }
+
+    function jumpToPanelSection(blockId) {
+      const id = String(blockId || '').trim();
+      if (!id) return;
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (document.body && document.body.getAttribute('data-panel-view') === 'full' && typeof getFullTabForElementId === 'function' && typeof setPanelFullTab === 'function') {
+        const curTab = document.body.getAttribute('data-full-tab') || 'cockpit';
+        const ownerTab = getFullTabForElementId(id);
+        if (curTab !== 'all' && curTab !== ownerTab) {
+          setPanelFullTab(ownerTab, { silent: true, skipAutoExpand: true, preserveScroll: true });
+        }
+      }
+      let cur = el.parentElement;
+      while (cur) {
+        if (cur.tagName === 'DETAILS' && !cur.open) {
+          cur.open = true;
+        }
+        cur = cur.parentElement;
+      }
+      if (el.tagName === 'DETAILS' && !el.open) {
+        el.open = true;
+      }
+      if (el.classList && el.classList.contains('is-collapsed') && typeof togglePanelCardCollapse === 'function') {
+        togglePanelCardCollapse(id);
+      }
+      if (typeof flushVisibleBlockRenders === 'function') flushVisibleBlockRenders();
+      if (typeof maybeLoadMissingSectionsForBlock === 'function') maybeLoadMissingSectionsForBlock(id);
+      if (typeof el.scrollIntoView === 'function') {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      if (el.classList) {
+        el.classList.add('is-jump-flash');
+        setTimeout(function () {
+          el.classList.remove('is-jump-flash');
+        }, 1200);
+      }
     }
 
     async function loadProjectInstincts(opts) {
@@ -3399,20 +4100,33 @@
     let _setupDoctorAutoCloseTimer = 0;
     let _lastHealthDoctorData = null;
     let _lastHealthDoctorLog = [];
+    let _setupDoctorLoadSeq = 0;
 
-    function closeSetupDoctor() {
+    function closeSetupDoctor(opts) {
+      _setupDoctorLoadSeq += 1;
       if (_setupDoctorAutoCloseTimer) {
         clearTimeout(_setupDoctorAutoCloseTimer);
         _setupDoctorAutoCloseTimer = 0;
       }
       const box = document.getElementById('setupDoctorBox');
+      const btn = document.getElementById('smartBannerDoctorBtn');
+      if (btn) {
+        btn.setAttribute('aria-expanded', 'false');
+        btn.classList.remove('is-active');
+      }
+      if (typeof syncFullGuardActivePill === 'function') syncFullGuardActivePill();
       if (box) {
         box.classList.remove('is-rescanning');
         box.style.minHeight = '';
-        box.style.display = 'none';
+        if (opts && opts.immediate) {
+          if (typeof cancelDisclosureAnimation === 'function') cancelDisclosureAnimation(box);
+          box.style.display = 'none';
+        } else if (typeof animateDisclosurePanel === 'function') {
+          animateDisclosurePanel(box, false, { duration: 200 });
+        } else {
+          box.style.display = 'none';
+        }
       }
-      const btn = document.getElementById('smartBannerDoctorBtn');
-      if (btn) btn.setAttribute('aria-expanded', 'false');
     }
 
     function renderSetupDoctorReport(rec, health, fixLog) {
@@ -3551,16 +4265,32 @@
     async function loadSetupDoctor() {
       const box = document.getElementById('setupDoctorBox');
       if (!box) return;
+      const loadSeq = ++_setupDoctorLoadSeq;
       if (_setupDoctorAutoCloseTimer) {
         clearTimeout(_setupDoctorAutoCloseTimer);
         _setupDoctorAutoCloseTimer = 0;
       }
+      const guardDrawer = document.getElementById('fullGuardDrawer');
+      const outgoingGuardH = (guardDrawer && guardDrawer.style.display !== 'none')
+        ? (typeof uiMeasureLayoutHeight === 'function'
+            ? uiMeasureLayoutHeight(guardDrawer)
+            : (guardDrawer.getBoundingClientRect ? guardDrawer.getBoundingClientRect().height : 0))
+        : 0;
+      if (typeof closeGuardDrawer === 'function') {
+        closeGuardDrawer('full', { immediate: true });
+      }
       const doctorBtn = document.getElementById('smartBannerDoctorBtn');
-      if (doctorBtn) doctorBtn.setAttribute('aria-expanded', 'true');
+      if (doctorBtn) {
+        doctorBtn.setAttribute('aria-expanded', 'true');
+        doctorBtn.classList.add('is-active');
+      }
+      if (typeof syncFullGuardActivePill === 'function') syncFullGuardActivePill();
       const hasExistingReport = box.style.display !== 'none' && Boolean(box.querySelector('[data-setup-doctor-body]'));
       if (hasExistingReport) {
-        const rect = typeof box.getBoundingClientRect === 'function' ? box.getBoundingClientRect() : null;
-        const prevH = rect && Number.isFinite(rect.height) ? Math.ceil(rect.height) : 0;
+        const rawPrevH = typeof uiMeasureLayoutHeight === 'function'
+          ? uiMeasureLayoutHeight(box)
+          : (box.getBoundingClientRect ? box.getBoundingClientRect().height : 0);
+        const prevH = Number.isFinite(rawPrevH) ? Math.ceil(rawPrevH) : 0;
         if (prevH > 0) box.style.minHeight = prevH + 'px';
         box.classList.add('is-rescanning');
         const rescanBtn = box.querySelector('[data-action="loadSetupDoctor"]');
@@ -3569,19 +4299,35 @@
           rescanBtn.textContent = L('↻ Анализ...', '↻ Scanning...');
         }
       } else {
-        box.style.display = 'block';
         box.innerHTML = '<div class="setup-doctor-loading">' + L('Анализ стека и здоровья систем...', 'Analyzing project stack & runtime health...') + '</div>';
+        if (typeof animateDisclosurePanel === 'function') {
+          animateDisclosurePanel(box, true, {
+            display: 'block',
+            duration: 220,
+            prevHeight: outgoingGuardH > 0 ? outgoingGuardH : undefined
+          });
+        } else {
+          box.style.display = 'block';
+        }
       }
       try {
         const [recSettled, healthSettled] = await Promise.allSettled([
           panelFetch('/api/setup-recommendations', { method: 'GET' }).then((r) => r.json()),
           panelFetch('/api/health-doctor', { method: 'GET' }).then((r) => r.json()),
         ]);
+        if (loadSeq !== _setupDoctorLoadSeq) return;
         const data = recSettled.status === 'fulfilled' ? recSettled.value : { ok: false, error: L('Ошибка запроса Setup Doctor', 'Setup Doctor request failed') };
         const healthData = healthSettled.status === 'fulfilled' ? healthSettled.value : null;
         _lastHealthDoctorLog = [];
+        const prevBoxH = typeof uiMeasureLayoutHeight === 'function'
+          ? uiMeasureLayoutHeight(box)
+          : (box.getBoundingClientRect ? box.getBoundingClientRect().height : 0);
         renderSetupDoctorReport(data, healthData, []);
+        if (typeof animateDisclosurePanel === 'function' && box.style.display !== 'none' && prevBoxH > 0) {
+          animateDisclosurePanel(box, true, { display: 'block', duration: 210, prevHeight: prevBoxH });
+        }
       } catch {
+        if (loadSeq !== _setupDoctorLoadSeq) return;
         renderSetupDoctorReport({ ok: false, error: L('Ошибка запроса Setup Doctor', 'Setup Doctor request failed') }, null, []);
       } finally {
         const releaseLock = function () {
@@ -3648,10 +4394,16 @@
       const drawer = document.getElementById('skillRegistryDrawer');
       if (!drawer) return;
       const open = drawer.style.display === 'none';
-      drawer.style.display = open ? 'block' : 'none';
+      if (typeof animateDisclosurePanel === 'function') {
+        animateDisclosurePanel(drawer, open, { display: 'block', duration: 220 });
+      } else {
+        drawer.style.display = open ? 'block' : 'none';
+      }
       if (open) {
         const inp = document.getElementById('extSkillSourceInput');
-        if (inp && typeof inp.focus === 'function') inp.focus();
+        if (inp && typeof inp.focus === 'function') {
+          try { inp.focus({ preventScroll: true }); } catch { inp.focus(); }
+        }
       }
     }
 
@@ -3771,14 +4523,24 @@
     async function loadSessionEpisodes() {
       const box = document.getElementById('sessionEpisodesContainer');
       if (!box) return;
-      box.style.display = 'block';
       box.innerHTML = '<div style="color:var(--text-sub);padding:2px;">' + L('Загрузка эпизодов памяти...', 'Loading memory episodes...') + '</div>';
+      if (typeof animateDisclosurePanel === 'function') {
+        animateDisclosurePanel(box, true, { display: 'block', duration: 210 });
+      } else {
+        box.style.display = 'block';
+      }
       try {
         const res = await panelFetch('/api/knowledge/episodes?limit=12', { method: 'GET' });
         const data = await res.json();
         const items = Array.isArray(data && data.items) ? data.items : [];
         if (data && data.stats) renderKnowledgeHub(undefined, undefined, data.stats);
+        const prevH = typeof uiMeasureLayoutHeight === 'function'
+          ? uiMeasureLayoutHeight(box)
+          : (box.getBoundingClientRect ? box.getBoundingClientRect().height : 0);
         renderSessionEpisodesData(items);
+        if (typeof animateDisclosurePanel === 'function' && prevH > 0) {
+          animateDisclosurePanel(box, true, { display: 'block', duration: 210, prevHeight: prevH });
+        }
         if (items.length > 0) {
           flashStatus(L('Загружено эпизодов памяти: ', 'Loaded memory episodes: ') + items.length + ' ✓');
         }
@@ -3850,12 +4612,43 @@
       }
     }
 
+    function syncGraphDebtButtonsActiveState(kind) {
+      const btnGraph = document.querySelector('[data-action="loadGraphifyOverview"]');
+      const btnDebt = document.querySelector('[data-action="loadShortcutDebt"]');
+      const isGraph = kind === 'graph';
+      const isDebt = kind === 'debt';
+      if (btnGraph) {
+        btnGraph.classList.toggle('active', isGraph);
+        btnGraph.setAttribute('aria-expanded', isGraph ? 'true' : 'false');
+      }
+      if (btnDebt) {
+        btnDebt.classList.toggle('active', isDebt);
+        btnDebt.setAttribute('aria-expanded', isDebt ? 'true' : 'false');
+      }
+      if (typeof syncAllSlidingPillsNow === 'function') {
+        syncAllSlidingPillsNow();
+      }
+    }
+
+    function closeGraphDebtDrawer() {
+      const drawer = document.getElementById('graphDebtDrawer');
+      _lastGraphDebtKind = '';
+      syncGraphDebtButtonsActiveState('');
+      if (!drawer) return;
+      if (typeof animateDisclosurePanel === 'function') {
+        animateDisclosurePanel(drawer, false, { duration: 190 });
+      } else {
+        drawer.style.display = 'none';
+      }
+    }
+
     function renderGraphifyData(data) {
       const drawer = document.getElementById('graphDebtDrawer');
       const badge = document.getElementById('graphDebtStatusBadge');
       if (!drawer || !data) return;
       _lastGraphifyData = data;
       _lastGraphDebtKind = 'graph';
+      syncGraphDebtButtonsActiveState('graph');
       const warmth = data.cacheWarmth || {};
       const warmthLabel = warmth.status === 'warm'
         ? (L('Кэш тёплый (', 'Cache warm (') + Number(warmth.remainingSeconds || 0) + L('с)', 's)'))
@@ -3892,21 +4685,35 @@
           escapeHtml(b.fromFile + ':L' + (b.callSiteLine || 1) + ' → ' + b.toFile + (b.toSymbol ? '#' + b.toSymbol : '')) +
         '</div>';
       }).join('');
+      const closeBtnHtml = '<button type="button" class="win-btn gd-mini-btn" data-action="closeGraphDebtDrawer" aria-label="' + L('Свернуть карточку', 'Collapse drawer') + '" title="' + L('Свернуть карточку', 'Collapse drawer') + '">✕</button>';
       drawer.innerHTML =
-        '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;margin-bottom:6px;color:var(--text-sub);">' +
-          '<span>' + escapeHtml(warmthLabel) + '</span>' +
-          '<span>' + escapeHtml(reuseLabel) + ' · ' + escapeHtml(data.topologyHash || '') + '</span>' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:6px;color:var(--text-sub);">' +
+          '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;flex:1;min-width:0;">' +
+            '<span>' + escapeHtml(warmthLabel) + '</span>' +
+            '<span>' + escapeHtml(reuseLabel) + ' · ' + escapeHtml(data.topologyHash || '') + '</span>' +
+          '</div>' +
+          closeBtnHtml +
         '</div>' +
         (godsHtml ? '<div style="margin-bottom:6px;">' + godsHtml + '</div>' : '') +
         (clustersHtml || '<div style="color:var(--text-sub);">' + L('Кластеры не обнаружены', 'No clusters detected') + '</div>') +
         (bridgesHtml ? '<div style="margin-top:6px;border-top:1px solid var(--border-subtle);padding-top:4px;"><strong>' + L('Межкластерные мосты:', 'Cross-cluster bridges:') + '</strong>' + bridgesHtml + '</div>' : '');
     }
 
-    async function loadGraphifyOverview() {
+    async function loadGraphifyOverview(opts) {
       const drawer = document.getElementById('graphDebtDrawer');
       if (!drawer) return;
-      drawer.style.display = 'block';
+      if (!(opts && opts.force) && drawer.style.display !== 'none' && _lastGraphDebtKind === 'graph') {
+        closeGraphDebtDrawer();
+        return;
+      }
+      _lastGraphDebtKind = 'graph';
+      syncGraphDebtButtonsActiveState('graph');
       drawer.innerHTML = '<div style="color:var(--text-sub);">' + L('Построение графа архитектуры Graphify v2...', 'Building Graphify v2 architecture graph...') + '</div>';
+      if (typeof animateDisclosurePanel === 'function') {
+        animateDisclosurePanel(drawer, true, { display: 'block', duration: 210 });
+      } else {
+        drawer.style.display = 'block';
+      }
       try {
         const res = await panelFetch('/api/graph', { method: 'GET' });
         const data = await res.json();
@@ -3914,7 +4721,13 @@
           drawer.innerHTML = '<div style="color:var(--status-warn);">' + L('Граф недоступен: ', 'Graph unavailable: ') + escapeHtml((data && data.error) || L('ошибка', 'error')) + '</div>';
           return;
         }
+        const prevH = typeof uiMeasureLayoutHeight === 'function'
+          ? uiMeasureLayoutHeight(drawer)
+          : (drawer.getBoundingClientRect ? drawer.getBoundingClientRect().height : 0);
         renderGraphifyData(data);
+        if (typeof animateDisclosurePanel === 'function' && prevH > 0) {
+          animateDisclosurePanel(drawer, true, { display: 'block', duration: 210, prevHeight: prevH });
+        }
         flashStatus(L('Карта архитектуры Graphify v2 обновлена ✓', 'Graphify v2 architecture map updated ✓'));
       } catch {
         drawer.innerHTML = '<div style="color:var(--status-warn);">' + L('Ошибка загрузки графа архитектуры', 'Error loading architecture graph') + '</div>';
@@ -3927,32 +4740,54 @@
       if (!drawer || !data) return;
       _lastShortcutDebtData = data;
       _lastGraphDebtKind = 'debt';
+      syncGraphDebtButtonsActiveState('debt');
       const items = Array.isArray(data.items) ? data.items : [];
       if (badge) {
         badge.textContent = L('Техдолг shortcut: ', 'Shortcut debt: ') + items.length + ' (no-trigger: ' + Number(data.noTriggerCount || 0) + ')';
         badge.style.color = Number(data.noTriggerCount || 0) > 0 ? 'var(--status-warn)' : 'var(--status-ok)';
       }
+      const closeBtnHtml = '<button type="button" class="win-btn gd-mini-btn" data-action="closeGraphDebtDrawer" aria-label="' + L('Свернуть карточку', 'Collapse drawer') + '" title="' + L('Свернуть карточку', 'Collapse drawer') + '">✕</button>';
       if (items.length === 0) {
-        drawer.textContent = L(
-          '✓ Осознанный техдолг (shortcut:) не обнаружен. Чистый реестр (' + Number(data.scannedFiles || 0) + ' файлов).',
-          '✓ No deliberate shortcut: debt found. Clean ledger (' + Number(data.scannedFiles || 0) + ' files).'
-        );
+        drawer.innerHTML =
+          '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">' +
+            '<span>' + escapeHtml(L(
+              '✓ Осознанный техдолг (shortcut:) не обнаружен. Чистый реестр (' + Number(data.scannedFiles || 0) + ' файлов).',
+              '✓ No deliberate shortcut: debt found. Clean ledger (' + Number(data.scannedFiles || 0) + ' files).'
+            )) + '</span>' +
+            closeBtnHtml +
+          '</div>';
         return;
       }
-      drawer.innerHTML = items.slice(0, 25).map(function (it) {
+      const rowsHtml = items.slice(0, 25).map(function (it) {
         const warnTag = it.rotRisk ? ' <strong style="color:var(--status-warn);">[no-trigger]</strong>' : '';
         const upg = it.upgradeTrigger ? (' · <em>' + escapeHtml(it.upgradeTrigger) + '</em>') : '';
         return '<div class="pitfall-item"><span class="pitfall-bullet">•</span><span style="min-width:0;word-break:break-word;">' +
           '<strong>' + escapeHtml(it.file + ':' + it.line) + '</strong> — ' + escapeHtml(it.ceiling || '') + upg + warnTag +
         '</span></div>';
       }).join('');
+      drawer.innerHTML =
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px;color:var(--text-sub);">' +
+          '<span>' + escapeHtml(L('Найдено меток shortcut: ', 'Shortcut markers found: ') + items.length) + '</span>' +
+          closeBtnHtml +
+        '</div>' +
+        rowsHtml;
     }
 
-    async function loadShortcutDebt() {
+    async function loadShortcutDebt(opts) {
       const drawer = document.getElementById('graphDebtDrawer');
       if (!drawer) return;
-      drawer.style.display = 'block';
+      if (!(opts && opts.force) && drawer.style.display !== 'none' && _lastGraphDebtKind === 'debt') {
+        closeGraphDebtDrawer();
+        return;
+      }
+      _lastGraphDebtKind = 'debt';
+      syncGraphDebtButtonsActiveState('debt');
       drawer.innerHTML = '<div style="color:var(--text-sub);">' + L('Сканирование меток техдолга shortcut:...', 'Scanning shortcut: tech debt markers...') + '</div>';
+      if (typeof animateDisclosurePanel === 'function') {
+        animateDisclosurePanel(drawer, true, { display: 'block', duration: 210 });
+      } else {
+        drawer.style.display = 'block';
+      }
       try {
         const res = await panelFetch('/api/debt', { method: 'GET' });
         const data = await res.json();
@@ -3960,7 +4795,13 @@
           drawer.innerHTML = '<div style="color:var(--status-warn);">' + L('Ошибка сканирования техдолга', 'Error scanning tech debt') + '</div>';
           return;
         }
+        const prevH = typeof uiMeasureLayoutHeight === 'function'
+          ? uiMeasureLayoutHeight(drawer)
+          : (drawer.getBoundingClientRect ? drawer.getBoundingClientRect().height : 0);
         renderShortcutDebtData(data);
+        if (typeof animateDisclosurePanel === 'function' && prevH > 0) {
+          animateDisclosurePanel(drawer, true, { display: 'block', duration: 210, prevHeight: prevH });
+        }
         const items = Array.isArray(data.items) ? data.items : [];
         if (items.length === 0) {
           flashStatus(L('Техдолг shortcut: 0 меток ✓', 'Shortcut debt: 0 markers ✓'));
@@ -4065,9 +4906,6 @@
       if (typeof detectedProjectInfo !== 'undefined' && detectedProjectInfo && typeof renderSmartPilotBanner === 'function') {
         try { renderSmartPilotBanner(detectedProjectInfo); } catch {}
       }
-      if (typeof syncCustomSelectTrigger === 'function') {
-        try { syncCustomSelectTrigger('sel-compactionThreshold'); } catch {}
-      }
 
       if (_lastSetupDoctorData) {
         const docBox = document.getElementById('setupDoctorBox');
@@ -4102,8 +4940,6 @@
 
     const EXPERT_GPU_INPUT_IDS = [
       'inp-gpuEndpoint',
-      'inp-gpuChatModel',
-      'inp-gpuEmbedModel',
       'inp-gpuKeepAlive',
       'inp-gpuEmbedKeepAlive',
       'inp-gpuContextTokens',

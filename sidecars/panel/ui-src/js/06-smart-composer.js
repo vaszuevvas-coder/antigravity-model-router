@@ -1169,19 +1169,32 @@
 
     const _isStandaloneGraphView = (function () {
       try {
+        const pathname = String((window.location && window.location.pathname) || '').replace(/\/+$/, '');
+        if (pathname === '/graph') return true;
         return new URLSearchParams(window.location.search).get('view') === 'graph';
       } catch {
         return false;
       }
     })();
 
+    let _lastVisibilityStateRefreshAt = Date.now();
     document.body.classList.toggle('is-tab-hidden', document.visibilityState !== 'visible');
     document.addEventListener('visibilitychange', function () {
       const isHidden = document.visibilityState !== 'visible';
       document.body.classList.toggle('is-tab-hidden', isHidden);
       if (!isHidden) {
         if (!_isStandaloneGraphView) {
-          pollTelemetryTick();
+          const now = Date.now();
+          if (now - _lastVisibilityStateRefreshAt >= 15000 && typeof refreshAll === 'function') {
+            _lastVisibilityStateRefreshAt = now;
+            void refreshAll({ silent: true });
+          } else if (typeof refreshSidecarOpenWorkspacesFast === 'function') {
+            void refreshSidecarOpenWorkspacesFast(true).then(function () {
+              pollTelemetryTick();
+            });
+          } else {
+            pollTelemetryTick();
+          }
         }
       } else if (telemetryPollTimer) {
         clearTimeout(telemetryPollTimer);
@@ -1194,9 +1207,10 @@
         return;
       }
       try {
-        const savedView = localStorage.getItem(PANEL_VIEW_STORAGE_KEY);
-        if (savedView === 'lite' || savedView === 'full') {
-          applyPanelViewModeDom(savedView, false);
+        applyPanelViewModeDom('full', false);
+        const savedFullTab = localStorage.getItem(PANEL_FULL_TAB_STORAGE_KEY);
+        if (typeof applyPanelFullTabDom === 'function') {
+          applyPanelFullTabDom(savedFullTab || 'cockpit', false);
         }
         const savedScale = localStorage.getItem(PANEL_UI_SCALE_STORAGE_KEY);
         applyPanelUiScaleDom(savedScale || 'auto', false);
@@ -1208,7 +1222,13 @@
       applyPanelBlockOrder(null);
       initBlockVisibilityObserver();
       initSmartComposerWidget();
+      if (typeof initFullLeftRailStickySync === 'function') {
+        initFullLeftRailStickySync();
+      }
       await refreshAll();
+      if (typeof scheduleSyncAllSlidingPills === 'function') {
+        scheduleSyncAllSlidingPills();
+      }
       void loadSmartComposerContext();
       if (typeof checkPluginUpdate === 'function') {
         void checkPluginUpdate({ force: false, silent: true });

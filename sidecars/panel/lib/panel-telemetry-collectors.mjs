@@ -61,17 +61,34 @@ export async function safeGetHudAndProgressStatus(state = {}, activeWs = '') {
       for (const chat of progress.activeChats) {
         if (!chat || typeof chat !== 'object') continue;
         if (Array.isArray(chat.backgroundTasks)) {
-          chat.backgroundTasks = chat.backgroundTasks.slice(0, 25).map((t) => ({
-            id: String(t?.id || t?.taskId || '').slice(0, 80),
-            taskId: String(t?.taskId || t?.id || '').slice(0, 80),
-            label: String(t?.label || '').slice(0, 120),
-            labelEn: String(t?.labelEn || '').slice(0, 120),
-            commandPreview: String(t?.commandPreview || '').slice(0, 120),
-            status: String(t?.status || 'done'),
-            isDaemon: Boolean(t?.isDaemon),
-            startedAt: Number(t?.startedAt || 0),
-            updatedAt: Number(t?.updatedAt || 0),
-          }));
+          const validProgModes = new Set(['determinate', 'estimated', 'indeterminate', 'done', 'error', 'cancelled']);
+          chat.backgroundTasks = chat.backgroundTasks.slice(0, 25).map((t) => {
+            const rawPct = t?.progressPct;
+            const progressPct = (typeof rawPct === 'number' && Number.isFinite(rawPct))
+              ? Math.max(0, Math.min(100, Math.round(rawPct)))
+              : null;
+            const rawMode = String(t?.progressMode || '').trim();
+            const progressMode = validProgModes.has(rawMode) ? rawMode : (String(t?.status || 'done') === 'running' ? 'indeterminate' : String(t?.status || 'done'));
+            const rawEta = t?.etaSec;
+            const etaSec = (typeof rawEta === 'number' && Number.isFinite(rawEta) && rawEta > 0)
+              ? Math.min(86400, Math.round(rawEta))
+              : null;
+            return {
+              id: String(t?.id || t?.taskId || '').slice(0, 80),
+              taskId: String(t?.taskId || t?.id || '').slice(0, 80),
+              label: String(t?.label || '').slice(0, 120),
+              labelEn: String(t?.labelEn || '').slice(0, 120),
+              commandPreview: String(t?.commandPreview || '').slice(0, 120),
+              status: String(t?.status || 'done'),
+              isDaemon: Boolean(t?.isDaemon),
+              startedAt: Number(t?.startedAt || 0),
+              updatedAt: Number(t?.updatedAt || 0),
+              progressPct,
+              progressMode,
+              etaSec,
+              progressText: String(t?.progressText || '').slice(0, 80),
+            };
+          });
         } else {
           chat.backgroundTasks = [];
         }
@@ -458,7 +475,7 @@ export async function safeGetQuotaForecast(state = {}) {
 }
 
 // Инкрементальный кэш сводной телеметрии по всем диалогам (byte-offset чтение без повторного парсинга старых мегабайт)
-const MAX_TRACKED_CHATS = 60;
+const MAX_TRACKED_CHATS = 1000;
 
 const perChatTelemetryCache = new Map();
 
@@ -888,16 +905,7 @@ function collectTelemetryUncached(configuredThreshold = 120000, options = {}) {
     // Implicit Cache для Gemini 4 (Hydrogen / Neon / Carbon / Argon) экономит 95% стоимости прочитанных из кэша токенов
     stats.cacheSavedTokens = Math.round(stats.cacheReadTokens * 0.95);
     const ramStatsOpt = options?.ramStats || null;
-    const ramSotaFromOpt = ramStatsOpt
-      ? Math.max(
-          0,
-          Number(
-            ramStatsOpt.sotaSavedTokens !== undefined
-              ? ramStatsOpt.sotaSavedTokens
-              : (ramStatsOpt.savedTokensEstimate || ramStatsOpt.sota?.savedTokensEstimate || 0)
-          )
-        )
-      : 0;
+    const ramSotaFromOpt = extractExtraRamSotaTokens(ramStatsOpt);
     stats.ramSavedTokens =
       stats.ramCalls.slices * 900 +
       stats.ramCalls.searches * 650 +
@@ -911,13 +919,12 @@ function collectTelemetryUncached(configuredThreshold = 120000, options = {}) {
       } catch {}
     }
     stats.cpuSavedTokens = cpuSavedTokens;
-    stats.totalSavedTokens = stats.cacheSavedTokens + stats.ramSavedTokens + stats.cpuSavedTokens + stats.gpuSavedTokens;
+    // Count only extension-driven local savings (RAM + CPU + GPU); exclude Google built-in Implicit Cache
+    stats.totalSavedTokens = stats.ramSavedTokens + stats.cpuSavedTokens + stats.gpuSavedTokens;
     stats.savingsBreakdown = {
-      cache: stats.cacheSavedTokens,
       ram: stats.ramSavedTokens,
       cpu: stats.cpuSavedTokens,
       gpu: stats.gpuSavedTokens,
-      cacheHitRate: stats.cacheHitRate,
     };
     stats.burnRateTokensPerStep = stats.steps > 0 ? Math.round((stats.inputTokens + stats.outputTokens) / stats.steps) : 0;
     stats.outputTokensPerStep = stats.steps > 0 ? Math.round(stats.outputTokens / stats.steps) : 0;
@@ -926,6 +933,12 @@ function collectTelemetryUncached(configuredThreshold = 120000, options = {}) {
   }
 
   return stats;
+}
+
+function normPanelConversationId(rawCid = '') {
+  const clean = String(rawCid || '').trim().replace(/^["'\s]+|["'\s]+$/g, '');
+  if (!clean) return '';
+  return clean.replace(/__[0-9a-f]{8}$/i, '') || clean;
 }
 
 export async function resolveActiveWorkspaceForPanel(requestedRoot = '', options = {}) {
@@ -944,8 +957,9 @@ export async function resolveActiveWorkspaceForPanel(requestedRoot = '', options
 
   let fallbackUmbrellaWs = '';
   const evaluateCandidate = (rawPath) => {
-    if (!rawPath || typeof rawPath !== 'string') return null;
-    const trimmed = rawPath.trim();
+    const parsedPath = parseWorkspaceUriToPath(rawPath);
+    if (!parsedPath || typeof parsedPath !== 'string') return null;
+    const trimmed = parsedPath.trim();
     if (!trimmed || trimmed === '__all__' || trimmed === '__auto__') return null;
     try {
       if (
@@ -958,7 +972,7 @@ export async function resolveActiveWorkspaceForPanel(requestedRoot = '', options
       const abs = resolve(trimmed);
       const isUmbrella = isUmbrellaDirWithoutMarkers(abs);
       if (isUmbrella && !fallbackUmbrellaWs) fallbackUmbrellaWs = abs;
-      return { abs, isUmbrella };
+      return { abs, isUmbrella, key: normalizeWorkspaceUriKey(abs) };
     } catch {
       return null;
     }
@@ -981,6 +995,7 @@ export async function resolveActiveWorkspaceForPanel(requestedRoot = '', options
 
   const runningCandidates = [];
   const recentCandidates = [];
+  const chatByNormId = new Map();
 
   if (taskProgress && typeof taskProgress === 'object') {
     const rawChatMap = new Map();
@@ -1013,7 +1028,7 @@ export async function resolveActiveWorkspaceForPanel(requestedRoot = '', options
       }
     }
 
-    for (const chat of rawChatMap.values()) {
+    for (const [rawCidKey, chat] of rawChatMap.entries()) {
       let effectiveWs = String(chat.workspaceRoot || '').trim();
       const isWorktreeWs = /[\\/]\.gemini[\\/]antigravity[\\/]worktrees[\\/]/i.test(effectiveWs);
       if ((chat.isSubagent || isWorktreeWs) && chat.parentConversationId) {
@@ -1030,12 +1045,64 @@ export async function resolveActiveWorkspaceForPanel(requestedRoot = '', options
         Number(chat.lastPostToolAt || 0),
         Number(chat.completedAt || 0)
       );
+      const normCid = normPanelConversationId(chat.conversationId || rawCidKey);
+      if (normCid) {
+        const prev = chatByNormId.get(normCid);
+        if (!prev || ts >= prev.ts) {
+          chatByNormId.set(normCid, { ...cand, ts });
+        }
+      }
       if (chat.status === 'running') {
         runningCandidates.push({ ...cand, ts, priority: 3 });
       } else {
         recentCandidates.push({ ...cand, ts, priority: 2 });
       }
     }
+  }
+
+  const activeCid = normPanelConversationId(options?.activeConversationId || '');
+  const activeChatCand = activeCid ? (chatByNormId.get(activeCid) || null) : null;
+
+  const rawOpenWorkspaces = Array.isArray(options?.openWorkspaces)
+    ? options.openWorkspaces
+    : (typeof options?.openWorkspaces === 'string' && options.openWorkspaces.trim()
+      ? options.openWorkspaces.split('|')
+      : []);
+  const openRealCandidates = [];
+  const seenOpenKeys = new Set();
+  for (const rawItem of rawOpenWorkspaces) {
+    const cand = evaluateCandidate(rawItem);
+    if (!cand || !cand.key || seenOpenKeys.has(cand.key)) continue;
+    seenOpenKeys.add(cand.key);
+    if (!cand.isUmbrella) {
+      openRealCandidates.push(cand);
+    }
+  }
+
+  // Prefer the workspace currently open in the active IDE window over background running chats
+  if (openRealCandidates.length > 0) {
+    if (openRealCandidates.length === 1) {
+      return openRealCandidates[0].abs;
+    }
+    if (activeChatCand && !activeChatCand.isUmbrella && seenOpenKeys.has(activeChatCand.key)) {
+      return activeChatCand.abs;
+    }
+    if (runningCandidates.length > 0) {
+      const sortedRun = [...runningCandidates].sort((a, b) => b.ts - a.ts);
+      const liveOpen = sortedRun.find((c) => !c.isUmbrella && seenOpenKeys.has(c.key));
+      if (liveOpen) return liveOpen.abs;
+    }
+    if (recentCandidates.length > 0) {
+      const sortedRec = [...recentCandidates].sort((a, b) => (b.ts - a.ts) || (b.priority - a.priority));
+      const recOpen = sortedRec.find((c) => !c.isUmbrella && seenOpenKeys.has(c.key));
+      if (recOpen) return recOpen.abs;
+    }
+    return openRealCandidates[0].abs;
+  }
+
+  // Next, honor the conversation bound to this panel window if IDE workspace URIs are empty
+  if (activeChatCand && !activeChatCand.isUmbrella) {
+    return activeChatCand.abs;
   }
 
   if (runningCandidates.length > 0) {
@@ -1621,6 +1688,8 @@ export async function safeGetRamCacheStatus(state = {}) {
       let sumOpSeq = 0;
       let sumBurstCount = 0;
       let sumSotaSavedTokens = 0;
+      let sumSotaNonSliceSavedTokens = 0;
+      let hasExplicitNonSlice = false;
       let sumSotaMemoHits = 0;
       let sumSotaRepairRecalls = 0;
       let sumSotaSpecPrefetches = 0;
@@ -1632,6 +1701,13 @@ export async function safeGetRamCacheStatus(state = {}) {
         const st = res.stats || {};
         const sota = st.sota && typeof st.sota === 'object' ? st.sota : null;
         sumSotaSavedTokens += Math.max(0, Number(st.savedTokensEstimate || sota?.savedTokensEstimate || 0));
+        if (st.sotaNonSliceSavedTokens !== undefined || sota?.nonSliceSavedTokens !== undefined) {
+          hasExplicitNonSlice = true;
+          sumSotaNonSliceSavedTokens += Math.max(
+            0,
+            Number(st.sotaNonSliceSavedTokens ?? sota?.nonSliceSavedTokens ?? 0)
+          );
+        }
         if (sota) {
           sumSotaMemoHits += Math.max(0, Number(sota.memoHits || 0));
           sumSotaRepairRecalls += Math.max(0, Number(sota.repairRecalls || 0));
@@ -1757,6 +1833,7 @@ export async function safeGetRamCacheStatus(state = {}) {
             memoHits: sumSotaMemoHits,
             repairRecalls: sumSotaRepairRecalls,
             speculativePrefetches: sumSotaSpecPrefetches,
+            ...(hasExplicitNonSlice ? { nonSliceSavedTokens: sumSotaNonSliceSavedTokens } : {}),
             savedTokensEstimate: sumSotaSavedTokens,
           }
         : undefined;
@@ -1772,6 +1849,7 @@ export async function safeGetRamCacheStatus(state = {}) {
         misses: sumMisses,
         searches: sumSearches,
         slices: sumSlices,
+        ...(hasExplicitNonSlice ? { sotaNonSliceSavedTokens: sumSotaNonSliceSavedTokens } : {}),
         sotaSavedTokens: sumSotaSavedTokens,
         savedTokensEstimate,
         cacheUsedMb: Number(totalUsedMb.toFixed(1)),
@@ -1803,9 +1881,15 @@ export async function safeGetRamCacheStatus(state = {}) {
   return { enabled, active: false, budgetMb, totalRamMb, cacheUsedMb: 0, savedTokensEstimate: 0, workspaces: [], instancesCount: 0 };
 }
 
-export function mergeRamSavingsIntoTelemetry(stats, ramStats) {
-  if (!stats || typeof stats !== 'object' || !ramStats || typeof ramStats !== 'object') return stats;
-  const extra = Math.max(
+function extractExtraRamSotaTokens(ramStats) {
+  if (!ramStats || typeof ramStats !== 'object') return 0;
+  if (ramStats.sotaNonSliceSavedTokens !== undefined) {
+    return Math.max(0, Number(ramStats.sotaNonSliceSavedTokens) || 0);
+  }
+  if (ramStats.sota?.nonSliceSavedTokens !== undefined) {
+    return Math.max(0, Number(ramStats.sota.nonSliceSavedTokens) || 0);
+  }
+  return Math.max(
     0,
     Number(
       ramStats.sotaSavedTokens !== undefined
@@ -1813,10 +1897,14 @@ export function mergeRamSavingsIntoTelemetry(stats, ramStats) {
         : (ramStats.savedTokensEstimate || ramStats.sota?.savedTokensEstimate || 0)
     )
   );
+}
+
+export function mergeRamSavingsIntoTelemetry(stats, ramStats) {
+  if (!stats || typeof stats !== 'object' || !ramStats || typeof ramStats !== 'object') return stats;
+  const extra = extractExtraRamSotaTokens(ramStats);
   if (extra <= 0) return stats;
   const nextRamSaved = Number(stats.ramSavedTokens || 0) + extra;
   const nextTotalSaved =
-    Number(stats.cacheSavedTokens || 0) +
     nextRamSaved +
     Number(stats.cpuSavedTokens || 0) +
     Number(stats.gpuSavedTokens || 0);
@@ -1825,7 +1913,13 @@ export function mergeRamSavingsIntoTelemetry(stats, ramStats) {
     ramSavedTokens: nextRamSaved,
     totalSavedTokens: nextTotalSaved,
     ...(stats.savingsBreakdown && typeof stats.savingsBreakdown === 'object'
-      ? { savingsBreakdown: { ...stats.savingsBreakdown, ram: nextRamSaved } }
+      ? {
+          savingsBreakdown: {
+            ram: nextRamSaved,
+            cpu: Number(stats.savingsBreakdown.cpu ?? stats.cpuSavedTokens ?? 0),
+            gpu: Number(stats.savingsBreakdown.gpu ?? stats.gpuSavedTokens ?? 0),
+          },
+        }
       : {}),
   };
 }
@@ -1851,20 +1945,52 @@ function formatHourBucketKey(tsMs) {
   return `${y}-${m}-${day}T${h}`;
 }
 
-function getBucketLabelRuEn(dateObj, kind) {
-  if (kind === 'day') {
-    const hh = String(dateObj.getHours()).padStart(2, '0');
-    return { ru: hh, en: hh };
-  }
-  const RU_DAYS = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
-  const EN_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const idx = dateObj.getDay();
-  return { ru: RU_DAYS[idx], en: EN_DAYS[idx] };
+const RU_DAYS_SHORT = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+const EN_DAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const RU_MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+const EN_MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function pad2Num(n) {
+  return String(n).padStart(2, '0');
 }
 
+function getBucketLabelRuEn(startDate, endDate, kind) {
+  if (kind === 'day') {
+    const hhStart = pad2Num(startDate.getHours());
+    const hhEnd = pad2Num(endDate.getHours());
+    return {
+      ru: hhStart,
+      en: hhStart,
+      periodRu: `${hhStart}:00–${hhEnd}:00`,
+      periodEn: `${hhStart}:00–${hhEnd}:00`,
+    };
+  }
+  if (kind === 'week') {
+    const idx = startDate.getDay();
+    const dd = pad2Num(startDate.getDate());
+    const mIdx = startDate.getMonth();
+    return {
+      ru: `${RU_DAYS_SHORT[idx]} ${dd}`,
+      en: `${EN_DAYS_SHORT[idx]} ${dd}`,
+      periodRu: `${RU_DAYS_SHORT[idx]}, ${startDate.getDate()} ${RU_MONTHS_SHORT[mIdx]}`,
+      periodEn: `${EN_DAYS_SHORT[idx]}, ${EN_MONTHS_SHORT[mIdx]} ${startDate.getDate()}`,
+    };
+  }
+  const incEnd = new Date(endDate.getTime() - 1);
+  const rangeLabel = `${pad2Num(startDate.getDate())}.${pad2Num(startDate.getMonth() + 1)}–${pad2Num(incEnd.getDate())}.${pad2Num(incEnd.getMonth() + 1)}`;
+  return {
+    ru: rangeLabel,
+    en: rangeLabel,
+    periodRu: `${startDate.getDate()} ${RU_MONTHS_SHORT[startDate.getMonth()]} – ${incEnd.getDate()} ${RU_MONTHS_SHORT[incEnd.getMonth()]}`,
+    periodEn: `${EN_MONTHS_SHORT[startDate.getMonth()]} ${startDate.getDate()} – ${EN_MONTHS_SHORT[incEnd.getMonth()]} ${incEnd.getDate()}`,
+  };
+}
+
+const ROI_TIMELINE_SCHEMA_VERSION = 3;
+
 /**
- * Aggregates and persists hourly ROI savings snapshots into rolling Day / Week / Month
- * buckets and derives Quota Pacer bullet telemetry.
+ * Aggregates and persists hourly ROI savings snapshots (RAM / CPU / GPU only) into rolling
+ * Day / 7-day / 4-week buckets and exposes honest 5h Quota Pacer bullet telemetry.
  * @param {object} [options={}]
  */
 export function collectRoiTimeline(options = {}) {
@@ -1872,23 +1998,28 @@ export function collectRoiTimeline(options = {}) {
   const nowMs = Number.isFinite(Number(safeOpts.nowMs)) ? Number(safeOpts.nowMs) : Date.now();
   const curTel = safeOpts.currentTelemetry && typeof safeOpts.currentTelemetry === 'object' ? safeOpts.currentTelemetry : {};
   const bk = curTel.savingsBreakdown && typeof curTel.savingsBreakdown === 'object' ? curTel.savingsBreakdown : {};
-  const curCache = Math.max(0, Math.round(Number(bk.cache ?? curTel.cacheSavedTokens ?? 0)));
   const curRam = Math.max(0, Math.round(Number(bk.ram ?? curTel.ramSavedTokens ?? 0)));
   const curCpu = Math.max(0, Math.round(Number(bk.cpu ?? curTel.cpuSavedTokens ?? 0)));
   const curGpu = Math.max(0, Math.round(Number(bk.gpu ?? curTel.gpuSavedTokens ?? 0)));
-  const curHitRate = Math.max(0, Math.min(100, Math.round(Number(bk.cacheHitRate ?? curTel.cacheHitRate ?? 0))));
 
   const cacheDir = typeof safeOpts.cacheDir === 'string' && safeOpts.cacheDir.trim()
     ? resolve(safeOpts.cacheDir.trim())
     : resolveTunnelCacheDir(join(__dirname, '..', '..', '..'));
   const timelineFile = join(cacheDir, 'roi-timeline.json');
 
-  const doc = safeReadJsonSync(timelineFile, () => ({
-    lastTotals: { cache: 0, ram: 0, cpu: 0, gpu: 0 },
+  const rawDoc = safeReadJsonSync(timelineFile, () => ({
+    schemaVersion: ROI_TIMELINE_SCHEMA_VERSION,
+    lastTotals: { ram: 0, cpu: 0, gpu: 0 },
     slots: [],
   }), { selfHeal: true });
 
-  const prevTotals = doc?.lastTotals && typeof doc.lastTotals === 'object' ? doc.lastTotals : { cache: 0, ram: 0, cpu: 0, gpu: 0 };
+  // Migrate away from pre-v3 timeline files (which included pre-extension transcripts & inflated slice baselines)
+  const needsMigration = rawDoc?.schemaVersion !== ROI_TIMELINE_SCHEMA_VERSION;
+  const doc = needsMigration
+    ? { schemaVersion: ROI_TIMELINE_SCHEMA_VERSION, lastTotals: { ram: 0, cpu: 0, gpu: 0 }, slots: [] }
+    : rawDoc;
+
+  const prevTotals = doc?.lastTotals && typeof doc.lastTotals === 'object' ? doc.lastTotals : { ram: 0, cpu: 0, gpu: 0 };
   const rawSlots = Array.isArray(doc?.slots) ? doc.slots : [];
   const slotMap = new Map();
   const maxAgeMs = 31 * 24 * 60 * 60 * 1000;
@@ -1899,14 +2030,14 @@ export function collectRoiTimeline(options = {}) {
     slotMap.set(String(s.hourKey), {
       hourKey: String(s.hourKey),
       ts,
-      cache: Math.max(0, Math.round(Number(s.cache) || 0)),
       ram: Math.max(0, Math.round(Number(s.ram) || 0)),
       cpu: Math.max(0, Math.round(Number(s.cpu) || 0)),
       gpu: Math.max(0, Math.round(Number(s.gpu) || 0)),
     });
   }
 
-  // Seed historical daily slots truthfully from brain transcript timestamps when store is empty
+  // Seed historical slots strictly from transcripts where extension tools actually ran (never plain pre-install chats)
+  let seededFromTranscripts = false;
   if (slotMap.size === 0 && safeOpts.seedFromTranscripts !== false) {
     const geminiRoot = join(homedir(), '.gemini');
     const brainDirs = Array.isArray(safeOpts.brainDirs)
@@ -1914,69 +2045,112 @@ export function collectRoiTimeline(options = {}) {
       : ['antigravity', 'antigravity-ide', 'antigravity-cli']
           .map((dir) => join(geminiRoot, dir, 'brain'))
           .filter((p) => existsSync(p));
-    const weightedFiles = [];
+    const activeChats = [];
     for (const bDir of brainDirs) {
       let ents = [];
       try { ents = readdirSync(bDir, { withFileTypes: true }); } catch { continue; }
       for (const d of ents) {
         if (!d.isDirectory()) continue;
         const tp = join(bDir, d.name, '.system_generated', 'logs', 'transcript.jsonl');
-        if (!existsSync(tp)) continue;
+        if (!existsSync(tp) || isSubagentTranscriptFile(tp)) continue;
         try {
           const st = statSync(tp);
           if (st.size > 0 && nowMs - st.mtimeMs <= maxAgeMs) {
-            weightedFiles.push({ ts: st.mtimeMs, size: st.size });
+            const chatAccum = parseSingleChatDelta(tp, st);
+            const rc = chatAccum.ramCalls || { slices: 0, searches: 0, contextPacks: 0, total: 0 };
+            if ((rc.total || 0) > 0) {
+              const rawChatRam = (rc.slices || 0) * 900 + (rc.searches || 0) * 650 + (rc.contextPacks || 0) * 1400;
+              activeChats.push({
+                ts: st.mtimeMs,
+                rawChatRam,
+                weightSteps: Math.max(1, chatAccum.steps || 1),
+              });
+            }
           }
         } catch {}
       }
     }
-    const totalSize = weightedFiles.reduce((acc, f) => acc + f.size, 0);
-    if (totalSize > 0 && (curCache + curRam + curCpu + curGpu) > 0) {
-      for (const wf of weightedFiles) {
-        const share = wf.size / totalSize;
-        const hk = formatHourBucketKey(wf.ts);
-        const existing = slotMap.get(hk) || { hourKey: hk, ts: wf.ts, cache: 0, ram: 0, cpu: 0, gpu: 0 };
-        existing.cache += Math.round(curCache * share);
-        existing.ram += Math.round(curRam * share);
-        existing.cpu += Math.round(curCpu * share);
-        existing.gpu += Math.round(curGpu * share);
+    if (activeChats.length > 0 && (curRam + curCpu + curGpu) > 0) {
+      seededFromTranscripts = true;
+      activeChats.sort((a, b) => a.ts - b.ts);
+      const totalRawRam = activeChats.reduce((acc, c) => acc + c.rawChatRam, 0);
+      const totalSteps = activeChats.reduce((acc, c) => acc + c.weightSteps, 0);
+      let remRam = curRam;
+      let remCpu = curCpu;
+      let remGpu = curGpu;
+      for (let idx = 0; idx < activeChats.length; idx++) {
+        const ac = activeChats[idx];
+        const isLast = idx === activeChats.length - 1;
+        const ramShare = totalRawRam > 0 ? (ac.rawChatRam / totalRawRam) : (ac.weightSteps / totalSteps);
+        const stepShare = ac.weightSteps / totalSteps;
+        const addRam = isLast ? remRam : Math.min(remRam, Math.round(curRam * ramShare));
+        const addCpu = isLast ? remCpu : Math.min(remCpu, Math.round(curCpu * stepShare));
+        const addGpu = isLast ? remGpu : Math.min(remGpu, Math.round(curGpu * stepShare));
+        remRam -= addRam;
+        remCpu -= addCpu;
+        remGpu -= addGpu;
+        const hk = formatHourBucketKey(ac.ts);
+        const existing = slotMap.get(hk) || { hourKey: hk, ts: ac.ts, ram: 0, cpu: 0, gpu: 0 };
+        existing.ts = Math.max(existing.ts, ac.ts);
+        existing.ram += addRam;
+        existing.cpu += addCpu;
+        existing.gpu += addGpu;
         slotMap.set(hk, existing);
       }
     }
   }
 
-  const curHourKey = formatHourBucketKey(nowMs);
-  const dCache = curCache >= Number(prevTotals.cache || 0) ? (curCache - Number(prevTotals.cache || 0)) : curCache;
-  const dRam = curRam >= Number(prevTotals.ram || 0) ? (curRam - Number(prevTotals.ram || 0)) : curRam;
-  const dCpu = curCpu >= Number(prevTotals.cpu || 0) ? (curCpu - Number(prevTotals.cpu || 0)) : curCpu;
-  const dGpu = curGpu >= Number(prevTotals.gpu || 0) ? (curGpu - Number(prevTotals.gpu || 0)) : curGpu;
+  // High-water-mark deltas with self-healing against poisoned legacy baselines (>100k above live totals)
+  const rawPrevRam = Math.max(0, Number(prevTotals.ram || 0));
+  const rawPrevCpu = Math.max(0, Number(prevTotals.cpu || 0));
+  const rawPrevGpu = Math.max(0, Number(prevTotals.gpu || 0));
+  const prevRam = rawPrevRam > curRam * 1.5 + 100_000 ? curRam : rawPrevRam;
+  const prevCpu = rawPrevCpu > curCpu * 1.5 + 100_000 ? curCpu : rawPrevCpu;
+  const prevGpu = rawPrevGpu > curGpu * 1.5 + 100_000 ? curGpu : rawPrevGpu;
+  const dRam = curRam > prevRam ? (curRam - prevRam) : 0;
+  const dCpu = curCpu > prevCpu ? (curCpu - prevCpu) : 0;
+  const dGpu = curGpu > prevGpu ? (curGpu - prevGpu) : 0;
+  const nextTotals = {
+    ram: Math.max(prevRam, curRam),
+    cpu: Math.max(prevCpu, curCpu),
+    gpu: Math.max(prevGpu, curGpu),
+  };
 
-  const activeSlot = slotMap.get(curHourKey) || { hourKey: curHourKey, ts: nowMs, cache: 0, ram: 0, cpu: 0, gpu: 0 };
-  if (slotMap.size === 0 && (curCache + curRam + curCpu + curGpu) > 0) {
-    activeSlot.cache += curCache;
-    activeSlot.ram += curRam;
-    activeSlot.cpu += curCpu;
-    activeSlot.gpu += curGpu;
-  } else if (dCache + dRam + dCpu + dGpu > 0) {
-    activeSlot.cache += dCache;
-    activeSlot.ram += dRam;
-    activeSlot.cpu += dCpu;
-    activeSlot.gpu += dGpu;
+  const curHourKey = formatHourBucketKey(nowMs);
+  const activeSlot = slotMap.get(curHourKey) || { hourKey: curHourKey, ts: nowMs, ram: 0, cpu: 0, gpu: 0 };
+  if (!seededFromTranscripts) {
+    if (slotMap.size === 0 && (curRam + curCpu + curGpu) > 0) {
+      activeSlot.ram += curRam;
+      activeSlot.cpu += curCpu;
+      activeSlot.gpu += curGpu;
+    } else if (dRam + dCpu + dGpu > 0) {
+      activeSlot.ram += dRam;
+      activeSlot.cpu += dCpu;
+      activeSlot.gpu += dGpu;
+    }
   }
   activeSlot.ts = nowMs;
   slotMap.set(curHourKey, activeSlot);
 
   const sortedSlots = Array.from(slotMap.values()).sort((a, b) => a.ts - b.ts).slice(-720);
-  if (safeOpts.persist !== false && (nowMs - lastRoiTimelineSaveTs >= 60_000 || !existsSync(timelineFile))) {
+  if (safeOpts.persist !== false && (needsMigration || nowMs - lastRoiTimelineSaveTs >= 60_000 || !existsSync(timelineFile))) {
     lastRoiTimelineSaveTs = nowMs;
     try {
       if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
       atomicWriteJsonSync(timelineFile, {
+        schemaVersion: ROI_TIMELINE_SCHEMA_VERSION,
         updatedAt: new Date(nowMs).toISOString(),
-        lastTotals: { cache: curCache, ram: curRam, cpu: curCpu, gpu: curGpu },
+        lastTotals: nextTotals,
         slots: sortedSlots,
       });
     } catch {}
+  }
+
+  let firstActiveAtMs = null;
+  for (const s of sortedSlots) {
+    if ((s.ram + s.cpu + s.gpu) > 0 && (firstActiveAtMs === null || s.ts < firstActiveAtMs)) {
+      firstActiveAtMs = s.ts;
+    }
   }
 
   // Build 8 x 3h buckets (24h rolling Day)
@@ -1986,8 +2160,8 @@ export function collectRoiTimeline(options = {}) {
   for (let i = 7; i >= 0; i--) {
     const start = alignedEnd - (i + 1) * threeHoursMs;
     const end = alignedEnd - i * threeHoursMs;
-    const lbl = getBucketLabelRuEn(new Date(start), 'day');
-    dayBuckets.push({ labelRu: lbl.ru, labelEn: lbl.en, start, end, cache: 0, ram: 0, cpu: 0, gpu: 0 });
+    const lbl = getBucketLabelRuEn(new Date(start), new Date(end), 'day');
+    dayBuckets.push({ labelRu: lbl.ru, labelEn: lbl.en, periodLabelRu: lbl.periodRu, periodLabelEn: lbl.periodEn, start, end, ram: 0, cpu: 0, gpu: 0 });
   }
 
   // Build 7 daily buckets (Week)
@@ -1999,25 +2173,24 @@ export function collectRoiTimeline(options = {}) {
   for (let i = 6; i >= 0; i--) {
     const start = todayMs - i * oneDayMs;
     const end = start + oneDayMs;
-    const lbl = getBucketLabelRuEn(new Date(start), 'week');
-    weekBuckets.push({ labelRu: lbl.ru, labelEn: lbl.en, start, end, cache: 0, ram: 0, cpu: 0, gpu: 0 });
+    const lbl = getBucketLabelRuEn(new Date(start), new Date(end), 'week');
+    weekBuckets.push({ labelRu: lbl.ru, labelEn: lbl.en, periodLabelRu: lbl.periodRu, periodLabelEn: lbl.periodEn, start, end, ram: 0, cpu: 0, gpu: 0 });
   }
 
-  // Build 4 weekly buckets (Month)
+  // Build 4 weekly buckets (28d rolling with calendar date ranges)
   const monthBuckets = [];
   const oneWeekMs = 7 * oneDayMs;
   const weekEnd = todayMs + oneDayMs;
   for (let i = 3; i >= 0; i--) {
     const start = weekEnd - (i + 1) * oneWeekMs;
     const end = weekEnd - i * oneWeekMs;
-    const wNum = 4 - i;
-    monthBuckets.push({ labelRu: `Н${wNum}`, labelEn: `W${wNum}`, start, end, cache: 0, ram: 0, cpu: 0, gpu: 0 });
+    const lbl = getBucketLabelRuEn(new Date(start), new Date(end), 'month');
+    monthBuckets.push({ labelRu: lbl.ru, labelEn: lbl.en, periodLabelRu: lbl.periodRu, periodLabelEn: lbl.periodEn, start, end, ram: 0, cpu: 0, gpu: 0 });
   }
 
   const addIntoBuckets = (buckets, slot) => {
     for (const b of buckets) {
       if (slot.ts >= b.start && slot.ts < b.end) {
-        b.cache += slot.cache;
         b.ram += slot.ram;
         b.cpu += slot.cpu;
         b.gpu += slot.gpu;
@@ -2031,30 +2204,38 @@ export function collectRoiTimeline(options = {}) {
     addIntoBuckets(monthBuckets, s);
   }
 
-  const cleanBuckets = (arr) => arr.map((b) => ({
-    labelRu: b.labelRu,
-    labelEn: b.labelEn,
-    cache: b.cache,
-    ram: b.ram,
-    cpu: b.cpu,
-    gpu: b.gpu,
-    total: b.cache + b.ram + b.cpu + b.gpu,
-  }));
+  const cleanBuckets = (arr) => arr.map((b) => {
+    const total = b.ram + b.cpu + b.gpu;
+    return {
+      labelRu: b.labelRu,
+      labelEn: b.labelEn,
+      periodLabelRu: b.periodLabelRu,
+      periodLabelEn: b.periodLabelEn,
+      beforeInstall: Boolean(firstActiveAtMs && b.end <= firstActiveAtMs && total === 0),
+      ram: b.ram,
+      cpu: b.cpu,
+      gpu: b.gpu,
+      total,
+    };
+  });
 
   const qp = safeOpts.quotaPacer && typeof safeOpts.quotaPacer === 'object' ? safeOpts.quotaPacer : {};
   const utilizationPct = Math.max(0, Math.min(100, Math.round(Number(qp.utilizationPct || 0))));
-  const projectedPct = Math.max(utilizationPct, Math.min(100, Math.round(utilizationPct * 1.25)));
+  const hasExplicitProj = Number.isFinite(Number(qp.projectedPct));
+  const projectedPct = hasExplicitProj
+    ? Math.max(utilizationPct, Math.min(100, Math.round(Number(qp.projectedPct))))
+    : utilizationPct;
 
   return {
     ok: true,
+    schemaVersion: ROI_TIMELINE_SCHEMA_VERSION,
     generatedAt: new Date(nowMs).toISOString(),
+    firstActiveAt: firstActiveAtMs ? new Date(firstActiveAtMs).toISOString() : null,
     totals: {
-      cache: curCache,
       ram: curRam,
       cpu: curCpu,
       gpu: curGpu,
-      total: curCache + curRam + curCpu + curGpu,
-      cacheHitRate: curHitRate,
+      total: curRam + curCpu + curGpu,
     },
     scales: {
       day: cleanBuckets(dayBuckets),
@@ -2065,8 +2246,12 @@ export function collectRoiTimeline(options = {}) {
       utilizationPct,
       projectedPct,
       status: qp.status || 'calm',
-      estimatedMinutesLeft: Number.isFinite(Number(qp.estimatedMinutesLeft)) ? Number(qp.estimatedMinutesLeft) : 240,
+      estimatedMinutesLeft: Number.isFinite(Number(qp.estimatedMinutesLeft)) ? Number(qp.estimatedMinutesLeft) : 300,
       turnsLast60m: Number(qp.turnsLast60m || 0),
+      turnsLast5h: Number(qp.turnsLast5h ?? qp.turnsLast60m ?? 0),
+      windowHours: Number(qp.windowHours || 5),
+      window5hCeiling: Number(qp.window5hCeiling || 0),
+      subscriptionTier: qp.subscriptionTier || '',
     },
   };
 }
@@ -2206,12 +2391,12 @@ export async function safeGetGuardPulse(workspaceRoot = '', state = {}, options 
         pitfallsCount: pitfalls.length,
         fragileCount: fragile.length,
         count: (cbStatus !== 'CLOSED' ? 1 : 0) + pitfalls.length + fragile.length,
-        severity: cbStatus === 'OPEN' ? 'err' : ((cbStatus === 'WARNING' || pitfalls.length > 0 || fragile.length > 0) ? 'warn' : 'ok'),
+        severity: (cbStatus === 'TRIPPED' || cbStatus === 'OPEN') ? 'err' : ((cbStatus === 'WARNING' || pitfalls.length > 0 || fragile.length > 0) ? 'warn' : 'ok'),
         pitfalls: pitfalls.slice(0, 5).map((p) => ({
           id: String(p?.id || ''),
-          file: String(p?.file || p?.target || ''),
-          lesson: String(p?.lesson || p?.summary || p?.error || ''),
-          category: String(p?.category || p?.kind || 'pitfall'),
+          file: String(p?.file || p?.fileName || p?.target || ''),
+          lesson: String(p?.lesson || p?.rule || p?.summary || p?.error || ''),
+          category: String(p?.category || p?.type || p?.kind || 'pitfall'),
         })),
         fragileFiles: fragile.slice(0, 5).map((f) => ({
           file: String(f.file || f.path || ''),
@@ -2316,7 +2501,9 @@ export async function safeGetGuardPulse(workspaceRoot = '', state = {}, options 
         const debtRes = scanShortcutDebt(activeWs, { maxFiles: 120, lang });
         debtTotal = Number(debtRes?.totalMarkers || 0);
         debtNoTriggerCount = Number(debtRes?.noTriggerCount || 0);
-        const rawMarkers = Array.isArray(debtRes?.markers) ? debtRes.markers : [];
+        const rawMarkers = Array.isArray(debtRes?.items)
+          ? debtRes.items
+          : (Array.isArray(debtRes?.markers) ? debtRes.markers : []);
         debtItems = rawMarkers.slice(0, 5).map((m) => ({
           file: String(m.file || ''),
           line: Number(m.line || 0),

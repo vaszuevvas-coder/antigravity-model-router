@@ -33,6 +33,7 @@ import {
 } from './local-gpu-engine.mjs';
 import { redactSecretsInText } from './security-guard.mjs';
 import { normalizeLang, pickLang } from './i18n.mjs';
+import { resolveTunnelCacheDir } from './cache-dir.mjs';
 import { lspBridge } from './lsp-bridge.mjs';
 import { knowledgeHub } from './sqlite-knowledge-hub.mjs';
 
@@ -785,8 +786,8 @@ export function readCachedSentinelSnapshot(wsPath = '', stateOverride = null, { 
 }
 
 export class BackgroundSentinel {
-  constructor({ cacheDir = DEFAULT_CACHE_DIR, stateOverride = null } = {}) {
-    this.cacheDir = cacheDir;
+  constructor({ cacheDir = '', stateOverride = null } = {}) {
+    this._customCacheDir = cacheDir && cacheDir !== DEFAULT_CACHE_DIR ? String(cacheDir) : '';
     this.stateOverride = stateOverride;
     this.lastActivityTs = Date.now();
     this.lastPreemptTs = 0;
@@ -804,6 +805,14 @@ export class BackgroundSentinel {
     this.tickInFlight = false;
 
     this._hydrateCountersFromDisk();
+  }
+
+  get cacheDir() {
+    return this._customCacheDir || resolveTunnelCacheDir(PLUGIN_ROOT);
+  }
+
+  set cacheDir(val) {
+    this._customCacheDir = val && val !== DEFAULT_CACHE_DIR ? String(val) : '';
   }
 
   _ensureCacheDirs() {

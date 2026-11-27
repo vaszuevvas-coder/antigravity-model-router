@@ -3,12 +3,30 @@
  * @description Loopback host/origin/workspace validation, HTTP middleware, and parent/LS watchdog.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { timingSafeEqual } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import { resolve } from 'node:path';
 
 export const BLOCKED_PROTO_KEYS = new Set(['__proto__', 'constructor', 'prototype', 'toString', 'valueOf', 'hasOwnProperty']);
+
+const activeSidecarRequestAls = new AsyncLocalStorage();
+
+export function getActiveSidecarRequest() {
+  return activeSidecarRequestAls.getStore() || null;
+}
+
+export function isValidSidecarToken(provided = '', expected = '') {
+  if (typeof provided !== 'string' || typeof expected !== 'string') return false;
+  const p = provided.trim();
+  const e = expected.trim();
+  if (!p || !e) return false;
+  const a = Buffer.from(p, 'utf8');
+  const b = Buffer.from(e, 'utf8');
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 export function isAllowedLoopbackEndpoint(rawUrl = '') {
   if (typeof rawUrl !== 'string') return false;
@@ -22,6 +40,17 @@ export function isAllowedLoopbackEndpoint(rawUrl = '') {
   } catch {
     return false;
   }
+}
+
+export function isSafeCreatableFolderPath(rawPath = '') {
+  if (typeof rawPath !== 'string') return false;
+  const trimmed = rawPath.trim();
+  if (!trimmed || trimmed.length > 512) return false;
+  if (/^(?:\\\\|\/\/)/.test(trimmed)) return false;
+  if (/[\r\n\0<>|"?*]/.test(trimmed.replace(/^[A-Za-z]:/, ''))) return false;
+  const parts = trimmed.split(/[\\/]/).filter(Boolean);
+  if (parts.some((p) => p === '..' || BLOCKED_PROTO_KEYS.has(p))) return false;
+  return true;
 }
 
 export function isValidWorkspaceDir(dir = '') {
@@ -84,12 +113,24 @@ export function validateRequestOrigin(req, options = {}) {
   }
   const hasValidPanelHdr = panelHdrStr === 'antigravity-v38' || panelHdrStr === 'antigravity-v37';
   const secFetchSite = String(getHdr('sec-fetch-site') || '').trim().toLowerCase();
-  const hasSidecarAuth = Boolean(
+  const expectedToken = typeof options.expectedToken === 'string'
+    ? options.expectedToken.trim()
+    : String(process.env.SIDECAR_TOKEN || '').trim();
+  const rawAuthHdr = getHdr('authorization');
+  const bearerToken = rawAuthHdr !== undefined && rawAuthHdr !== null
+    ? String(rawAuthHdr).trim().replace(/^Bearer\s+/i, '')
+    : '';
+  const providedToken = String(
     getHdr('x-sidecar-token') ||
     getHdr('x-antigravity-token') ||
-    getHdr('authorization') ||
-    secFetchSite === 'same-origin'
-  );
+    bearerToken ||
+    ''
+  ).trim();
+  if (providedToken && expectedToken && !isValidSidecarToken(providedToken, expectedToken)) {
+    return false;
+  }
+  const hasValidToken = Boolean(expectedToken && providedToken && isValidSidecarToken(providedToken, expectedToken));
+  const hasSidecarAuth = Boolean(hasValidToken || secFetchSite === 'same-origin');
 
   const isWebviewScheme = (proto) =>
     proto === 'vscode-webview:' ||
@@ -117,6 +158,7 @@ export function validateRequestOrigin(req, options = {}) {
   if (rawOrigin === undefined || rawOrigin === null || rawOrigin === '') {
     const rawReferer = getHdr('referer');
     if (!rawReferer) {
+      if (isPost) return hasValidPanelHdr || hasSidecarAuth;
       if (secFetchSite === 'cross-site' && !hasValidPanelHdr && !hasSidecarAuth) return false;
       return true;
     }
@@ -134,7 +176,7 @@ export function validateRequestOrigin(req, options = {}) {
   const originStr = String(rawOrigin).trim();
   if (!originStr) return false;
   if (originStr.toLowerCase() === 'null') {
-    return isPost ? (hasValidPanelHdr || hasSidecarAuth) : true;
+    return (isPost || options.enforceGetOrigin) ? (hasValidPanelHdr || hasSidecarAuth) : true;
   }
   try {
     const u = new URL(originStr);
@@ -190,7 +232,7 @@ export function attachSidecarSecurityMiddleware(server, options = {}) {
     }
 
     const isApiRoute = pathname.startsWith('/api/') || pathname.startsWith('/_sidecar/');
-    if (!validateRequestOrigin(req, { enforceGetOrigin: isApiRoute })) {
+    if (!validateRequestOrigin(req, { enforceGetOrigin: isApiRoute, expectedToken: options.expectedToken })) {
       res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ ok: false, error: 'Forbidden origin' }));
       return;
@@ -236,12 +278,17 @@ export function attachSidecarSecurityMiddleware(server, options = {}) {
           return false;
         }
       }
+      if (event === 'end') {
+        return activeSidecarRequestAls.run(req, () => origEmit(event, ...args));
+      }
       return origEmit(event, ...args);
     };
 
-    for (const listener of origListeners) {
-      listener.call(server, req, res);
-    }
+    activeSidecarRequestAls.run(req, () => {
+      for (const listener of origListeners) {
+        listener.call(server, req, res);
+      }
+    });
   });
 
   return server;

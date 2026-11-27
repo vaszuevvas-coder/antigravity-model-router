@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * @file run-mega-diagnostic.mjs
- * @description Unified 6-contour 360-degree Mega-Diagnostic CLI for The Tunnel v4.0.5:
+ * @description Unified 6-contour 360-degree Mega-Diagnostic CLI for The Tunnel v4.0.6:
  *   1. Hygiene & Manifests (UI build check, version sync, Skill-Architect, GitHub Guard)
  *   2. Static, Security, Contracts & Sandboxed Fuzzing (Deep Stress Auditor --fuzz)
  *   3. 8 Practical Cross-System Missions (tests/mega-cross-system-e2e.test.mjs)
@@ -562,12 +562,12 @@ async function runContour6LiveCdp(screenshotsDir = '') {
         });
       };
       measure('full_ru_380');
-      document.querySelector('[data-action="setUiLanguage"][data-arg="en"]')?.click();
+      if (typeof setUiLanguage === 'function') await setUiLanguage('en');
       await new Promise((r) => setTimeout(r, 150));
       const enTitle = document.querySelector('#smartComposerCard .lg-card-title')?.textContent?.trim() || '';
       measure('full_en_380');
 
-      document.querySelector('[data-action="setUiLanguage"][data-arg="ru"]')?.click();
+      if (typeof setUiLanguage === 'function') await setUiLanguage('ru');
       await new Promise((r) => setTimeout(r, 150));
 
       document.querySelector('[data-action="setPanelViewMode"][data-arg="lite"]')?.click();

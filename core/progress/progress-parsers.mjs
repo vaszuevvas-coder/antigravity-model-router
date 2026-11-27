@@ -59,6 +59,12 @@ export function normalizeConversationId(rawCid = 'default') {
 
 export const UUID_PROJ_NAME_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export function isInstalledPluginWorkspacePath(wsPath = '') {
+  const norm = sanitizeWorkspaceRoot(wsPath).replace(/\\/g, '/').toLowerCase();
+  if (!norm) return false;
+  return /(?:^|\/)(?:\.gemini\/(?:config|antigravity)\/plugins|\.?agents?\/plugins)\/[^/]+(?:\/|$)/i.test(norm);
+}
+
 export function isBrainOrTempWorkspacePath(wsPath = '') {
   const norm = sanitizeWorkspaceRoot(wsPath).replace(/\\/g, '/').toLowerCase();
   if (!norm) return true;
@@ -66,7 +72,8 @@ export function isBrainOrTempWorkspacePath(wsPath = '') {
     norm.includes('/.gemini/antigravity/brain') ||
     norm.includes('/.gemini/antigravity-ide/brain') ||
     norm.includes('/.gemini/antigravity-cli/brain') ||
-    norm.includes('/.system_generated/')
+    norm.includes('/.system_generated/') ||
+    isInstalledPluginWorkspacePath(norm)
   );
 }
 
@@ -1123,6 +1130,66 @@ function extractBgLabelFromLogHead(headText = '') {
   return '';
 }
 
+export function extractBgProgressFromLogTail(tailText = '') {
+  const cleanTail = String(tailText || '').replace(/\x1b(?:\[[0-9;?]*[a-zA-Z]|\][^\x07]*(?:\x07|\x1b\\))/g, '');
+  if (!cleanTail.trim()) return { progressPct: null, progressText: '' };
+  const rawLines = cleanTail.split(/[\r\n]+/);
+  const lines = [];
+  for (let i = rawLines.length - 1; i >= 0 && lines.length < 20; i--) {
+    const line = rawLines[i].trim();
+    if (line) lines.push(line);
+  }
+  if (lines.length === 0) return { progressPct: null, progressText: '' };
+
+  let progressPct = null;
+  const pctRe = /(?<![\d.%])(100|[1-9]?\d)(?:\.\d+)?\s*%/g;
+  const fracRe = /(?:\[|\(|\b(?:step|stage|task|file|files|test|tests|pass|passed|done|item|items|chunk|chunks|layer|batch|этап|шаг)\s*[:#]?\s*)(\d{1,5})\s*(?:\/|of|из)\s*(\d{1,5})(?:\]|\)|\b)/gi;
+
+  for (const line of lines) {
+    pctRe.lastIndex = 0;
+    let lastPct = null;
+    let m;
+    while ((m = pctRe.exec(line)) !== null) {
+      const val = Number(m[1]);
+      if (Number.isFinite(val) && val >= 0 && val <= 100) {
+        lastPct = Math.round(val);
+      }
+    }
+    if (lastPct !== null) {
+      progressPct = lastPct;
+      break;
+    }
+
+    if (/\b\d{1,4}\/\d{1,2}\/\d{2,4}\b/.test(line)) continue;
+    fracRe.lastIndex = 0;
+    let lastFracPct = null;
+    while ((m = fracRe.exec(line)) !== null) {
+      const current = Number(m[1]);
+      const total = Number(m[2]);
+      if (total >= 2020 && total <= 2039 && current <= 12) continue;
+      if (Number.isFinite(current) && Number.isFinite(total) && total > 0 && current >= 0 && current <= total && total <= 100000) {
+        lastFracPct = clampInt(Math.round((current / total) * 100), 0, 100, 0);
+      }
+    }
+    if (lastFracPct !== null) {
+      progressPct = lastFracPct;
+      break;
+    }
+  }
+
+  let progressText = '';
+  for (const line of lines) {
+    if (line.length < 3) continue;
+    if (/^[\s=\-_*#.|]+$/.test(line)) continue;
+    if (/^(?:command\s+)?exit(?:ed)?(?:\s+with)?\s+(?:code|status)\b/i.test(line)) continue;
+    progressText = sanitizeBgPreviewText(line, 80);
+    if (progressText.length >= 3) break;
+    progressText = '';
+  }
+
+  return { progressPct, progressText };
+}
+
 function scanConversationBackgroundTaskLogs(transcriptPath, bgTasksMap, upsertBgTask) {
   try {
     const tasksDir = join(dirname(dirname(transcriptPath)), 'tasks');
@@ -1155,6 +1222,7 @@ function scanConversationBackgroundTaskLogs(transcriptPath, bgTasksMap, upsertBg
       const sample = readBoundedLogHeadAndTail(item.fullPath, 512, 1024);
       if (!sample) continue;
       const tailStatus = inferBgStatusFromLogTail(sample.tailText);
+      const parsedProg = extractBgProgressFromLogTail(sample.tailText);
       let matchedKey = '';
       if (bgTasksMap.has(item.taskId)) {
         matchedKey = item.taskId;
@@ -1174,6 +1242,8 @@ function scanConversationBackgroundTaskLogs(transcriptPath, bgTasksMap, upsertBg
         upsertBgTask(matchedKey, {
           status: nextStatus,
           ...(headHint ? { commandPreview: headHint } : {}),
+          ...(typeof parsedProg.progressPct === 'number' ? { progressPct: parsedProg.progressPct } : {}),
+          ...(parsedProg.progressText ? { progressText: parsedProg.progressText } : {}),
           startedAt: prev.startedAt || sample.birthtimeMs || sample.mtimeMs,
           updatedAt: Math.max(prev.updatedAt || 0, sample.mtimeMs),
         });
@@ -1186,6 +1256,8 @@ function scanConversationBackgroundTaskLogs(transcriptPath, bgTasksMap, upsertBg
           label,
           commandPreview: headHint || label,
           isDaemon: false,
+          ...(typeof parsedProg.progressPct === 'number' ? { progressPct: parsedProg.progressPct } : {}),
+          ...(parsedProg.progressText ? { progressText: parsedProg.progressText } : {}),
           startedAt: sample.birthtimeMs || sample.mtimeMs,
           updatedAt: sample.mtimeMs,
         });
@@ -1286,6 +1358,12 @@ export function inspectTranscriptTurnState(transcriptPath = '', now = Date.now()
       .replace(/\s+/g, ' ')
       .trim()
       .slice(0, 120);
+    const nextProgressPct = typeof patch.progressPct === 'number' && Number.isFinite(patch.progressPct)
+      ? clampInt(patch.progressPct, 0, 100, 0)
+      : (typeof prev?.progressPct === 'number' ? prev.progressPct : null);
+    const nextProgressText = typeof patch.progressText === 'string' && patch.progressText.trim()
+      ? patch.progressText.trim().slice(0, 80)
+      : String(prev?.progressText || '');
     backgroundTasksMap.set(id, {
       taskId: id,
       label: nextLabel,
@@ -1295,6 +1373,10 @@ export function inspectTranscriptTurnState(transcriptPath = '', now = Date.now()
       isDaemon: typeof patch.isDaemon === 'boolean' ? patch.isDaemon : Boolean(prev?.isDaemon),
       startedAt: prevStarted > 0 ? prevStarted : patchStarted,
       updatedAt: Math.max(prevUpdated, patchUpdated, patchStarted),
+      progressPct: nextProgressPct,
+      progressMode: patch.progressMode || prev?.progressMode || '',
+      etaSec: typeof patch.etaSec === 'number' && Number.isFinite(patch.etaSec) ? patch.etaSec : (prev?.etaSec ?? null),
+      progressText: nextProgressText,
       seq: nextSeq,
     });
   };
@@ -1667,17 +1749,48 @@ export function inspectTranscriptTurnState(transcriptPath = '', now = Date.now()
     return Number(b.seq || 0) - Number(a.seq || 0);
   });
   const backgroundTasksTotalCount = allBgTasks.length;
-  const backgroundTasks = allBgTasks.slice(0, MAX_PUBLIC_BACKGROUND_TASKS).map((t) => ({
-    id: t.taskId,
-    taskId: t.taskId,
-    label: t.label,
-    labelEn: localizeProgressLabelToEn(t.label),
-    commandPreview: t.commandPreview,
-    status: t.status,
-    isDaemon: Boolean(t.isDaemon),
-    startedAt: Number(t.startedAt || 0),
-    updatedAt: Number(t.updatedAt || 0),
-  }));
+  const backgroundTasks = allBgTasks.slice(0, MAX_PUBLIC_BACKGROUND_TASKS).map((t) => {
+    const startedAt = Number(t.startedAt || 0);
+    const updatedAt = Number(t.updatedAt || 0);
+    const hasRawPct = typeof t.progressPct === 'number' && Number.isFinite(t.progressPct);
+    let progressMode = 'indeterminate';
+    let progressPct = null;
+    let etaSec = null;
+
+    if (t.status === 'done') {
+      progressMode = 'done';
+      progressPct = 100;
+    } else if (t.status === 'error') {
+      progressMode = 'error';
+      progressPct = hasRawPct ? clampInt(t.progressPct, 0, 100, 100) : 100;
+    } else if (t.status === 'cancelled') {
+      progressMode = 'cancelled';
+      progressPct = hasRawPct ? clampInt(t.progressPct, 0, 100, 0) : 0;
+    } else if (t.status === 'running' && !t.isDaemon && hasRawPct) {
+      progressMode = 'determinate';
+      progressPct = clampInt(t.progressPct, 0, 99, 0);
+      const elapsedSec = startedAt > 0 && now > startedAt ? Math.round((now - startedAt) / 1000) : 0;
+      if (progressPct >= 3 && elapsedSec >= 2) {
+        etaSec = Math.min(86400, Math.max(1, Math.round((elapsedSec * (100 - progressPct)) / progressPct)));
+      }
+    }
+
+    return {
+      id: t.taskId,
+      taskId: t.taskId,
+      label: t.label,
+      labelEn: localizeProgressLabelToEn(t.label),
+      commandPreview: t.commandPreview,
+      status: t.status,
+      isDaemon: Boolean(t.isDaemon),
+      startedAt,
+      updatedAt,
+      progressPct,
+      progressMode,
+      etaSec,
+      progressText: String(t.progressText || '').slice(0, 80),
+    };
+  });
   const runningBackgroundTasks = stoppedByServerRestart
     ? []
     : allBgTasks.filter((t) => t.status === 'running');
@@ -1743,6 +1856,25 @@ export function inspectTranscriptTurnState(transcriptPath = '', now = Date.now()
       const isFreshWakeup = hasTrailingWakeupMessage && !stoppedByServerRestart && (now - Number(st.mtimeMs || 0) < 45_000);
       if (!hasRunningSibling && hasWaitParkOutput && !isFreshWakeup) {
         return { ...baseTelemetry, swarmParked: true, state: 'completed' };
+      }
+    }
+  }
+
+  // Wait-state check when PLANNER_RESPONSE invoked ask_question alongside GENERIC steps (e.g. update_steps + ask_question)
+  if (lastPlannerIdx >= 0 && lastPlannerIdx > lastUserIdx && lastMeaningfulIdx > lastPlannerIdx && lastMeaningful?.type !== 'USER_INPUT' && !stoppedByServerRestart) {
+    const lpTools = Array.isArray(parsed[lastPlannerIdx]?.tool_calls) ? parsed[lastPlannerIdx].tool_calls : [];
+    if (lpTools.some((tc) => tc?.name === 'ask_question')) {
+      const postModelSteps = parsed
+        .slice(lastPlannerIdx + 1)
+        .filter((it) => it && it.source !== 'SYSTEM' && it.source !== 'SYSTEM_SDK');
+      const hasRunningGeneric = postModelSteps.some(
+        (it) => it.type === 'GENERIC' && String(it.status || '').toUpperCase() === 'RUNNING'
+      );
+      const doneGenericCount = postModelSteps.filter(
+        (it) => it.type === 'GENERIC' && String(it.status || '').toUpperCase() === 'DONE'
+      ).length;
+      if (hasRunningGeneric || doneGenericCount < lpTools.length) {
+        return { ...baseTelemetry, state: 'waiting_user' };
       }
     }
   }

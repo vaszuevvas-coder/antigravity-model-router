@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import {
   getInstallStatus,
   maintainCacheDir,
+  parseInstallCliArgs,
   runInstall,
   runUninstall,
 } from '../install.js';
@@ -340,5 +341,89 @@ test('buildReleasePackages({ zipOnly: true }) emits verified ZIP, SHA256SUMS.txt
   } finally {
     restoreFile(routerStateSnap);
     fs.rmSync(tmpOut, { recursive: true, force: true });
+  }
+});
+
+test('install.js safety guards: uninstall refuses unmarked dir, install blocks subpath target, nested exclusions pruned, CLI args validated, corrupted cache healed', () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'amr-install-guards-'));
+  try {
+    // 1. runUninstall refuses to delete an unmarked directory
+    const unrelatedDir = path.join(tmpRoot, 'important-user-folder');
+    fs.mkdirSync(unrelatedDir, { recursive: true });
+    fs.writeFileSync(path.join(unrelatedDir, 'notes.txt'), 'keep me', 'utf8');
+    const badUninstall = runUninstall({ targetDir: unrelatedDir, silent: true, lang: 'en' });
+    assert.equal(badUninstall.ok, false);
+    assert.equal(badUninstall.removed, false);
+    assert.equal(fs.existsSync(path.join(unrelatedDir, 'notes.txt')), true);
+
+    // 2. runInstall refuses when targetDir is inside srcRoot
+    const srcRoot = path.join(tmpRoot, 'src-repo');
+    fs.mkdirSync(path.join(srcRoot, 'sidecars', 'panel'), { recursive: true });
+    fs.mkdirSync(path.join(srcRoot, 'skills', 'bundled'), { recursive: true });
+    fs.writeFileSync(path.join(srcRoot, 'plugin.json'), JSON.stringify({ name: 'antigravity-model-router', version: '4.0.5' }), 'utf8');
+    fs.writeFileSync(path.join(srcRoot, 'router-state.json'), JSON.stringify({ uiLanguage: 'en' }), 'utf8');
+    fs.writeFileSync(path.join(srcRoot, 'sidecars', 'panel', 'ui.html'), '<html></html>', 'utf8');
+    fs.writeFileSync(path.join(srcRoot, 'skills', 'bundled', 'SKILL.md'), '---\nname: bundled\ndescription: bundled\n---\n', 'utf8');
+
+    const subpathRes = runInstall({
+      srcRoot,
+      targetDir: path.join(srcRoot, 'nested-out'),
+      silent: true,
+      lang: 'en',
+    });
+    assert.equal(subpathRes.ok, false);
+    assert.equal(fs.existsSync(path.join(srcRoot, 'nested-out')), false);
+
+    // 3. Stale NESTED_EXCLUDE directories (e.g. ui-src) are pruned on upgrade while preserving project-* skills
+    const destRoot = path.join(tmpRoot, 'dest-plugin');
+    fs.mkdirSync(path.join(destRoot, 'sidecars', 'panel', 'ui-src'), { recursive: true });
+    fs.writeFileSync(path.join(destRoot, 'sidecars', 'panel', 'ui-src', 'stale.js'), '// stale', 'utf8');
+    fs.mkdirSync(path.join(destRoot, 'skills', 'project-local'), { recursive: true });
+    fs.writeFileSync(path.join(destRoot, 'skills', 'project-local', 'SKILL.md'), '---\nname: project-local\ndescription: local\n---\n', 'utf8');
+
+    const installRes = runInstall({ srcRoot, targetDir: destRoot, silent: true, lang: 'en' });
+    assert.equal(installRes.ok, true);
+    assert.equal(fs.existsSync(path.join(destRoot, 'sidecars', 'panel', 'ui-src')), false);
+    assert.equal(fs.existsSync(path.join(destRoot, 'skills', 'project-local', 'SKILL.md')), true);
+
+    // 4. parseInstallCliArgs catches missing flag values and unknown arguments, and CLI exits non-zero
+    const missingTarget = parseInstallCliArgs(['--target', '--silent']);
+    assert.equal(missingTarget.targetDir, '');
+    assert.equal(missingTarget.silent, true);
+    assert.ok(missingTarget.errors.length > 0);
+
+    const missingLang = parseInstallCliArgs(['--lang', '--dry-run']);
+    assert.equal(missingLang.lang, '');
+    assert.ok(missingLang.errors.length > 0);
+
+    const unknownArg = parseInstallCliArgs(['--taget', path.join(tmpRoot, 'x')]);
+    assert.deepEqual(unknownArg.unknownArgs, ['--taget', path.join(tmpRoot, 'x')]);
+    assert.ok(unknownArg.errors.length > 0);
+
+    assert.throws(() => {
+      execFileSync(process.execPath, [path.join(ROOT_DIR, 'install.js'), '--taget', destRoot], {
+        cwd: ROOT_DIR,
+        encoding: 'utf8',
+        stdio: 'pipe',
+        timeout: 10000,
+      });
+    });
+
+    // 5. maintainCacheDir self-heals corrupted JSON caches
+    const cacheDir = path.join(tmpRoot, 'corrupt-cache');
+    fs.mkdirSync(cacheDir, { recursive: true });
+    fs.writeFileSync(path.join(cacheDir, 'circuit-breaker.json'), '{broken json', 'utf8');
+    fs.writeFileSync(path.join(cacheDir, 'compaction-state.json'), '{broken json', 'utf8');
+    const maintRes = maintainCacheDir(cacheDir);
+    assert.equal(fs.existsSync(path.join(cacheDir, 'circuit-breaker.json')), false);
+    assert.equal(fs.existsSync(path.join(cacheDir, 'compaction-state.json')), false);
+    assert.ok(maintRes.legacyRemoved >= 2);
+
+    // 6. install.sh avoids double 'v$(node -v)'
+    const installSh = fs.readFileSync(path.join(ROOT_DIR, 'install.sh'), 'utf8');
+    assert.equal(installSh.includes('v$(node -v)'), false);
+    assert.match(installSh, /\[\[ "\$NODE_MAJOR" =~ \^\[0-9\]\+\$ \]\]/);
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });

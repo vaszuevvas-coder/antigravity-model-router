@@ -12,28 +12,94 @@
     let _autoWorkspaceResolved = '';
     let _cachedSidecarOpenWorkspaces = [];
     let _lastOpenWorkspacesPollAt = 0;
+    let _openWorkspacesInFlight = null;
+    let _sidecarWsSubscribed = false;
+    let _sidecarWsRefreshTimer = null;
+
+    function normalizeSidecarWorkspaceUris(res) {
+      if (!Array.isArray(res)) return [];
+      return res
+        .map(function (u) { return String(u || '').trim(); })
+        .filter(Boolean)
+        .slice(0, 24);
+    }
+
+    function ensureSidecarWorkspaceSubscription() {
+      if (_sidecarWsSubscribed) return;
+      if (window.sidecar && typeof window.sidecar.onWorkspaceChange === 'function') {
+        _sidecarWsSubscribed = true;
+        try {
+          window.sidecar.onWorkspaceChange(function (uris) {
+            const nextList = normalizeSidecarWorkspaceUris(uris);
+            const prevSig = _cachedSidecarOpenWorkspaces.join('|');
+            const nextSig = nextList.join('|');
+            _cachedSidecarOpenWorkspaces = nextList;
+            _lastOpenWorkspacesPollAt = Date.now();
+            if (prevSig !== nextSig && _selectedWorkspaceMode === '__auto__' && lastPayloadCache) {
+              if (_sidecarWsRefreshTimer) clearTimeout(_sidecarWsRefreshTimer);
+              _sidecarWsRefreshTimer = setTimeout(function () {
+                _sidecarWsRefreshTimer = null;
+                if (typeof refreshAll === 'function') {
+                  void refreshAll({ silent: true });
+                }
+              }, 25);
+            }
+          });
+        } catch {}
+      }
+    }
 
     async function refreshSidecarOpenWorkspacesFast(force) {
+      ensureSidecarWorkspaceSubscription();
       const now = Date.now();
       if (!force && _lastOpenWorkspacesPollAt > 0 && now - _lastOpenWorkspacesPollAt < 4000) {
         return _cachedSidecarOpenWorkspaces;
       }
-      _lastOpenWorkspacesPollAt = now;
-      try {
-        if (window.sidecar && typeof window.sidecar.getWorkspaceUris === 'function') {
-          const res = await Promise.race([
-            window.sidecar.getWorkspaceUris(),
-            new Promise(function (resolve) { setTimeout(function () { resolve([]); }, 350); })
-          ]);
-          if (Array.isArray(res)) {
-            _cachedSidecarOpenWorkspaces = res
-              .map(function (u) { return String(u || '').trim(); })
-              .filter(Boolean)
-              .slice(0, 24);
+      if (_openWorkspacesInFlight) {
+        return _openWorkspacesInFlight;
+      }
+      const TIMEOUT_MARK = {};
+      const timeoutMs = _cachedSidecarOpenWorkspaces.length === 0 ? 900 : 350;
+      _openWorkspacesInFlight = (async function () {
+        try {
+          if (window.sidecar && typeof window.sidecar.getWorkspaceUris === 'function') {
+            const rawPromise = Promise.resolve(window.sidecar.getWorkspaceUris()).catch(function () { return null; });
+            const res = await Promise.race([
+              rawPromise,
+              new Promise(function (resolve) { setTimeout(function () { resolve(TIMEOUT_MARK); }, timeoutMs); })
+            ]);
+            if (res !== TIMEOUT_MARK && Array.isArray(res)) {
+              _cachedSidecarOpenWorkspaces = normalizeSidecarWorkspaceUris(res);
+              _lastOpenWorkspacesPollAt = Date.now();
+            } else if (res === TIMEOUT_MARK) {
+              // Preserve late IPC resolution so cold-start open workspaces still sync without waiting for next poll
+              rawPromise.then(function (lateRes) {
+                if (!Array.isArray(lateRes)) return;
+                const nextList = normalizeSidecarWorkspaceUris(lateRes);
+                const prevSig = _cachedSidecarOpenWorkspaces.join('|');
+                const nextSig = nextList.join('|');
+                _cachedSidecarOpenWorkspaces = nextList;
+                _lastOpenWorkspacesPollAt = Date.now();
+                if (prevSig !== nextSig && _selectedWorkspaceMode === '__auto__' && lastPayloadCache) {
+                  if (_sidecarWsRefreshTimer) clearTimeout(_sidecarWsRefreshTimer);
+                  _sidecarWsRefreshTimer = setTimeout(function () {
+                    _sidecarWsRefreshTimer = null;
+                    if (typeof refreshAll === 'function') {
+                      void refreshAll({ silent: true });
+                    }
+                  }, 25);
+                }
+              });
+            }
           }
-        }
-      } catch {}
-      return _cachedSidecarOpenWorkspaces;
+        } catch {}
+        return _cachedSidecarOpenWorkspaces;
+      })();
+      try {
+        return await _openWorkspacesInFlight;
+      } finally {
+        _openWorkspacesInFlight = null;
+      }
     }
     void refreshSidecarOpenWorkspacesFast(true);
 
@@ -79,28 +145,54 @@
       const scopeBadge = document.getElementById('checkpointsScopeBadge');
       const activeName = getSelectedWorkspaceDisplayName();
 
+      const isAutoMode = _selectedWorkspaceMode === '__auto__';
+
       if (badgeEl) {
         if (_selectedWorkspaceMode === '__all__') {
           badgeEl.textContent = L('Все проекты', 'All projects');
-        } else if (_selectedWorkspaceMode !== '__auto__') {
+        } else if (!isAutoMode) {
           badgeEl.textContent = activeName;
         } else {
           const autoTarget = _autoWorkspaceResolved || _activeWorkspaceResolved || '';
           const autoName = autoTarget ? getWorkspaceDisplayLabel(autoTarget) : (activeName || L('Проект', 'Project'));
-          badgeEl.textContent = L('Авто · ', 'Auto · ') + autoName;
+          badgeEl.textContent = autoName;
         }
       }
       if (triggerBtn) {
+        let modeLine = '';
         if (_selectedWorkspaceMode === '__all__') {
-          triggerBtn.title = L('Режим «Все проекты»: общая лента снимков (остальные блоки используют активный проект)', '"All projects" mode: combined snapshot timeline (other cards use active project)');
+          modeLine = L('Режим «Все проекты»: общая лента снимков (остальные блоки используют активный проект)', '"All projects" mode: combined snapshot timeline (other cards use active project)');
         } else if (_selectedWorkspaceMode !== '__auto__') {
-          triggerBtn.title = L('Выбран проект: ', 'Selected project: ') + _selectedWorkspaceMode;
+          modeLine = L('Выбран проект: ', 'Selected project: ') + _selectedWorkspaceMode;
         } else {
-          triggerBtn.title = L('Авторежим: ', 'Auto mode: ') + (_autoWorkspaceResolved || _activeWorkspaceResolved || L('активный чат', 'active chat'));
+          modeLine = L('Авторежим: ', 'Auto mode: ') + (_autoWorkspaceResolved || _activeWorkspaceResolved || L('активный чат', 'active chat'));
         }
+        const profileLbl = (typeof detectedProjectInfo !== 'undefined' && detectedProjectInfo)
+          ? (typeof pickText === 'function'
+            ? pickText(detectedProjectInfo, 'label', 'labelEn', '')
+            : (detectedProjectInfo.label || detectedProjectInfo.labelEn || ''))
+          : '';
+        const profileLine = profileLbl
+          ? (L('Профиль воркспейса: «', 'Workspace profile: "') + profileLbl + L('» · Навыки в Авто-режиме', '" · Skills in Auto mode'))
+          : L('ИИ-Пилот активен · Навыки в Авто-режиме', 'AI Pilot Active · Skills in Auto mode');
+        const descLine = L(
+          'Переключает текущий проект для всех модулей пульта (снимки отката, Git-песочницы, Композер, Дозор, грабли и память).',
+          'Switches the active workspace for all panel modules (snapshots, Git sandboxes, Composer, Sentinel, pitfalls, and memory).'
+        );
+        const fullTip = modeLine + '\n' + profileLine + '\n' + descLine;
+        if (typeof setTooltipTitle === 'function') setTooltipTitle(triggerBtn, fullTip);
+        else triggerBtn.title = fullTip;
       }
       if (resetAutoBtn) {
-        resetAutoBtn.style.display = _selectedWorkspaceMode !== '__auto__' ? 'inline-flex' : 'none';
+        resetAutoBtn.style.display = 'inline-flex';
+        resetAutoBtn.classList.toggle('active', isAutoMode);
+        resetAutoBtn.setAttribute('aria-pressed', isAutoMode ? 'true' : 'false');
+        resetAutoBtn.textContent = L('Авто', 'Auto');
+        const autoBtnTip = isAutoMode
+          ? L('Авторежим включён: проект определяется по активному чату', 'Auto mode is on: project follows the active chat')
+          : L('Авторежим выключен — нажмите, чтобы вернуться к автоопределению активного чата', 'Auto mode is off — click to return to active chat auto-detection');
+        if (typeof setTooltipTitle === 'function') setTooltipTitle(resetAutoBtn, autoBtnTip);
+        else resetAutoBtn.title = autoBtnTip;
       }
       if (scopeBadge) {
         if (_selectedWorkspaceMode === '__all__') {
@@ -225,6 +317,7 @@
       }
       const shieldSumEl = document.getElementById('agentShieldSummary');
       if (shieldSumEl) {
+        shieldSumEl.hidden = true;
         shieldSumEl.innerHTML = L(
           'Аудит конфигов MCP, хуков и <code>SKILL.md</code> на секреты и prompt-injection.',
           'Audits MCP configs, hooks, and <code>SKILL.md</code> for secrets and prompt injection.'
@@ -262,18 +355,65 @@
       flashStatus(L('Переключение на «' + label + '»...', 'Switching to "' + label + '"...'));
       await refreshAll({ silent: true });
       loadSmartComposerContext();
-      const expBox = document.getElementById('expertDetailsBox');
-      if (expBox && expBox.open) {
-        if (typeof loadProjectInstincts === 'function') loadProjectInstincts({ silent: true });
-        if (typeof refreshGatesStatus === 'function') refreshGatesStatus({ silent: true });
+      const activeFullTab = document.body ? (document.body.getAttribute('data-full-tab') || 'cockpit') : 'cockpit';
+      if (activeFullTab === 'memory' && typeof loadProjectInstincts === 'function') {
+        loadProjectInstincts({ silent: true });
+      }
+      if (activeFullTab === 'bugs' && typeof refreshGatesStatus === 'function') {
+        refreshGatesStatus({ silent: true });
       }
     }
 
     const nativeFetch = window.fetch.bind(window);
-    function panelFetch(url, options) {
+    let _exchangedSidecarToken = '';
+    const _initialAuthCode = (function () {
+      try {
+        const sp = new URLSearchParams(window.location.search);
+        const code = (sp.get('authCode') || '').trim();
+        if (code && window.history && typeof window.history.replaceState === 'function') {
+          sp.delete('authCode');
+          const nextSearch = sp.toString();
+          const nextUrl = window.location.pathname + (nextSearch ? '?' + nextSearch : '') + (window.location.hash || '');
+          window.history.replaceState(null, '', nextUrl);
+        }
+        return code;
+      } catch {
+        return '';
+      }
+    })();
+    let _authCodeExchangePromise = null;
+    function ensureExchangedSidecarToken() {
+      if (_exchangedSidecarToken || !_initialAuthCode) return Promise.resolve(_exchangedSidecarToken);
+      if (!_authCodeExchangePromise) {
+        _authCodeExchangePromise = nativeFetch('/api/project-graph/exchange-auth', {
+          method: 'POST',
+          headers: { 'X-Router-Panel': PANEL_AUTH_HEADER, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ authCode: _initialAuthCode }),
+        })
+          .then(function (r) { return r && r.ok ? r.json() : null; })
+          .then(function (d) {
+            if (d && d.ok && typeof d.token === 'string' && d.token) {
+              _exchangedSidecarToken = d.token;
+            }
+            return _exchangedSidecarToken;
+          })
+          .catch(function () { return ''; });
+      }
+      return _authCodeExchangePromise;
+    }
+    if (_initialAuthCode) {
+      void ensureExchangedSidecarToken();
+    }
+
+    async function panelFetch(url, options) {
       const opts = Object.assign({}, options || {});
       const abortSignal = opts.signal || null;
+      let targetUrl = String(url || '');
+      if (_initialAuthCode && !_exchangedSidecarToken && targetUrl !== '/api/project-graph/exchange-auth') {
+        await ensureExchangedSidecarToken();
+      }
       const sidecarToken = (window.sidecar && window.sidecar.token)
+        || _exchangedSidecarToken
         || new URLSearchParams(window.location.search).get('token')
         || '';
       const hdrs = Object.assign({ 'X-Router-Panel': PANEL_AUTH_HEADER }, opts.headers || {});
@@ -283,16 +423,26 @@
       if (opts.body && !hdrs['Content-Type'] && !hdrs['content-type']) {
         hdrs['Content-Type'] = 'application/json';
       }
-      let targetUrl = String(url || '');
+      const openWsHeaderList = _cachedSidecarOpenWorkspaces.slice(0, 24);
+      const openWsQueryList = _cachedSidecarOpenWorkspaces.slice(0, 8);
+      const activeConvId = (window.sidecar && typeof window.sidecar.conversationId === 'string')
+        ? window.sidecar.conversationId.trim().slice(0, 128)
+        : '';
       if (
-        _cachedSidecarOpenWorkspaces.length > 0 &&
+        openWsHeaderList.length > 0 &&
         !hdrs['X-Open-Workspaces'] &&
         !hdrs['x-open-workspaces'] &&
-        (targetUrl.indexOf('/api/state') === 0 ||
-          targetUrl.indexOf('/api/telemetry') === 0 ||
-          targetUrl.indexOf('/api/project-graph/workspaces') === 0)
+        targetUrl.indexOf('/api/') === 0
       ) {
-        hdrs['X-Open-Workspaces'] = encodeURIComponent(_cachedSidecarOpenWorkspaces.join('|'));
+        hdrs['X-Open-Workspaces'] = encodeURIComponent(openWsHeaderList.join('|'));
+      }
+      if (
+        activeConvId &&
+        !hdrs['X-Active-Conversation-Id'] &&
+        !hdrs['x-active-conversation-id'] &&
+        targetUrl.indexOf('/api/') === 0
+      ) {
+        hdrs['X-Active-Conversation-Id'] = activeConvId;
       }
       opts.headers = hdrs;
 
@@ -306,6 +456,16 @@
           if (targetUrl.indexOf('rootDir=') === -1) {
             targetUrl += (targetUrl.indexOf('?') === -1 ? '?rootDir=' : '&rootDir=') + encodeURIComponent(wsParam);
           }
+        }
+        // Pass active IDE workspace URIs & conversationId in query params so SidecarApp handlers (which receive only `data`) can read them
+        if (openWsQueryList.length > 0 && targetUrl.indexOf('openWorkspaces=') === -1) {
+          const encodedOpenWs = encodeURIComponent(openWsQueryList.join('|'));
+          if (targetUrl.length + encodedOpenWs.length < 1800) {
+            targetUrl += (targetUrl.indexOf('?') === -1 ? '?openWorkspaces=' : '&openWorkspaces=') + encodedOpenWs;
+          }
+        }
+        if (activeConvId && targetUrl.indexOf('activeConversationId=') === -1) {
+          targetUrl += (targetUrl.indexOf('?') === -1 ? '?activeConversationId=' : '&activeConversationId=') + encodeURIComponent(activeConvId);
         }
       }
 
@@ -401,6 +561,10 @@
       updateState({ autoSpecMode: mode });
     }
 
+    function setAutoSpecOutput(mode) {
+      updateState({ autoSpecOutput: mode });
+    }
+
     function setLeanMode(mode) {
       updateState({ leanMode: mode });
     }
@@ -492,25 +656,21 @@
       wizDraft.sentinelBundle = currentState.sentinelEnabled !== false && currentState.shadowWorktreeEnabled !== false;
     }
 
-    function normalizePanelViewMode(rawMode) {
-      return String(rawMode || '').trim().toLowerCase() === 'lite' ? 'lite' : 'full';
+    function normalizePanelViewMode() {
+      return 'full';
     }
 
-    function applyPanelViewModeDomPreviewOnly(mode) {
-      const valid = normalizePanelViewMode(mode);
+    function applyPanelViewModeDomPreviewOnly() {
       if (document.body) {
-        document.body.setAttribute('data-panel-view', valid);
+        document.body.setAttribute('data-panel-view', 'full');
       }
-      document.querySelectorAll('#panelViewModeGroup button').forEach((btn) => {
-        btn.classList.toggle('active', btn.dataset.view === valid);
-      });
       if (typeof syncSmartComposerSizeAndScroll === 'function') {
         syncSmartComposerSizeAndScroll();
       }
     }
 
     function openOnboardingWizard(stepNum) {
-      wizStep = Math.max(1, Math.min(4, Number(stepNum || 1)));
+      wizStep = Math.max(1, Math.min(2, Number(stepNum || 1)));
       const isFresh = currentState.onboardingCompleted === false;
       const isAdvisor = currentState.confirmBeforeRun !== false;
       if (isAdvisor) {
@@ -532,7 +692,13 @@
       }
 
       const modal = document.getElementById('onboardingWizardModal');
-      if (modal) modal.classList.add('visible');
+      if (modal) {
+        if (typeof animateModalOverlayState === 'function') {
+          animateModalOverlayState(modal, true, { useVisibleClass: true });
+        } else {
+          modal.classList.add('visible');
+        }
+      }
       wizSubTierPreviewDirty = false;
       wizLangPreviewDirty = false;
       wizViewModePreviewDirty = false;
@@ -571,7 +737,13 @@
 
     function closeOnboardingWizard() {
       const modal = document.getElementById('onboardingWizardModal');
-      if (modal) modal.classList.remove('visible');
+      if (modal) {
+        if (typeof animateModalOverlayState === 'function') {
+          animateModalOverlayState(modal, false, { useVisibleClass: true });
+        } else {
+          modal.classList.remove('visible');
+        }
+      }
       wizSubTierPreviewDirty = false;
       wizLangPreviewDirty = false;
       wizViewModePreviewDirty = false;
@@ -592,7 +764,7 @@
     }
 
     function wizGoStep(s) {
-      wizStep = Math.max(1, Math.min(4, Number(s || 1)));
+      wizStep = Math.max(1, Math.min(2, Number(s || 1)));
       renderWizardStep();
     }
 
@@ -606,7 +778,7 @@
     }
 
     function wizNextStep() {
-      if (wizStep < 4) {
+      if (wizStep < 2) {
         wizStep += 1;
         renderWizardStep();
       } else {
@@ -720,125 +892,110 @@
     }
 
     function renderWizardStep() {
-      [1, 2, 3, 4].forEach((i) => {
+      [1, 2].forEach((i) => {
         const p = document.getElementById('wizPill' + i);
         if (p) p.classList.toggle('active', i === wizStep);
       });
       const backBtn = document.getElementById('wizBackBtn');
+      const quickSaveBtn = document.getElementById('wizQuickSaveBtn');
       const nextBtn = document.getElementById('wizNextBtn');
       const hintEl = document.getElementById('wizStepHint');
       const bodyEl = document.getElementById('wizBodyContent');
       if (!bodyEl) return;
 
       if (backBtn) backBtn.textContent = wizStep === 1 ? L('Позже', 'Later') : L('← Назад', '← Back');
-      if (nextBtn) nextBtn.textContent = wizStep === 4 ? L('✓ Сохранить и начать', '✓ Save & Start') : L('Далее →', 'Next →');
+      if (nextBtn) nextBtn.textContent = wizStep === 2 ? L('✓ Сохранить и начать', '✓ Save & Start') : L('Далее →', 'Next →');
+      if (quickSaveBtn) {
+        const showQuickSave = wizStep === 1 && currentState.onboardingCompleted !== false;
+        quickSaveBtn.style.display = showQuickSave ? 'inline-flex' : 'none';
+        quickSaveBtn.textContent = L('✓ Сохранить', '✓ Save');
+      }
 
       if (wizStep === 1) {
-        if (hintEl) hintEl.textContent = L('Шаг 1 из 4 · Язык, калибровка ПК и подписка', 'Step 1 of 4 · Language, PC calibration & tier');
+        if (hintEl) hintEl.textContent = L('Шаг 1 из 2 · Язык, тариф и ПК', 'Step 1 of 2 · Language, tier & PC');
         const hw = currentHardwareProfile || {};
         const sys = hw.system || {};
         const gpu = hw.gpu || {};
         const oll = hw.ollama || {};
         const recInfo = hw.recommendation || {};
         const isScanning = wizHwLoading && !sys.cpuModel && !sys.totalRamMb;
+        const rawCpu = sys.cpuModel ? sys.cpuModel.replace(/\(R\)|\(TM\)|Processor|CPU/gi, '').trim() : '';
+        const shortCpu = rawCpu ? rawCpu.replace(/^(?:AMD|Intel)\s+/i, '') : '';
         const cpuText = isScanning
-          ? L('Сканируем процессор...', 'Scanning CPU...')
-          : (sys.cpuModel
-              ? (sys.cpuModel.replace(/\(R\)|\(TM\)|Processor|CPU/gi, '').trim() + ' · ' + (sys.logicalCores || 4) + L(' пот.', ' thr.'))
-              : L('Авто-определение CPU', 'Auto-detect CPU'));
+          ? L('Сканируем...', 'Scanning...')
+          : (shortCpu
+              ? (shortCpu + ' · ' + (sys.logicalCores || 4) + L(' п.', ' thr.'))
+              : L('Авто CPU', 'Auto CPU'));
         const ramGb = sys.totalRamGb || Math.round((sys.totalRamMb || 8192) / 1024);
         const recRamGb = Math.max(1, Math.round((wizDraft.ramMaxBudgetMb || 4096) / 1024));
         const ramText = isScanning
-          ? L('Определяем объём ОЗУ...', 'Detecting RAM...')
-          : (ramGb + L(' ГБ ОЗУ (буфер: ', ' GB RAM (cache: ') + recRamGb + L(' ГБ)', ' GB)'));
-        const gpuName = gpu.name || L('Встроенная графика / CPU', 'Integrated GPU / CPU');
+          ? L('ОЗУ...', 'RAM...')
+          : (ramGb + L(' ГБ · кэш ', ' GB · ') + recRamGb + L(' ГБ', ' GB'));
+        const gpuFull = gpu.name || L('Встроенная графика / CPU', 'Integrated GPU / CPU');
+        const gpuShort = gpuFull.replace(/^NVIDIA\s+GeForce\s+/i, '').replace(/^AMD\s+Radeon\s+/i, '');
         const gpuVramText = gpu.totalMb > 0 ? (' · ' + Math.round(gpu.totalMb / 1024) + L(' ГБ', ' GB')) : '';
-        const gpuTileText = isScanning ? L('Проверяем видеокарту...', 'Detecting GPU...') : (gpuName + gpuVramText);
+        const gpuTileText = isScanning ? L('GPU...', 'GPU...') : (gpuShort + gpuVramText);
         const ollStatus = isScanning
-          ? L('Проверка Ollama...', 'Checking Ollama...')
+          ? L('Проверка...', 'Checking...')
           : (oll.running ? L('Запущена', 'Running') : (oll.installed ? L('Установлена', 'Installed') : L('Не найдена', 'Not found')));
+        const passportTip = isScanning
+          ? L('Считываем характеристики ПК для безопасного расчёта потоков и памяти', 'Reading hardware specs to calculate safe thread and memory budgets')
+          : (isRu()
+              ? (recInfo.vendorTipRu || 'Лимиты автоматически адаптированы под ваш компьютер без риска зависаний.')
+              : (recInfo.vendorTipEn || 'Limits are automatically calibrated for your machine to prevent freezes.'));
         const sub = wizDraft.subscriptionTier;
         const lang = normalizeUiLanguage(wizDraft.uiLanguage || getUiLanguage());
-        const viewMode = normalizePanelViewMode(wizDraft.panelViewMode || currentState.panelViewMode);
 
         bodyEl.innerHTML =
-          '<div class="wiz-group-title" style="margin-top:0;">Language / Язык интерфейса и ответов ИИ</div>' +
-          '<div class="wiz-two-col" style="margin-bottom:10px;">' +
-            '<div class="wiz-choice-card' + (lang === 'en' ? ' selected' : '') + '" style="margin-bottom:0;" data-action="wizSetLanguage" data-arg="en">' +
-              '<div class="wiz-choice-head"><span>English</span><span style="font-size:10px;color:var(--accent-cyan);">Default</span></div>' +
-              '<div class="wiz-choice-desc">English panel UI, setup wizard, hooks and AI replies.</div>' +
+          '<div class="wiz-top-split">' +
+            '<div class="wiz-seg-col">' +
+              '<div class="wiz-sec-head">' + L('Язык / Language', 'Language') + '</div>' +
+              '<div class="wiz-seg-group">' +
+                '<button type="button" class="wiz-seg-chip' + (lang === 'en' ? ' selected' : '') + '" data-action="wizSetLanguage" data-arg="en" title="English panel UI, setup wizard, hooks and AI replies.">English</button>' +
+                '<button type="button" class="wiz-seg-chip' + (lang === 'ru' ? ' selected' : '') + '" data-action="wizSetLanguage" data-arg="ru" title="Русский интерфейс пульта, мастера, хуков и ответов ИИ.">Русский</button>' +
+              '</div>' +
             '</div>' +
-            '<div class="wiz-choice-card' + (lang === 'ru' ? ' selected' : '') + '" style="margin-bottom:0;" data-action="wizSetLanguage" data-arg="ru">' +
-              '<div class="wiz-choice-head"><span>Русский</span><span style="font-size:10px;color:var(--status-ok);">RU</span></div>' +
-              '<div class="wiz-choice-desc">Русский интерфейс пульта, мастера, хуков и ответов ИИ.</div>' +
-            '</div>' +
-          '</div>' +
-          '<div class="wiz-group-title">' + L('Режим интерфейса панели', 'Panel Interface Mode') + '</div>' +
-          '<div class="wiz-two-col" style="margin-bottom:10px;">' +
-            '<div class="wiz-choice-card' + (viewMode === 'full' ? ' selected' : '') + '" style="margin-bottom:0;" data-action="wizSetViewMode" data-arg="full">' +
-              '<div class="wiz-choice-head"><span>Full</span><span style="font-size:10px;color:var(--accent-cyan);">' + L('По умолчанию', 'Default') + '</span></div>' +
-              '<div class="wiz-choice-desc">' + L('Все блоки настроек, телеметрия Роя, графики RAM/GPU, Дозор и экспертные спойлеры.', 'All setting blocks, Swarm telemetry, RAM/GPU charts, Sentinel & expert spoilers.') + '</div>' +
-            '</div>' +
-            '<div class="wiz-choice-card' + (viewMode === 'lite' ? ' selected' : '') + '" style="margin-bottom:0;" data-action="wizSetViewMode" data-arg="lite">' +
-              '<div class="wiz-choice-head"><span>Lite</span><span style="font-size:10px;color:var(--status-ok);">' + L('Компактно', 'Compact') + '</span></div>' +
-              '<div class="wiz-choice-desc">' + L('Краткий пульт: прогресс, Стек, Карта, компактный Композер, порог, дизайн, Рой, Дозор и RAM+GPU.', 'Compact panel: progress, Stack, Map, slim Composer, confirm threshold, design, Swarm, Sentinel & RAM+GPU.') + '</div>' +
+            '<div class="wiz-seg-col">' +
+              '<div class="wiz-sec-head">' + L('Подписка', 'Subscription') + '</div>' +
+              '<div class="wiz-seg-group">' +
+                '<button type="button" class="wiz-seg-chip' + (sub === 'pro' ? ' selected' : '') + '" data-action="wizSetSubTier" data-arg="pro" title="' + escHtml(L('Hydrogen на S/M и Orchestrator (Neon) на L/XL. Недоступные на Pro модели Ultra (Carbon) скрыты.', 'Hydrogen on S/M and Orchestrator (Neon) on L/XL. Ultra-only models (Carbon) are hidden.')) + '">Pro <span class="wiz-chip-tag">' + L('квота', 'quota') + '</span></button>' +
+                '<button type="button" class="wiz-seg-chip' + (sub === 'ultra' ? ' selected' : '') + '" data-action="wizSetSubTier" data-arg="ultra" title="' + escHtml(L('Полная версия: Orchestrator (Carbon/Neon), расширенные воркеры Роя и повышенный лимит квот.', 'Full features: Orchestrator (Carbon/Neon), extended Swarm workers and higher quota limits.')) + '">Ultra <span class="wiz-chip-tag is-ok">' + L('макс.', 'max') + '</span></button>' +
+              '</div>' +
             '</div>' +
           '</div>' +
 
-          '<div class="hw-passport-card">' +
-            '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;">' +
-              '<span style="font-weight:700;font-size:11px;">' + L('Паспорт и авто-калибровка вашей системы', 'Hardware Passport & Auto-Calibration') + '</span>' +
-              '<button type="button" class="win-btn" style="font-size:9.5px;padding:2px 7px;" data-action="wizRescanHw">' + L('↻ Пересканировать ПК', '↻ Rescan PC') + '</button>' +
+          '<div class="hw-passport-card is-compact" title="' + escHtml(passportTip) + '">' +
+            '<div class="wiz-passport-head">' +
+              '<span class="wiz-passport-title">' + L('Паспорт ПК', 'PC Passport') + '</span>' +
+              '<div class="wiz-passport-actions">' +
+                '<button type="button" class="win-btn wiz-mini-action" data-action="sendHardwareTunePrompt" title="' + escHtml(L('Собрать промпт по моему железу и подобрать самые свежие модели в чате', 'Generate hardware passport & pick latest local models in chat')) + '">' + L('Подбор в чате', 'AI Tune') + '</button>' +
+                '<button type="button" class="win-btn wiz-mini-action" data-action="wizRescanHw" title="' + escHtml(L('Пересканировать процессор, ОЗУ, GPU и Ollama', 'Rescan CPU, RAM, GPU & Ollama')) + '">' + L('↻ ПК', '↻ Scan') + '</button>' +
+              '</div>' +
             '</div>' +
-            '<div class="hw-spec-grid">' +
-              '<div class="hw-spec-tile"><div class="hw-spec-k">' + L('Процессор', 'CPU') + '</div><div class="hw-spec-v" title="' + escHtml(sys.cpuModel || '') + '">' + escHtml(cpuText) + '</div></div>' +
-              '<div class="hw-spec-tile"><div class="hw-spec-k">' + L('Оперативная память', 'System Memory') + '</div><div class="hw-spec-v">' + escHtml(ramText) + '</div></div>' +
-              '<div class="hw-spec-tile"><div class="hw-spec-k">' + L('Видеокарта', 'GPU') + ' (' + escHtml((gpu.vendor || 'cpu').toUpperCase()) + ')</div><div class="hw-spec-v" title="' + escHtml(gpuTileText) + '">' + escHtml(gpuTileText) + '</div></div>' +
-              '<div class="hw-spec-tile"><div class="hw-spec-k">' + L('Локальный ИИ Ollama', 'Local AI Ollama') + '</div><div class="hw-spec-v">' + ollStatus + '</div></div>' +
-            '</div>' +
-            '<div style="font-size:10px;color:var(--text-sub);margin-top:5px;line-height:1.35;">' + escHtml(isScanning
-              ? L('Считываем характеристики вашего ПК для безопасного расчёта потоков и памяти...', 'Reading your hardware specs to calculate safe thread and memory budgets...')
-              : (isRu()
-                  ? (recInfo.vendorTipRu || 'Лимиты автоматически адаптированы под ваш компьютер без риска зависаний.')
-                  : (recInfo.vendorTipEn || 'Limits are automatically calibrated for your machine to prevent freezes.'))) + '</div>' +
-          '</div>' +
-
-          '<div class="wiz-group-title">' + L('1) Какой у вас тариф подписки Antigravity?', '1) Which Antigravity subscription tier do you use?') + '</div>' +
-          '<div class="wiz-two-col">' +
-            '<div class="wiz-choice-card' + (sub === 'pro' ? ' selected' : '') + '" style="margin-bottom:0;" data-action="wizSetSubTier" data-arg="pro">' +
-              '<div class="wiz-choice-head"><span>' + L('Подписка Pro', 'Pro Tier') + '</span><span style="font-size:10px;color:var(--accent-cyan);">' + L('Беречь квоту', 'Save quota') + '</span></div>' +
-              '<div class="wiz-choice-desc">' + L('Hydrogen на S/M и Orchestrator (Neon) на L/XL. Недоступные на Pro модели Ultra (Carbon) автоматически скрыты.', 'Hydrogen on S/M and Orchestrator (Neon) on L/XL. Ultra-only models (Carbon) are hidden automatically.') + '</div>' +
-            '</div>' +
-            '<div class="wiz-choice-card' + (sub === 'ultra' ? ' selected' : '') + '" style="margin-bottom:0;" data-action="wizSetSubTier" data-arg="ultra">' +
-              '<div class="wiz-choice-head"><span>Ultra / Max</span><span style="font-size:10px;color:var(--status-ok);">' + L('Полный доступ', 'Full access') + '</span></div>' +
-              '<div class="wiz-choice-desc">' + L('Полная версия расширения: Orchestrator (Carbon/Neon), расширенные воркеры Роя и повышенный лимит квот.', 'Full extension features: Orchestrator (Carbon/Neon), extended Swarm workers and higher quota limits.') + '</div>' +
+            '<div class="hw-spec-grid is-compact">' +
+              '<div class="hw-spec-tile"><div class="hw-spec-k">CPU</div><div class="hw-spec-v" title="' + escHtml(sys.cpuModel || cpuText) + '">' + escHtml(cpuText) + '</div></div>' +
+              '<div class="hw-spec-tile"><div class="hw-spec-k">RAM</div><div class="hw-spec-v" title="' + escHtml(ramText) + '">' + escHtml(ramText) + '</div></div>' +
+              '<div class="hw-spec-tile"><div class="hw-spec-k">GPU (' + escHtml((gpu.vendor || 'cpu').toUpperCase()) + ')</div><div class="hw-spec-v" title="' + escHtml(gpuFull + gpuVramText) + '">' + escHtml(gpuTileText) + '</div></div>' +
+              '<div class="hw-spec-tile"><div class="hw-spec-k">Ollama</div><div class="hw-spec-v">' + ollStatus + '</div></div>' +
             '</div>' +
           '</div>' +
 
-          '<div class="wiz-group-title">' + L('2) Использовать ресурсы ПК для экономии облачных токенов?', '2) Use local PC resources to save cloud tokens?') + '</div>' +
-          '<div class="wiz-choice-card' + (wizDraft.useRam ? ' selected' : '') + '" data-action="wizToggleFlag" data-arg="useRam">' +
-            '<div class="wiz-choice-head">' +
-              '<span>' + (wizDraft.useRam ? '✓ ' : '') + L('Оперативная память (In-RAM кэш кода)', 'System RAM (In-RAM Code Cache)') + '</span>' +
-              '<span>' + (wizDraft.useRam ? (L('ВКЛ · до ', 'ON · up to ') + recRamGb + L(' ГБ', ' GB')) : L('ВЫКЛ', 'OFF')) + '</span>' +
-            '</div>' +
-            '<div class="wiz-choice-desc">' + L('Мгновенно выдаёт ИИ точные срезы строк за &lt;1 мс без повторного чтения файлов с диска.', 'Delivers exact code slices to AI in &lt;1 ms without re-reading full files from disk.') + '</div>' +
+          '<div class="wiz-sec-head">' + L('Локальное ускорение (0 облачных токенов)', 'Local Acceleration (0 cloud tokens)') + '</div>' +
+          '<div class="wiz-res-grid">' +
+            '<button type="button" class="wiz-compact-card' + (wizDraft.useRam ? ' selected' : '') + '" data-action="wizToggleFlag" data-arg="useRam" title="' + escHtml(L('Мгновенно выдаёт ИИ точные срезы строк за <1 мс без повторного чтения файлов с диска.', 'Delivers exact code slices to AI in <1 ms without re-reading full files from disk.')) + '">' +
+              '<div class="wiz-compact-head"><span>' + (wizDraft.useRam ? '✓ ' : '') + L('In-RAM кэш', 'In-RAM Cache') + '</span><span class="wiz-chip-tag' + (wizDraft.useRam ? ' is-ok' : '') + '">' + (wizDraft.useRam ? (recRamGb + L(' ГБ', ' GB')) : L('ВЫКЛ', 'OFF')) + '</span></div>' +
+              '<div class="wiz-compact-sub">' + L('Срезы кода <1 мс', 'Code slices <1 ms') + '</div>' +
+            '</button>' +
+            '<button type="button" class="wiz-compact-card' + (wizDraft.useCpu ? ' selected' : '') + '" data-action="wizToggleFlag" data-arg="useCpu" title="' + escHtml(L('Локальный триграммный индекс и быстрая фоновая проверка синтаксиса на ядрах CPU (спит в простое).', 'Local trigram search index and fast background syntax verification on CPU cores (sleeps when idle).')) + '">' +
+              '<div class="wiz-compact-head"><span>' + (wizDraft.useCpu ? '✓ ' : '') + L('CPU-пул', 'CPU Pool') + '</span><span class="wiz-chip-tag' + (wizDraft.useCpu ? ' is-ok' : '') + '">' + (wizDraft.useCpu ? (wizDraft.cpuMaxThreads + L(' пот.', ' thr.')) : L('1 пот.', '1 thr.')) + '</span></div>' +
+              '<div class="wiz-compact-sub">' + L('Индекс и синтаксис', 'Index & syntax') + '</div>' +
+            '</button>' +
+            '<button type="button" class="wiz-compact-card' + (wizDraft.useGpu ? ' selected' : '') + '" data-action="wizToggleFlag" data-arg="useGpu" title="' + escHtml(L('Бесплатное сжатие больших логов, умное автодополнение в Композере и смысловой поиск через Ollama.', 'Free distillation of huge logs, smart Composer autocomplete and semantic search via Ollama.')) + '">' +
+              '<div class="wiz-compact-head"><span>' + (wizDraft.useGpu ? '✓ ' : '') + 'GPU · Ollama</span><span class="wiz-chip-tag' + (wizDraft.useGpu ? ' is-ok' : '') + '">' + (wizDraft.useGpu ? escHtml(wizDraft.gpuChatModel) : L('ВЫКЛ', 'OFF')) + '</span></div>' +
+              '<div class="wiz-compact-sub">' + L('Логи и умный поиск', 'Logs & search') + '</div>' +
+            '</button>' +
           '</div>' +
 
-          '<div class="wiz-choice-card' + (wizDraft.useCpu ? ' selected' : '') + '" data-action="wizToggleFlag" data-arg="useCpu">' +
-            '<div class="wiz-choice-head">' +
-              '<span>' + (wizDraft.useCpu ? '✓ ' : '') + L('Многопоточный процессор (CPU-пул, 0 VRAM)', 'Multi-Core CPU Pool (0 VRAM)') + '</span>' +
-              '<span>' + (wizDraft.useCpu ? (L('ВКЛ · до ', 'ON · up to ') + wizDraft.cpuMaxThreads + L(' пот.', ' thr.')) : L('Тихий режим (1 пот.)', 'Quiet mode (1 thr.)')) + '</span>' +
-            '</div>' +
-            '<div class="wiz-choice-desc">' + L('Локальный триграммный индекс и быстрая фоновая проверка синтаксиса на ядрах CPU (спит в простое).', 'Local trigram search index and fast background syntax verification on CPU cores (sleeps when idle).') + '</div>' +
-          '</div>' +
-
-          '<div class="wiz-choice-card' + (wizDraft.useGpu ? ' selected' : '') + '" data-action="wizToggleFlag" data-arg="useGpu">' +
-            '<div class="wiz-choice-head">' +
-              '<span>' + (wizDraft.useGpu ? '✓ ' : '') + L('Видеокарта (локальный ИИ через Ollama)', 'Local GPU (Ollama Copilot)') + '</span>' +
-              '<span>' + (wizDraft.useGpu ? (L('ВКЛ · ', 'ON · ') + escHtml(wizDraft.gpuChatModel + ' + ' + wizDraft.gpuEmbedModel)) : L('ВЫКЛ (без GPU)', 'OFF (no GPU)')) + '</span>' +
-            '</div>' +
-            '<div class="wiz-choice-desc">' + L('Бесплатное сжатие больших логов, умное автодополнение в Композере и смысловой поиск (0 облачных токенов).', 'Free distillation of huge logs, smart Composer autocomplete and semantic search (0 cloud tokens).') + '</div>' +
-          '</div>' +
           (wizDraft.useGpu
             ? (function () {
                 const cb = recInfo.cascadeBundle || {};
@@ -847,8 +1004,8 @@
                   ? allModels.map(function (m) { return (m.alreadyDownloaded ? '✓ ' : '↓ ') + m.name; }).join(', ')
                   : (wizDraft.gpuChatModel + ', ' + wizDraft.gpuEmbedModel);
                 const missingGbTxt = Number(cb.approxMissingDiskGb || 0) > 0
-                  ? (' (~' + Number(cb.approxMissingDiskGb).toFixed(1) + L(' ГБ к загрузке)', ' GB to download)'))
-                  : L(' (все модели каскада уже скачаны ✓)', ' (all cascade models already downloaded ✓)');
+                  ? (' · ~' + Number(cb.approxMissingDiskGb).toFixed(1) + L(' ГБ к загрузке', ' GB to download'))
+                  : L(' · ✓ скачаны', ' · ✓ ready');
                 const pm = wizDraft.gpuPullMode || 'cascade';
                 const joinWizModelsSubdir = function (baseDir) {
                   const clean = String(baseDir || '').trim().replace(/[\\/]+$/, '');
@@ -857,162 +1014,123 @@
                 const effectiveDir = String(wizDraft.gpuOllamaDir || '').trim();
                 const derivedModelsDir = String(wizDraft.gpuModelsDir || joinWizModelsSubdir(effectiveDir) || '').trim();
                 const ollNeedsInstall = !isScanning && !oll.installed && !oll.running;
-                const ollInstallBlock = ollNeedsInstall
-                  ? '<div class="wiz-gpu-install-box">' +
-                      '<label class="wiz-mini-check-row" data-action="wizToggleFlag" data-arg="autoInstallOllama">' +
-                        '<input type="checkbox"' + (wizDraft.autoInstallOllama !== false ? ' checked' : '') + ' tabindex="-1" style="pointer-events:none;" />' +
-                        '<span><strong>' + L('Установить Ollama автоматически', 'Auto-install Ollama') + '</strong> — ' +
-                          L('скачает и установит Ollama после завершения мастера, затем сразу начнёт загрузку моделей.', 'downloads and installs Ollama on finish, then immediately starts model downloads.') +
-                        '</span>' +
-                      '</label>' +
-                    '</div>'
-                  : '<div style="font-size:9.5px;color:var(--status-ok);margin-top:4px;">✓ ' + L('Ollama обнаружена в системе — модели можно скачать сразу после мастера.', 'Ollama detected on this PC — models can download right after finish.') + '</div>';
+                const advOpen = Boolean(effectiveDir || wizDraft.gpuPreferHfMirror);
                 const dirHintLine = effectiveDir
-                  ? ('<div style="font-size:9px;color:var(--text-sub);margin-top:3px;word-break:break-all;">' + L('Модели сохранятся в: ', 'Models folder: ') + '<code>' + escHtml(derivedModelsDir) + '</code></div>')
-                  : '<div style="font-size:9px;color:var(--text-sub);margin-top:3px;">' + L('Если не указывать — используются стандартные пути системы (~/.ollama).', 'Leave empty to use default system paths (~/.ollama).') + '</div>';
-                return '<div class="wiz-gpu-cascade-box">' +
-                  '<div style="font-size:10.5px;font-weight:600;">' + L('Модели под ступени вашей видеопамяти', 'Models matched to your VRAM tiers') + escHtml(missingGbTxt) + '</div>' +
-                  '<div style="font-size:9.5px;color:var(--text-sub);margin-top:2px;line-height:1.35;">' + escHtml(namesList) + '</div>' +
-                  '<div style="margin-top:6px;">' +
-                    '<div style="font-size:9.5px;font-weight:600;margin-bottom:3px;color:var(--text-main);">' + L('Папка установки Ollama и моделей:', 'Folder for Ollama & models:') + '</div>' +
-                    '<div class="wiz-dir-row">' +
-                      '<input type="text" id="wizGpuInstallDir" class="lg-input" data-input-action="wizSetGpuInstallDir" value="' + escHtml(effectiveDir) + '" placeholder="' + escHtml(L('По умолчанию (AppData / ~/.ollama)', 'Default (AppData / ~/.ollama)')) + '" />' +
-                      '<button type="button" class="win-btn wiz-dir-pick-btn" id="wizBtnPickGpuDir" data-action="wizPickGpuInstallDir">' + L('Выбрать…', 'Browse…') + '</button>' +
-                    '</div>' +
-                    dirHintLine +
+                  ? ('<div class="wiz-dir-hint">' + L('Модели: ', 'Models: ') + '<code>' + escHtml(derivedModelsDir) + '</code></div>')
+                  : '<div class="wiz-dir-hint">' + L('По умолчанию: ~/.ollama (можно оставить пустым)', 'Default: ~/.ollama (optional)') + '</div>';
+                const ollInstallBlock = ollNeedsInstall
+                  ? '<label class="wiz-mini-check-row" data-action="wizToggleFlag" data-arg="autoInstallOllama" title="' + escHtml(L('Скачает и установит Ollama после завершения мастера, затем сразу начнёт загрузку моделей.', 'Downloads and installs Ollama on finish, then immediately starts model downloads.')) + '">' +
+                      '<input type="checkbox"' + (wizDraft.autoInstallOllama !== false ? ' checked' : '') + ' tabindex="-1" style="pointer-events:none;" />' +
+                      '<span>' + L('Установить Ollama автоматически', 'Auto-install Ollama') + '</span>' +
+                    '</label>'
+                  : '';
+                return '<div class="wiz-gpu-cascade-box is-compact">' +
+                  '<div class="wiz-gpu-line" title="' + escHtml(namesList) + '">' +
+                    '<strong>' + escHtml(wizDraft.gpuChatModel + ' + ' + wizDraft.gpuEmbedModel) + '</strong>' +
+                    '<span class="wiz-gpu-meta">' + escHtml(missingGbTxt) + '</span>' +
+                  '</div>' +
+                  '<div class="wiz-gpu-cascade-pills">' +
+                    '<button type="button" class="wiz-gpu-cascade-pill' + (pm === 'cascade' ? ' selected' : '') + '" data-action="wizSetGpuPullMode" data-arg="cascade">' + L('↓ Весь каскад', '↓ Full cascade') + '</button>' +
+                    '<button type="button" class="wiz-gpu-cascade-pill' + (pm === 'active_only' ? ' selected' : '') + '" data-action="wizSetGpuPullMode" data-arg="active_only">' + L('Текущий лимит', 'Active limit') + '</button>' +
+                    '<button type="button" class="wiz-gpu-cascade-pill' + (pm === 'skip' ? ' selected' : '') + '" data-action="wizSetGpuPullMode" data-arg="skip">' + L('Пропустить', 'Skip') + '</button>' +
                   '</div>' +
                   ollInstallBlock +
-                  '<label class="wiz-mini-check-row" style="margin-top:5px;" data-action="wizToggleFlag" data-arg="gpuPreferHfMirror">' +
-                    '<input type="checkbox"' + (wizDraft.gpuPreferHfMirror ? ' checked' : '') + ' tabindex="-1" style="pointer-events:none;" />' +
-                    '<span>' + L('Предпочитать зеркало Hugging Face (GGUF напрямую с hf.co)', 'Prefer Hugging Face mirror (GGUF directly from hf.co)') + '</span>' +
-                  '</label>' +
-                  '<div class="wiz-gpu-cascade-pills">' +
-                    '<button type="button" class="wiz-gpu-cascade-pill' + (pm === 'cascade' ? ' selected' : '') + '" data-action="wizSetGpuPullMode" data-arg="cascade">' + L('↓ Скачать весь каскад (Рекомендуется)', '↓ Download full cascade (Recommended)') + '</button>' +
-                    '<button type="button" class="wiz-gpu-cascade-pill' + (pm === 'active_only' ? ' selected' : '') + '" data-action="wizSetGpuPullMode" data-arg="active_only">' + L('Только текущий лимит', 'Active limit only') + '</button>' +
-                    '<button type="button" class="wiz-gpu-cascade-pill' + (pm === 'skip' ? ' selected' : '') + '" data-action="wizSetGpuPullMode" data-arg="skip">' + L('Пропустить сейчас', 'Skip for now') + '</button>' +
-                  '</div>' +
+                  '<details class="wiz-adv-details"' + (advOpen ? ' open' : '') + '>' +
+                    '<summary>' + L('Папка моделей и зеркало HF', 'Models folder & HF mirror') + '</summary>' +
+                    '<div class="wiz-adv-body">' +
+                      '<div class="wiz-dir-row">' +
+                        '<input type="text" id="wizGpuInstallDir" class="lg-input" data-input-action="wizSetGpuInstallDir" value="' + escHtml(effectiveDir) + '" placeholder="' + escHtml(L('По умолчанию (AppData / ~/.ollama)', 'Default (AppData / ~/.ollama)')) + '" />' +
+                        '<button type="button" class="win-btn wiz-dir-pick-btn" id="wizBtnPickGpuDir" data-action="wizPickGpuInstallDir">' + L('Выбрать…', 'Browse…') + '</button>' +
+                      '</div>' +
+                      dirHintLine +
+                      '<label class="wiz-mini-check-row" data-action="wizToggleFlag" data-arg="gpuPreferHfMirror">' +
+                        '<input type="checkbox"' + (wizDraft.gpuPreferHfMirror ? ' checked' : '') + ' tabindex="-1" style="pointer-events:none;" />' +
+                        '<span>' + L('Зеркало Hugging Face (GGUF с hf.co)', 'Hugging Face mirror (GGUF from hf.co)') + '</span>' +
+                      '</label>' +
+                    '</div>' +
+                  '</details>' +
                 '</div>';
               })()
-            : '') +
-
-          '<button type="button" class="hw-ai-tune-btn" data-action="sendHardwareTunePrompt">' +
-            L('Собрать промпт по моему железу и подобрать самые свежие модели в чате', 'Generate hardware passport & pick latest local models in chat') +
-          '</button>';
-      } else if (wizStep === 2) {
-        if (hintEl) hintEl.textContent = L('Шаг 2 из 4 · Когда ИИ должен советоваться с вами?', 'Step 2 of 4 · When should AI confirm plans with you?');
+            : '');
+      } else {
+        if (hintEl) hintEl.textContent = L('Шаг 2 из 2 · Поведение и защита', 'Step 2 of 2 · Workflow & safety');
         const m = wizDraft.modePreset;
-        bodyEl.innerHTML =
-          '<div style="font-size:10.5px;color:var(--text-sub);margin-bottom:8px;">' + L('Вы пишете задачи обычным разговорным языком — ИИ сам изучает файлы проекта. Выберите комфортный уровень контроля:', 'Describe tasks in plain language — AI scouts project files automatically. Choose your preferred level of control:') + '</div>' +
-          '<div class="wiz-choice-card' + (m === 'advisor_m' ? ' selected' : '') + '" data-action="wizSelectMode" data-arg="advisor_m">' +
-            '<div class="wiz-choice-head">' +
-              '<span>' + L('Умный советник (Smart-Synergy · от M+)', 'Smart Advisor (Smart-Synergy · M+)') + '</span>' +
-              '<span style="color:var(--status-ok);">' + L('Рекомендуется', 'Recommended') + '</span>' +
-            '</div>' +
-            '<div class="wiz-choice-desc">' + L('Мелкие правки (S) делает сразу, а перед заметными задачами (M/L/XL) кратко показывает план, рекомендуемую модель и спрашивает «Запускаем?».', 'Executes small S edits right away; for medium/large tasks (M/L/XL) shows a brief plan, recommended model and asks "Proceed?".') + '</div>' +
-          '</div>' +
-          '<div class="wiz-choice-card' + (m === 'advisor_all' ? ' selected' : '') + '" data-action="wizSelectMode" data-arg="advisor_all">' +
-            '<div class="wiz-choice-head">' +
-              '<span>' + L('Строгий контроль (Спрашивать план всегда)', 'Strict Control (Always confirm)') + '</span>' +
-              '<span style="color:var(--accent-cyan);">' + L('Полное одобрение', 'Full approval') + '</span>' +
-            '</div>' +
-            '<div class="wiz-choice-desc">' + L('Перед любым изменением кода (даже небольшим S) сначала показывает объём, затронутые файлы и ждёт вашего подтверждения.', 'Before any code edit (even small S), always shows scope, affected files and waits for your approval.') + '</div>' +
-          '</div>' +
-          '<div class="wiz-choice-card' + (m === 'autopilot_balance' ? ' selected' : '') + '" data-action="wizSelectMode" data-arg="autopilot_balance">' +
-            '<div class="wiz-choice-head">' +
-              '<span>' + L('Полный автопилот (Делать сразу без вопросов)', 'Full Autopilot (Run without prompts)') + '</span>' +
-              '<span style="color:var(--accent-cyan);">' + L('Без лишних кликов', 'Zero extra clicks') + '</span>' +
-            '</div>' +
-            '<div class="wiz-choice-desc">' + L('Не переспрашивает план перед рутиной — сам находит нужные модули, вносит правки и запускает самопроверку.', 'Skips confirmation prompts — scouts modules, applies edits and runs self-verification automatically.') + '</div>' +
-          '</div>' +
-          '<div class="wiz-choice-card' + (m === 'flash_economy' ? ' selected' : '') + '" data-action="wizSelectMode" data-arg="flash_economy">' +
-            '<div class="wiz-choice-head">' +
-              '<span>' + L('Экономный автопилот (Максимум экономии квоты)', 'Economy Autopilot (Max quota savings)') + '</span>' +
-              '<span>' + L('До 80% выгоднее', 'Up to 80% cheaper') + '</span>' +
-            '</div>' +
-            '<div class="wiz-choice-desc">' + L('Выполняет рутину на быстрой модели Hydrogen / Flash, советуя старшие модели только для самых сложных архитектурных задач XL.', 'Handles routine work on fast Hydrogen / Flash, recommending heavier models only for complex XL architecture tasks.') + '</div>' +
-          '</div>';
-      } else if (wizStep === 3) {
-        if (hintEl) hintEl.textContent = L('Шаг 3 из 4 · Дизайн интерфейсов в проектах', 'Step 3 of 4 · UI design workflow');
         const g = wizDraft.uiDesignPreviewGate;
         const insp = wizDraft.uiInspirationMode || 'ask';
-        bodyEl.innerHTML =
-          '<div class="wiz-group-title">' + L('Когда вы просите сверстать или обновить UI в вашем проекте:', 'When you ask to design or update UI in your project:') + '</div>' +
-          '<div class="wiz-choice-card' + (g ? ' selected' : '') + '" data-action="wizSetDesignGate" data-arg="true">' +
-            '<div class="wiz-choice-head">' +
-              '<span>' + L('Согласовывать стиль и примеры перед вёрсткой', 'Preview style & prototypes before coding') + '</span>' +
-              '<span style="color:var(--status-ok);">' + L('Рекомендуется', 'Recommended') + '</span>' +
-            '</div>' +
-            '<div class="wiz-choice-desc">' + L('Защищает от шаблонных ИИ-интерфейсов: сначала уточнит направление или покажет интерактивную витрину A/B/C.', 'Prevents generic AI UI: clarifies visual direction or builds an interactive A/B/C showroom first.') + '</div>' +
-          '</div>' +
-          (g
-            ? '<div class="wiz-gpu-cascade-box" style="margin-top:-2px;margin-bottom:8px;">' +
-                '<div style="font-size:10px;font-weight:600;margin-bottom:4px;">' + L('Как готовить визуальные референсы:', 'How to prepare visual references:') + '</div>' +
-                '<div class="wiz-gpu-cascade-pills">' +
-                  '<button type="button" class="wiz-gpu-cascade-pill' + (insp === 'ask' ? ' selected' : '') + '" data-action="wizSetInspirationMode" data-arg="ask">' + L('Спрашивать по задаче', 'Ask per task') + '</button>' +
-                  '<button type="button" class="wiz-gpu-cascade-pill' + (insp === 'showroom' ? ' selected' : '') + '" data-action="wizSetInspirationMode" data-arg="showroom">' + L('Сразу витрина A/B/C', 'A/B/C Showroom') + '</button>' +
-                  '<button type="button" class="wiz-gpu-cascade-pill' + (insp === 'web_refs' ? ' selected' : '') + '" data-action="wizSetInspirationMode" data-arg="web_refs">' + L('Примеры из веба', 'Web References') + '</button>' +
-                '</div>' +
-              '</div>'
-            : '') +
-          '<div class="wiz-choice-card' + (!g ? ' selected' : '') + '" data-action="wizSetDesignGate" data-arg="false">' +
-            '<div class="wiz-choice-head">' +
-              '<span>' + L('Сразу внедрять дизайн в код (без превью)', 'Apply UI edits directly in code (no preview)') + '</span>' +
-              '<span style="color:var(--accent-cyan);">' + L('Быстрее', 'Faster') + '</span>' +
-            '</div>' +
-            '<div class="wiz-choice-desc">' + L('ИИ сам подберёт гармоничную палитру под ваш проект и сразу обновит вёрстку без лишних вопросов.', 'AI picks a cohesive palette matching your project and updates layout right away without extra prompts.') + '</div>' +
-          '</div>';
-      } else {
-        if (hintEl) hintEl.textContent = L('Шаг 4 из 4 · Страховка кода и итоговая сводка', 'Step 4 of 4 · Code safety & final summary');
         const sf = wizDraft.safetyBundle;
         const sn = wizDraft.sentinelBundle !== false;
         const modeLabelMap = {
-          advisor_m: L('Советник M+ (Smart-Synergy)', 'Advisor M+ (Smart-Synergy)'),
-          advisor_all: L('Строгий контроль (все задачи)', 'Strict Control (all tasks)'),
-          autopilot_balance: L('Полный автопилот', 'Full Autopilot'),
-          flash_economy: L('Экономный автопилот', 'Economy Autopilot')
+          advisor_m: L('Советник M+', 'Advisor M+'),
+          advisor_all: L('Строгий контроль', 'Strict Control'),
+          autopilot_balance: L('Автопилот', 'Autopilot'),
+          flash_economy: L('Эконом', 'Economy')
         };
         const recRamGb = Math.max(1, Math.round((wizDraft.ramMaxBudgetMb || 4096) / 1024));
         const hwSummary = (wizDraft.useRam ? ('RAM ' + recRamGb + L(' ГБ', ' GB')) : L('RAM выкл', 'RAM off'))
-          + ' · ' + (wizDraft.useCpu ? ('CPU ' + wizDraft.cpuMaxThreads + L(' пот.', ' thr.')) : L('CPU 1 пот.', 'CPU 1 thr.'))
+          + ' · ' + (wizDraft.useCpu ? ('CPU ' + wizDraft.cpuMaxThreads + L(' пот.', ' thr.')) : L('CPU 1 п.', 'CPU 1 thr.'))
           + ' · ' + (wizDraft.useGpu ? ('GPU ' + wizDraft.gpuChatModel) : L('без GPU', 'no GPU'));
-        const viewModeSummary = normalizePanelViewMode(wizDraft.panelViewMode) === 'lite' ? 'Lite' : 'Full';
         const langSummary = normalizeUiLanguage(wizDraft.uiLanguage) === 'ru' ? 'Русский' : 'English';
 
         bodyEl.innerHTML =
-          '<div class="wiz-callout-info">' +
-            L(
-              '<strong>Про скиллы (навыки ИИ):</strong> вам <strong>не нужно</strong> включать их вручную — все навыки работают в режиме <strong>«Умный Авто»</strong> и подключаются ровно под вашу задачу.',
-              '<strong>About AI Skills:</strong> you <strong>don\'t need</strong> to toggle them manually — all skills run in <strong>"Smart Auto"</strong> mode and activate only when relevant.'
-            ) +
+          '<div class="wiz-sec-head" style="margin-top:0;">' + L('Уровень контроля ИИ', 'AI Control Level') + '</div>' +
+          '<div class="wiz-mode-grid">' +
+            '<button type="button" class="wiz-compact-card' + (m === 'advisor_m' ? ' selected' : '') + '" data-action="wizSelectMode" data-arg="advisor_m" title="' + escHtml(L('Мелкие правки (S) делает сразу, а перед заметными задачами (M/L/XL) кратко показывает план, рекомендуемую модель и спрашивает «Запускаем?».', 'Executes small S edits right away; for medium/large tasks (M/L/XL) shows a brief plan, recommended model and asks "Proceed?".')) + '">' +
+              '<div class="wiz-compact-head"><span>' + L('Умный советник', 'Smart Advisor') + '</span><span class="wiz-chip-tag is-ok">M+</span></div>' +
+              '<div class="wiz-compact-sub">' + L('Мелочи сразу, план от M+', 'S fast, confirm M+') + '</div>' +
+            '</button>' +
+            '<button type="button" class="wiz-compact-card' + (m === 'advisor_all' ? ' selected' : '') + '" data-action="wizSelectMode" data-arg="advisor_all" title="' + escHtml(L('Перед любым изменением кода (даже небольшим S) сначала показывает объём, затронутые файлы и ждёт вашего подтверждения.', 'Before any code edit (even small S), always shows scope, affected files and waits for your approval.')) + '">' +
+              '<div class="wiz-compact-head"><span>' + L('Строгий контроль', 'Strict Control') + '</span><span class="wiz-chip-tag">' + L('Все', 'All') + '</span></div>' +
+              '<div class="wiz-compact-sub">' + L('Одобрять любую правку', 'Confirm every edit') + '</div>' +
+            '</button>' +
+            '<button type="button" class="wiz-compact-card' + (m === 'autopilot_balance' ? ' selected' : '') + '" data-action="wizSelectMode" data-arg="autopilot_balance" title="' + escHtml(L('Не переспрашивает план перед рутиной — сам находит нужные модули, вносит правки и запускает самопроверку.', 'Skips confirmation prompts — scouts modules, applies edits and runs self-verification automatically.')) + '">' +
+              '<div class="wiz-compact-head"><span>' + L('Полный автопилот', 'Full Autopilot') + '</span><span class="wiz-chip-tag">' + L('Авто', 'Auto') + '</span></div>' +
+              '<div class="wiz-compact-sub">' + L('В код без пауз', 'Run without prompts') + '</div>' +
+            '</button>' +
+            '<button type="button" class="wiz-compact-card' + (m === 'flash_economy' ? ' selected' : '') + '" data-action="wizSelectMode" data-arg="flash_economy" title="' + escHtml(L('Выполняет рутину на быстрой модели Hydrogen / Flash, советуя старшие модели только для самых сложных архитектурных задач XL.', 'Handles routine work on fast Hydrogen / Flash, recommending heavier models only for complex XL architecture tasks.')) + '">' +
+              '<div class="wiz-compact-head"><span>' + L('Экономный', 'Economy') + '</span><span class="wiz-chip-tag">-80%</span></div>' +
+              '<div class="wiz-compact-sub">' + L('Максимум на Hydrogen', 'Routine on Hydrogen') + '</div>' +
+            '</button>' +
           '</div>' +
-          '<div class="wiz-choice-card' + (sf ? ' selected' : '') + '" data-action="wizToggleFlag" data-arg="safetyBundle">' +
-            '<div class="wiz-choice-head">' +
-              '<span>' + (sf ? '✓ ' : '') + L('Теневые снимки отката и автопроверка кода', 'Shadow Rollback Snapshots & Auto-Verify') + '</span>' +
-              '<span style="color:var(--status-ok);">' + (sf ? L('ВКЛ (Надёжно)', 'ON (Safe)') : L('ВЫКЛ', 'OFF')) + '</span>' +
-            '</div>' +
-            '<div class="wiz-choice-desc">' + L('Сохраняет резервную копию файла перед каждой правкой (откат в 1 клик) и проверяет затронутые тесты и синтаксис.', 'Saves a backup before every edit (1-click rollback) and automatically verifies syntax and impacted tests.') + '</div>' +
+
+          '<div class="wiz-sec-head">' + L('Вёрстка и дизайн UI', 'UI Design Workflow') + '</div>' +
+          '<div class="wiz-two-col">' +
+            '<button type="button" class="wiz-compact-card' + (g ? ' selected' : '') + '" data-action="wizSetDesignGate" data-arg="true" title="' + escHtml(L('Защищает от шаблонных ИИ-интерфейсов: сначала уточнит направление или покажет интерактивную витрину A/B/C.', 'Prevents generic AI UI: clarifies visual direction or builds an interactive A/B/C showroom first.')) + '">' +
+              '<div class="wiz-compact-head"><span>' + L('Превью перед вёрсткой', 'Preview before UI code') + '</span><span class="wiz-chip-tag is-ok">A/B/C</span></div>' +
+              '<div class="wiz-compact-sub">' + L('Защита от шаблонов', 'Anti-template check') + '</div>' +
+            '</button>' +
+            '<button type="button" class="wiz-compact-card' + (!g ? ' selected' : '') + '" data-action="wizSetDesignGate" data-arg="false" title="' + escHtml(L('ИИ сам подберёт гармоничную палитру под ваш проект и сразу обновит вёрстку без лишних вопросов.', 'AI picks a cohesive palette matching your project and updates layout right away without extra prompts.')) + '">' +
+              '<div class="wiz-compact-head"><span>' + L('Сразу в код', 'Direct to code') + '</span><span class="wiz-chip-tag">' + L('Быстро', 'Fast') + '</span></div>' +
+              '<div class="wiz-compact-sub">' + L('Без превью-витрины', 'Skip UI preview') + '</div>' +
+            '</button>' +
           '</div>' +
-          '<div class="wiz-choice-card' + (sn ? ' selected' : '') + '" data-action="wizToggleFlag" data-arg="sentinelBundle">' +
-            '<div class="wiz-choice-head">' +
-              '<span>' + (sn ? '✓ ' : '') + L('Фоновый Дозор (Sentinel) и Git-песочницы', 'Background Sentinel & Git Sandboxes') + '</span>' +
-              '<span style="color:var(--accent-cyan);">' + (sn ? L('ВКЛ', 'ON') : L('ВЫКЛ', 'OFF')) + '</span>' +
-            '</div>' +
-            '<div class="wiz-choice-desc">' + L('В простое тихо проверяет изменённые файлы на скрытые ошибки и позволяет изолировать рискованные эксперименты.', 'Silently checks edited files during idle pauses for hidden bugs and lets you isolate risky experiments.') + '</div>' +
+          (g
+            ? '<div class="wiz-sub-pills">' +
+                '<span class="wiz-sub-label">' + L('Источник идей:', 'Refs:') + '</span>' +
+                '<div class="wiz-gpu-cascade-pills" style="margin-top:0;">' +
+                  '<button type="button" class="wiz-gpu-cascade-pill' + (insp === 'ask' ? ' selected' : '') + '" data-action="wizSetInspirationMode" data-arg="ask">' + L('По задаче', 'Ask') + '</button>' +
+                  '<button type="button" class="wiz-gpu-cascade-pill' + (insp === 'showroom' ? ' selected' : '') + '" data-action="wizSetInspirationMode" data-arg="showroom">' + L('Витрина A/B/C', 'A/B/C Showroom') + '</button>' +
+                  '<button type="button" class="wiz-gpu-cascade-pill' + (insp === 'web_refs' ? ' selected' : '') + '" data-action="wizSetInspirationMode" data-arg="web_refs">' + L('Веб-рефы', 'Web Refs') + '</button>' +
+                '</div>' +
+              '</div>'
+            : '') +
+
+          '<div class="wiz-sec-head">' + L('Страховка кода', 'Code Safety') + '</div>' +
+          '<div class="wiz-two-col">' +
+            '<button type="button" class="wiz-compact-card' + (sf ? ' selected' : '') + '" data-action="wizToggleFlag" data-arg="safetyBundle" title="' + escHtml(L('Сохраняет резервную копию файла перед каждой правкой (откат в 1 клик) и проверяет затронутые тесты и синтаксис.', 'Saves a backup before every edit (1-click rollback) and automatically verifies syntax and impacted tests.')) + '">' +
+              '<div class="wiz-compact-head"><span>' + (sf ? '✓ ' : '') + L('Бэкапы и проверка', 'Snapshots & Verify') + '</span><span class="wiz-chip-tag' + (sf ? ' is-ok' : '') + '">' + (sf ? L('ВКЛ', 'ON') : L('ВЫКЛ', 'OFF')) + '</span></div>' +
+              '<div class="wiz-compact-sub">' + L('Откат в 1 клик + тесты', '1-click rollback + tests') + '</div>' +
+            '</button>' +
+            '<button type="button" class="wiz-compact-card' + (sn ? ' selected' : '') + '" data-action="wizToggleFlag" data-arg="sentinelBundle" title="' + escHtml(L('В простое тихо проверяет изменённые файлы на скрытые ошибки и позволяет изолировать рискованные эксперименты.', 'Silently checks edited files during idle pauses for hidden bugs and lets you isolate risky experiments.')) + '">' +
+              '<div class="wiz-compact-head"><span>' + (sn ? '✓ ' : '') + L('Дозор и песочницы', 'Sentinel & Sandboxes') + '</span><span class="wiz-chip-tag' + (sn ? ' is-ok' : '') + '">' + (sn ? L('ВКЛ', 'ON') : L('ВЫКЛ', 'OFF')) + '</span></div>' +
+              '<div class="wiz-compact-sub">' + L('Фоновый поиск багов', 'Idle bug & git guard') + '</div>' +
+            '</button>' +
           '</div>' +
-          '<div class="wiz-summary-card">' +
-            '<div style="font-size:10.5px;font-weight:700;">' + L('Итоговая конфигурация перед стартом:', 'Configuration summary:') + '</div>' +
-            '<div class="wiz-summary-grid">' +
-              '<div class="wiz-summary-item"><div class="wiz-summary-k">' + L('Язык / Тариф', 'Language / Tier') + '</div><div class="wiz-summary-v">' + langSummary + ' · ' + (wizDraft.subscriptionTier === 'ultra' ? 'Ultra' : 'Pro') + '</div></div>' +
-              '<div class="wiz-summary-item"><div class="wiz-summary-k">' + L('Режим диалога', 'Workflow Mode') + '</div><div class="wiz-summary-v" title="' + escHtml(modeLabelMap[wizDraft.modePreset] || '') + '">' + escHtml(modeLabelMap[wizDraft.modePreset] || L('Советник M+', 'Advisor M+')) + '</div></div>' +
-              '<div class="wiz-summary-item"><div class="wiz-summary-k">' + L('Ресурсы ПК', 'PC Resources') + '</div><div class="wiz-summary-v" title="' + escHtml(hwSummary) + '">' + escHtml(hwSummary) + '</div></div>' +
-              '<div class="wiz-summary-item"><div class="wiz-summary-k">' + L('Режим пульта', 'Panel Mode') + '</div><div class="wiz-summary-v">' + escHtml(viewModeSummary) + '</div></div>' +
-            '</div>' +
-          '</div>' +
-          '<div class="wiz-callout-ready">' +
-            L(
-              'Всё готово! Нажмите <strong>«✓ Сохранить и начать»</strong> — параметры применятся глобально для всех текущих и новых чатов.',
-              'All set! Click <strong>"✓ Save & Start"</strong> — settings will apply globally to all current and future chats.'
-            ) +
+
+          '<div class="wiz-summary-strip" title="' + escHtml(L('Все навыки ИИ (скиллы) работают в режиме «Умный Авто» и подключаются под вашу задачу.', 'All AI skills run in "Smart Auto" mode and activate when relevant.')) + '">' +
+            '<span class="wiz-sum-pill">' + langSummary + ' · ' + (wizDraft.subscriptionTier === 'ultra' ? 'Ultra' : 'Pro') + '</span>' +
+            '<span class="wiz-sum-pill">' + escHtml(modeLabelMap[wizDraft.modePreset] || L('Советник M+', 'Advisor M+')) + '</span>' +
+            '<span class="wiz-sum-pill">' + escHtml(hwSummary) + '</span>' +
+            '<span class="wiz-sum-pill is-accent">' + L('Навыки: Авто', 'Skills: Auto') + '</span>' +
           '</div>';
       }
       if (bodyEl && bodyEl.classList) {
@@ -1126,7 +1244,13 @@
       }
 
       const modal = document.getElementById('onboardingWizardModal');
-      if (modal) modal.classList.remove('visible');
+      if (modal) {
+        if (typeof animateModalOverlayState === 'function') {
+          animateModalOverlayState(modal, false, { useVisibleClass: true });
+        } else {
+          modal.classList.remove('visible');
+        }
+      }
       wizSubTierPreviewDirty = false;
       wizLangPreviewDirty = false;
       wizViewModePreviewDirty = false;

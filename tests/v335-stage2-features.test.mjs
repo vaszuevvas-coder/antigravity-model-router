@@ -140,21 +140,86 @@ test('2. collectRoiTimeline aggregates Day/Week/Month buckets and Quota Pacer bu
         ramSavedTokens: 18000,
         cpuSavedTokens: 7000,
         gpuSavedTokens: 4000,
-        cacheHitRate: 86,
-        savingsBreakdown: { cache: 45000, ram: 18000, cpu: 7000, gpu: 4000, cacheHitRate: 86 },
+        savingsBreakdown: { ram: 18000, cpu: 7000, gpu: 4000 },
       },
-      quotaPacer: { utilizationPct: 40, status: 'calm', estimatedMinutesLeft: 195, turnsLast60m: 14 },
+      quotaPacer: { utilizationPct: 40, projectedPct: 52, status: 'calm', estimatedMinutesLeft: 195, turnsLast60m: 14, turnsLast5h: 22 },
     });
 
     assert.equal(res.ok, true);
     assert.equal(res.scales.day.length, 8);
     assert.equal(res.scales.week.length, 7);
     assert.equal(res.scales.month.length, 4);
-    assert.equal(res.totals.total, 74000);
+    // Extension-only layers: RAM (18000) + CPU (7000) + GPU (4000) = 29000 (Google Implicit Cache excluded)
+    assert.equal(res.totals.total, 29000);
+    assert.equal(res.totals.cache, undefined);
     assert.equal(res.quotaBullet.utilizationPct, 40);
-    assert.equal(res.quotaBullet.projectedPct, 50);
+    assert.equal(res.quotaBullet.projectedPct, 52);
     assert.equal(res.quotaBullet.estimatedMinutesLeft, 195);
+    assert.equal(res.quotaBullet.turnsLast5h, 22);
     assert.equal(fs.existsSync(path.join(tmpDir, 'roi-timeline.json')), true);
+
+    // Regression: temporary counter dip (e.g. workspace switch) must NEVER re-add lifetime totals as a delta spike
+    const afterDip = collectRoiTimeline({
+      cacheDir: tmpDir,
+      nowMs: nowMs + 120_000,
+      seedFromTranscripts: false,
+      currentTelemetry: {
+        ramSavedTokens: 5000,
+        cpuSavedTokens: 7000,
+        gpuSavedTokens: 4000,
+        savingsBreakdown: { ram: 5000, cpu: 7000, gpu: 4000 },
+      },
+      quotaPacer: { utilizationPct: 40, projectedPct: 52, status: 'calm', estimatedMinutesLeft: 195, turnsLast60m: 14, turnsLast5h: 22 },
+    });
+    const daySumAfterDip = afterDip.scales.day.reduce((acc, b) => acc + b.ram, 0);
+    assert.equal(daySumAfterDip, 18000, 'Counter dip must add 0 delta instead of re-adding lifetime RAM savings');
+
+    // Verify v3 calendar range labels (DD.MM-DD.MM) replace legacy H1..H4 / W1..W4 codes
+    assert.match(afterDip.scales.month[0].labelRu, /^\d{2}\.\d{2}–\d{2}\.\d{2}$/);
+    assert.ok(afterDip.scales.month[0].periodLabelRu && afterDip.scales.month[0].periodLabelEn);
+    assert.equal(afterDip.schemaVersion, 3);
+
+    // Regression: legacy schemaVersion:2 poisoned cache (35.7M baseline & old slots) migrates cleanly to v3 and seeds ONLY extension-active chats
+    const migCache = path.join(tmpDir, 'mig-cache');
+    const migBrain = path.join(tmpDir, 'mig-brain');
+    fs.mkdirSync(migCache, { recursive: true });
+    const oldChatDir = path.join(migBrain, 'old-plain-chat', '.system_generated', 'logs');
+    const extChatDir = path.join(migBrain, 'ext-active-chat', '.system_generated', 'logs');
+    fs.mkdirSync(oldChatDir, { recursive: true });
+    fs.mkdirSync(extChatDir, { recursive: true });
+    const oldTp = path.join(oldChatDir, 'transcript.jsonl');
+    const extTp = path.join(extChatDir, 'transcript.jsonl');
+    fs.writeFileSync(oldTp, JSON.stringify({ type: 'PLANNER_RESPONSE', input_tokens: 1000, output_tokens: 200 }) + '\n');
+    const oldTsSec = Math.floor((nowMs - 20 * 24 * 60 * 60 * 1000) / 1000);
+    fs.utimesSync(oldTp, oldTsSec, oldTsSec);
+    fs.writeFileSync(extTp, [
+      JSON.stringify({ type: 'PLANNER_RESPONSE', input_tokens: 500, output_tokens: 100 }),
+      JSON.stringify({ tool_calls: [{ name: 'mcp_antigravity-model-router_ram-memory_ram_slice', args: {} }] }),
+    ].join('\n') + '\n');
+    const extTsSec = Math.floor((nowMs - 2 * 60 * 60 * 1000) / 1000);
+    fs.utimesSync(extTp, extTsSec, extTsSec);
+
+    fs.writeFileSync(path.join(migCache, 'roi-timeline.json'), JSON.stringify({
+      schemaVersion: 2,
+      lastTotals: { ram: 35705104, cpu: 1446894, gpu: 153049 },
+      slots: [{ hourKey: '2026-11-04T12', ts: nowMs - 22 * 24 * 60 * 60 * 1000, ram: 999999, cpu: 50000, gpu: 5000 }],
+    }));
+
+    const migrated = collectRoiTimeline({
+      cacheDir: migCache,
+      nowMs,
+      brainDirs: [migBrain],
+      currentTelemetry: {
+        ramSavedTokens: 900,
+        cpuSavedTokens: 300,
+        gpuSavedTokens: 100,
+        savingsBreakdown: { ram: 900, cpu: 300, gpu: 100 },
+      },
+    });
+    assert.equal(migrated.schemaVersion, 3);
+    assert.equal(migrated.scales.month[0].total, 0, 'Pre-extension week must stay 0 after v3 migration');
+    assert.equal(migrated.scales.month[0].beforeInstall, true, 'Pre-extension week must carry beforeInstall flag');
+    assert.equal(migrated.scales.month[3].ram, 900, 'Extension-active chat savings must land in current period');
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -188,6 +253,13 @@ test('3. Sidecar /api/state (roiTimeline), /api/health-doctor, /api/health-docto
     const stJson = await stRes.json();
     assert.equal(stRes.status, 200);
     assert.ok(stJson.roiTimeline && stJson.roiTimeline.scales && Array.isArray(stJson.roiTimeline.scales.day));
+
+    const telCoreRes = await fetch(`${baseUrl}/api/telemetry?sections=core`, { headers });
+    const telCoreJson = await telCoreRes.json();
+    assert.equal(telCoreRes.status, 200);
+    assert.equal(telCoreJson.ramCache, undefined, 'sec.hw=false must still omit top-level ramCache');
+    assert.ok(telCoreJson.roiTimeline && telCoreJson.roiTimeline.scales, '/api/telemetry must include roiTimeline');
+    assert.equal(telCoreJson.telemetry.ramSavedTokens, stJson.telemetry.ramSavedTokens, 'RAM savings must stay consistent when sec.hw=false');
 
     const hdRes = await fetch(`${baseUrl}/api/health-doctor`, { headers });
     const hdJson = await hdRes.json();

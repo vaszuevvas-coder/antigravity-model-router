@@ -60,6 +60,12 @@ const NOISE_BUILTIN_METHODS = new Set([
   'Error', 'Promise', 'Buffer', 'Math', 'JSON', 'console', 'process', 'require',
   'toFixed', 'charAt', 'charCodeAt', 'codePointAt', 'subarray', 'alloc', 'fromCharCode',
   'append', 'extend', 'items', 'format', 'encode', 'decode',
+  'call', 'apply', 'bind', 'then', 'catch', 'finally', 'next',
+  'getAttribute', 'setAttribute', 'removeAttribute', 'hasAttribute',
+  'querySelector', 'querySelectorAll', 'getElementById', 'createElement',
+  'appendChild', 'removeChild', 'addEventListener', 'removeEventListener',
+  'contains', 'toggle', 'focus', 'blur', 'click', 'close', 'open',
+  'send', 'end', 'write', 'read', 'on', 'once', 'off', 'emit', 'kill', 'unref', 'ref', 'animate', 'cancel',
 ]);
 
 function escapeRegExp(str) {
@@ -661,14 +667,74 @@ function stripLineNoise(line, ext) {
  *
  * @param {Map<string, any>|Record<string, any>} filesMap
  */
+function isUiAssetPath(relPath = '') {
+  return /(?:^|\/)(?:ui-src|public|client|renderer|browser)\//i.test(String(relPath || ''));
+}
+
+function isTestCodePath(relPath = '') {
+  return /(?:^|\/)(?:tests?|__tests__|e2e|specs?)\/|\.(?:test|spec)\.[a-z0-9]+$/i.test(String(relPath || ''));
+}
+
+function sharedDirPrefixDepth(a = '', b = '') {
+  const normA = normalizePosixRel(a);
+  const normB = normalizePosixRel(b);
+  if (typeof normA !== 'string' || !normA || typeof normB !== 'string' || !normB) return 0;
+  const partsA = normA.split('/').slice(0, -1);
+  const partsB = normB.split('/').slice(0, -1);
+  let depth = 0;
+  const n = Math.min(partsA.length, partsB.length);
+  while (depth < n && partsA[depth] === partsB[depth]) depth++;
+  return depth;
+}
+
+export function pickBestCallTargetDef(callerFile, targetDefs, importedFiles) {
+  if (!Array.isArray(targetDefs) || targetDefs.length === 0) return null;
+  const validDefs = targetDefs.filter((d) => d && typeof d.file === 'string' && d.file.trim().length > 0);
+  if (validDefs.length === 0) return null;
+  if (validDefs.length === 1) return validDefs[0];
+
+  const importedHits = importedFiles && importedFiles.size > 0
+    ? validDefs.filter((d) => importedFiles.has(d.file))
+    : [];
+  let pool = importedHits;
+  if (pool.length === 0) {
+    const nonTestPool = !isTestCodePath(callerFile)
+      ? validDefs.filter((d) => !isTestCodePath(d.file))
+      : validDefs;
+    const basePool = nonTestPool.length > 0 ? nonTestPool : validDefs;
+    const callerIsUi = isUiAssetPath(callerFile);
+    const sameRealm = basePool.filter((d) => isUiAssetPath(d.file) === callerIsUi);
+    pool = sameRealm.length > 0 ? sameRealm : basePool;
+  }
+  if (!Array.isArray(pool) || pool.length === 0) return null;
+  if (pool.length === 1) return pool[0];
+
+  let best = pool[0];
+  let bestDepth = sharedDirPrefixDepth(callerFile, best.file);
+  for (let i = 1; i < pool.length; i++) {
+    const cand = pool[i];
+    const d = sharedDirPrefixDepth(callerFile, cand.file);
+    if (d > bestDepth || (d === bestDepth && cand.file.localeCompare(best.file) < 0)) {
+      best = cand;
+      bestDepth = d;
+    }
+  }
+  return best;
+}
+
 export function buildSymbolCallGraph(filesMap) {
   const t0 = performance.now();
-  const entries = filesMap instanceof Map
+  const rawEntries = filesMap instanceof Map
     ? Array.from(filesMap.entries())
     : (filesMap && typeof filesMap === 'object' ? Object.entries(filesMap) : []);
+  const entries = rawEntries
+    .map(([rawRel, val]) => [normalizePosixRel(rawRel), val])
+    .filter(([relPath]) => Boolean(relPath))
+    .sort((a, b) => a[0].localeCompare(b[0]));
 
   const definedSymbols = new Map(); // name -> Array<{ name, file, kind, signature, startLine, endLine }>
   const symbolNamesLower = new Map(); // lowerName -> Set<name>
+  const codeLowerMap = new Map();
   const parsedFiles = [];
 
   for (const [relPath, val] of entries) {
@@ -679,6 +745,7 @@ export function buildSymbolCallGraph(filesMap) {
     if (!CODE_EXTENSIONS.has(ext) && !(val && typeof val === 'object' && Array.isArray(val.symbols))) {
       continue;
     }
+    codeLowerMap.set(relPath.toLowerCase(), relPath);
 
     const text = typeof val === 'string'
       ? val
@@ -748,6 +815,14 @@ export function buildSymbolCallGraph(filesMap) {
       for (const idm of clause.matchAll(/\b([A-Za-z_$][A-Za-z0-9_$]*)\b/g)) {
         if (idm[1] !== 'as' && idm[1] !== 'type') importedIdents.add(idm[1]);
       }
+    }
+    const importedFiles = new Set();
+    for (const sm of pf.text.matchAll(/(?:\bfrom\s+|\bimport\s*(?:\(\s*)?|\brequire\s*\(\s*)['"]([^'"]+)['"]/g)) {
+      const spec = sm[1];
+      const resolved = spec.startsWith('.')
+        ? resolveRelativeModuleCandidate(pf.relPath, spec, codeLowerMap)
+        : (codeLowerMap.get(normalizePosixRel(spec).toLowerCase()) || '');
+      if (resolved && resolved !== pf.relPath) importedFiles.add(resolved);
     }
     let inBlockComment = false;
 
@@ -820,26 +895,38 @@ export function buildSymbolCallGraph(filesMap) {
 
         const targetDefs = isRepoSymbol ? definedSymbols.get(calleeName) : null;
         const sameFileDef = targetDefs?.find((d) => d.file === pf.relPath) || null;
-        const chosenDef = sameFileDef || targetDefs?.[0] || null;
+        const chosenDef = sameFileDef || pickBestCallTargetDef(pf.relPath, targetDefs, importedFiles);
         const calleeFile = chosenDef?.file || '';
         const calleeLine = chosenDef?.startLine || 0;
         const isDotted = m[0].startsWith('.');
+        const importedTargetCount = targetDefs
+          ? targetDefs.filter((d) => importedFiles.has(d.file)).length
+          : 0;
         let confidence = 'AMBIGUOUS';
         if (isRepoSymbol && !isDotted) {
-          if (sameFileDef || (targetDefs.length === 1 && importedIdents.has(calleeName))) {
+          if (
+            sameFileDef
+            || (importedIdents.has(calleeName) && (targetDefs.length === 1 || (chosenDef && importedFiles.has(chosenDef.file))))
+          ) {
             confidence = 'EXTRACTED';
           } else if (targetDefs.length === 1) {
+            confidence = 'INFERRED';
+          }
+        } else if (isRepoSymbol && isDotted) {
+          if (chosenDef && importedFiles.has(chosenDef.file) && importedTargetCount === 1) {
             confidence = 'INFERRED';
           }
         }
 
         const callerKey = `${pf.relPath}#${callerName}`;
         const calleeKey = `${calleeFile}#${calleeName}`;
+        const calleeEdgeKey = `${pf.relPath}=>${calleeKey}`;
 
         const prevSize = calleesOf.get(callerName)?.size || 0;
-        addEdge(calleesOf, callerName, calleeKey, {
+        addEdge(calleesOf, callerName, calleeEdgeKey, {
           name: calleeName,
           file: calleeFile,
+          callerFile: pf.relPath,
           line: calleeLine,
           callSiteLine: lineNo,
           isRepoSymbol,
@@ -969,9 +1056,10 @@ export function querySymbolEgoGraph(
     }
     const callees = graph.calleesOf?.get(t);
     if (callees) {
-      for (const [k, edge] of callees.entries()) {
+      for (const [, edge] of callees.entries()) {
         if (seenTargets.has(edge.name)) continue;
-        if (!calleeMap.has(k)) calleeMap.set(k, edge);
+        const dedupKey = `${edge.file || ''}#${edge.name}`;
+        if (!calleeMap.has(dedupKey)) calleeMap.set(dedupKey, edge);
       }
     }
   }
@@ -1003,8 +1091,38 @@ export function querySymbolEgoGraph(
   };
 }
 
-function normalizePosixRel(p = '') {
-  return String(p || '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
+export function normalizePosixRel(p = '') {
+  if (typeof p !== 'string') return '';
+  const cleaned = p
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .replace(/^(?:\.\/)+/, '');
+  if (!cleaned || cleaned === '.' || cleaned === '/') return '';
+  return cleaned;
+}
+
+function isValidRelPath(rel) {
+  return typeof rel === 'string' && rel.length > 0 && rel !== '.' && rel !== '..' && !rel.startsWith('../');
+}
+
+function resolveCallerSourceRel(callerName, edge, callerDefs, warnedSet, { allowMultiFallback = false } = {}) {
+  let srcRel = '';
+  if (edge?.callerFile) {
+    srcRel = normalizePosixRel(edge.callerFile);
+  } else if (Array.isArray(callerDefs) && callerDefs.length === 1) {
+    srcRel = normalizePosixRel(callerDefs[0]?.file);
+  } else {
+    if (warnedSet && !warnedSet.has(callerName)) {
+      warnedSet.add(callerName);
+      const count = Array.isArray(callerDefs) ? callerDefs.length : 0;
+      console.warn(`[cpu-ast-graph] callerDefs count mismatch for "${callerName}": expected 1, got ${count}`);
+    }
+    if (allowMultiFallback && Array.isArray(callerDefs) && callerDefs.length > 0) {
+      srcRel = normalizePosixRel(callerDefs[0]?.file);
+    }
+  }
+  return isValidRelPath(srcRel) ? srcRel : '';
 }
 
 function iterMapOrObjectEntries(src) {
@@ -1753,12 +1871,14 @@ export function detectArchitectureClusters(
     maxIterations = 12,
     ambiguousScale = 0.25,
     excludeHubsPercentile = null,
+    includeTests = false,
   } = {}
 ) {
   const t0 = performance.now();
   const nodes = [];
   const nodeIndex = new Map();
 
+  const rawCodeEntries = [];
   for (const [rawRel, val] of iterMapOrObjectEntries(filesMap).sort((a, b) => String(a[0]).localeCompare(String(b[0])))) {
     const relPath = normalizePosixRel(rawRel);
     if (!relPath) continue;
@@ -1766,6 +1886,14 @@ export function detectArchitectureClusters(
       ? String(val.ext).toLowerCase()
       : path.posix.extname(relPath).toLowerCase();
     if (!CODE_EXTENSIONS.has(ext)) continue;
+    rawCodeEntries.push({ relPath, val });
+  }
+  const nonTestCodeEntries = !includeTests
+    ? rawCodeEntries.filter((e) => !isTestCodePath(e.relPath))
+    : rawCodeEntries;
+  const activeCodeEntries = nonTestCodeEntries.length >= 2 ? nonTestCodeEntries : rawCodeEntries;
+
+  for (const { relPath, val } of activeCodeEntries) {
     const idx = nodes.length;
     nodes.push({
       id: idx,
@@ -1809,7 +1937,6 @@ export function detectArchitectureClusters(
     directedImportPairs.add(key);
     outSet[u].add(v);
     inSet[v].add(u);
-    addUndirectedWeight(u, v, 3.0);
   };
 
   for (const [rawSrc, targets] of iterMapOrObjectEntries(forwardDeps)) {
@@ -1830,16 +1957,28 @@ export function detectArchitectureClusters(
     }
   }
 
+  // Attenuate ubiquitous utility hubs (high fan-in sinks) so independent subsystems do not collapse into one cluster
+  for (const edgeKey of directedImportPairs) {
+    const sep = edgeKey.indexOf('->');
+    const u = Number(edgeKey.slice(0, sep));
+    const v = Number(edgeKey.slice(sep + 2));
+    const inDegV = inSet[v].size;
+    const importWeight = inDegV > 3 ? (3.0 / (1 + (inDegV - 3) * 0.45)) : 3.0;
+    addUndirectedWeight(u, v, importWeight);
+  }
+
   // Inter-file AST symbol calls add weighted edges (capped at 4 calls per file pair)
   if (symbolGraph?.calleesOf && symbolGraph?.definedSymbols) {
     const pairCalls = new Map();
+    const warnedCallerDefs = new Set();
     for (const [callerName, edgeMap] of symbolGraph.calleesOf.entries()) {
       const callerDefs = symbolGraph.definedSymbols.get(callerName);
-      if (!callerDefs || callerDefs.length !== 1) continue;
-      const u = nodeIndex.get(normalizePosixRel(callerDefs[0].file));
-      if (u === undefined) continue;
       for (const edge of edgeMap.values()) {
         if (!edge?.isRepoSymbol || !edge.file) continue;
+        const srcRel = resolveCallerSourceRel(callerName, edge, callerDefs, warnedCallerDefs);
+        if (!srcRel) continue;
+        const u = nodeIndex.get(srcRel);
+        if (u === undefined) continue;
         const v = nodeIndex.get(normalizePosixRel(edge.file));
         if (v === undefined || u === v) continue;
         const pairKey = u < v ? `${u}|${v}` : `${v}|${u}`;
@@ -1871,10 +2010,11 @@ export function detectArchitectureClusters(
     grp.push(n.id);
   }
   for (const ids of dirGroups.values()) {
-    if (ids.length >= 2 && ids.length <= 25) {
+    if (ids.length >= 2 && ids.length <= 80) {
+      const dirPairW = Math.min(0.35, 2.4 / (ids.length - 1));
       for (let i = 0; i < ids.length; i++) {
         for (let j = i + 1; j < ids.length; j++) {
-          addUndirectedWeight(ids[i], ids[j], 0.35);
+          addUndirectedWeight(ids[i], ids[j], dirPairW);
         }
       }
     }
@@ -1890,31 +2030,42 @@ export function detectArchitectureClusters(
   }
 
   const labels = Int32Array.from({ length: N }, (_, i) => i);
+  const commTotDeg = Float64Array.from(weightedDeg);
   const order = Array.from({ length: N }, (_, i) => i).sort(
-    (a, b) => weightedDeg[b] - weightedDeg[a] || nodes[a].relPath.localeCompare(nodes[b].relPath)
+    (a, b) => weightedDeg[a] - weightedDeg[b] || nodes[a].relPath.localeCompare(nodes[b].relPath)
   );
   const iterCap = Math.max(1, Math.min(32, Number(maxIterations) || 12));
   const labelScores = new Map();
+  const resolution = 1.15;
 
   for (let iter = 0; iter < iterCap; iter++) {
     let changed = 0;
     for (const u of order) {
-      if (adj[u].size === 0) continue;
+      const degU = weightedDeg[u];
+      if (adj[u].size === 0 || degU <= 0 || twoM <= 0) continue;
+      const oldLbl = labels[u];
       labelScores.clear();
-      labelScores.set(labels[u], 0.001);
+      labelScores.set(oldLbl, 0);
       for (const [v, w] of adj[u].entries()) {
         const lbl = labels[v];
         labelScores.set(lbl, (labelScores.get(lbl) || 0) + w);
       }
-      let bestLabel = labels[u];
-      let bestScore = -1;
-      for (const [lbl, sc] of labelScores.entries()) {
-        if (sc > bestScore || (sc === bestScore && lbl < bestLabel)) {
-          bestScore = sc;
+      let bestLabel = oldLbl;
+      const stayWeight = labelScores.get(oldLbl) || 0;
+      const stayTotWithoutU = Math.max(0, commTotDeg[oldLbl] - degU);
+      let bestGain = stayWeight - (resolution * degU * stayTotWithoutU) / twoM;
+      for (const [lbl, wToLbl] of labelScores.entries()) {
+        if (lbl === oldLbl) continue;
+        const totWithoutU = commTotDeg[lbl];
+        const gain = wToLbl - (resolution * degU * totWithoutU) / twoM;
+        if (gain > bestGain + 1e-6 || (Math.abs(gain - bestGain) <= 1e-6 && lbl < bestLabel)) {
+          bestGain = gain;
           bestLabel = lbl;
         }
       }
-      if (bestLabel !== labels[u]) {
+      if (bestLabel !== oldLbl) {
+        commTotDeg[oldLbl] = Math.max(0, commTotDeg[oldLbl] - degU);
+        commTotDeg[bestLabel] += degU;
         labels[u] = bestLabel;
         changed++;
       }
@@ -2284,22 +2435,25 @@ export function findSurprisingConnections(
   archClusters,
   symbolGraph = null,
   forwardDeps = null,
-  { topN = 6 } = {}
+  { topN = 6, includeTests = false } = {}
 ) {
   const fileToCluster = archClusters?.fileToCluster instanceof Map ? archClusters.fileToCluster : new Map();
   const bridges = [];
   const seen = new Set();
 
   if (symbolGraph?.calleesOf && symbolGraph?.definedSymbols) {
+    const warnedCallerDefs = new Set();
     for (const [callerName, edgeMap] of symbolGraph.calleesOf.entries()) {
       const callerDefs = symbolGraph.definedSymbols.get(callerName);
-      if (!callerDefs || callerDefs.length === 0) continue;
-      const srcFile = normalizePosixRel(callerDefs[0].file);
-      const srcCluster = fileToCluster.get(srcFile);
       for (const edge of edgeMap.values()) {
         if (!edge?.file) continue;
+        const srcFile = resolveCallerSourceRel(callerName, edge, callerDefs, warnedCallerDefs, {
+          allowMultiFallback: true,
+        });
         const dstFile = normalizePosixRel(edge.file);
-        if (!dstFile || dstFile === srcFile) continue;
+        if (!srcFile || !dstFile || dstFile === srcFile) continue;
+        if (!includeTests && (isTestCodePath(srcFile) || isTestCodePath(dstFile))) continue;
+        const srcCluster = fileToCluster.get(srcFile);
         const dstCluster = fileToCluster.get(dstFile);
         const crossCluster = Boolean(srcCluster && dstCluster && srcCluster.id !== dstCluster.id);
         const crossDir = path.posix.dirname(srcFile) !== path.posix.dirname(dstFile);
@@ -2330,6 +2484,7 @@ export function findSurprisingConnections(
       for (const rawDst of toArrayIter(targets)) {
         const dstFile = normalizePosixRel(rawDst);
         if (!dstFile || dstFile === srcFile) continue;
+        if (!includeTests && (isTestCodePath(srcFile) || isTestCodePath(dstFile))) continue;
         const dstCluster = fileToCluster.get(dstFile);
         if (!srcCluster || !dstCluster || srcCluster.id === dstCluster.id) continue;
         const key = `imp:${srcFile}->${dstFile}`;

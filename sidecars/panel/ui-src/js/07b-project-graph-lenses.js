@@ -775,42 +775,16 @@
       if (cleanList.length === 0) return;
       const tokens = cleanList.map(function (f) { return '@file:' + f; });
 
-      if (typeof pgIsStandaloneView === 'function' && pgIsStandaloneView()) {
-        const joined = tokens.join(' ') + ' ';
-        try {
-          if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-            void navigator.clipboard.writeText(joined);
-          }
-        } catch {}
-        flashStatus(L('Скопировано для вставки в чат: ', 'Copied to paste in chat: ') + tokens.length + ' @file');
+      if (typeof pgDispatchToComposer === 'function') {
+        pgDispatchToComposer({
+          tokens: tokens,
+          prompt: '',
+          inlineOkLabel: L('Добавлено в Композер: ', 'Added to Composer: ') + tokens.length + ' @file',
+          standaloneOkLabel: L('Отправлено в Умный Композер панели: ', 'Sent to panel Smart Composer: ') + tokens.length + ' @file ✓',
+          standaloneFallbackLabel: L('Скопировано для вставки в чат: ', 'Copied to paste in chat: ') + tokens.length + ' @file',
+        });
         return;
       }
-
-      const inputEl = document.getElementById('smartComposerInput');
-      if (inputEl) {
-        let cur = inputEl.value || '';
-        for (let i = 0; i < tokens.length; i++) {
-          const tok = tokens[i];
-          if (cur.indexOf(tok) === -1) {
-            const sep = cur && !/\s$/.test(cur) ? ' ' : '';
-            cur = cur + sep + tok;
-          }
-        }
-        inputEl.value = cur && !/\s$/.test(cur) ? (cur + ' ') : cur;
-        if (typeof _smartLastDraft !== 'undefined') {
-          _smartLastDraft = inputEl.value;
-        }
-        if (typeof renderSmartComposerMirror === 'function') {
-          renderSmartComposerMirror();
-        }
-      }
-      if (typeof closeProjectGraphModal === 'function') {
-        closeProjectGraphModal();
-      }
-      if (inputEl) {
-        inputEl.focus();
-      }
-      flashStatus(L('Добавлено в Композер: ', 'Added to Composer: ') + tokens.length + ' @file');
     }
 
     function pgSendCartToComposer() {

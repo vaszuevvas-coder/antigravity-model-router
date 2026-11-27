@@ -1,13 +1,12 @@
 @echo off
 chcp 65001 >nul
-setlocal EnableExtensions EnableDelayedExpansion
-cd /d "%~dp0"
+setlocal EnableExtensions
+set "SCRIPT_DIR=%~dp0"
+cd /d "%SCRIPT_DIR%"
 
 set "SILENT_MODE=0"
-for %%A in (%*) do (
-  if /I "%%~A"=="--silent" set "SILENT_MODE=1"
-  if /I "%%~A"=="/S" set "SILENT_MODE=1"
-)
+call :PARSE_ARGS %*
+setlocal EnableDelayedExpansion
 
 call :FIND_NODE
 if not defined NODE_EXE (
@@ -35,7 +34,7 @@ if not defined NODE_EXE (
 )
 
 echo Installing The Tunnel plugin...
-"%NODE_EXE%" "%~dp0install.js" %*
+"%NODE_EXE%" "!SCRIPT_DIR!install.js" %*
 set "EXIT_CODE=!ERRORLEVEL!"
 if !EXIT_CODE! NEQ 0 (
   echo [ERR] Installation failed with exit code !EXIT_CODE!.
@@ -46,6 +45,13 @@ if !EXIT_CODE! NEQ 0 (
 echo.
 if "!SILENT_MODE!"=="0" pause
 exit /b 0
+
+:PARSE_ARGS
+if "%~1"=="" goto :EOF
+if /I "%~1"=="--silent" set "SILENT_MODE=1"
+if /I "%~1"=="/S" set "SILENT_MODE=1"
+shift
+goto :PARSE_ARGS
 
 :FIND_NODE
 set "NODE_EXE="

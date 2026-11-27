@@ -249,13 +249,13 @@ test('3. Server state sanitization, token savings aggregation, router-state.json
       ramSavedTokens: 500,
       cpuSavedTokens: 50,
       gpuSavedTokens: 25,
-      totalSavedTokens: 675,
-      savingsBreakdown: { cache: 100, ram: 500, cpu: 50, gpu: 25, cacheHitRate: 50 },
+      totalSavedTokens: 575,
+      savingsBreakdown: { ram: 500, cpu: 50, gpu: 25 },
     },
     { sota: { savedTokensEstimate: 300 } }
   );
   assert.equal(merged.ramSavedTokens, 800);
-  assert.equal(merged.totalSavedTokens, 975);
+  assert.equal(merged.totalSavedTokens, 875);
   assert.equal(merged.savingsBreakdown.ram, 800);
 
   // router-state.json defaults

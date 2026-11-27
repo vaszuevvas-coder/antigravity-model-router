@@ -495,25 +495,11 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
     // -----------------------------------------------------------------------
     // 1 & 2B. Full Bottom Scroll Reachability + Zero Horizontal Overflow (Expanded)
     // -----------------------------------------------------------------------
-    const expandedScrollMetrics = await cdp.evaluate(async (spoilerIds, cardIds) => {
-      for (const id of spoilerIds) {
-        const el = document.getElementById(id);
-        if (el && !el.open) {
-          const summary = el.querySelector('summary');
-          if (summary) summary.click();
-          if (!el.open) el.open = true;
-          await new Promise((r) => setTimeout(r, 25));
-        }
-      }
-
-      for (const cardId of cardIds) {
-        const card = document.getElementById(cardId);
-        if (card && card.classList.contains('is-collapsed')) {
-          const btn = card.querySelector('.lg-card-collapse-btn');
-          if (btn) btn.click();
-          else card.classList.remove('is-collapsed');
-          await new Promise((r) => setTimeout(r, 25));
-        }
+    const expandedScrollMetrics = await cdp.evaluate(async () => {
+      const hwTabBtn = document.getElementById('fullTabBtn-hardware');
+      if (hwTabBtn) {
+        hwTabBtn.click();
+        await new Promise((r) => setTimeout(r, 80));
       }
 
       if (typeof flushVisibleBlockRenders === 'function') {
@@ -587,7 +573,7 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
         statusBarBottom: statusBarRect ? statusBarRect.bottom : null,
         offendingBoxes,
       };
-    }, [...PANEL_SPOILER_IDS], [...COLLAPSIBLE_PANEL_CARD_IDS]);
+    });
 
     assert.ok(
       expandedScrollMetrics.scrollWidth <= expandedScrollMetrics.clientWidth + 2,
@@ -620,19 +606,9 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
     // -----------------------------------------------------------------------
     // 2C. Zero Right-Edge Overflow on Narrow Controls & Fixed Wizard Bounds
     // -----------------------------------------------------------------------
-    const narrowControlsAudit = await cdp.evaluate(() => {
-      const ids = [
-        'btnSendSmartComposer',
-        'inp-gpuEndpoint',
-        'inp-gpuChatModel',
-        'inp-gpuEmbedModel',
-        'inp-gpuKeepAlive',
-        'inp-gpuEmbedKeepAlive',
-        'inp-gpuContextTokens',
-        'inp-gpuModelsDir',
-      ];
+    const narrowControlsAudit = await cdp.evaluate(async () => {
       const cw = document.documentElement.clientWidth;
-      const items = ids.map((id) => {
+      const measureIds = (ids) => ids.map((id) => {
         const el = document.getElementById(id);
         if (!el) return { id, missing: true };
         const rect = el.getBoundingClientRect();
@@ -644,6 +620,18 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
           clientWidth: cw,
         };
       });
+      document.getElementById('fullTabBtn-cockpit')?.click();
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const items = measureIds(['btnSendSmartComposer']);
+      document.getElementById('fullTabBtn-hardware')?.click();
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      items.push(...measureIds([
+        'inp-gpuEndpoint',
+        'inp-gpuKeepAlive',
+        'inp-gpuEmbedKeepAlive',
+        'inp-gpuContextTokens',
+        'inp-gpuModelsDir',
+      ]));
       return { clientWidth: cw, items };
     });
 
@@ -656,12 +644,8 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
       );
     }
 
-    // Regression: long BugBot finding path in Lite Sentinel must truncate without horizontal overflow
-    const liteSentinelOverflowAudit = await cdp.evaluate(async () => {
-      const prevView = document.body.getAttribute('data-panel-view') || 'full';
-      const liteBtn = document.querySelector('#panelViewModeGroup button[data-view="lite"]');
-      if (liteBtn) liteBtn.click();
-      await new Promise((r) => setTimeout(r, 40));
+    // Guard Dock in sticky HUD must handle long BugBot finding paths without horizontal overflow
+    const guardDockOverflowAudit = await cdp.evaluate(async () => {
       renderSentinelStatus({
         enabled: true,
         state: 'idle',
@@ -675,55 +659,30 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
           }],
         },
       }, currentState);
+      const bugsBtn = document.getElementById('gdFullBtn-bugs');
+      if (bugsBtn) bugsBtn.click();
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       const cw = document.documentElement.clientWidth;
       const sw = document.documentElement.scrollWidth;
-      const cardRect = document.getElementById('liteQuickCard')?.getBoundingClientRect();
-      const rowRect = document.getElementById('liteSentinelRow')?.getBoundingClientRect();
-      const findingsRect = document.getElementById('liteSentinelFindings')?.getBoundingClientRect();
-      const checkBtnRect = document.getElementById('btnLiteSentinelCheck')?.getBoundingClientRect();
-      const fixBtnRect = document.getElementById('btnLiteSentinelFix')?.getBoundingClientRect();
-      const itemBtnRect = document.querySelector('#liteSentinelFindings .lite-sentinel-item-fix-btn')?.getBoundingClientRect();
-      const locTitle = document.querySelector('#liteSentinelFindings .sentinel-finding-loc')?.getAttribute('title') || '';
-
-      // Restore previous view mode & clean findings
+      const drawerRect = document.getElementById('fullGuardDrawer')?.getBoundingClientRect();
       renderSentinelStatus({ enabled: true, state: 'idle', shadowGuard: { errorCount: 0, warnCount: 0, issues: [], coChangeAlerts: [] }, bugBot: { findingsCount: 0, findings: [] } }, currentState);
-      const restoreBtn = document.querySelector(`#panelViewModeGroup button[data-view="${prevView}"]`);
-      if (restoreBtn) restoreBtn.click();
+      if (typeof closeGuardDrawer === 'function') closeGuardDrawer('full');
       await new Promise((r) => setTimeout(r, 40));
-
       return {
         clientWidth: cw,
         scrollWidth: sw,
-        cardRight: cardRect ? cardRect.right : 0,
-        rowRight: rowRect ? rowRect.right : 0,
-        findingsRight: findingsRect ? findingsRect.right : 0,
-        checkBtnRight: checkBtnRect ? checkBtnRect.right : 0,
-        fixBtnRight: fixBtnRect ? fixBtnRect.right : 0,
-        itemBtnRight: itemBtnRect ? itemBtnRect.right : 0,
-        locTitle,
+        drawerRight: drawerRect ? drawerRect.right : 0,
       };
     });
 
     assert.ok(
-      liteSentinelOverflowAudit.scrollWidth <= liteSentinelOverflowAudit.clientWidth + 2,
-      `Lite Sentinel long path caused horizontal overflow: scrollWidth=${liteSentinelOverflowAudit.scrollWidth} > clientWidth+2 (${liteSentinelOverflowAudit.clientWidth + 2})`,
+      guardDockOverflowAudit.scrollWidth <= guardDockOverflowAudit.clientWidth + 2,
+      `Guard Dock long path caused horizontal overflow: scrollWidth=${guardDockOverflowAudit.scrollWidth} > clientWidth+2 (${guardDockOverflowAudit.clientWidth + 2})`,
     );
     assert.ok(
-      liteSentinelOverflowAudit.rowRight <= liteSentinelOverflowAudit.cardRight + 1,
-      `#liteSentinelRow overflowed #liteQuickCard: rowRight=${liteSentinelOverflowAudit.rowRight} > cardRight+1 (${liteSentinelOverflowAudit.cardRight + 1})`,
+      guardDockOverflowAudit.drawerRight <= guardDockOverflowAudit.clientWidth + 2,
+      `#fullGuardDrawer overflowed viewport: drawerRight=${guardDockOverflowAudit.drawerRight} > clientWidth+2 (${guardDockOverflowAudit.clientWidth + 2})`,
     );
-    assert.ok(
-      liteSentinelOverflowAudit.findingsRight <= liteSentinelOverflowAudit.cardRight + 1,
-      `#liteSentinelFindings overflowed #liteQuickCard: findingsRight=${liteSentinelOverflowAudit.findingsRight} > cardRight+1 (${liteSentinelOverflowAudit.cardRight + 1})`,
-    );
-    assert.ok(
-      liteSentinelOverflowAudit.checkBtnRight <= liteSentinelOverflowAudit.clientWidth + 1 &&
-        liteSentinelOverflowAudit.fixBtnRight <= liteSentinelOverflowAudit.clientWidth + 1 &&
-        liteSentinelOverflowAudit.itemBtnRight <= liteSentinelOverflowAudit.clientWidth + 1,
-      `Lite Sentinel action buttons overflowed viewport: ${JSON.stringify(liteSentinelOverflowAudit)}`,
-    );
-    assert.match(liteSentinelOverflowAudit.locTitle, /AutoStudio\/GoogleFlow_Bot\/config\/settings\.mjs/);
 
     const wizardLayoutAudit = await cdp.evaluate(async () => {
       const setupBtn = document.getElementById('smartBannerSetupBtn');
@@ -787,42 +746,9 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
     );
 
     // -----------------------------------------------------------------------
-    // 3. Zero Orphaned Child Badges on Collapse (Flat Cards + Remaining Spoilers)
+    // 3. Zero Orphaned Elements Across Category Tab Isolation
     // -----------------------------------------------------------------------
     const orphanAudit = await cdp.evaluate(async () => {
-      const swarmCard = document.getElementById('swarmTelemetryCard');
-      const hwCard = document.getElementById('gpuRamCard');
-      const sentinelCard = document.getElementById('sentinelSectionCard');
-      const skillsCard = document.getElementById('skillsSectionCard');
-      if (typeof updateState === 'function') {
-        await updateState({
-          panelOpenSpoilers: {},
-          panelCollapsedCards: {
-            ...(typeof currentState === 'object' && currentState ? currentState.panelCollapsedCards : {}),
-            skillsSectionCard: true,
-            swarmTelemetryCard: true,
-            gpuRamCard: true,
-            sentinelSectionCard: true,
-          },
-        });
-      }
-      let closedStable = 0;
-      const closeDeadline = Date.now() + 3000;
-      while (Date.now() < closeDeadline && closedStable < 3) {
-        for (const c of [swarmCard, hwCard, sentinelCard, skillsCard]) {
-          if (c && !c.classList.contains('is-collapsed')) c.classList.add('is-collapsed');
-        }
-        await new Promise((r) => setTimeout(r, 80));
-        if (
-          [swarmCard, hwCard, sentinelCard, skillsCard].every((c) => !c || c.classList.contains('is-collapsed'))
-        ) {
-          closedStable += 1;
-        } else {
-          closedStable = 0;
-        }
-      }
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-
       const inspectElements = (selectors) => selectors.map((sel) => {
         const el = document.querySelector(sel);
         if (!el) return { sel, missing: true };
@@ -835,47 +761,35 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
         };
       });
 
-      const headerPills = inspectElements([
-        '#metricCacheHitBadge',
+      document.getElementById('fullTabBtn-cockpit')?.click();
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+      const hiddenWhileCockpit = inspectElements([
         '#swarmStatusBadge',
-        '#hwCardHeaderSummaryBadge',
-        '#sentinelLiveBadge',
-      ]);
-
-      const telemetryInner = inspectElements([
         '#metricTotalSaved',
-        '#metricSavedBreakdownGrid',
-        '#quotaPacerBadge',
-      ]);
-
-      const hwInner = inspectElements([
-        '#ramUnitStateBadge',
-        '#gpuUnitStateBadge',
-        '#cpuUnitStateBadge',
         '#gpuModelsPicker',
-        '#btn-gpuChatModel',
-        '#btn-gpuChatModel .lg-select-chevron',
-      ]);
-
-      const sentinelInner = inspectElements([
         '#sentinelStatusBox',
-        '#btnRunSentinelNow',
-        '#sentinelHealthVal',
-      ]);
-
-      const skillsBody = inspectElements([
-        '#skillsSectionCard .skill-search-bar',
         '#skillsContainer',
       ]);
+
+      const readOnTab = async (tabId, selectors) => {
+        document.getElementById('fullTabBtn-' + tabId)?.click();
+        await new Promise((r) => setTimeout(r, 60));
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        return inspectElements(selectors);
+      };
+
+      const behaviorInner = await readOnTab('behavior', ['#swarmStatusBadge']);
+      const telemetryInner = await readOnTab('economy', ['#metricTotalSaved', '#metricSavedBreakdownGrid']);
+      const hwInner = await readOnTab('hardware', ['#hwCardHeaderSummaryBadge', '#ramUnitStateBadge', '#gpuModelsPicker', '#btn-gpuChatModel']);
+      const sentinelInner = await readOnTab('bugs', ['#sentinelLiveBadge', '#sentinelStatusBox', '#btnRunSentinelNow']);
+      const skillsBody = await readOnTab('settings', ['#skillsSectionCard .skill-search-bar', '#skillsContainer']);
 
       return {
         hasLegacyTelemetrySpoiler: Boolean(document.getElementById('telemetrySwarmSpoiler')),
         hasLegacyHwSpoiler: Boolean(document.getElementById('hardwareResourcesSpoiler')),
-        swarmCollapsed: swarmCard?.classList.contains('is-collapsed') ?? false,
-        hwCollapsed: hwCard?.classList.contains('is-collapsed') ?? false,
-        sentinelCollapsed: sentinelCard?.classList.contains('is-collapsed') ?? false,
-        skillsCollapsed: skillsCard?.classList.contains('is-collapsed') ?? false,
-        headerPills,
+        hiddenWhileCockpit,
+        behaviorInner,
         telemetryInner,
         hwInner,
         sentinelInner,
@@ -885,25 +799,22 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
 
     assert.equal(orphanAudit.hasLegacyTelemetrySpoiler, false, 'telemetrySwarmSpoiler wrapper must be removed');
     assert.equal(orphanAudit.hasLegacyHwSpoiler, false, 'hardwareResourcesSpoiler wrapper must be removed');
-    assert.equal(orphanAudit.swarmCollapsed, true, 'swarmTelemetryCard should be collapsed');
-    assert.equal(orphanAudit.hwCollapsed, true, 'gpuRamCard should be collapsed');
-    assert.equal(orphanAudit.sentinelCollapsed, true, 'sentinelSectionCard should be collapsed');
-    assert.equal(orphanAudit.skillsCollapsed, true, 'skillsSectionCard should be collapsed');
 
-    for (const pill of orphanAudit.headerPills) {
-      assert.equal(pill.missing, false, `Expected header pill to exist in DOM: ${pill.sel}`);
-      assert.ok(pill.clientRects > 0, `Expected collapsed card header pill to remain visible: ${pill.sel}`);
+    for (const item of orphanAudit.hiddenWhileCockpit) {
+      assert.equal(item.missing, false, `Expected selector to exist in DOM: ${item.sel}`);
+      assert.equal(item.clientRects, 0, `Expected non-active tab element to have 0 clientRects on cockpit: ${item.sel}`);
+      assert.equal(item.offsetParentNull, true, `Expected non-active tab element offsetParent === null on cockpit: ${item.sel}`);
     }
 
     for (const item of [
+      ...orphanAudit.behaviorInner,
       ...orphanAudit.telemetryInner,
       ...orphanAudit.hwInner,
       ...orphanAudit.sentinelInner,
       ...orphanAudit.skillsBody,
     ]) {
       assert.equal(item.missing, false, `Expected selector to exist in DOM: ${item.sel}`);
-      assert.equal(item.clientRects, 0, `Orphaned visible rect inside collapsed card for ${item.sel}`);
-      assert.equal(item.offsetParentNull, true, `Expected offsetParent === null inside collapsed card for ${item.sel}`);
+      assert.ok(item.clientRects > 0, `Expected active tab element to be visible: ${item.sel}`);
     }
 
     // -----------------------------------------------------------------------
@@ -975,12 +886,10 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
       await new Promise((r) => setTimeout(r, 200));
     }, [...PANEL_SPOILER_IDS]);
 
-    const spoilersStartClosed = await cdp.evaluate(() => ({
-      hw: Boolean(document.getElementById('hwEnginesSpoiler')?.open),
-      sent: Boolean(document.getElementById('sentinelEnginesSpoiler')?.open),
+    const noSpoilers = await cdp.evaluate(() => ({
+      legacySpoilersCount: document.querySelectorAll('details.expert-spoiler, details.tune-spoiler').length,
     }));
-    assert.equal(spoilersStartClosed.hw, false, '#hwEnginesSpoiler must start closed before Section 5 click');
-    assert.equal(spoilersStartClosed.sent, false, '#sentinelEnginesSpoiler must start closed before Section 5 click');
+    assert.equal(noSpoilers.legacySpoilersCount, 0, 'All <details> spoilers must be removed in 7-category layout');
 
     const wideOverflow = await cdp.evaluate(async () => {
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -1023,12 +932,10 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
     };
 
     const hwInitial = await cdp.evaluate(async () => {
-      const card = document.getElementById('gpuRamCard');
-      if (card && card.classList.contains('is-collapsed') && typeof togglePanelCardCollapse === 'function') {
-        togglePanelCardCollapse('gpuRamCard');
-      }
+      document.getElementById('fullTabBtn-hardware')?.click();
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       if (typeof ensurePanelSectionsLoaded === 'function') {
-        await ensurePanelSectionsLoaded(['skills', 'checkpoints', 'bayesian', 'circuit', 'compaction', 'pitfalls', 'hw']);
+        await ensurePanelSectionsLoaded(['hw']);
       }
       if (typeof flushVisibleBlockRenders === 'function') {
         flushVisibleBlockRenders();
@@ -1037,9 +944,9 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
         await refreshAll();
       }
       if (typeof ensurePanelSectionsLoaded === 'function') {
-        await ensurePanelSectionsLoaded(['skills', 'checkpoints', 'bayesian', 'circuit', 'compaction', 'pitfalls', 'hw']);
+        await ensurePanelSectionsLoaded(['hw']);
       }
-      // Wait for async lazy sections (e.g. skills above gpuRamCard) so layout height settles before clicking.
+      // Wait for async lazy sections so layout height settles before clicking.
       let stable = 0;
       let prevH = -1;
       const deadline = Date.now() + 4000;
@@ -1083,38 +990,20 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
       };
     });
 
-    await realClickSelector('#hwEnginesSpoiler > summary');
-    await realClickSelector('#sentinelEnginesSpoiler > summary');
     await realClickSelector('#btn-gpuChatModel');
 
     const afterClicks = await cdp.evaluate(async () => {
       await new Promise((r) => setTimeout(r, 250));
       const openBeforeStale = {
-        hwEnginesSpoiler: Boolean(document.getElementById('hwEnginesSpoiler')?.open),
-        sentinelEnginesSpoiler: Boolean(document.getElementById('sentinelEnginesSpoiler')?.open),
         selectHidden: Boolean(document.getElementById('lgCustomSelectMenu')?.hidden),
-        gpuCardCollapsed: Boolean(document.getElementById('gpuRamCard')?.classList.contains('is-collapsed')),
-        sentinelCardCollapsed: Boolean(document.getElementById('sentinelSectionCard')?.classList.contains('is-collapsed')),
         wizVisible: Boolean(document.getElementById('onboardingWizardModal')?.classList.contains('visible')),
         scrollY: window.scrollY,
-        lsSpoilers: localStorage.getItem('ag_tunnel_open_spoilers_v1'),
-        stateSpoilers: currentState?.panelOpenSpoilers,
-      };
-      // Simulate a stale server response stripping nested spoiler IDs from panelOpenSpoilers
-      if (typeof applyAllSpoilersOpenState === 'function') {
-        applyAllSpoilersOpenState({});
-      }
-      await new Promise((r) => setTimeout(r, 80));
-      const openAfterStale = {
-        hwEnginesSpoiler: Boolean(document.getElementById('hwEnginesSpoiler')?.open),
-        sentinelEnginesSpoiler: Boolean(document.getElementById('sentinelEnginesSpoiler')?.open),
       };
       if (window.__hwCounterObserver) {
         window.__hwCounterObserver.disconnect();
       }
       return {
         openBeforeStale,
-        openAfterStale,
         hwAfter: {
           ram: document.getElementById('ramUnitMetricVal')?.textContent || '',
           gpu: document.getElementById('gpuUnitMetricVal')?.textContent || '',
@@ -1127,19 +1016,11 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
       };
     });
 
-    assert.equal(
-      afterClicks.openBeforeStale.hwEnginesSpoiler,
-      true,
-      `#hwEnginesSpoiler must remain open after real mouse click: ${JSON.stringify(afterClicks.openBeforeStale)}`,
-    );
-    assert.equal(afterClicks.openBeforeStale.sentinelEnginesSpoiler, true, '#sentinelEnginesSpoiler must remain open after real mouse click');
     assert.equal(afterClicks.openBeforeStale.selectHidden, false, '#lgCustomSelectMenu must open on real mouse click');
-    assert.equal(afterClicks.openAfterStale.hwEnginesSpoiler, true, '#hwEnginesSpoiler must NOT collapse on stale server panelOpenSpoilers={}');
-    assert.equal(afterClicks.openAfterStale.sentinelEnginesSpoiler, true, '#sentinelEnginesSpoiler must NOT collapse on stale server panelOpenSpoilers={}');
     assert.equal(
       afterClicks.mutations.length,
       0,
-      `RAM/GPU/CPU counters must NOT reset/mutate on spoiler or dropdown clicks, saw: ${JSON.stringify(afterClicks.mutations)}`,
+      `RAM/GPU/CPU counters must NOT reset/mutate on dropdown click, saw: ${JSON.stringify(afterClicks.mutations)}`,
     );
     assert.equal(afterClicks.hwAfter.ram, hwInitial.ram);
     assert.equal(afterClicks.hwAfter.gpu, hwInitial.gpu);
@@ -1186,6 +1067,210 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
     assert.ok(ramMissAudit.activeSnap.ramPct && ramMissAudit.activeSnap.ramPct !== '0%', `Expected active RAM pct > 0%, got ${ramMissAudit.activeSnap.ramPct}`);
     assert.equal(ramMissAudit.afterMissSnap.ram, ramMissAudit.activeSnap.ram, 'Transient active:false must preserve RAM metric');
     assert.equal(ramMissAudit.afterMissSnap.ramPct, ramMissAudit.activeSnap.ramPct, 'Transient active:false must preserve RAM pct');
+
+    // Phase 2 Variant C: verify left mini-rail 4 Full tabs + All, embedded progress & draggable Guard Dock/Preset bar fit 320px viewport
+    const phase2LayoutAudit = await cdp.evaluate(async () => {
+      const cw = document.documentElement.clientWidth;
+      const tabs = ['cockpit', 'behavior', 'economy', 'hardware', 'bugs', 'memory', 'settings'];
+      const tabMetrics = [];
+      for (const t of tabs) {
+        const btn = document.getElementById('fullTabBtn-' + t);
+        if (btn) btn.click();
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        tabMetrics.push({
+          tab: t,
+          bodyTab: document.body.getAttribute('data-full-tab'),
+          scrollWidth: document.documentElement.scrollWidth,
+          clientWidth: document.documentElement.clientWidth,
+        });
+      }
+      const railRect = document.getElementById('fullTabsBar')?.getBoundingClientRect() || null;
+      const progressParentId = document.getElementById('agLiveProgressWrap')?.parentElement?.id || '';
+      const guardParentId = document.getElementById('fullGuardRailWrap')?.parentElement?.id || '';
+      const presetParentId = document.getElementById('unifiedPresetBar')?.parentElement?.id || '';
+      const guardDragHandle = Boolean(document.querySelector('#fullGuardRailWrap [data-role="drag-handle"]'));
+      const presetDragHandle = Boolean(document.querySelector('#unifiedPresetBar [data-role="drag-handle"]'));
+      return { cw, tabMetrics, railRight: railRect ? railRect.right : 0, progressParentId, guardParentId, presetParentId, guardDragHandle, presetDragHandle };
+    });
+    assert.equal(phase2LayoutAudit.progressParentId, 'lgStickyHud', '#agLiveProgressWrap must be embedded in #lgStickyHud');
+    assert.equal(phase2LayoutAudit.guardParentId, 'lgStickyHud', '#fullGuardRailWrap must be pinned in #lgStickyHud');
+    assert.equal(phase2LayoutAudit.presetParentId, 'fullTabsBar', '#unifiedPresetBar must be pinned in #fullTabsBar');
+    assert.equal(phase2LayoutAudit.guardDragHandle, false, '#fullGuardRailWrap must NOT have drag handle when pinned');
+    assert.equal(phase2LayoutAudit.presetDragHandle, false, '#unifiedPresetBar must NOT have drag handle when pinned');
+    assert.ok(phase2LayoutAudit.railRight <= phase2LayoutAudit.cw + 2, `Left rail overflowed 320px: ${phase2LayoutAudit.railRight}`);
+    for (const m of phase2LayoutAudit.tabMetrics) {
+      assert.equal(m.bodyTab, m.tab, `Tab button must switch data-full-tab to ${m.tab}`);
+      assert.ok(
+        m.scrollWidth <= m.clientWidth + 2,
+        `Tab ${m.tab} caused horizontal overflow at 320px: scrollWidth=${m.scrollWidth} > clientWidth+2 (${m.clientWidth + 2})`,
+      );
+    }
+
+    // Regression: Fixed App-Shell keeps #lgStickyHud & #fullTabsBar fixed while .window-body scrolls at 100% and 130% scale
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: 760,
+      height: 860,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+
+    const stickyRailScrollAudit = await cdp.evaluate(async () => {
+      if (typeof renderTaskProgressAndHud === 'function') {
+        renderTaskProgressAndHud({
+          status: 'running',
+          activeChats: [
+            { conversationId: 'c1', chatNumber: 1, projectName: 'ProjA', workspaceRoot: '/tmp/a', status: 'running', currentStep: 2, totalSteps: 7, percent: 25, stepTitle: 'Step 2' },
+            { conversationId: 'c2', chatNumber: 2, projectName: 'ProjB', workspaceRoot: '/tmp/b', status: 'running', currentStep: 1, totalSteps: 4, percent: 15, stepTitle: 'Step 1' },
+          ],
+        });
+      }
+      const results = [];
+      for (const scaleVal of ['100', '130']) {
+        if (typeof applyPanelUiScaleDom === 'function') applyPanelUiScaleDom(scaleVal, false);
+        const settingsBtn = document.getElementById('fullTabBtn-settings');
+        if (settingsBtn) settingsBtn.click();
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        await new Promise((r) => setTimeout(r, 60));
+
+        const scroller = document.querySelector('.full-workspace-shell > .window-body') || document.scrollingElement;
+        const hudBefore = document.getElementById('lgStickyHud').getBoundingClientRect();
+        const railBefore = document.getElementById('fullTabsBar').getBoundingClientRect();
+
+        scroller.scrollTop = 280;
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+        const hudRect = document.getElementById('lgStickyHud').getBoundingClientRect();
+        const railRect = document.getElementById('fullTabsBar').getBoundingClientRect();
+        const cockpitRect = document.getElementById('fullTabBtn-cockpit').getBoundingClientRect();
+        const shellRect = document.querySelector('.lg-shell').getBoundingClientRect();
+        results.push({
+          scaleVal,
+          windowScrollY: window.scrollY,
+          bodyScrollTop: Math.round(scroller.scrollTop),
+          hudHeight: Math.round(hudRect.height),
+          hudTopBefore: Math.round(hudBefore.top),
+          hudTopAfter: Math.round(hudRect.top),
+          hudBottom: Math.round(hudRect.bottom),
+          railTopBefore: Math.round(railBefore.top),
+          railTop: Math.round(railRect.top),
+          cockpitTop: Math.round(cockpitRect.top),
+          shellBottom: Math.round(shellRect.bottom),
+          innerHeight: window.innerHeight,
+        });
+        scroller.scrollTop = 0;
+      }
+      return results;
+    });
+
+    for (const r of stickyRailScrollAudit) {
+      assert.equal(r.windowScrollY, 0, `Outer window must stay fixed (scrollY=0) at scale=${r.scaleVal}, got ${r.windowScrollY}`);
+      assert.ok(r.bodyScrollTop > 100, `Expected .window-body to scroll at scale=${r.scaleVal}, got scrollTop=${r.bodyScrollTop}`);
+      assert.ok(r.hudHeight > 160, `Expected tall sticky HUD (>160px) with 2 active chats at scale=${r.scaleVal}, got ${r.hudHeight}`);
+      assert.equal(r.hudTopAfter, r.hudTopBefore, `HUD must not shift vertically on scroll at scale=${r.scaleVal}`);
+      assert.equal(r.railTop, r.railTopBefore, `Left rail must not shift vertically on scroll at scale=${r.scaleVal}`);
+      assert.ok(r.shellBottom <= r.innerHeight + 2, `Fixed .lg-shell overflowed viewport bottom at scale=${r.scaleVal}: ${r.shellBottom} > ${r.innerHeight}`);
+      assert.ok(
+        r.railTop >= r.hudBottom - 1,
+        `Left rail overlapped fixed HUD at scale=${r.scaleVal}: railTop=${r.railTop} < hudBottom=${r.hudBottom}`,
+      );
+      assert.ok(
+        r.cockpitTop >= r.hudBottom - 1,
+        `Cockpit button ('Пульт') covered by fixed HUD at scale=${r.scaleVal}: cockpitTop=${r.cockpitTop} < hudBottom=${r.hudBottom}`,
+      );
+    }
+
+    // Regression audit: stale-tab snapback protection, advisor/autopilot box mutual exclusion, scroll reset & opacity, narrow 380px/460px rail
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 860, deviceScaleFactor: 1, mobile: false });
+    const regressionAudit = await cdp.evaluate(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const wb = document.querySelector('.full-workspace-shell > .window-body');
+      if (typeof applyPanelUiScaleDom === 'function') applyPanelUiScaleDom('100', false);
+
+      // 1. Stale renderPayload must not snap user back from selected tab
+      document.getElementById('fullTabBtn-behavior')?.click();
+      await sleep(180);
+      if (typeof renderPayload === 'function' && typeof currentState === 'object') {
+        renderPayload({ state: Object.assign({}, currentState, { panelFullTab: 'cockpit' }) });
+      }
+      const tabAfterStale = document.body.getAttribute('data-full-tab');
+
+      // 2. Advisor vs Autopilot sub-settings mutual exclusion
+      const advCard = document.getElementById('mode-advisor');
+      const autoCard = document.getElementById('mode-autopilot');
+      const advBox = document.getElementById('advisorBox');
+      const autoBox = document.getElementById('autopilotBox');
+      autoCard?.click();
+      await sleep(280);
+      const onAuto = {
+        advDisp: advBox ? getComputedStyle(advBox).display : '',
+        advH: advBox ? Math.round(advBox.getBoundingClientRect().height) : -1,
+        autoDisp: autoBox ? getComputedStyle(autoBox).display : '',
+        autoH: autoBox ? Math.round(autoBox.getBoundingClientRect().height) : -1,
+      };
+      advCard?.click();
+      await sleep(280);
+      const onAdv = {
+        advDisp: advBox ? getComputedStyle(advBox).display : '',
+        advH: advBox ? Math.round(advBox.getBoundingClientRect().height) : -1,
+        autoDisp: autoBox ? getComputedStyle(autoBox).display : '',
+        autoH: autoBox ? Math.round(autoBox.getBoundingClientRect().height) : -1,
+      };
+
+      // 3. Scroll reset & zero stuck opacity:0 on visible tabs
+      if (wb) wb.scrollTop = 220;
+      document.getElementById('fullTabBtn-bugs')?.click();
+      await sleep(320);
+      const scrollAfterSwitch = wb ? Math.round(wb.scrollTop) : -1;
+
+      const stuckZeroOpacity = [];
+      for (const tab of ['behavior', 'bugs', 'settings']) {
+        document.getElementById('fullTabBtn-' + tab)?.click();
+        await sleep(320);
+        const cards = Array.from(document.querySelectorAll(`.window-body > [data-tab-panel="${tab}"]`));
+        for (const c of cards) {
+          for (const el of [c, ...Array.from(c.querySelectorAll('.settings-group-list, .sunken-box'))]) {
+            const cs = getComputedStyle(el);
+            if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+            const r = el.getBoundingClientRect();
+            if (r.width > 0 && r.height > 0 && parseFloat(cs.opacity) < 0.99) {
+              stuckZeroOpacity.push({ tab, id: el.id || el.className, op: cs.opacity });
+            }
+          }
+        }
+      }
+      return { tabAfterStale, onAuto, onAdv, scrollAfterSwitch, stuckZeroOpacity };
+    });
+
+    assert.equal(regressionAudit.tabAfterStale, 'behavior', 'Stale renderPayload must not snap user back from behavior tab');
+    assert.equal(regressionAudit.onAuto.advDisp, 'none', 'Advisor sub-settings must hide when Autopilot is active');
+    assert.equal(regressionAudit.onAuto.advH, 0, 'Advisor sub-settings height must be 0 when hidden');
+    assert.ok(regressionAudit.onAuto.autoH > 20, 'Autopilot sub-settings must be visible when active');
+    assert.equal(regressionAudit.onAdv.autoDisp, 'none', 'Autopilot sub-settings must hide when Advisor is active');
+    assert.equal(regressionAudit.onAdv.autoH, 0, 'Autopilot sub-settings height must be 0 when hidden');
+    assert.ok(regressionAudit.onAdv.advH > 100, 'Advisor sub-settings must be visible when active');
+    assert.equal(regressionAudit.scrollAfterSwitch, 0, 'Tab switch must reset .window-body scrollTop to 0');
+    assert.deepEqual(regressionAudit.stuckZeroOpacity, [], 'No visible card/container may remain stuck at opacity < 1');
+
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 460, height: 760, deviceScaleFactor: 1, mobile: false });
+    const guard460 = await cdp.evaluate(async () => {
+      await new Promise((r) => setTimeout(r, 120));
+      const gr = document.getElementById('fullGuardButtons');
+      return gr ? { scrollW: gr.scrollWidth, clientW: gr.clientWidth } : null;
+    });
+    assert.ok(guard460 && guard460.scrollW <= guard460.clientW + 2, `Guard rail overflowed at 460px: ${JSON.stringify(guard460)}`);
+
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 380, height: 740, deviceScaleFactor: 1, mobile: false });
+    const rail380 = await cdp.evaluate(async () => {
+      await new Promise((r) => setTimeout(r, 120));
+      return Array.from(document.querySelectorAll('#fullTabsBar .full-rail-btn')).map((b) => ({
+        id: b.id,
+        w: Math.round(b.getBoundingClientRect().width),
+      }));
+    });
+    for (const btn of rail380) {
+      const minW = btn.id === 'fullTabBtn-hardware' ? 36 : 48;
+      assert.ok(btn.w >= minW, `Rail button ${btn.id} crushed at 380px: width=${btn.w} < ${minW}`);
+    }
   } finally {
     delete process.env.TUNNEL_TEST_STATE_PATH;
     delete process.env.TUNNEL_CACHE_DIR;

@@ -139,6 +139,34 @@
         : L('Среда: Health-Doctor, GATES.md и техдолг shortcut: в норме.', 'Environment: Health-Doctor, GATES.md, and shortcut: debt clean.');
     }
 
+    function syncFullGuardActivePill() {
+      const container = document.getElementById('fullGuardButtons');
+      const pill = document.getElementById('fullGuardActivePill');
+      if (!container || !pill) return;
+      const doctorBtn = document.getElementById('smartBannerDoctorBtn');
+      const doctorActive = Boolean(doctorBtn && doctorBtn.classList.contains('is-active'));
+      const activeBtn = doctorActive
+        ? doctorBtn
+        : (_gdActiveTab.full ? document.getElementById('gdFullBtn-' + _gdActiveTab.full) : null);
+      if (!activeBtn || typeof activeBtn.offsetLeft !== 'number') {
+        container.classList.remove('has-sliding-pill');
+        pill.style.opacity = '0';
+        return;
+      }
+      const w = activeBtn.offsetWidth || 0;
+      const h = activeBtn.offsetHeight || 0;
+      if (w <= 0 || h <= 0) {
+        container.classList.remove('has-sliding-pill');
+        pill.style.opacity = '0';
+        return;
+      }
+      container.classList.add('has-sliding-pill');
+      pill.style.width = w + 'px';
+      pill.style.height = h + 'px';
+      pill.style.transform = 'translate3d(' + activeBtn.offsetLeft + 'px, ' + activeBtn.offsetTop + 'px, 0)';
+      pill.style.opacity = '1';
+    }
+
     function renderGuardDock(guardPulse) {
       if (guardPulse && typeof guardPulse === 'object') {
         _lastGuardPulse = guardPulse;
@@ -178,9 +206,10 @@
         gdApplyBadge(railBadge, count, sev);
       }
 
+      syncFullGuardActivePill();
       syncGuardScanButtons();
-      renderGuardDrawer('lite');
-      renderGuardDrawer('full');
+      renderGuardDrawer('lite', arguments[1]);
+      renderGuardDrawer('full', arguments[1]);
     }
 
     function syncGuardScanButtons() {
@@ -194,9 +223,12 @@
       const fullBtn = document.getElementById('btnFullGuardAuditAll');
       if (fullBtn) {
         fullBtn.disabled = _gdAuditBusy || _sentinelActionBusy;
-        fullBtn.textContent = (_gdAuditBusy || _sentinelActionBusy)
-          ? L('↻ …', '↻ …')
-          : L('↻ Всё', '↻ All');
+        const fullLbl = document.getElementById('btnFullGuardAuditAllLabel');
+        if (fullLbl) {
+          fullLbl.textContent = (_gdAuditBusy || _sentinelActionBusy)
+            ? L('…', '…')
+            : L('Всё', 'All');
+        }
       }
     }
 
@@ -225,7 +257,28 @@
         const btn = document.getElementById(surf === 'lite' ? 'btnLiteGuardMenu' : 'btnFullGuardMenu');
         if (menu) {
           menu.classList.remove('is-open');
-          menu.style.display = 'none';
+          if (typeof animateDisclosurePanel === 'function' && menu.style.display !== 'none') {
+            const rect = menu.getBoundingClientRect ? menu.getBoundingClientRect() : null;
+            if (rect && rect.height > 0 && typeof menu.animate === 'function' && !(typeof uiPrefersReducedMotion === 'function' && uiPrefersReducedMotion())) {
+              const seq = (menu._gdMenuSeq || 0) + 1;
+              menu._gdMenuSeq = seq;
+              try {
+                const anim = menu.animate(
+                  [{ opacity: 1, transform: 'translate3d(0,0,0) scale(1)' }, { opacity: 0, transform: 'translate3d(0,-4px,0) scale(0.96)' }],
+                  { duration: 130, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' }
+                );
+                anim.onfinish = function () {
+                  if (menu._gdMenuSeq === seq && !menu.classList.contains('is-open')) menu.style.display = 'none';
+                };
+              } catch {
+                menu.style.display = 'none';
+              }
+            } else {
+              menu.style.display = 'none';
+            }
+          } else {
+            menu.style.display = 'none';
+          }
         }
         if (btn) btn.setAttribute('aria-expanded', 'false');
       });
@@ -240,6 +293,7 @@
       const btn = document.getElementById(surf === 'lite' ? 'btnLiteGuardMenu' : 'btnFullGuardMenu');
       if (!menu) return;
       _gdOpenMenu = surf;
+      menu._gdMenuSeq = (menu._gdMenuSeq || 0) + 1;
       menu.style.display = 'flex';
       menu.classList.add('is-open');
       if (btn) btn.setAttribute('aria-expanded', 'true');
@@ -252,6 +306,7 @@
       if (GUARD_TABS.indexOf(tab) === -1) return;
       closeAllGuardMenus();
 
+      let renderOpts = null;
       if (_gdActiveTab[surf] === tab) {
         _gdActiveTab[surf] = null;
         if (surf === 'lite' && tab === 'bugs') {
@@ -260,21 +315,31 @@
         }
       } else {
         _gdActiveTab[surf] = tab;
+        if (surf === 'full' && typeof closeSetupDoctor === 'function') {
+          const docBox = document.getElementById('setupDoctorBox');
+          const docH = (docBox && docBox.style.display !== 'none')
+            ? (typeof uiMeasureLayoutHeight === 'function'
+                ? uiMeasureLayoutHeight(docBox)
+                : (docBox.getBoundingClientRect ? docBox.getBoundingClientRect().height : 0))
+            : 0;
+          if (docH > 0) renderOpts = { prevHeightOverride: docH };
+          closeSetupDoctor({ immediate: true });
+        }
         if (surf === 'lite' && tab === 'bugs') {
           _gdAutoOpenedBugsLite = false;
         }
       }
-      renderGuardDock(null);
+      renderGuardDock(null, renderOpts);
     }
 
-    function closeGuardDrawer(surface) {
+    function closeGuardDrawer(surface, opts) {
       const surf = surface === 'full' ? 'full' : 'lite';
       if (surf === 'lite' && _gdActiveTab.lite === 'bugs') {
         _gdAutoOpenedBugsLite = false;
         _gdDismissedBugsSig = gdComputeBugsSig();
       }
       _gdActiveTab[surf] = null;
-      renderGuardDock(null);
+      renderGuardDock(null, opts);
     }
 
     function resetGuardDockTransientState() {
@@ -310,6 +375,8 @@
           : L('Баги и Дозор · чисто', 'Bugs & Sentinel · clean');
         if (surf === 'full' && b.sentinelList.length > 0) {
           primaryBtn = gdMakeActionBtn(L('Исправить всё', 'Fix all'), 'fixLiteSentinelFindings', '', 'is-primary-err', L('Отправить все находки на исправление в отдельный чат', 'Send all findings to a separate chat to fix'));
+        } else if (b.wiretapList.length > 0 && b.sentinelList.length === 0) {
+          primaryBtn = gdMakeActionBtn(L('Очистить сбои', 'Clear faults'), 'clearWiretapFaults', '', '', L('Очистить журнал сбоев Wiretap', 'Clear Wiretap fault log'));
         } else if (b.count === 0) {
           primaryBtn = gdMakeActionBtn(L('Проверить', 'Scan'), 'runGuardAudit', 'bugs', '', L('Запустить проверку Фонового Дозора', 'Run Background Sentinel scan'));
         }
@@ -385,7 +452,7 @@
           primaryBtn = gdMakeActionBtn(L('Обновить', 'Refresh'), 'runGuardAudit', 'instincts', '', L('Обновить список накопленных инстинктов', 'Refresh learned project instincts'));
         }
         if (surf === 'full') {
-          extraBtn = gdMakeActionBtn(L('↓ Все', '↓ All'), 'jumpGuardFullSection', 'expertGuardrailsCard', '', L('Перейти к полному списку инстинктов', 'Jump to full instincts list'));
+          extraBtn = gdMakeActionBtn(L('↓ Все', '↓ All'), 'jumpGuardFullSection', 'expertPitfallsBox', '', L('Перейти к полному списку инстинктов', 'Jump to full instincts list'));
         }
         const items = Array.isArray(inst.items) ? inst.items : [];
         if (items.length === 0) {
@@ -419,7 +486,7 @@
           primaryBtn = gdMakeActionBtn(L('Сброс хрупк.', 'Reset fragile'), 'resetFragilityFromDock', '', '', L('Сбросить счётчики хрупких файлов', 'Reset workspace file fragility'));
         }
         if (surf === 'full') {
-          extraBtn = gdMakeActionBtn(L('↓ Грабли', '↓ Risks'), 'jumpGuardFullSection', 'expertPitfallsBox', '', L('Перейти к реестру грабель и хрупкости', 'Jump to Pitfall Ledger & Fragility'));
+          extraBtn = gdMakeActionBtn(L('↓ Грабли', '↓ Risks'), 'jumpGuardFullSection', 'intelligenceBayesianCard', '', L('Перейти к барьерам сбоев и хрупкости', 'Jump to Fault Barriers & Fragility'));
         }
         if (r.cbStatus !== 'CLOSED') {
           rows.push(
@@ -508,7 +575,7 @@
       return { title: title, tone: tone, primaryBtn: primaryBtn, extraBtn: extraBtn, rows: rows };
     }
 
-    function renderGuardDrawer(surface) {
+    function renderGuardDrawer(surface, opts) {
       const surf = surface === 'full' ? 'full' : 'lite';
       const activeTab = _gdActiveTab[surf];
       const drawerEl = document.getElementById(surf === 'lite' ? 'liteGuardDrawer' : 'fullGuardDrawer');
@@ -520,15 +587,36 @@
       const liteFind = surf === 'lite' ? document.getElementById('liteSentinelFindings') : null;
 
       if (!activeTab) {
-        drawerEl.style.display = 'none';
+        drawerEl.dataset.renderedTab = '';
         if (liteSum) liteSum.style.display = 'none';
+        if (opts && opts.immediate) {
+          if (typeof cancelDisclosureAnimation === 'function') cancelDisclosureAnimation(drawerEl);
+          drawerEl.style.display = 'none';
+          return;
+        }
+        if (typeof animateDisclosurePanel === 'function') {
+          animateDisclosurePanel(drawerEl, false, { duration: 200 });
+        } else {
+          drawerEl.style.display = 'none';
+        }
         return;
       }
+
+      const wasOpen = drawerEl.style.display !== 'none';
+      const prevTab = drawerEl.dataset.renderedTab || '';
+      const prevH = wasOpen
+        ? (typeof uiMeasureLayoutHeight === 'function'
+            ? uiMeasureLayoutHeight(drawerEl)
+            : (drawerEl.getBoundingClientRect ? drawerEl.getBoundingClientRect().height : 0))
+        : 0;
+      const overridePrevH = opts && Number(opts.prevHeightOverride) > 0 ? Number(opts.prevHeightOverride) : 0;
+      const effectivePrevH = prevH > 0 ? prevH : overridePrevH;
+      const isTabSwitch = Boolean(wasOpen && prevTab && prevTab !== activeTab);
 
       const buckets = gdGetComputedBuckets();
       const model = gdBuildDrawerModel(activeTab, surf, buckets);
       drawerEl.className = 'gd-drawer ' + (surf === 'lite' ? 'gd-lite-drawer' : 'gd-full-drawer') + ' tone-' + model.tone;
-      drawerEl.style.display = 'block';
+      drawerEl.dataset.renderedTab = activeTab;
 
       headEl.innerHTML =
         '<span class="gd-drawer-title" title="' + gdEsc(model.title) + '">' + gdEsc(model.title) + '</span>' +
@@ -550,6 +638,33 @@
         bodyEl.innerHTML = skipEmptyForSen ? '' : model.rows.join('');
       } else {
         bodyEl.innerHTML = model.rows.join('');
+      }
+
+      if (typeof animateDisclosurePanel === 'function') {
+        animateDisclosurePanel(drawerEl, true, {
+          display: 'block',
+          duration: 230,
+          prevHeight: effectivePrevH > 0 ? effectivePrevH : undefined
+        });
+        if (isTabSwitch && typeof bodyEl.animate === 'function' && !(typeof uiPrefersReducedMotion === 'function' && uiPrefersReducedMotion())) {
+          const prevIdx = GUARD_TABS.indexOf(prevTab);
+          const nextIdx = GUARD_TABS.indexOf(activeTab);
+          const dir = prevIdx >= 0 && nextIdx >= 0 && nextIdx < prevIdx ? -1 : 1;
+          try {
+            bodyEl.animate(
+              [
+                { opacity: 0.3, transform: 'translate3d(' + (dir * 10) + 'px, 0, 0)' },
+                { opacity: 1, transform: 'translate3d(0, 0, 0)' }
+              ],
+              { duration: 170, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' }
+            );
+          } catch {}
+        }
+      } else {
+        drawerEl.style.display = 'block';
+      }
+      if (typeof syncFullLeftRailStickyOffset === 'function') {
+        syncFullLeftRailStickyOffset();
       }
     }
 
@@ -730,6 +845,10 @@
 
     function jumpGuardFullSection(targetId) {
       if (!targetId) return;
+      if (typeof jumpToPanelSection === 'function') {
+        jumpToPanelSection(targetId);
+        return;
+      }
       const el = document.getElementById(targetId);
       if (!el) return;
       const spoiler = el.closest ? el.closest('details') : null;

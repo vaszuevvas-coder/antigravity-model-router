@@ -5,6 +5,107 @@
     const _agShowAllBgTasksByChat = Object.create(null);
     const _agExpandedStepsByChat = Object.create(null);
     const AG_BG_TASKS_PREVIEW_LIMIT = 4;
+    const AG_RECENT_COMPLETED_MAX = 12;
+    const _agLastTrackedChatsByCid = Object.create(null);
+    let _agRecentCompletedTasks = [];
+    let _agPinnedCompletedTask = null;
+    let _agRecentCompletedOpen = false;
+    let _agLastProgressPayload = null;
+
+    function agCanSmoothHudMotion(el) {
+      if (!el || typeof el.animate !== 'function') return false;
+      if (typeof uiPrefersReducedMotion === 'function' && uiPrefersReducedMotion()) return false;
+      const r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+      return Boolean(r && r.height > 0);
+    }
+
+    function agSmoothCollapseAndRemoveNode(node, onDone) {
+      if (!node || !node.parentNode) return;
+      if (!agCanSmoothHudMotion(node)) {
+        node.remove();
+        if (typeof onDone === 'function') onDone();
+        return;
+      }
+      const h = (typeof uiMeasureLayoutHeight === 'function' ? uiMeasureLayoutHeight(node) : 0)
+        || node.offsetHeight
+        || (node.getBoundingClientRect ? node.getBoundingClientRect().height : 0)
+        || 0;
+      const cs = typeof getComputedStyle === 'function' ? getComputedStyle(node) : null;
+      const pt = cs ? cs.paddingTop : '0px';
+      const pb = cs ? cs.paddingBottom : '0px';
+      const mb = cs ? cs.marginBottom : '0px';
+      const btw = cs ? cs.borderTopWidth : '0px';
+      const bbw = cs ? cs.borderBottomWidth : '0px';
+      node.classList.add('closing');
+      node.style.overflow = 'hidden';
+      try {
+        node.animate(
+          [
+            { height: h + 'px', opacity: 1, paddingTop: pt, paddingBottom: pb, marginTop: '0px', marginBottom: mb, borderTopWidth: btw, borderBottomWidth: bbw, transform: 'translate3d(0,0,0) scale(1)' },
+            { height: '0px', opacity: 0, paddingTop: '0px', paddingBottom: '0px', marginTop: '0px', marginBottom: '0px', borderTopWidth: '0px', borderBottomWidth: '0px', transform: 'translate3d(0,-4px,0) scale(0.975)' }
+          ],
+          { duration: 245, easing: 'cubic-bezier(0.32, 0.72, 0, 1)', fill: 'forwards' }
+        );
+      } catch {}
+      setTimeout(function () {
+        if (node.parentNode) node.remove();
+        if (typeof syncFullLeftRailStickyOffset === 'function') syncFullLeftRailStickyOffset();
+        if (typeof onDone === 'function') onDone();
+      }, 260);
+    }
+
+    function agSmoothHideInlineStrip(stripEl, onHidden) {
+      if (!stripEl) return;
+      if (stripEl._agStripAnim) {
+        try { stripEl._agStripAnim.cancel(); } catch {}
+        stripEl._agStripAnim = null;
+      }
+      const seq = (stripEl._agStripSeq || 0) + 1;
+      stripEl._agStripSeq = seq;
+      if (stripEl.style.display === 'none' || !agCanSmoothHudMotion(stripEl)) {
+        stripEl.style.display = 'none';
+        if (typeof onHidden === 'function') onHidden();
+        return;
+      }
+      const h = (typeof uiMeasureLayoutHeight === 'function' ? uiMeasureLayoutHeight(stripEl) : 0)
+        || stripEl.offsetHeight
+        || (stripEl.getBoundingClientRect ? stripEl.getBoundingClientRect().height : 0)
+        || 0;
+      stripEl.style.overflow = 'hidden';
+      try {
+        const anim = stripEl.animate(
+          [
+            { height: h + 'px', opacity: 1, marginTop: getComputedStyle(stripEl).marginTop || '0px' },
+            { height: '0px', opacity: 0, marginTop: '0px' }
+          ],
+          { duration: 210, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' }
+        );
+        stripEl._agStripAnim = anim;
+        anim.onfinish = function () {
+          if (stripEl._agStripSeq !== seq) return;
+          stripEl._agStripAnim = null;
+          stripEl.style.display = 'none';
+          stripEl.style.overflow = '';
+          if (typeof onHidden === 'function') onHidden();
+          if (typeof syncFullLeftRailStickyOffset === 'function') syncFullLeftRailStickyOffset();
+        };
+      } catch {
+        stripEl.style.display = 'none';
+        stripEl.style.overflow = '';
+        if (typeof onHidden === 'function') onHidden();
+      }
+    }
+
+    function agShowInlineStrip(stripEl, displayVal) {
+      if (!stripEl) return;
+      stripEl._agStripSeq = (stripEl._agStripSeq || 0) + 1;
+      if (stripEl._agStripAnim) {
+        try { stripEl._agStripAnim.cancel(); } catch {}
+        stripEl._agStripAnim = null;
+      }
+      stripEl.style.overflow = '';
+      stripEl.style.display = displayVal || 'flex';
+    }
 
     function toggleStepChip(cid, stepKey, chipEl) {
       const cleanCid = String(cid || '').trim();
@@ -147,12 +248,41 @@
       _agPctAnimFrameByChat[cid] = requestAnimationFrame(step);
     }
 
+    function normalizeSidecarUriToWsKey(rawUri) {
+      let s = String(rawUri || '').trim();
+      if (!s) return '';
+      if (/^file:\/\//i.test(s)) {
+        try {
+          s = decodeURIComponent(s.replace(/^file:\/\/\/?/i, ''));
+          if (!/^[A-Za-z]:/.test(s) && !s.startsWith('/')) s = '/' + s;
+        } catch {}
+      }
+      return typeof normalizeWsClientKey === 'function' ? normalizeWsClientKey(s) : s.toLowerCase();
+    }
+
     async function resetStaleProgressChats(conversationId) {
       try {
-        const body = conversationId ? { action: 'dismiss_chat', conversationId: conversationId } : { action: 'reset_stale' };
+        if (!conversationId) {
+          _agPinnedCompletedTask = null;
+          Object.keys(_agLastTrackedChatsByCid).forEach(function (k) {
+            delete _agLastTrackedChatsByCid[k];
+          });
+        } else if (_agPinnedCompletedTask && _agPinnedCompletedTask.conversationId === conversationId) {
+          _agPinnedCompletedTask = null;
+        }
+        const wsMode = typeof _selectedWorkspaceMode !== 'undefined' ? _selectedWorkspaceMode : '__auto__';
+        const autoWs = typeof _autoWorkspaceResolved !== 'undefined' ? _autoWorkspaceResolved : '';
+        const activeWs = typeof _activeWorkspaceResolved !== 'undefined' ? _activeWorkspaceResolved : '';
+        const scopedWs = (wsMode !== '__all__')
+          ? ((wsMode !== '__auto__' ? wsMode : '') || autoWs || activeWs || '')
+          : '';
+        const body = conversationId
+          ? { action: 'dismiss_chat', conversationId: conversationId, workspaceRoot: scopedWs }
+          : { action: 'reset_stale', workspaceRoot: scopedWs };
         const res = await panelFetch('/api/hud', { method: 'POST', body: JSON.stringify(body) });
-        if (res && res.ok && res.taskProgress) {
-          renderTaskProgressAndHud(res.taskProgress, res.floatingHud);
+        const data = (res && typeof res.json === 'function') ? await res.json().catch(function () { return null; }) : res;
+        if (data && data.ok && data.taskProgress) {
+          renderTaskProgressAndHud(data.taskProgress, data.floatingHud);
         }
         if (typeof flashStatus === 'function') {
           flashStatus(L('Карточки прогресса сброшены ✓', 'Progress cards cleared ✓'));
@@ -160,9 +290,170 @@
       } catch {}
     }
 
+    function agDoesTaskMatchWorkspaceFilter(task, pinnedWsKey, autoOpenWsKeys) {
+      if (!task) return false;
+      if (task.isUnscopedChat || !task.workspaceRoot) return true;
+      const taskWsKey = normalizeWsClientKey(task.workspaceRoot);
+      if (pinnedWsKey) {
+        return taskWsKey === pinnedWsKey;
+      }
+      if (autoOpenWsKeys && autoOpenWsKeys.size > 0) {
+        return autoOpenWsKeys.has(taskWsKey);
+      }
+      return true;
+    }
+
+    function agFormatRecentAgo(ts) {
+      const diffSec = Math.max(0, Math.round((Date.now() - Number(ts || Date.now())) / 1000));
+      if (diffSec < 60) return L(diffSec + 'с назад', diffSec + 's ago');
+      const diffMin = Math.floor(diffSec / 60);
+      if (diffMin < 60) return L(diffMin + 'м назад', diffMin + 'm ago');
+      const diffHr = Math.floor(diffMin / 60);
+      return L(diffHr + 'ч назад', diffHr + 'h ago');
+    }
+
+    function agArchiveCompletedChat(chatObj) {
+      if (!chatObj || typeof chatObj !== 'object') return null;
+      const cid = String(chatObj.conversationId || '').trim();
+      if (!cid || cid === '__primary_slot__') return null;
+      const nowTs = Date.now();
+      const finishedAt = Number(chatObj.completedAt || chatObj.updatedAt || nowTs) || nowTs;
+      const rawTitleRu = String(chatObj.topicLabel || chatObj.stepTitle || chatObj.formattedText || '').trim();
+      const rawTitleEn = String(chatObj.topicLabel || chatObj.stepTitleEn || chatObj.formattedTextEn || rawTitleRu).trim();
+      const cleanTitleRu = rawTitleRu && rawTitleRu !== 'Ожидание задачи' ? rawTitleRu : L('Задача завершена', 'Task completed');
+      const cleanTitleEn = rawTitleEn && rawTitleEn !== 'Waiting for task' ? rawTitleEn : 'Task completed';
+      const totalSteps = Math.max(0, Number(chatObj.totalSteps || 0));
+      const curStep = Math.max(0, Number(chatObj.currentStep || totalSteps || 0));
+      const stepsText = totalSteps > 0 ? (Math.min(curStep || totalSteps, totalSteps) + '/' + totalSteps) : '';
+      const summary = {
+        key: cid + ':' + finishedAt,
+        conversationId: cid,
+        chatNumber: Math.max(1, Number(chatObj.chatNumber || 1)),
+        chatLabel: String(chatObj.chatLabel || ('Чат #' + (chatObj.chatNumber || 1))),
+        chatLabelEn: String(chatObj.chatLabelEn || ('Chat #' + (chatObj.chatNumber || 1))),
+        topicLabel: String(chatObj.topicLabel || '').trim(),
+        projectName: String(chatObj.projectName || '').trim(),
+        workspaceRoot: String(chatObj.workspaceRoot || '').trim(),
+        isUnscopedChat: Boolean(chatObj.isUnscopedChat || !chatObj.workspaceRoot),
+        title: cleanTitleRu,
+        titleEn: cleanTitleEn,
+        stepsText: stepsText,
+        finishedAt: finishedAt,
+        status: chatObj.status === 'error' ? 'error' : 'completed',
+      };
+      const existingIdx = _agRecentCompletedTasks.findIndex(function (item) {
+        return item && item.conversationId === cid && Math.abs((item.finishedAt || 0) - finishedAt) <= 15000;
+      });
+      if (existingIdx !== -1) {
+        _agRecentCompletedTasks[existingIdx] = summary;
+      } else {
+        _agRecentCompletedTasks.unshift(summary);
+        if (_agRecentCompletedTasks.length > AG_RECENT_COMPLETED_MAX) {
+          _agRecentCompletedTasks = _agRecentCompletedTasks.slice(0, AG_RECENT_COMPLETED_MAX);
+        }
+      }
+      _agPinnedCompletedTask = summary;
+      return summary;
+    }
+
+    function renderRecentCompletedUi(pinnedWsKey, autoOpenWsKeys) {
+      const btnEl = document.getElementById('btnRecentCompletedTasks');
+      const popEl = document.getElementById('agRecentCompletedPopover');
+      const listEl = document.getElementById('agRecentCompletedList');
+      const visibleItems = _agRecentCompletedTasks.filter(function (item) {
+        return agDoesTaskMatchWorkspaceFilter(item, pinnedWsKey, autoOpenWsKeys);
+      });
+      if (btnEl) {
+        if (visibleItems.length > 0) {
+          btnEl.style.display = 'inline-flex';
+          const lblEl = btnEl.querySelector('.ag-recent-completed-label');
+          const cntEl = btnEl.querySelector('.ag-recent-completed-count');
+          if (lblEl) lblEl.textContent = L('✓ Недавние', '✓ Recent');
+          if (cntEl) cntEl.textContent = String(visibleItems.length);
+          btnEl.setAttribute('aria-expanded', _agRecentCompletedOpen ? 'true' : 'false');
+          btnEl.title = L('Недавние выполненные задачи (', 'Recent completed tasks (') + visibleItems.length + ')';
+        } else {
+          btnEl.style.display = 'none';
+          btnEl.setAttribute('aria-expanded', 'false');
+          _agRecentCompletedOpen = false;
+        }
+      }
+      if (popEl) {
+        const showPop = Boolean(_agRecentCompletedOpen && visibleItems.length > 0);
+        popEl.style.display = showPop ? 'flex' : 'none';
+        popEl.setAttribute('aria-hidden', showPop ? 'false' : 'true');
+      }
+      if (listEl) {
+        if (visibleItems.length === 0) {
+          listEl.innerHTML = '';
+        } else {
+          listEl.innerHTML = visibleItems.map(function (item) {
+            const titleTxt = isRu() ? (item.title || item.titleEn) : (item.titleEn || item.title);
+            const chatBadgeTxt = isRu() ? item.chatLabel : item.chatLabelEn;
+            const metaParts = [chatBadgeTxt];
+            if (item.projectName) metaParts.push(item.projectName);
+            if (item.stepsText) metaParts.push(item.stepsText);
+            metaParts.push(agFormatRecentAgo(item.finishedAt));
+            const iconTxt = item.status === 'error' ? '✕' : '✓';
+            return '<div class="ag-recent-completed-row" data-recent-cid="' + escapeHtml(item.conversationId) + '">' +
+              '<span class="ag-recent-completed-row-icon">' + iconTxt + '</span>' +
+              '<div class="ag-recent-completed-row-body">' +
+                '<div class="ag-recent-completed-row-title" title="' + escapeHtml(titleTxt) + '">' + escapeHtml(titleTxt) + '</div>' +
+                '<div class="ag-recent-completed-row-meta">' + escapeHtml(metaParts.join(' · ')) + '</div>' +
+              '</div>' +
+            '</div>';
+          }).join('');
+        }
+      }
+    }
+
+    function closeRecentCompletedPopover() {
+      _agRecentCompletedOpen = false;
+      const btnEl = document.getElementById('btnRecentCompletedTasks');
+      const popEl = document.getElementById('agRecentCompletedPopover');
+      if (btnEl) btnEl.setAttribute('aria-expanded', 'false');
+      if (popEl) {
+        popEl.style.display = 'none';
+        popEl.setAttribute('aria-hidden', 'true');
+      }
+    }
+
+    function toggleRecentCompletedPopover(btnEl) {
+      const nextOpen = !_agRecentCompletedOpen;
+      _agRecentCompletedOpen = nextOpen;
+      const targetBtn = btnEl || document.getElementById('btnRecentCompletedTasks');
+      const popEl = document.getElementById('agRecentCompletedPopover');
+      if (targetBtn) targetBtn.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+      if (popEl) {
+        popEl.style.display = nextOpen ? 'flex' : 'none';
+        popEl.setAttribute('aria-hidden', nextOpen ? 'false' : 'true');
+      }
+    }
+
+    function dismissLastCompletedTask() {
+      _agPinnedCompletedTask = null;
+      if (_agLastProgressPayload) {
+        renderTaskProgressAndHud(_agLastProgressPayload);
+      } else {
+        renderTaskProgressAndHud({ status: 'idle', activeChats: [] });
+      }
+    }
+
+    function clearRecentCompletedTasks() {
+      _agRecentCompletedTasks = [];
+      _agPinnedCompletedTask = null;
+      closeRecentCompletedPopover();
+      if (_agLastProgressPayload) {
+        renderTaskProgressAndHud(_agLastProgressPayload);
+      } else {
+        renderTaskProgressAndHud({ status: 'idle', activeChats: [] });
+      }
+    }
+
     function renderTaskProgressAndHud(progress, hud) {
       const p = progress || (hud && hud.progress) || null;
       if (!p) return;
+      _agLastProgressPayload = p;
       const headingEl = document.getElementById('agProgressHeadingText');
       const projBadgeEl = document.getElementById('agProgressProjectBadge');
       const recentBarEl = document.getElementById('agRecentProjectsBar');
@@ -203,15 +494,55 @@
       const pinnedWsKey = (_selectedWorkspaceMode !== '__auto__' && _selectedWorkspaceMode !== '__all__')
         ? normalizeWsClientKey(_selectedWorkspaceMode)
         : '';
+      const autoOpenWsKeys = new Set();
+      if (_selectedWorkspaceMode === '__auto__') {
+        if (typeof _cachedSidecarOpenWorkspaces !== 'undefined' && Array.isArray(_cachedSidecarOpenWorkspaces)) {
+          for (let oi = 0; oi < _cachedSidecarOpenWorkspaces.length; oi++) {
+            const ok = normalizeSidecarUriToWsKey(_cachedSidecarOpenWorkspaces[oi]);
+            if (ok) autoOpenWsKeys.add(ok);
+          }
+        }
+        const autoResKey = normalizeWsClientKey(
+          (typeof _autoWorkspaceResolved !== 'undefined' && _autoWorkspaceResolved) ||
+          (typeof _activeWorkspaceResolved !== 'undefined' && _activeWorkspaceResolved) ||
+          ''
+        );
+        if (autoResKey) autoOpenWsKeys.add(autoResKey);
+      }
       const chats = pinnedWsKey
         ? rawChats.filter(function (c) {
             if (!c) return false;
             if (c.isUnscopedChat || !c.workspaceRoot) return true;
             return normalizeWsClientKey(c.workspaceRoot) === pinnedWsKey;
           })
-        : rawChats;
+        : (autoOpenWsKeys.size > 0
+            ? rawChats.filter(function (c) {
+                if (!c) return false;
+                if (c.isUnscopedChat || !c.workspaceRoot) return true;
+                return autoOpenWsKeys.has(normalizeWsClientKey(c.workspaceRoot));
+              })
+            : rawChats);
 
       _agHasLiveTasks = chats.length > 0;
+
+      const rawChatByCid = Object.create(null);
+      rawChats.forEach(function (c) {
+        if (!c || !c.conversationId) return;
+        rawChatByCid[c.conversationId] = c;
+        _agLastTrackedChatsByCid[c.conversationId] = c;
+        if (c.status === 'completed' || Number(c.percent || 0) >= 100) {
+          agArchiveCompletedChat(c);
+        }
+      });
+      Object.keys(_agLastTrackedChatsByCid).forEach(function (prevCid) {
+        if (!rawChatByCid[prevCid]) {
+          const prevChat = _agLastTrackedChatsByCid[prevCid];
+          delete _agLastTrackedChatsByCid[prevCid];
+          if (prevChat && prevChat.status !== 'idle') {
+            agArchiveCompletedChat({ ...prevChat, status: prevChat.status === 'error' ? 'error' : 'completed', percent: 100 });
+          }
+        }
+      });
 
       const projectGroups = [];
       const projectGroupMap = Object.create(null);
@@ -235,7 +566,17 @@
         }
         grp.chats.push(c);
       });
-      const isMultiProject = projectGroups.length > 1;
+      const currentHeaderWsKey = normalizeWsClientKey(
+        pinnedWsKey
+          ? _selectedWorkspaceMode
+          : ((typeof _activeWorkspaceResolved !== 'undefined' && _activeWorkspaceResolved) || (typeof _autoWorkspaceResolved !== 'undefined' && _autoWorkspaceResolved) || '')
+      );
+      const singleForeignGroup = projectGroups.length === 1 &&
+        !projectGroups[0].isUnscopedChat &&
+        projectGroups[0].workspaceRoot &&
+        currentHeaderWsKey &&
+        normalizeWsClientKey(projectGroups[0].workspaceRoot) !== currentHeaderWsKey;
+      const isMultiProject = projectGroups.length > 1 || Boolean(singleForeignGroup);
 
       const activePool = Array.isArray(p.activeProjects)
         ? p.activeProjects
@@ -254,9 +595,14 @@
           : L('Прогресс задачи', 'Task Progress');
       }
 
+      const pinnedCompletedVisible = (_agPinnedCompletedTask && agDoesTaskMatchWorkspaceFilter(_agPinnedCompletedTask, pinnedWsKey, autoOpenWsKeys))
+        ? _agPinnedCompletedTask
+        : null;
+      renderRecentCompletedUi(pinnedWsKey, autoOpenWsKeys);
+
       const resetStaleBtn = document.getElementById('btnResetStaleProgress');
       if (resetStaleBtn) {
-        resetStaleBtn.style.display = chats.length > 0 ? 'inline-flex' : 'none';
+        resetStaleBtn.style.display = (chats.length > 0 || pinnedCompletedVisible) ? 'inline-flex' : 'none';
       }
 
       if (projBadgeEl) {
@@ -266,9 +612,13 @@
       if (recentBarEl) {
         const otherProjects = runningProjects.filter(function (rp) {
           if (!rp || !rp.workspaceRoot || rp.isUnscopedChat) return false;
+          const rpWsKey = normalizeWsClientKey(rp.workspaceRoot);
           if (pinnedWsKey) {
-            if (rp.workspaceRoot) return normalizeWsClientKey(rp.workspaceRoot) !== pinnedWsKey;
+            if (rpWsKey) return rpWsKey !== pinnedWsKey;
             return rp.projectName !== getSelectedWorkspaceDisplayName();
+          }
+          if (autoOpenWsKeys.size > 0 && rpWsKey) {
+            return !autoOpenWsKeys.has(rpWsKey);
           }
           if (chats.length > 0) {
             return !Object.prototype.hasOwnProperty.call(projectGroupMap, rp.projectName);
@@ -279,15 +629,18 @@
           recentBarEl.style.display = 'flex';
           recentBarEl.innerHTML = otherProjects.slice(0, 3).map(function (rp) {
             const rpPct = Math.max(0, Math.min(100, Math.round(Number(rp.percent || 0))));
+            const isWaitProj = rp.status === 'waiting_user';
             const countSuffix = Number(rp.activeChatsCount) > 1 ? (' (' + rp.activeChatsCount + ')') : '';
             const rpWs = rp.workspaceRoot || '';
             const rpStage = pickText(rp, 'stageLabel', 'stageLabelEn', '');
             const rpStep = pickText(rp, 'stepTitle', 'stepTitleEn', '');
+            const waitLabel = isWaitProj ? L(' · Вопрос', ' · Question') : '';
             const tip = L('Переключить панель на активный проект ', 'Switch panel to active project ') + rp.projectName +
+              (isWaitProj ? L(' (ожидает ответа на вопрос)', ' (waiting for user answer)') : '') +
               (rpStage ? (' · ' + rpStage) : '') +
               (rpStep ? (' · ' + rpStep) : '');
-            return '<button type="button" class="ag-step-chip active" data-action="selectPanelWorkspaceChip" data-ws="' + escapeHtml(rpWs) + '" title="' + escapeHtml(tip) + '">' +
-              escapeHtml(rp.projectName) + countSuffix + ' · ' + rpPct + '%</button>';
+            return '<button type="button" class="ag-step-chip active' + (isWaitProj ? ' is-waiting-user' : '') + '" data-action="selectPanelWorkspaceChip" data-ws="' + escapeHtml(rpWs) + '" title="' + escapeHtml(tip) + '">' +
+              (isWaitProj ? '? ' : '') + escapeHtml(rp.projectName) + countSuffix + waitLabel + ' · ' + rpPct + '%</button>';
           }).join('');
         } else {
           recentBarEl.style.display = 'none';
@@ -305,7 +658,6 @@
               '<span class="ag-project-group-name"></span>' +
               '<span class="ag-project-group-count"></span>' +
             '</div>' +
-            '<span class="ag-project-group-pct">0%</span>' +
           '</div>' +
           '<div class="ag-project-group-chats"></div>';
         return el;
@@ -350,6 +702,7 @@
               '<div class="ag-bloom-fill idle" style="width: 0%; --fill-scale: 0;"><div class="ag-bloom-shimmer"></div></div>' +
             '</div>' +
             '<span class="ag-progress-pct"><span class="ag-pct-num">0</span>%</span>' +
+            '<button type="button" class="ag-completed-dismiss-btn" data-action="dismissLastCompletedTask" style="display: none;" title="' + L('Скрыть выполненную задачу', 'Dismiss completed task') + '" aria-label="' + L('Скрыть выполненную задачу', 'Dismiss completed task') + '">×</button>' +
           '</div>' +
           '<div class="ag-steps-mini-list" style="display: none;"></div>' +
           '<div class="ag-subagents-drawer" aria-hidden="true">' +
@@ -533,6 +886,22 @@
         });
       }
 
+      function formatBgEtaText(etaSec) {
+        const sec = Math.round(Number(etaSec || 0));
+        if (!Number.isFinite(sec) || sec <= 0) return '';
+        if (sec >= 3600) {
+          const h = Math.floor(sec / 3600);
+          const m = Math.floor((sec % 3600) / 60);
+          return '~' + h + L('ч', 'h') + (m > 0 ? (' ' + m + L('м', 'm')) : '');
+        }
+        if (sec >= 60) {
+          const m = Math.floor(sec / 60);
+          const s = sec % 60;
+          return '~' + m + L('м', 'm') + (s > 0 ? (' ' + s + L('с', 's')) : '');
+        }
+        return '~' + sec + L('с', 's');
+      }
+
       function formatBgTaskMeta(task) {
         const st = String((task && task.status) || 'done');
         const started = Number((task && task.startedAt) || 0);
@@ -549,6 +918,16 @@
         }
         if (st === 'running') {
           if (task && task.isDaemon) return durText ? ('daemon · ' + durText) : 'daemon';
+          const pMode = String((task && task.progressMode) || 'indeterminate');
+          const rawPct = task && task.progressPct;
+          const hasPct = typeof rawPct === 'number' && Number.isFinite(rawPct);
+          if (hasPct && (pMode === 'determinate' || pMode === 'estimated')) {
+            const pctVal = Math.max(0, Math.min(99, Math.round(rawPct)));
+            const pctStr = (pMode === 'estimated' ? '~' : '') + pctVal + '%';
+            const etaStr = formatBgEtaText(task && task.etaSec);
+            const tailStr = etaStr || durText;
+            return tailStr ? (pctStr + ' · ' + tailStr) : pctStr;
+          }
           return durText || L('в работе', 'running');
         }
         if (st === 'error') return durText ? (L('ошиб · ', 'err · ') + durText) : L('ошибка', 'error');
@@ -661,23 +1040,51 @@
           let icoEl;
           let titleEl;
           let metaEl;
+          let trackEl;
+          let fillEl;
+          let subEl;
           if (!rowItem) {
             rowItem = document.createElement('div');
             rowItem.setAttribute('data-task-id', taskId);
             const rowInner = document.createElement('div');
             rowInner.className = 'ag-bgtask-row';
+            const rowTop = document.createElement('div');
+            rowTop.className = 'ag-bgtask-top';
             icoEl = document.createElement('span');
             titleEl = document.createElement('span');
             titleEl.className = 'ag-bgtask-title';
             metaEl = document.createElement('span');
-            rowInner.appendChild(icoEl);
-            rowInner.appendChild(titleEl);
-            rowInner.appendChild(metaEl);
+            rowTop.appendChild(icoEl);
+            rowTop.appendChild(titleEl);
+            rowTop.appendChild(metaEl);
+
+            const progLine = document.createElement('div');
+            progLine.className = 'ag-bgtask-progress-line';
+            trackEl = document.createElement('div');
+            trackEl.className = 'ag-bgtask-track';
+            trackEl.setAttribute('role', 'progressbar');
+            trackEl.setAttribute('aria-valuemin', '0');
+            trackEl.setAttribute('aria-valuemax', '100');
+            fillEl = document.createElement('div');
+            fillEl.className = 'ag-bgtask-fill';
+            trackEl.appendChild(fillEl);
+            progLine.appendChild(trackEl);
+
+            subEl = document.createElement('div');
+            subEl.className = 'ag-bgtask-substatus';
+            subEl.style.display = 'none';
+
+            rowInner.appendChild(rowTop);
+            rowInner.appendChild(progLine);
+            rowInner.appendChild(subEl);
             rowItem.appendChild(rowInner);
           } else {
             icoEl = rowItem.querySelector('.ag-bgtask-ico');
             titleEl = rowItem.querySelector('.ag-bgtask-title');
             metaEl = rowItem.querySelector('.ag-bgtask-meta');
+            trackEl = rowItem.querySelector('.ag-bgtask-track');
+            fillEl = rowItem.querySelector('.ag-bgtask-fill');
+            subEl = rowItem.querySelector('.ag-bgtask-substatus');
           }
 
           if (rowItem.className !== nextCls) rowItem.className = nextCls;
@@ -710,6 +1117,73 @@
             if (metaEl.textContent !== nextMetaTxt) metaEl.textContent = nextMetaTxt;
           }
 
+          const rawMode = String((t && t.progressMode) || '').trim();
+          const pMode = rawMode || (st === 'running' ? 'indeterminate' : st);
+          const rawPct = t && t.progressPct;
+          const hasPct = typeof rawPct === 'number' && Number.isFinite(rawPct);
+          let nextFillCls = 'ag-bgtask-fill';
+          let nextWidth = '';
+          let nextAriaNow = null;
+
+          if (st === 'done' || pMode === 'done') {
+            nextFillCls += ' is-done';
+            nextWidth = '100%';
+            nextAriaNow = '100';
+          } else if (st === 'error' || pMode === 'error') {
+            const errPct = hasPct ? Math.max(0, Math.min(100, Math.round(rawPct))) : 100;
+            nextFillCls += ' is-error';
+            nextWidth = errPct + '%';
+            nextAriaNow = String(errPct);
+          } else if (st === 'cancelled' || pMode === 'cancelled') {
+            const stopPct = hasPct ? Math.max(0, Math.min(100, Math.round(rawPct))) : 0;
+            nextFillCls += ' is-cancelled';
+            nextWidth = stopPct + '%';
+            nextAriaNow = String(stopPct);
+          } else if (!(t && t.isDaemon) && pMode === 'determinate' && hasPct) {
+            const detPct = Math.max(0, Math.min(99, Math.round(rawPct)));
+            nextFillCls += ' is-determinate';
+            nextWidth = detPct + '%';
+            nextAriaNow = String(detPct);
+          } else if (!(t && t.isDaemon) && pMode === 'estimated' && hasPct) {
+            const estPct = Math.max(0, Math.min(97, Math.round(rawPct)));
+            nextFillCls += ' is-estimated';
+            nextWidth = estPct + '%';
+            nextAriaNow = String(estPct);
+          } else {
+            const updAt = Number((t && t.updatedAt) || 0);
+            const isQuiet = updAt > 0 && (Date.now() - updAt) > 25000;
+            nextFillCls += ' is-indeterminate' + (isQuiet ? ' is-quiet' : '');
+            nextWidth = '';
+            nextAriaNow = null;
+          }
+
+          if (trackEl) {
+            if (nextAriaNow !== null) {
+              if (trackEl.getAttribute('aria-valuenow') !== nextAriaNow) {
+                trackEl.setAttribute('aria-valuenow', nextAriaNow);
+              }
+            } else if (trackEl.hasAttribute('aria-valuenow')) {
+              trackEl.removeAttribute('aria-valuenow');
+            }
+          }
+          if (fillEl) {
+            if (fillEl.className !== nextFillCls) fillEl.className = nextFillCls;
+            if (fillEl.style.width !== nextWidth) fillEl.style.width = nextWidth;
+          }
+
+          const rawSub = st === 'running' ? String((t && t.progressText) || '').trim() : '';
+          const showSub = Boolean(rawSub && rawSub !== titleText);
+          if (subEl) {
+            if (showSub) {
+              if (subEl.textContent !== rawSub) subEl.textContent = rawSub;
+              if (subEl.title !== rawSub) subEl.title = rawSub;
+              if (subEl.style.display !== '') subEl.style.display = '';
+            } else {
+              if (subEl.style.display !== 'none') subEl.style.display = 'none';
+              if (subEl.textContent !== '') subEl.textContent = '';
+            }
+          }
+
           const expectedRef = prevNode.nextSibling;
           if (rowItem.parentNode !== listEl || rowItem !== expectedRef) {
             listEl.insertBefore(rowItem, expectedRef);
@@ -719,7 +1193,13 @@
 
         Array.from(listEl.querySelectorAll('.ag-bgtask-item')).forEach(function (node) {
           const tid = node.getAttribute('data-task-id');
-          if (!activeTaskIds.has(tid)) node.remove();
+          if (!activeTaskIds.has(tid) && !node.classList.contains('closing')) {
+            if (agCanSmoothHudMotion(node)) {
+              agSmoothCollapseAndRemoveNode(node);
+            } else {
+              node.remove();
+            }
+          }
         });
 
         let seeAllBtn = listEl.querySelector('.ag-bgtasks-see-all-btn');
@@ -757,15 +1237,16 @@
           delete _agExpandedBgTasksByChat[oldCid];
           delete _agShowAllBgTasksByChat[oldCid];
           delete _agExpandedStepsByChat[oldCid];
-          extraNode.classList.add('closing');
-          setTimeout(function () { if (extraNode.parentNode) extraNode.remove(); }, 260);
+          agSmoothCollapseAndRemoveNode(extraNode);
         });
+        let morphedFromActive = false;
         if (!primaryEl) {
           primaryEl = createStatusBarRowElement('__primary_slot__');
           stackEl.appendChild(primaryEl);
         } else {
           const prevCid = primaryEl.getAttribute('data-cid');
           if (prevCid && prevCid !== '__primary_slot__') {
+            morphedFromActive = true;
             _agDisplayedPctByChat['__primary_slot__'] = _agDisplayedPctByChat[prevCid] || 0;
             delete _agDisplayedPctByChat[prevCid];
             delete _agExpandedSubagentsByChat[prevCid];
@@ -788,13 +1269,12 @@
         const fillEl = mainCap.querySelector('.ag-bloom-fill');
         const pctWrapEl = mainCap.querySelector('.ag-progress-pct');
         const numEl = mainCap.querySelector('.ag-pct-num');
+        const dismissBtn = mainCap.querySelector('.ag-completed-dismiss-btn');
         const stepsEl = primaryEl.querySelector('.ag-steps-mini-list');
 
         syncSubagentsDrawerForChat(primaryEl, '__primary_slot__', []);
         syncBgTasksDrawerForChat(primaryEl, '__primary_slot__', [], 0, 0);
 
-        if (dotEl) dotEl.className = 'ag-bloom-dot idle';
-        if (badgeEl) badgeEl.style.display = 'none';
         mainCap.classList.remove('is-waiting-user');
         if (mainCap.getAttribute('data-action') === 'focusWaitingProgressChat') {
           mainCap.removeAttribute('data-action');
@@ -805,28 +1285,71 @@
         }
         const idleJumpBtn = mainCap.querySelector('.ag-waiting-jump-btn');
         if (idleJumpBtn) idleJumpBtn.style.display = 'none';
-        if (titleEl) {
-          titleEl.textContent = L('Ожидание задачи', 'Waiting for task');
-          titleEl.classList.add('is-idle');
-          titleEl.title = L('Все задачи завершены · ожидание нового запроса', 'All tasks finished · awaiting new prompt');
+        if (pinnedCompletedVisible) {
+          const isErrDone = pinnedCompletedVisible.status === 'error';
+          const doneTitle = (isErrDone ? '✕ ' : '✓ ') + (isRu()
+            ? (pinnedCompletedVisible.title || pinnedCompletedVisible.titleEn)
+            : (pinnedCompletedVisible.titleEn || pinnedCompletedVisible.title));
+          if (dotEl) dotEl.className = isErrDone ? 'ag-bloom-dot error' : 'ag-bloom-dot completed';
+          if (badgeEl) {
+            badgeEl.style.display = 'inline-flex';
+            badgeEl.textContent = isRu() ? pinnedCompletedVisible.chatLabel : pinnedCompletedVisible.chatLabelEn;
+            badgeEl.title = (pinnedCompletedVisible.projectName ? pinnedCompletedVisible.projectName + ' · ' : '') + doneTitle;
+          }
+          if (titleEl) {
+            titleEl.textContent = doneTitle;
+            titleEl.classList.remove('is-idle');
+            titleEl.title = doneTitle + ' · ' + agFormatRecentAgo(pinnedCompletedVisible.finishedAt);
+          }
+          if (fillEl) {
+            fillEl.style.width = '100%';
+            fillEl.style.setProperty('--fill-scale', '1');
+            fillEl.className = 'ag-bloom-fill completed idle';
+          }
+          if (pctWrapEl) pctWrapEl.classList.remove('is-idle');
+          if (dismissBtn) {
+            dismissBtn.style.display = 'inline-flex';
+            dismissBtn.title = L('Скрыть выполненную задачу', 'Dismiss completed task');
+          }
+          animateChatPctNode('__primary_slot__', numEl, 100);
+        } else {
+          if (dotEl) dotEl.className = 'ag-bloom-dot idle';
+          if (badgeEl) badgeEl.style.display = 'none';
+          if (titleEl) {
+            titleEl.textContent = L('Ожидание задачи', 'Waiting for task');
+            titleEl.classList.add('is-idle');
+            titleEl.title = L('Все задачи завершены · ожидание нового запроса', 'All tasks finished · awaiting new prompt');
+          }
+          if (fillEl) {
+            fillEl.style.width = '0%';
+            fillEl.style.setProperty('--fill-scale', '0');
+            fillEl.className = 'ag-bloom-fill idle';
+          }
+          if (pctWrapEl) pctWrapEl.classList.add('is-idle');
+          if (dismissBtn) dismissBtn.style.display = 'none';
+          animateChatPctNode('__primary_slot__', numEl, 0);
         }
-        if (fillEl) {
-          fillEl.style.width = '0%';
-          fillEl.style.setProperty('--fill-scale', '0');
-          fillEl.className = 'ag-bloom-fill idle';
-        }
-        if (pctWrapEl) pctWrapEl.classList.add('is-idle');
-        animateChatPctNode('__primary_slot__', numEl, 0);
         if (stepsEl) {
-          stepsEl.style.display = 'none';
-          stepsEl.innerHTML = '';
+          agSmoothHideInlineStrip(stepsEl, function () {
+            stepsEl.innerHTML = '';
+          });
         }
         const idleCtxEl = primaryEl.querySelector('.ag-context-pills-row');
         if (idleCtxEl) {
-          idleCtxEl.style.display = 'none';
-          idleCtxEl.textContent = '';
-          idleCtxEl.dataset.sig = '';
+          agSmoothHideInlineStrip(idleCtxEl, function () {
+            idleCtxEl.textContent = '';
+            idleCtxEl.dataset.sig = '';
+          });
         }
+        if (morphedFromActive && agCanSmoothHudMotion(mainCap)) {
+          try {
+            mainCap.animate(
+              [{ opacity: 0.72, transform: 'scale(0.99)' }, { opacity: 1, transform: 'scale(1)' }],
+              { duration: 200, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' }
+            );
+          } catch {}
+        }
+        if (typeof syncFullLeftRailStickyOffset === 'function') syncFullLeftRailStickyOffset();
         return;
       }
 
@@ -871,6 +1394,10 @@
         const pct = Math.max(0, Math.min(100, Math.round(Number(c.percent || 0))));
         animateChatPctNode(cid, numEl, pct);
         if (pctWrapEl) pctWrapEl.classList.remove('is-idle');
+        const rowDismissBtn = mainCap.querySelector('.ag-completed-dismiss-btn');
+        if (rowDismissBtn) {
+          rowDismissBtn.style.display = (c.status === 'completed') ? 'inline-flex' : 'none';
+        }
 
         const chatNumLabel = pickText(c, 'chatLabel', 'chatLabelEn', '') || (L('Чат #', 'Chat #') + (c.chatNumber || (globalIdx + 1)));
         const topic = String(c.topicLabel || '').trim();
@@ -954,7 +1481,7 @@
         }
 
         if (stepsEl && Array.isArray(c.steps) && c.steps.length > 0) {
-          stepsEl.style.display = 'flex';
+          agShowInlineStrip(stepsEl, 'flex');
           const visibleSteps = c.steps.slice(0, 30);
           while (stepsEl.children.length > visibleSteps.length) {
             stepsEl.removeChild(stepsEl.lastElementChild);
@@ -1019,8 +1546,9 @@
             if (lblEl && lblEl.textContent !== labelText) lblEl.textContent = labelText;
           });
         } else if (stepsEl) {
-          stepsEl.style.display = 'none';
-          if (stepsEl.children.length > 0) stepsEl.textContent = '';
+          agSmoothHideInlineStrip(stepsEl, function () {
+            if (stepsEl.children.length > 0) stepsEl.textContent = '';
+          });
         }
 
         const ctxRowEl = itemEl.querySelector('.ag-context-pills-row');
@@ -1028,11 +1556,12 @@
           const skills = Array.isArray(c.activeSkills) ? c.activeSkills.slice(0, 4) : [];
           const sig = skills.join(',') + '|' + getUiLanguage();
           if (skills.length === 0) {
-            ctxRowEl.style.display = 'none';
-            if (ctxRowEl.children.length > 0) ctxRowEl.textContent = '';
-            ctxRowEl.dataset.sig = '';
+            agSmoothHideInlineStrip(ctxRowEl, function () {
+              if (ctxRowEl.children.length > 0) ctxRowEl.textContent = '';
+              ctxRowEl.dataset.sig = '';
+            });
           } else {
-            ctxRowEl.style.display = 'flex';
+            agShowInlineStrip(ctxRowEl, 'flex');
             if (ctxRowEl.dataset.sig !== sig) {
               ctxRowEl.dataset.sig = sig;
               ctxRowEl.textContent = '';
@@ -1072,20 +1601,10 @@
           const headEl = grpEl.querySelector('.ag-project-group-head');
           const nameEl = grpEl.querySelector('.ag-project-group-name');
           const countEl = grpEl.querySelector('.ag-project-group-count');
-          const grpPctEl = grpEl.querySelector('.ag-project-group-pct');
           const chatsWrapEl = grpEl.querySelector('.ag-project-group-chats') || grpEl;
 
           const meta = activeProjMetaMap[grp.projectName];
           const grpWs = grp.workspaceRoot || (meta && meta.workspaceRoot) || '';
-          const grpPct = Math.round(grp.chats.reduce(function (acc, item) {
-            return acc + Math.max(0, Math.min(100, Math.round(Number(item.percent || 0))));
-          }, 0) / Math.max(1, grp.chats.length));
-          const allDone = grp.chats.every(function (item) {
-            return item.status === 'completed' || Number(item.percent || 0) >= 100;
-          });
-          const hasWaiting = !allDone &&
-            grp.chats.some(function (item) { return item.status === 'waiting_user'; }) &&
-            !grp.chats.some(function (item) { return item.status === 'running'; });
 
           if (headEl) {
             headEl.title = grp.isUnscopedChat
@@ -1097,10 +1616,6 @@
           }
           if (countEl) {
             countEl.textContent = formatChatsWord(grp.chats.length);
-          }
-          if (grpPctEl) {
-            grpPctEl.textContent = grpPct + '%';
-            grpPctEl.className = 'ag-project-group-pct' + (allDone ? ' is-done' : (hasWaiting ? ' is-waiting' : ''));
           }
 
           let prevRowEl = null;
@@ -1118,15 +1633,14 @@
             delete _agExpandedBgTasksByChat[cid];
             delete _agShowAllBgTasksByChat[cid];
             delete _agExpandedStepsByChat[cid];
-            node.classList.add('closing');
-            setTimeout(function () { if (node.parentNode) node.remove(); }, 260);
+            agSmoothCollapseAndRemoveNode(node);
           }
         });
 
         Array.from(stackEl.querySelectorAll('.ag-project-group')).forEach(function (grpNode) {
           const pName = grpNode.getAttribute('data-project');
           if (!activeGroupNames.has(pName)) {
-            grpNode.remove();
+            agSmoothCollapseAndRemoveNode(grpNode);
           }
         });
       } else {
@@ -1147,14 +1661,20 @@
             delete _agExpandedBgTasksByChat[cid];
             delete _agShowAllBgTasksByChat[cid];
             delete _agExpandedStepsByChat[cid];
-            node.classList.add('closing');
-            setTimeout(function () { if (node.parentNode) node.remove(); }, 260);
+            agSmoothCollapseAndRemoveNode(node);
           }
         });
       }
     }
 
     document.addEventListener('pointerdown', function (ev) {
+      if (_agRecentCompletedOpen) {
+        const inPop = ev.target && ev.target.closest ? ev.target.closest('#agRecentCompletedPopover') : null;
+        const inPopBtn = ev.target && ev.target.closest ? ev.target.closest('#btnRecentCompletedTasks') : null;
+        if (!inPop && !inPopBtn) {
+          closeRecentCompletedPopover();
+        }
+      }
       if (!_openCustomSelectId) return;
       const inMenu = ev.target && ev.target.closest ? ev.target.closest('#lgCustomSelectMenu') : null;
       const inTrigger = ev.target && ev.target.closest ? ev.target.closest('.lg-select-trigger') : null;
@@ -1182,7 +1702,7 @@
         ev.stopPropagation();
         return;
       } else if (Date.now() < _suppressBlockClickUntil && ev.target && ev.target.closest) {
-        const inDragHeader = ev.target.closest('.lg-card-head, summary, .ag-progress-top-row, .smart-banner, #expertCircuitHeadRow, #expertPitfallsHeadRow, #expertKnowledgeHeadRow');
+        const inDragHeader = ev.target.closest('.lg-card-head, summary, .ag-progress-top-row, .gd-full-rail, .unified-preset-top, #expertCircuitHeadRow, #expertPitfallsHeadRow, #expertKnowledgeHeadRow');
         if (inDragHeader) {
           ev.preventDefault();
           ev.stopPropagation();
@@ -1200,164 +1720,7 @@
     });
 
     (function setupBlockPointerDragAndDrop() {
-      let dragState = null;
-
-      function resolveBlockDragTrigger(target) {
-        if (!target || typeof target.closest !== 'function') return null;
-        const explicitHandle = target.closest('[data-role="drag-handle"]');
-        if (explicitHandle) {
-          const explicitBlock = explicitHandle.closest('.reorderable-block');
-          if (!explicitBlock || !explicitBlock.parentElement) return null;
-          return { handle: explicitHandle, blockEl: explicitBlock, immediate: true };
-        }
-
-        const headerEl = target.closest('.lg-card-head, summary, .ag-progress-top-row, #smartProjectBanner, #expertCircuitHeadRow, #expertPitfallsHeadRow, #expertKnowledgeHeadRow');
-        if (!headerEl) return null;
-        const blockEl = headerEl.closest('.reorderable-block');
-        if (!blockEl || !blockEl.parentElement) return null;
-        if (headerEl !== blockEl && headerEl.parentElement !== blockEl) return null;
-
-        const interactive = target.closest('button, a, input, select, textarea, label, [role="combobox"], .lg-card-collapse-btn, .lg-select-wrap, .win-btn, .lg-icon-btn, .lang-pill-btn, .ag-project-pill, .smart-badge-btn');
-        if (interactive && headerEl.contains(interactive)) return null;
-
-        return { handle: headerEl, blockEl: blockEl, immediate: false };
-      }
-
-      document.addEventListener('pointerdown', function (ev) {
-        if (ev.button !== 0 && ev.pointerType === 'mouse') return;
-        const trigger = resolveBlockDragTrigger(ev.target);
-        if (!trigger) return;
-        const handle = trigger.handle;
-        const blockEl = trigger.blockEl;
-        const parentEl = blockEl.parentElement;
-        const pointerId = ev.pointerId !== undefined ? ev.pointerId : 0;
-
-        if (trigger.immediate) {
-          ev.preventDefault();
-          ev.stopPropagation();
-          _suppressSummaryClickUntil = Date.now() + 450;
-          _suppressBlockClickUntil = Date.now() + 450;
-          blockEl.classList.add('is-dragging-lift');
-          try {
-            if (handle.setPointerCapture && ev.pointerId !== undefined) handle.setPointerCapture(ev.pointerId);
-          } catch {}
-        }
-
-        dragState = {
-          pointerId: pointerId,
-          handle: handle,
-          blockEl: blockEl,
-          parentEl: parentEl,
-          started: trigger.immediate,
-          moved: false,
-          startX: Number(ev.clientX || 0),
-          startY: Number(ev.clientY || 0),
-          threshold: 5
-        };
-      });
-
-      window.addEventListener('pointermove', function (ev) {
-        if (!dragState) return;
-        const pid = ev.pointerId !== undefined ? ev.pointerId : 0;
-        if (pid !== dragState.pointerId) return;
-
-        const blockEl = dragState.blockEl;
-        const parentEl = dragState.parentEl;
-
-        if (!dragState.started) {
-          const dist = Math.hypot(Number(ev.clientX || 0) - dragState.startX, Number(ev.clientY || 0) - dragState.startY);
-          if (dist < dragState.threshold) return;
-          dragState.started = true;
-          blockEl.classList.add('is-dragging-lift');
-          try {
-            if (dragState.handle && dragState.handle.setPointerCapture && ev.pointerId !== undefined) {
-              dragState.handle.setPointerCapture(ev.pointerId);
-            }
-          } catch {}
-          try {
-            if (window.getSelection) {
-              const sel = window.getSelection();
-              if (sel && sel.removeAllRanges) sel.removeAllRanges();
-            }
-          } catch {}
-        }
-
-        _suppressSummaryClickUntil = Date.now() + 450;
-        _suppressBlockClickUntil = Date.now() + 450;
-
-        const siblings = Array.from(parentEl.children).filter(function (node) {
-          if (!node.classList || !node.classList.contains('reorderable-block')) return false;
-          try {
-            const st = window.getComputedStyle ? window.getComputedStyle(node) : null;
-            if (st && st.display === 'none') return false;
-          } catch {}
-          return true;
-        });
-        const idx = siblings.indexOf(blockEl);
-        if (idx === -1) return;
-
-        const clientY = ev.clientY;
-        if (idx > 0) {
-          const prevEl = siblings[idx - 1];
-          const prevRect = prevEl.getBoundingClientRect();
-          const prevMid = prevRect.top + prevRect.height * 0.5;
-          if (clientY < prevMid) {
-            const rects = recordFlipRects(siblings);
-            parentEl.insertBefore(blockEl, prevEl);
-            if (parentEl.classList && parentEl.classList.contains('window-body') && typeof syncPinnedWindowBodyCompanions === 'function') {
-              syncPinnedWindowBodyCompanions();
-            }
-            playFlipAnimation(siblings, rects, blockEl);
-            dragState.moved = true;
-            updateBlockControlsStatus();
-            return;
-          }
-        }
-        if (idx < siblings.length - 1) {
-          const nextEl = siblings[idx + 1];
-          const nextRect = nextEl.getBoundingClientRect();
-          const nextMid = nextRect.top + nextRect.height * 0.5;
-          if (clientY > nextMid) {
-            const rects = recordFlipRects(siblings);
-            parentEl.insertBefore(blockEl, nextEl.nextSibling);
-            if (parentEl.classList && parentEl.classList.contains('window-body') && typeof syncPinnedWindowBodyCompanions === 'function') {
-              syncPinnedWindowBodyCompanions();
-            }
-            playFlipAnimation(siblings, rects, blockEl);
-            dragState.moved = true;
-            updateBlockControlsStatus();
-          }
-        }
-      });
-
-      function finishPointerDrag(ev) {
-        if (!dragState) return;
-        if (ev && ev.pointerId !== undefined && ev.pointerId !== dragState.pointerId) return;
-        const st = dragState;
-        dragState = null;
-        if (!st.started) return;
-
-        _suppressSummaryClickUntil = Date.now() + 350;
-        _suppressBlockClickUntil = Date.now() + 350;
-        try {
-          if (st.handle && st.handle.releasePointerCapture && ev && ev.pointerId !== undefined) {
-            st.handle.releasePointerCapture(st.pointerId);
-          }
-        } catch {}
-        st.blockEl.classList.remove('is-dragging-lift');
-        if (st.moved) {
-          if (st.parentEl && st.parentEl.classList && st.parentEl.classList.contains('window-body') && typeof syncPinnedWindowBodyCompanions === 'function') {
-            syncPinnedWindowBodyCompanions();
-          }
-          st.blockEl.classList.add('is-just-moved');
-          setTimeout(function () { st.blockEl.classList.remove('is-just-moved'); }, 360);
-          persistCurrentBlockOrder(L('Порядок блоков сохранён ✓', 'Card order saved ✓'));
-        }
-      }
-
-      window.addEventListener('pointerup', finishPointerDrag);
-      window.addEventListener('pointercancel', finishPointerDrag);
-      window.addEventListener('blur', function () { finishPointerDrag(null); });
+      // Drag-and-drop block reordering removed in favor of categorized left navigation.
     })();
 
     document.addEventListener('keydown', function (ev) {
@@ -1429,9 +1792,51 @@
     });
 
     let _uiScaleResizeTimer = 0;
+    let _lastStickyHudH = -1;
+    let _lastFullRailMaxH = -1;
+    let _stickyHudResizeObserver = null;
+
+    function syncFullLeftRailStickyOffset() {
+      const hudEl = document.getElementById('lgStickyHud');
+      const rootStyle = document.documentElement && document.documentElement.style;
+      if (!hudEl || !rootStyle || typeof rootStyle.setProperty !== 'function') return;
+
+      const hudH = Math.ceil(Number(hudEl.offsetHeight || 0));
+      if (hudH > 0 && hudH !== _lastStickyHudH) {
+        _lastStickyHudH = hudH;
+        rootStyle.setProperty('--sticky-hud-h', hudH + 'px');
+      }
+
+      const scaleRaw = typeof rootStyle.getPropertyValue === 'function'
+        ? parseFloat(rootStyle.getPropertyValue('--panel-ui-scale'))
+        : 1;
+      const scale = (Number.isFinite(scaleRaw) && scaleRaw > 0.25) ? scaleRaw : 1;
+      const vpH = Number(window.innerHeight || 0);
+      if (vpH > 0 && hudH > 0) {
+        const maxRailH = Math.max(160, Math.floor((vpH / scale) - hudH - 22));
+        if (maxRailH !== _lastFullRailMaxH) {
+          _lastFullRailMaxH = maxRailH;
+          rootStyle.setProperty('--full-rail-max-h', maxRailH + 'px');
+        }
+      }
+    }
+
+    function initFullLeftRailStickySync() {
+      syncFullLeftRailStickyOffset();
+      const hudEl = document.getElementById('lgStickyHud');
+      if (!hudEl || _stickyHudResizeObserver || typeof ResizeObserver !== 'function') return;
+      try {
+        _stickyHudResizeObserver = new ResizeObserver(function () {
+          syncFullLeftRailStickyOffset();
+        });
+        _stickyHudResizeObserver.observe(hudEl);
+      } catch {}
+    }
 
     window.addEventListener('resize', function () {
       if (_openCustomSelectId) closeCustomSelectMenu(false);
+      syncFullLeftRailStickyOffset();
+      if (typeof scheduleSyncAllSlidingPills === 'function') scheduleSyncAllSlidingPills();
       if (_uiScaleResizeTimer) clearTimeout(_uiScaleResizeTimer);
       _uiScaleResizeTimer = setTimeout(function () {
         _uiScaleResizeTimer = 0;
@@ -1441,6 +1846,8 @@
         if (activeMode === 'auto' && typeof applyPanelUiScaleDom === 'function') {
           applyPanelUiScaleDom('auto', false);
         }
+        syncFullLeftRailStickyOffset();
+        if (typeof scheduleSyncAllSlidingPills === 'function') scheduleSyncAllSlidingPills();
       }, 180);
     });
 
@@ -1462,8 +1869,6 @@
         selectGpuModel(target.getAttribute('data-key'), target.value);
       } else if (target.getAttribute('data-change-action') === 'selectPanelWorkspace') {
         selectPanelWorkspace(target.value);
-      } else if (target.getAttribute('data-change-action') === 'setCompactionThreshold') {
-        setCompactionThreshold(target.value);
       } else if (target.getAttribute('data-change-action') === 'setGpuVramCap') {
         setGpuVramCap(Number(target.value));
       } else if (target.getAttribute('data-change-action') === 'setRamBudget') {

@@ -1011,16 +1011,15 @@ test('Contour 4 — End-to-end pipeline: Warm RAM + CPU Pool -> Context Pack -> 
         ramSavedTokens: 400,
         cpuSavedTokens: 300,
         gpuSavedTokens: 250,
-        totalSavedTokens: 2150,
-        savingsBreakdown: { cache: 1200, ram: 400, cpu: 300, gpu: 250, cacheHitRate: 75 },
+        totalSavedTokens: 950,
+        savingsBreakdown: { ram: 400, cpu: 300, gpu: 250 },
       },
       ramStats
     );
-    assert.ok(mergedTel.totalSavedTokens >= 2150);
+    assert.ok(mergedTel.totalSavedTokens >= 950);
     assert.equal(
       mergedTel.totalSavedTokens,
-      mergedTel.savingsBreakdown.cache +
-        mergedTel.savingsBreakdown.ram +
+      mergedTel.savingsBreakdown.ram +
         mergedTel.savingsBreakdown.cpu +
         mergedTel.savingsBreakdown.gpu
     );

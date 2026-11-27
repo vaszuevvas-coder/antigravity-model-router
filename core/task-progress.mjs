@@ -49,7 +49,7 @@ function clampInt(val, min, max, fallback) {
 export function createDefaultProgressState() {
   const now = Date.now();
   return {
-    version: '4.0.5',
+    version: '4.0.6',
     activeConversationId: 'default',
     projectName: 'antigravity-model-router',
     workspaceRoot: '',
@@ -419,8 +419,8 @@ function dedupeAndNormalizeChatsMap(chatsObj = {}, registryObj = {}, brainDirs =
     const cid = normalizeConversationId(rawKey || rawVal.conversationId || 'default');
     if (cid !== rawKey || rawVal.conversationId !== cid) mutated = true;
 
-    const cleanWs = sanitizeWorkspaceRoot(rawVal.workspaceRoot || '');
-    const wtMeta = parseAntigravityWorktreePath(cleanWs);
+    const rawCleanWs = sanitizeWorkspaceRoot(rawVal.workspaceRoot || '');
+    const wtMeta = parseAntigravityWorktreePath(rawCleanWs);
     const tPath = resolveTranscriptPathForChat(cid, rawVal.transcriptPath || '', brainDirs);
     const subMeta = tPath
       ? inspectSubagentTranscriptMeta(tPath)
@@ -428,6 +428,8 @@ function dedupeAndNormalizeChatsMap(chatsObj = {}, registryObj = {}, brainDirs =
     const isSub = Boolean(rawVal.isSubagent || subMeta.isSubagent || wtMeta?.parentCid);
     let parentCid = normalizeConversationId(subMeta.parentConversationId || wtMeta?.parentCid || rawVal.parentConversationId || '');
     if (parentCid === 'default' || parentCid === cid) parentCid = '';
+    const wasPoisonedWs = Boolean(!wtMeta && rawCleanWs && isBrainOrTempWorkspacePath(rawCleanWs));
+    const cleanWs = wasPoisonedWs ? '' : rawCleanWs;
     const parentProjHint = parentCid && chatsObj?.[parentCid]?.projectName ? String(chatsObj[parentCid].projectName) : '';
     const rawStoredProj = rawVal.projectName ? String(rawVal.projectName).trim().replace(/^["']+|["']+$/g, '') : '';
     const isPoisonedProj =
@@ -435,10 +437,21 @@ function dedupeAndNormalizeChatsMap(chatsObj = {}, registryObj = {}, brainDirs =
       rawStoredProj === cid ||
       rawStoredProj === 'default' ||
       UUID_PROJ_NAME_RE.test(rawStoredProj);
+    const isUnscoped =
+      !isSub &&
+      !cleanWs &&
+      (wasPoisonedWs || Boolean(rawVal.isUnscopedChat) || rawStoredProj === UNSCOPED_CHAT_PROJECT_RU);
     const cleanProj = wtMeta
       ? (parentProjHint || (!isPoisonedProj && rawStoredProj !== wtMeta.worktreeDir ? rawStoredProj : '') || extractProjectName('', 'antigravity-model-router'))
-      : ((!isPoisonedProj ? rawStoredProj : '') || extractProjectName(cleanWs));
-    if (cleanWs !== (rawVal.workspaceRoot || '') || cleanProj !== (rawVal.projectName || '')) {
+      : (isUnscoped
+          ? UNSCOPED_CHAT_PROJECT_RU
+          : ((!isPoisonedProj ? rawStoredProj : '') || extractProjectName(cleanWs)));
+    const cleanProjEn = isUnscoped ? UNSCOPED_CHAT_PROJECT_EN : (rawVal.projectNameEn || cleanProj);
+    if (
+      cleanWs !== (rawVal.workspaceRoot || '') ||
+      cleanProj !== (rawVal.projectName || '') ||
+      Boolean(rawVal.isUnscopedChat) !== isUnscoped
+    ) {
       mutated = true;
     }
     const nextAgentKind = subMeta.agentKind || rawVal.agentKind || (wtMeta ? 'swarm_worker' : (isSub ? 'subagent' : ''));
@@ -460,6 +473,7 @@ function dedupeAndNormalizeChatsMap(chatsObj = {}, registryObj = {}, brainDirs =
       conversationId: cid,
       workspaceRoot: cleanWs,
       projectName: cleanProj,
+      projectNameEn: cleanProjEn,
       transcriptPath: tPath || rawVal.transcriptPath || '',
       stepTitle: sanitizeStepText(rawVal.stepTitle || ''),
       formattedText: sanitizeStepText(rawVal.formattedText || ''),
@@ -468,6 +482,11 @@ function dedupeAndNormalizeChatsMap(chatsObj = {}, registryObj = {}, brainDirs =
       agentKind: nextAgentKind,
       roleLabel: nextRoleLabel,
     };
+    if (isUnscoped) {
+      normalizedEntry.isUnscopedChat = true;
+    } else {
+      delete normalizedEntry.isUnscopedChat;
+    }
 
     if (nextChats[cid]) {
       nextChats[cid] = mergeChatRecords(nextChats[cid], normalizedEntry);
@@ -523,7 +542,127 @@ function dedupeAndNormalizeChatsMap(chatsObj = {}, registryObj = {}, brainDirs =
 }
 
 const VALID_BG_TASK_STATUSES = new Set(['running', 'done', 'error', 'cancelled']);
+const VALID_BG_PROGRESS_MODES = new Set(['determinate', 'estimated', 'indeterminate', 'done', 'error', 'cancelled']);
 const MAX_PUBLIC_BG_TASKS = 25;
+const BG_DURATION_HISTORY_MAX_SIGNATURES = 80;
+const BG_DURATION_HISTORY_MAX_SAMPLES = 7;
+const BG_DURATION_HISTORY_MAX_IDS = 200;
+const BG_DURATION_HISTORY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const BG_DURATION_MIN_MS = 2000;
+const BG_DURATION_MAX_MS = 3600 * 1000;
+
+function getBgDurationHistoryFile(cacheFile = '') {
+  return cacheFile || join(ensureCacheDir(), 'bg-task-durations.json');
+}
+
+export function normalizeBgCommandSignature(commandPreview = '', label = '') {
+  const raw = String(commandPreview || label || '').trim().toLowerCase();
+  if (!raw) return '';
+  const cleaned = raw
+    .replace(/["'`]/g, ' ')
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ' ')
+    .replace(/[a-z]:\\[^\s]+/gi, (m) => m.split(/[\\/]/).pop() || '')
+    .replace(/(?:^|\s)\/[^\s]+/g, (m) => ' ' + (m.trim().split('/').pop() || ''))
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return '';
+  const tokens = cleaned
+    .split(' ')
+    .filter((tok) => tok && !/^\d+(?:\.\d+)?$/.test(tok))
+    .slice(0, 3);
+  return tokens.join(' ').slice(0, 64).trim();
+}
+
+function readBgDurationStore(filePath) {
+  const data = safeReadJsonSync(filePath, () => ({ entries: {}, recordedIds: [] }));
+  return {
+    entries: data && typeof data.entries === 'object' && !Array.isArray(data.entries) ? data.entries : {},
+    recordedIds: Array.isArray(data?.recordedIds) ? data.recordedIds.map(String) : [],
+  };
+}
+
+export function recordBgTaskDurationSample(task = {}, opts = {}) {
+  if (!task || typeof task !== 'object') return false;
+  if (task.status !== 'done' || task.isDaemon) return false;
+  const taskId = String(task.taskId || task.id || '').trim();
+  const startedAt = Number(task.startedAt || 0);
+  const updatedAt = Number(task.updatedAt || 0);
+  if (!taskId || startedAt <= 0 || updatedAt <= startedAt) return false;
+  const durationMs = Math.round(updatedAt - startedAt);
+  if (durationMs < BG_DURATION_MIN_MS || durationMs > BG_DURATION_MAX_MS) return false;
+  const sig = normalizeBgCommandSignature(task.commandPreview, task.label);
+  if (!sig) return false;
+
+  const filePath = getBgDurationHistoryFile(opts.cacheFile || '');
+  const store = readBgDurationStore(filePath);
+  if (store.recordedIds.includes(taskId)) return false;
+
+  const now = Math.max(updatedAt, Number(opts.now || Date.now()));
+  const nextEntries = {};
+  for (const [k, v] of Object.entries(store.entries)) {
+    if (!v || typeof v !== 'object' || !Array.isArray(v.samples)) continue;
+    const upd = Number(v.updatedAt || 0);
+    if (upd > 0 && now - upd > BG_DURATION_HISTORY_TTL_MS) continue;
+    nextEntries[k] = {
+      samples: v.samples.map((n) => Math.round(Number(n))).filter((n) => Number.isFinite(n) && n >= BG_DURATION_MIN_MS && n <= BG_DURATION_MAX_MS).slice(-BG_DURATION_HISTORY_MAX_SAMPLES),
+      updatedAt: upd || now,
+    };
+  }
+  const existing = nextEntries[sig] || { samples: [], updatedAt: now };
+  existing.samples = [...existing.samples, durationMs].slice(-BG_DURATION_HISTORY_MAX_SAMPLES);
+  existing.updatedAt = now;
+  nextEntries[sig] = existing;
+
+  const sortedKeys = Object.keys(nextEntries).sort((a, b) => (nextEntries[b].updatedAt || 0) - (nextEntries[a].updatedAt || 0));
+  if (sortedKeys.length > BG_DURATION_HISTORY_MAX_SIGNATURES) {
+    for (const dropKey of sortedKeys.slice(BG_DURATION_HISTORY_MAX_SIGNATURES)) {
+      delete nextEntries[dropKey];
+    }
+  }
+
+  const nextIds = [...store.recordedIds.filter((id) => id !== taskId), taskId].slice(-BG_DURATION_HISTORY_MAX_IDS);
+  atomicWriteJsonSync(filePath, { entries: nextEntries, recordedIds: nextIds });
+  return true;
+}
+
+export function estimateBgTaskProgressFromHistory(task = {}, now = Date.now(), opts = {}) {
+  if (!task || typeof task !== 'object') return null;
+  if (task.status !== 'running' || task.isDaemon) return null;
+  const startedAt = Number(task.startedAt || 0);
+  const safeNow = Number(now || 0);
+  if (startedAt <= 0 || safeNow < startedAt) return null;
+  const sig = normalizeBgCommandSignature(task.commandPreview, task.label);
+  if (!sig) return null;
+
+  const filePath = getBgDurationHistoryFile(opts.cacheFile || '');
+  const store = readBgDurationStore(filePath);
+  const entry = store.entries[sig];
+  if (!entry || !Array.isArray(entry.samples) || entry.samples.length === 0) return null;
+  const valid = entry.samples
+    .map((n) => Number(n))
+    .filter((n) => Number.isFinite(n) && n >= BG_DURATION_MIN_MS && n <= BG_DURATION_MAX_MS)
+    .sort((a, b) => a - b);
+  if (valid.length === 0) return null;
+  const mid = Math.floor(valid.length / 2);
+  const expectedMs = valid.length % 2 === 1
+    ? valid[mid]
+    : Math.round((valid[mid - 1] + valid[mid]) / 2);
+  if (expectedMs < BG_DURATION_MIN_MS) return null;
+
+  const elapsedMs = safeNow - startedAt;
+  if (elapsedMs < expectedMs) {
+    return {
+      progressMode: 'estimated',
+      progressPct: clampInt(Math.round((elapsedMs / expectedMs) * 90), 4, 92, 4),
+      etaSec: Math.max(1, Math.round((expectedMs - elapsedMs) / 1000)),
+    };
+  }
+  return {
+    progressMode: 'estimated',
+    progressPct: Math.min(97, 92 + Math.floor((elapsedMs - expectedMs) / Math.max(5000, expectedMs * 0.5))),
+    etaSec: null,
+  };
+}
 
 function normalizeBackgroundTasksList(
   rawList = [],
@@ -564,6 +703,49 @@ function normalizeBackgroundTasksList(
     const label = stripQ(sanitizeStepText(item.label || item.description || 'Фоновая задача')).slice(0, 120) || 'Фоновая задача';
     const labelEn = stripQ(sanitizeStepText(item.labelEn || localizeProgressLabelToEn(label))).slice(0, 120) || 'Background task';
     const commandPreview = stripQ(String(item.commandPreview || '').replace(/\s+/g, ' ')).slice(0, 120);
+    const progressText = stripQ(sanitizeStepText(item.progressText || '')).slice(0, 80);
+
+    const rawPct = item.progressPct;
+    const hasRawPct = typeof rawPct === 'number' && Number.isFinite(rawPct);
+    const rawMode = VALID_BG_PROGRESS_MODES.has(item.progressMode) ? item.progressMode : '';
+    const rawEta = item.etaSec;
+    const hasRawEta = typeof rawEta === 'number' && Number.isFinite(rawEta) && rawEta > 0;
+
+    let progressMode = 'indeterminate';
+    let progressPct = null;
+    let etaSec = null;
+
+    if (status === 'done') {
+      progressMode = 'done';
+      progressPct = 100;
+      if (!isDaemon && startedAt > 0 && updatedAt > startedAt) {
+        recordBgTaskDurationSample({ taskId, commandPreview, label, status, isDaemon, startedAt, updatedAt });
+      }
+    } else if (status === 'error') {
+      progressMode = 'error';
+      progressPct = hasRawPct ? clampInt(rawPct, 0, 100, 100) : 100;
+    } else if (status === 'cancelled') {
+      progressMode = 'cancelled';
+      progressPct = hasRawPct ? clampInt(rawPct, 0, 99, 0) : 0;
+    } else if (isDaemon) {
+      progressMode = 'indeterminate';
+    } else if (rawMode === 'determinate' || (!rawMode && hasRawPct)) {
+      progressMode = 'determinate';
+      progressPct = clampInt(rawPct, 0, 99, 0);
+      etaSec = hasRawEta ? Math.min(86400, Math.round(rawEta)) : null;
+    } else if (rawMode === 'estimated' && hasRawPct) {
+      progressMode = 'estimated';
+      progressPct = clampInt(rawPct, 0, 97, 4);
+      etaSec = hasRawEta ? Math.min(86400, Math.round(rawEta)) : null;
+    } else if (safeNow > 0 && startedAt > 0) {
+      const est = estimateBgTaskProgressFromHistory({ commandPreview, label, status, isDaemon, startedAt }, safeNow);
+      if (est) {
+        progressMode = est.progressMode;
+        progressPct = est.progressPct;
+        etaSec = est.etaSec;
+      }
+    }
+
     out.push({
       id: taskId,
       taskId,
@@ -574,6 +756,10 @@ function normalizeBackgroundTasksList(
       isDaemon,
       startedAt,
       updatedAt,
+      progressPct,
+      progressMode,
+      etaSec,
+      progressText,
     });
   }
   return out;
@@ -605,7 +791,7 @@ export function filterVisibleBackgroundTasks(
 
 function buildBackgroundTasksSig(list = [], totalCount = 0) {
   const head = Array.isArray(list)
-    ? list.map((t) => `${t.taskId}:${t.status}:${t.updatedAt}:${t.label}`).join('|')
+    ? list.map((t) => `${t.taskId}:${t.status}:${t.updatedAt}:${t.label}:${t.progressMode || ''}:${t.progressPct ?? ''}:${t.etaSec ?? ''}:${t.progressText || ''}`).join('|')
     : '';
   return `${Math.max(0, Number(totalCount || 0))}::${head}`;
 }
@@ -1206,7 +1392,7 @@ function hydrateStateWithPrimary(state, activeChats = [], defaultProject = 'anti
     ...state,
     activeConversationId: primary.conversationId,
     projectName: primary.projectName || defaultProject,
-    workspaceRoot: primary.workspaceRoot || workspaceRoot || state.workspaceRoot || '',
+    workspaceRoot: primary.isUnscopedChat ? '' : (primary.workspaceRoot || workspaceRoot || state.workspaceRoot || ''),
     status: primary.status,
     grade: primary.grade || state.grade || 'M',
     currentStep: primary.currentStep,
@@ -1375,7 +1561,8 @@ export function getTaskProgressSnapshot(opts = {}) {
 
         const tInfo = inspectTranscriptTurnState(tPath, now, { hostBootAt });
         if (!tInfo.exists || (tInfo.state !== 'running' && tInfo.state !== 'waiting_user')) continue;
-        if (existing?.lastHandledStepKey && existing.lastHandledStepKey === tInfo.stepKey) continue;
+        const allowWaitingRediscover = tInfo.state === 'waiting_user' && existing?.lastDismissedState !== 'waiting_user';
+        if (existing?.lastHandledStepKey && existing.lastHandledStepKey === tInfo.stepKey && !allowWaitingRediscover) continue;
 
         const wtFromTranscript = parseAntigravityWorktreePath(tInfo.detectedWorkspace || existing?.workspaceRoot || '');
         const parentCid = subMeta.isSubagent
@@ -2051,7 +2238,8 @@ export function initTaskProgressFromPrompt({
         isSubagent: false,
         parentConversationId: '',
         projectName: projName,
-        workspaceRoot: sanitizeWorkspaceRoot(cleanWs || existingChat.workspaceRoot || ''),
+        projectNameEn: isUnscopedInit ? UNSCOPED_CHAT_PROJECT_EN : projName,
+        workspaceRoot: effectiveInitWs,
         transcriptPath: resolvedTranscript || existingChat.transcriptPath || '',
         baselineDoneStepKey,
         status: 'running',
@@ -2072,11 +2260,13 @@ export function initTaskProgressFromPrompt({
         completedAt: 0,
         updatedAt: now,
       };
+      if (isUnscopedInit) updatedChat.isUnscopedChat = true;
+      else delete updatedChat.isUnscopedChat;
       chatsMap[cid] = updatedChat;
       state.chatRegistry = registry;
       state.chats = chatsMap;
-      const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, cleanWs);
-      return hydrateStateWithPrimary(state, visible, projName, cleanWs);
+      const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, effectiveInitWs);
+      return hydrateStateWithPrimary(state, visible, projName, effectiveInitWs);
     }
 
     let steps = [];
@@ -2164,8 +2354,8 @@ export function initTaskProgressFromPrompt({
     chatsMap[cid] = chatEntry;
     state.chatRegistry = registry;
     state.chats = chatsMap;
-    const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, cleanWs);
-    return hydrateStateWithPrimary(state, visible, projName, cleanWs);
+    const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, effectiveInitWs);
+    return hydrateStateWithPrimary(state, visible, projName, effectiveInitWs);
   });
 }
 
@@ -2195,7 +2385,8 @@ export function advanceTaskProgressOnPreTool({
   ensureCacheDir();
   const now = Date.now();
   const cid = normalizeConversationId(conversationId);
-  const cleanWs = sanitizeWorkspaceRoot(workspaceRoot);
+  const rawCleanWs = sanitizeWorkspaceRoot(workspaceRoot);
+  const cleanWs = rawCleanWs && !isBrainOrTempWorkspacePath(rawCleanWs) ? rawCleanWs : '';
   const shortFile = sanitizeFileBasename(filePath);
   const cleanSummary = String(toolSummary || '').trim();
   const cleanSym = String(symbolHint || '').trim();
@@ -2219,10 +2410,15 @@ export function advanceTaskProgressOnPreTool({
     if (effectiveParentCid === 'default' || effectiveParentCid === cid) effectiveParentCid = '';
 
     const parentProjHint = effectiveParentCid ? chatsMap[effectiveParentCid]?.projectName || '' : '';
-    const projName = extractProjectName(
-      cleanWs || chatsMap[cid]?.workspaceRoot || state.workspaceRoot || '',
-      parentProjHint || chatsMap[cid]?.projectName || state.projectName || ''
-    );
+    const prevChatWsRaw = sanitizeWorkspaceRoot(chatsMap[cid]?.workspaceRoot || '');
+    const prevChatWs = prevChatWsRaw && !isBrainOrTempWorkspacePath(prevChatWsRaw) ? prevChatWsRaw : '';
+    const effectiveWs = cleanWs || prevChatWs || (effectiveIsSub ? sanitizeWorkspaceRoot(state.workspaceRoot || '') : '');
+    const isUnscopedChat = !effectiveIsSub && !effectiveWs;
+    const projName = effectiveWs
+      ? extractProjectName(effectiveWs, parentProjHint || chatsMap[cid]?.projectName || state.projectName || '')
+      : (isUnscopedChat
+          ? UNSCOPED_CHAT_PROJECT_RU
+          : extractProjectName('', parentProjHint || chatsMap[cid]?.projectName || state.projectName || ''));
     const preferredSubRole = effectiveIsSub
       ? (subMeta.agentHint || (chatsMap[cid]?.roleLabel && chatsMap[cid]?.roleLabel !== 'author' ? chatsMap[cid].roleLabel : '') || (swarmWorkerKind && swarmWorkerKind !== 'author' ? swarmWorkerKind : '') || chatsMap[cid]?.roleLabel || '')
       : '';
@@ -2278,7 +2474,9 @@ export function advanceTaskProgressOnPreTool({
         agentKind: isSwarmWorker ? 'swarm_worker' : (effectiveIsSub ? 'subagent' : ''),
         spawnedSubagentRoles: chat?.spawnedSubagentRoles || {},
         projectName: projName,
-        workspaceRoot: sanitizeWorkspaceRoot(cleanWs || chat?.workspaceRoot || state.workspaceRoot || ''),
+        projectNameEn: isUnscopedChat ? UNSCOPED_CHAT_PROJECT_EN : projName,
+        ...(isUnscopedChat ? { isUnscopedChat: true } : {}),
+        workspaceRoot: effectiveWs,
         transcriptPath: resolvedTranscript,
         baselineDoneStepKey,
         status: 'running',
@@ -2805,7 +3003,8 @@ export function advanceTaskProgressOnPreTool({
       agentKind: isSwarmWorker ? 'swarm_worker' : (effectiveIsSub ? (chat.agentKind || 'subagent') : ''),
       roleLabel: preferredSubRole,
       projectName: projName,
-      workspaceRoot: sanitizeWorkspaceRoot(cleanWs || chat.workspaceRoot || ''),
+      projectNameEn: isUnscopedChat ? UNSCOPED_CHAT_PROJECT_EN : projName,
+      workspaceRoot: effectiveWs,
       transcriptPath: resolvedTranscript || chat.transcriptPath || '',
       status: effectiveStatus,
       currentStep,
@@ -2838,12 +3037,14 @@ export function advanceTaskProgressOnPreTool({
       completedAt: 0,
       updatedAt: now,
     };
+    if (isUnscopedChat) updatedChat.isUnscopedChat = true;
+    else delete updatedChat.isUnscopedChat;
 
     chatsMap[cid] = updatedChat;
     state.chatRegistry = registry;
     state.chats = chatsMap;
-    const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, cleanWs);
-    return hydrateStateWithPrimary(state, visible, projName, cleanWs);
+    const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, effectiveWs);
+    return hydrateStateWithPrimary(state, visible, projName, effectiveWs);
   });
 }
 
@@ -2870,7 +3071,8 @@ export function recordTaskProgressOnPostTool({
   ensureCacheDir();
   const now = Date.now();
   const cid = normalizeConversationId(conversationId);
-  const cleanWs = sanitizeWorkspaceRoot(workspaceRoot);
+  const rawCleanWs = sanitizeWorkspaceRoot(workspaceRoot);
+  const cleanWs = rawCleanWs && !isBrainOrTempWorkspacePath(rawCleanWs) ? rawCleanWs : '';
   const shortFile = sanitizeFileBasename(filePath);
   const cleanTestFile = sanitizeFileBasename(testFile);
   const cleanSummary = String(toolSummary || '').trim();
@@ -2889,7 +3091,13 @@ export function recordTaskProgressOnPostTool({
     let effectiveParentCid = normalizeConversationId(subMeta.parentConversationId || chatsMap[cid]?.parentConversationId || '');
     if (effectiveParentCid === 'default' || effectiveParentCid === cid) effectiveParentCid = '';
 
-    const projName = extractProjectName(cleanWs || chatsMap[cid]?.workspaceRoot || state.workspaceRoot || '');
+    const prevChatWsRaw = sanitizeWorkspaceRoot(chatsMap[cid]?.workspaceRoot || '');
+    const prevChatWs = prevChatWsRaw && !isBrainOrTempWorkspacePath(prevChatWsRaw) ? prevChatWsRaw : '';
+    const effectiveWs = cleanWs || prevChatWs || (effectiveIsSub ? sanitizeWorkspaceRoot(state.workspaceRoot || '') : '');
+    const isUnscopedChat = !effectiveIsSub && !effectiveWs;
+    const projName = effectiveWs
+      ? extractProjectName(effectiveWs)
+      : (isUnscopedChat ? UNSCOPED_CHAT_PROJECT_RU : extractProjectName('', state.projectName || ''));
     let chatNumber = chatsMap[cid]?.chatNumber || 1;
     let registry = state.chatRegistry;
     if (!effectiveIsSub) {
@@ -2913,7 +3121,9 @@ export function recordTaskProgressOnPostTool({
           agentKind: subMeta.agentKind || (effectiveIsSub ? 'subagent' : ''),
           roleLabel: effectiveIsSub ? (subMeta.agentHint || '') : '',
           projectName: projName,
-          workspaceRoot: sanitizeWorkspaceRoot(cleanWs || state.workspaceRoot || ''),
+          projectNameEn: isUnscopedChat ? UNSCOPED_CHAT_PROJECT_EN : projName,
+          ...(isUnscopedChat ? { isUnscopedChat: true } : {}),
+          workspaceRoot: effectiveWs,
           transcriptPath: resolvedTranscript,
           status: 'running',
           grade: effectiveIsSub ? 'S' : (state.grade || 'M'),
@@ -3084,7 +3294,8 @@ export function recordTaskProgressOnPostTool({
       agentKind: subMeta.agentKind || chat.agentKind || (effectiveIsSub ? 'subagent' : ''),
       roleLabel: effectiveIsSub ? (chat.roleLabel || subMeta.agentHint || '') : '',
       projectName: projName,
-      workspaceRoot: sanitizeWorkspaceRoot(cleanWs || chat.workspaceRoot || ''),
+      projectNameEn: isUnscopedChat ? UNSCOPED_CHAT_PROJECT_EN : projName,
+      workspaceRoot: effectiveWs,
       transcriptPath: resolvedTranscript || chat.transcriptPath || '',
       status,
       currentStep,
@@ -3107,12 +3318,14 @@ export function recordTaskProgressOnPostTool({
       editedFilesCount,
       updatedAt: now,
     };
+    if (isUnscopedChat) updatedChat.isUnscopedChat = true;
+    else delete updatedChat.isUnscopedChat;
 
     chatsMap[cid] = updatedChat;
     state.chatRegistry = registry;
     state.chats = chatsMap;
-    const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, cleanWs);
-    return hydrateStateWithPrimary(state, visible, projName, cleanWs);
+    const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, effectiveWs);
+    return hydrateStateWithPrimary(state, visible, projName, effectiveWs);
   });
 }
 
@@ -3242,7 +3455,8 @@ export function finalizeTaskProgressOnStop({
   ensureCacheDir();
   const now = Date.now();
   const cid = normalizeConversationId(conversationId);
-  const cleanWs = sanitizeWorkspaceRoot(workspaceRoot);
+  const rawCleanWs = sanitizeWorkspaceRoot(workspaceRoot);
+  const cleanWs = rawCleanWs && !isBrainOrTempWorkspacePath(rawCleanWs) ? rawCleanWs : '';
 
   return updateJsonAtomicSync(getTaskProgressFile(), createDefaultProgressState, (prev) => {
     const state = prev && typeof prev === 'object' ? { ...createDefaultProgressState(), ...prev } : createDefaultProgressState();
@@ -3251,10 +3465,16 @@ export function finalizeTaskProgressOnStop({
     state.chatRegistry = deduped.registry;
 
     const existing = chatsMap[cid] || null;
-    const projName = extractProjectName(cleanWs || existing?.workspaceRoot || state.workspaceRoot || '');
+    const prevChatWsRaw = sanitizeWorkspaceRoot(existing?.workspaceRoot || '');
+    const prevChatWs = prevChatWsRaw && !isBrainOrTempWorkspacePath(prevChatWsRaw) ? prevChatWsRaw : '';
+    const effectiveWs = cleanWs || prevChatWs || (existing?.isSubagent ? sanitizeWorkspaceRoot(state.workspaceRoot || '') : '');
+    const isUnscopedChat = Boolean(existing && !existing.isSubagent && !effectiveWs);
+    const projName = effectiveWs
+      ? extractProjectName(effectiveWs)
+      : (isUnscopedChat ? UNSCOPED_CHAT_PROJECT_RU : extractProjectName('', state.projectName || ''));
     if (!existing) {
-      const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, cleanWs);
-      return hydrateStateWithPrimary(state, visible, projName, cleanWs);
+      const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, effectiveWs);
+      return hydrateStateWithPrimary(state, visible, projName, effectiveWs);
     }
 
     if (existing.status === 'waiting_user') {
@@ -3265,8 +3485,8 @@ export function finalizeTaskProgressOnStop({
         updatedAt: now,
       };
       state.chats = chatsMap;
-      const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, cleanWs);
-      return hydrateStateWithPrimary(state, visible, projName, cleanWs);
+      const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, effectiveWs);
+      return hydrateStateWithPrimary(state, visible, projName, effectiveWs);
     }
 
     const totalSteps = Math.max(1, clampInt(existing.totalSteps || existing.steps?.length, 1, MAX_TIMELINE_STEPS, 3));
@@ -3300,7 +3520,10 @@ export function finalizeTaskProgressOnStop({
       chatsMap[cid] = {
         ...existing,
         transcriptPath: stopTranscript || transcriptPath || existing.transcriptPath || '',
-        workspaceRoot: sanitizeWorkspaceRoot(cleanWs || existing.workspaceRoot || state.workspaceRoot || ''),
+        workspaceRoot: effectiveWs,
+        projectName: projName,
+        projectNameEn: isUnscopedChat ? UNSCOPED_CHAT_PROJECT_EN : projName,
+        ...(isUnscopedChat ? { isUnscopedChat: true } : {}),
         status: 'running',
         currentStep: curStep,
         totalSteps,
@@ -3329,15 +3552,18 @@ export function finalizeTaskProgressOnStop({
         updatedAt: now,
       };
       state.chats = chatsMap;
-      const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, cleanWs);
-      return hydrateStateWithPrimary(state, visible, projName, cleanWs);
+      const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, effectiveWs);
+      return hydrateStateWithPrimary(state, visible, projName, effectiveWs);
     }
 
     if (isTerminalHandoff) {
       chatsMap[cid] = {
         ...existing,
         transcriptPath: transcriptPath || existing.transcriptPath || '',
-        workspaceRoot: sanitizeWorkspaceRoot(cleanWs || existing.workspaceRoot || state.workspaceRoot || ''),
+        workspaceRoot: effectiveWs,
+        projectName: projName,
+        projectNameEn: isUnscopedChat ? UNSCOPED_CHAT_PROJECT_EN : projName,
+        ...(isUnscopedChat ? { isUnscopedChat: true } : {}),
         status: existing.status === 'idle' || existing.status === 'completed' ? 'running' : (existing.status || 'running'),
         orchestratorSession: Boolean(existing.orchestratorSession || isOrchestratorMode || /^TERMINAL_STEP_TYPE$/i.test(termStr)),
         pendingPlanHandoff: Boolean(existing.pendingPlanHandoff || /^TERMINAL_STEP_TYPE$/i.test(termStr)),
@@ -3348,8 +3574,8 @@ export function finalizeTaskProgressOnStop({
         updatedAt: now,
       };
       state.chats = chatsMap;
-      const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, cleanWs);
-      return hydrateStateWithPrimary(state, visible, projName, cleanWs);
+      const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, effectiveWs);
+      return hydrateStateWithPrimary(state, visible, projName, effectiveWs);
     }
 
     const nextStatus = isErr ? 'error' : 'completed';
@@ -3375,7 +3601,10 @@ export function finalizeTaskProgressOnStop({
     chatsMap[cid] = {
       ...existing,
       transcriptPath: transcriptPath || existing.transcriptPath || '',
-      workspaceRoot: sanitizeWorkspaceRoot(cleanWs || existing.workspaceRoot || state.workspaceRoot || ''),
+      workspaceRoot: effectiveWs,
+      projectName: projName,
+      projectNameEn: isUnscopedChat ? UNSCOPED_CHAT_PROJECT_EN : projName,
+      ...(isUnscopedChat ? { isUnscopedChat: true } : {}),
       status: nextStatus,
       currentStep: nextStep,
       totalSteps,
@@ -3413,8 +3642,8 @@ export function finalizeTaskProgressOnStop({
     };
 
     state.chats = chatsMap;
-    const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, cleanWs);
-    return hydrateStateWithPrimary(state, visible, projName, cleanWs);
+    const visible = sweepAndBuildVisibleChats(chatsMap, state, cid, now, DEFAULT_COMPLETED_HOLD_MS, brainDirs, projName, effectiveWs);
+    return hydrateStateWithPrimary(state, visible, projName, effectiveWs);
   });
 }
 
@@ -3434,8 +3663,11 @@ export function dismissStaleChats({
 } = {}) {
   ensureCacheDir();
   const targetCid = conversationId ? normalizeConversationId(conversationId) : '';
-  const resetIdleFields = (c, stepKey = '') => ({
+  const normWsCompare = (raw) => sanitizeWorkspaceRoot(raw || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const targetWsKey = !targetCid && workspaceRoot ? normWsCompare(workspaceRoot) : '';
+  const resetIdleFields = (c, stepKey = '', dismissedState = '') => ({
     ...expireChatToIdle(c, stepKey || c.lastHandledStepKey || ''),
+    lastDismissedState: dismissedState || c.status || '',
     percent: 0,
     currentStep: 0,
     stepTitle: 'Ожидание задачи',
@@ -3456,13 +3688,21 @@ export function dismissStaleChats({
       if (!rawChat || typeof rawChat !== 'object') continue;
       if (targetCid && cid !== targetCid && rawChat.parentConversationId !== targetCid) continue;
       if (!targetCid && !['running', 'waiting_user', 'completed', 'error'].includes(rawChat.status)) continue;
+      if (!targetCid && targetWsKey) {
+        const chatWsKey = normWsCompare(rawChat.workspaceRoot || '');
+        if (chatWsKey && chatWsKey !== targetWsKey) continue;
+      }
       const tPath = resolveTranscriptPathForChat(cid, rawChat.transcriptPath || '');
       const tInfo = tPath ? inspectTranscriptTurnState(tPath, now) : { exists: false };
-      chats[cid] = resetIdleFields(rawChat, tInfo.stepKey || '');
+      chats[cid] = resetIdleFields(rawChat, tInfo.stepKey || '', tInfo.state || rawChat.status || '');
     }
 
     state.chats = chats;
-    if (!targetCid || normalizeConversationId(state.activeConversationId || '') === targetCid) {
+    const hasRemainingActive = Object.values(chats).some(
+      (c) => c && ['running', 'waiting_user', 'completed', 'error'].includes(c.status)
+    );
+    const activeCidMatch = targetCid && normalizeConversationId(state.activeConversationId || '') === targetCid;
+    if ((!targetCid && !hasRemainingActive) || activeCidMatch || (!targetCid && targetWsKey && normWsCompare(state.workspaceRoot || '') === targetWsKey)) {
       state.status = 'idle';
       state.currentStep = 0;
       state.percent = 0;

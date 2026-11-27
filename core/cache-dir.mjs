@@ -3,21 +3,39 @@
  * @description Shared cache path resolver (`TUNNEL_CACHE_DIR` override) and bounded LRU/TTL pruning helpers.
  */
 
-import { existsSync, mkdirSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype', 'toString', 'valueOf', 'hasOwnProperty']);
+const UNSAFE_KEYS = new Set([
+  '__proto__',
+  'constructor',
+  'prototype',
+  'toString',
+  'valueOf',
+  'hasOwnProperty',
+  'isPrototypeOf',
+  'propertyIsEnumerable',
+  'toLocaleString',
+  '__defineGetter__',
+  '__defineSetter__',
+  '__lookupGetter__',
+  '__lookupSetter__',
+]);
+
+const DEFAULT_MAX_ENTRIES = 64;
+const DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Resolves the `.cache` directory for a plugin root, respecting `process.env.TUNNEL_CACHE_DIR`
  * so isolated tests never pollute production `.cache/*.json`.
- * @param {string} pluginRoot
+ * @param {string} [pluginRoot=process.cwd()]
  * @returns {string}
  */
 export function resolveTunnelCacheDir(pluginRoot = process.cwd()) {
   const override = typeof process.env.TUNNEL_CACHE_DIR === 'string' ? process.env.TUNNEL_CACHE_DIR.trim() : '';
   if (override) return resolve(override);
-  return join(pluginRoot, '.cache');
+  const root = typeof pluginRoot === 'string' && pluginRoot.trim() ? pluginRoot : process.cwd();
+  return join(root, '.cache');
 }
 
 /**
@@ -26,9 +44,8 @@ export function resolveTunnelCacheDir(pluginRoot = process.cwd()) {
  * @returns {string}
  */
 export function ensureTunnelCacheDir(cacheDir) {
-  if (cacheDir && !existsSync(cacheDir)) {
-    mkdirSync(cacheDir, { recursive: true });
-  }
+  if (typeof cacheDir !== 'string' || !cacheDir.trim()) return '';
+  mkdirSync(cacheDir, { recursive: true });
   return cacheDir;
 }
 
@@ -45,43 +62,79 @@ export function ensureTunnelCacheDir(cacheDir) {
  * }} [options={}]
  * @returns {Record<string, T>}
  */
-export function pruneObjectMapByTimestamp(
-  mapObj,
-  {
-    maxEntries = 64,
-    maxAgeMs = 24 * 60 * 60 * 1000,
-    now = Date.now(),
-    getTs = (val) => Number(val?.ts || val?.updatedAtMs || 0) || 0,
-    keepPredicate = null,
-  } = {}
-) {
+export function pruneObjectMapByTimestamp(mapObj, options = {}) {
   if (!mapObj || typeof mapObj !== 'object' || Array.isArray(mapObj)) return {};
+
+  const opts = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
+  const defaultGetTs = (val) => Number(val?.ts || val?.updatedAtMs || 0) || 0;
+  const getTs = typeof opts.getTs === 'function' ? opts.getTs : defaultGetTs;
+  const keepPredicate = typeof opts.keepPredicate === 'function' ? opts.keepPredicate : null;
+
+  const rawNow = opts.now;
+  const now = typeof rawNow === 'number' && Number.isFinite(rawNow) ? rawNow : Date.now();
+
+  const rawMaxAge = opts.maxAgeMs;
+  const maxAgeMs =
+    rawMaxAge !== null && rawMaxAge !== '' && typeof rawMaxAge !== 'boolean' && Number.isFinite(Number(rawMaxAge))
+      ? Number(rawMaxAge)
+      : DEFAULT_MAX_AGE_MS;
+
+  const rawMaxEntries = opts.maxEntries;
+  const limit =
+    rawMaxEntries !== null &&
+    rawMaxEntries !== '' &&
+    typeof rawMaxEntries !== 'boolean' &&
+    Number.isFinite(Number(rawMaxEntries))
+      ? Math.max(1, Math.round(Number(rawMaxEntries)))
+      : DEFAULT_MAX_ENTRIES;
 
   const pinned = [];
   const regular = [];
 
   for (const [k, v] of Object.entries(mapObj)) {
-    if (!k || UNSAFE_KEYS.has(k) || !v || typeof v !== 'object') continue;
-    if (typeof keepPredicate === 'function' && keepPredicate(k, v)) {
-      pinned.push({ k, v, ts: Number(getTs(v, k)) || now });
+    if (!k || UNSAFE_KEYS.has(k) || !v || typeof v !== 'object' || Array.isArray(v)) continue;
+
+    let rawTs = 0;
+    try {
+      rawTs = Number(getTs(v, k));
+    } catch {
       continue;
     }
-    const ts = Number(getTs(v, k)) || 0;
+    const ts = Number.isFinite(rawTs) && rawTs > 0 ? rawTs : 0;
+
+    let isPinned = false;
+    if (keepPredicate) {
+      try {
+        isPinned = Boolean(keepPredicate(k, v));
+      } catch {
+        isPinned = false;
+      }
+    }
+
+    if (isPinned) {
+      pinned.push({ k, v, ts: ts || now });
+      continue;
+    }
+
     if (maxAgeMs > 0) {
       if (!ts || now - ts > maxAgeMs) continue;
     }
     regular.push({ k, v, ts });
   }
 
-  const limit = Number.isFinite(Number(maxEntries)) ? Math.max(1, Math.round(Number(maxEntries))) : 64;
-  if (pinned.length + regular.length > limit) {
+  if (pinned.length > limit) {
+    pinned.sort((a, b) => b.ts - a.ts);
+  }
+  const keptPinnedCount = Math.min(pinned.length, limit);
+  const allowedRegular = Math.max(0, limit - keptPinnedCount);
+
+  if (regular.length > allowedRegular) {
     regular.sort((a, b) => b.ts - a.ts);
   }
-  const allowedRegular = Math.max(0, limit - pinned.length);
 
   const out = {};
-  for (const item of pinned) {
-    out[item.k] = item.v;
+  for (let i = 0; i < keptPinnedCount; i++) {
+    out[pinned[i].k] = pinned[i].v;
   }
   for (let i = 0; i < regular.length && i < allowedRegular; i++) {
     out[regular[i].k] = regular[i].v;
@@ -95,10 +148,12 @@ export function pruneObjectMapByTimestamp(
  * @param {{ treatSelfAsAlive?: boolean }} [options]
  * @returns {boolean}
  */
-export function isPidAlive(pid, { treatSelfAsAlive = false } = {}) {
+export function isPidAlive(pid, options = {}) {
+  if (typeof pid !== 'number' && (typeof pid !== 'string' || !pid.trim())) return false;
   const num = Number(pid);
   if (!Number.isInteger(num) || num <= 0) return false;
-  if (treatSelfAsAlive && num === process.pid) return true;
+  const opts = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
+  if (opts.treatSelfAsAlive && num === process.pid) return true;
   try {
     process.kill(num, 0);
     return true;
@@ -113,6 +168,7 @@ export function isPidAlive(pid, { treatSelfAsAlive = false } = {}) {
  * @returns {Record<string, unknown>}
  */
 export function createBaseLiveActivityState(extra = {}) {
+  const safeExtra = extra && typeof extra === 'object' && !Array.isArray(extra) ? extra : {};
   return {
     opSeq: 0,
     inFlight: [],
@@ -120,6 +176,6 @@ export function createBaseLiveActivityState(extra = {}) {
     lastOp: '',
     lastDetail: '',
     lastLatencyMs: 0,
-    ...(extra && typeof extra === 'object' ? extra : {}),
+    ...safeExtra,
   };
 }

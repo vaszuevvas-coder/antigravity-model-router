@@ -410,6 +410,42 @@ test('9. AgentDiet, artifact approval detection, Chain-of-Draft directives, Fail
   assert.ok(pivot.anchoredEntities.includes('metricCacheHitBadge'));
   assert.ok(pivot.anchoredEntities.includes('gpuPostEditCritic'));
 
+  const mockMapper = {
+    rankRepoByPageRank: () => ({
+      rankedFiles: [
+        { file: 'core/tool-pruner.mjs', seedHits: 2, matchedSymbols: [{ name: 'compileVoiceOrLongRuPromptPivot' }] },
+        { file: 'tests/auto-spec-mode.test.mjs', seedHits: 1, matchedSymbols: [{ name: 'resolveAutoSpecOutput' }] },
+      ],
+    }),
+  };
+  const forcedShortRu = compileVoiceOrLongRuPromptPivot('Поправь кэш в панели', {
+    wsPath: ROOT_DIR,
+    repoMapper: mockMapper,
+    forceAlways: true,
+  });
+  assert.equal(forcedShortRu.triggered, true);
+  assert.match(forcedShortRu.formattedPivot, /TARGETS:/);
+  assert.match(forcedShortRu.formattedPivot, /CONTRACTS:/);
+  assert.match(forcedShortRu.formattedPivot, /VERIFY:/);
+
+  const forcedShortEn = compileVoiceOrLongRuPromptPivot('Fix cache badge', {
+    wsPath: ROOT_DIR,
+    repoMapper: mockMapper,
+    forceAlways: true,
+  });
+  assert.equal(forcedShortEn.triggered, true);
+  assert.match(forcedShortEn.formattedPivot, /TARGETS:/);
+
+  const forcedEmpty = compileVoiceOrLongRuPromptPivot('   ', { wsPath: ROOT_DIR, repoMapper: mockMapper, forceAlways: true });
+  assert.equal(forcedEmpty.triggered, false);
+
+  const forcedReadOnly = compileVoiceOrLongRuPromptPivot('Почему тормозит троттлинг?', {
+    wsPath: ROOT_DIR,
+    repoMapper: mockMapper,
+    forceAlways: true,
+  });
+  assert.equal(forcedReadOnly.triggered, false);
+
   const nowIso = new Date().toISOString();
   const bucket = {
     targetFile: 'core/hook-runner.mjs',

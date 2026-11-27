@@ -450,3 +450,306 @@ test('6. Fix #1: registerDaemonWorkspace updates latest active workspace & resol
     resetStdioClientWorkspaceForTest('');
   }
 });
+
+test('7. Installed plugin dirs are never treated as user workspaces and unscoped chats auto-heal to "Без проекта"', async () => {
+  const {
+    isBrainOrTempWorkspacePath,
+    isInstalledPluginWorkspacePath,
+  } = await import('../core/progress/progress-parsers.mjs');
+  const {
+    UNSCOPED_CHAT_PROJECT_RU,
+    initTaskProgressFromPrompt,
+    advanceTaskProgressOnPreTool,
+    recordTaskProgressOnPostTool,
+    resetTaskProgress,
+  } = await import('../core/task-progress.mjs');
+  const { isEphemeralPanelCandidatePath } = await import('../sidecars/panel/lib/panel-state-skills.mjs');
+
+  const pluginInstallDir = 'C:\\Users\\Test\\.gemini\\config\\plugins\\antigravity-model-router';
+  const scratchDevRepoDir = 'C:\\Users\\Test\\.gemini\\antigravity\\scratch\\antigravity-model-router';
+
+  assert.equal(isInstalledPluginWorkspacePath(pluginInstallDir), true);
+  assert.equal(isInstalledPluginWorkspacePath(scratchDevRepoDir), false);
+  assert.equal(isBrainOrTempWorkspacePath(pluginInstallDir), true);
+  assert.equal(isBrainOrTempWorkspacePath(scratchDevRepoDir), false);
+  assert.equal(isEphemeralPanelCandidatePath(pluginInstallDir), true);
+  assert.equal(isEphemeralPanelCandidatePath(scratchDevRepoDir), false);
+
+  const prevCacheDir = process.env.TUNNEL_CACHE_DIR;
+  const tmpCache = makeTempDir('amr-plugin-ws-isolation-');
+  const tmpRepo = makeTempDir('amr-real-proj-');
+  process.env.TUNNEL_CACHE_DIR = tmpCache;
+
+  try {
+    fs.writeFileSync(path.join(tmpRepo, 'package.json'), '{"name":"real-proj"}\n', 'utf8');
+    resetTaskProgress();
+
+    // Another active chat sets state.workspaceRoot to tmpRepo
+    initTaskProgressFromPrompt({
+      conversationId: 'real-proj-chat',
+      workspaceRoot: tmpRepo,
+      userPrompt: 'Fix real project bug',
+      grade: 'S',
+    });
+
+    // Unscoped chat receives installed plugin dir (or empty workspaceRoot) -> must stay "Без проекта"
+    const cidUnscoped = 'unscoped-plugin-chat';
+    initTaskProgressFromPrompt({
+      conversationId: cidUnscoped,
+      workspaceRoot: pluginInstallDir,
+      userPrompt: 'Просто вопрос без проекта',
+      grade: 'S',
+    });
+    advanceTaskProgressOnPreTool({
+      conversationId: cidUnscoped,
+      workspaceRoot: '',
+      toolName: 'run_command',
+      commandLine: 'echo hi',
+    });
+    const afterPost = recordTaskProgressOnPostTool({
+      conversationId: cidUnscoped,
+      workspaceRoot: pluginInstallDir,
+      toolName: 'run_command',
+      commandLine: 'echo hi',
+      verifyOk: true,
+    });
+    const unscopedEntry = (afterPost.activeChats || []).find((c) => c.conversationId === cidUnscoped);
+    assert.ok(unscopedEntry, 'Unscoped chat must be present in activeChats');
+    assert.equal(unscopedEntry.isUnscopedChat, true);
+    assert.equal(unscopedEntry.projectName, UNSCOPED_CHAT_PROJECT_RU);
+    assert.equal(unscopedEntry.workspaceRoot, '');
+
+    // Poisoned legacy record in task-progress.json must auto-heal on getTaskProgressSnapshot
+    const poisonedCid = 'legacy-poisoned-plugin-chat';
+    const tpPath = path.join(tmpCache, 'task-progress.json');
+    updateJsonAtomicSync(
+      tpPath,
+      () => ({ version: '4.0.5', chats: {}, chatRegistry: {} }),
+      (cur) => {
+        const chats = cur?.chats && typeof cur.chats === 'object' ? { ...cur.chats } : {};
+        chats[poisonedCid] = {
+          conversationId: poisonedCid,
+          chatNumber: 9,
+          projectName: 'antigravity-model-router',
+          workspaceRoot: pluginInstallDir,
+          status: 'running',
+          currentStep: 1,
+          totalSteps: 2,
+          percent: 40,
+          steps: [],
+          updatedAt: Date.now(),
+        };
+        return { ...cur, chats };
+      }
+    );
+
+    const repairedSnap = getTaskProgressSnapshot({ workspaceRoot: '', brainDirs: [] });
+    const repairedChat = repairedSnap.chats[poisonedCid];
+    assert.ok(repairedChat, 'Poisoned chat must still exist after auto-heal');
+    assert.equal(repairedChat.workspaceRoot, '');
+    assert.equal(repairedChat.projectName, UNSCOPED_CHAT_PROJECT_RU);
+    assert.equal(repairedChat.isUnscopedChat, true);
+  } finally {
+    if (prevCacheDir === undefined) delete process.env.TUNNEL_CACHE_DIR;
+    else process.env.TUNNEL_CACHE_DIR = prevCacheDir;
+    try { fs.rmSync(tmpCache, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 }); } catch {}
+    try { fs.rmSync(tmpRepo, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 }); } catch {}
+  }
+});
+
+test('8. Auto-workspace prioritizes active IDE openWorkspaces & conversationId over fresher background chats (even without req headers)', async () => {
+  const { pathToFileURL } = await import('node:url');
+  const http = await import('node:http');
+  const { startSidecarPanel } = await import('../sidecars/panel/server.mjs');
+  const { initTaskProgressFromPrompt, resetTaskProgress } = await import('../core/task-progress.mjs');
+
+  const tmpRoot = makeTempDir('amr-ws-priority-');
+  const prevCacheDir = process.env.TUNNEL_CACHE_DIR;
+  const prevIsolate = process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+  const tmpCache = path.join(tmpRoot, 'cache');
+  const wsGame = path.join(tmpRoot, 'BitFergo-game');
+  const wsRouter = path.join(tmpRoot, 'antigravity-model-router');
+  const wsExtra = path.join(tmpRoot, 'extra-lib');
+
+  fs.mkdirSync(tmpCache, { recursive: true });
+  fs.mkdirSync(wsGame, { recursive: true });
+  fs.mkdirSync(wsRouter, { recursive: true });
+  fs.mkdirSync(wsExtra, { recursive: true });
+  fs.writeFileSync(path.join(wsGame, 'package.json'), '{"name":"bitfergo-game"}\n', 'utf8');
+  fs.writeFileSync(path.join(wsRouter, 'plugin.json'), '{"name":"antigravity-model-router"}\n', 'utf8');
+  fs.writeFileSync(path.join(wsExtra, 'package.json'), '{"name":"extra-lib"}\n', 'utf8');
+
+  process.env.TUNNEL_CACHE_DIR = tmpCache;
+  process.env.TUNNEL_TEST_ISOLATE_INSTALLED = '1';
+
+  const now = Date.now();
+  const gameUri = pathToFileURL(wsGame).href;
+  const extraUri = pathToFileURL(wsExtra).href;
+
+  try {
+    // 1. Direct resolver: single open IDE workspace beats fresher running chat in another repo
+    const tp = {
+      chats: {
+        'conv-game-1': { conversationId: 'conv-game-1', workspaceRoot: wsGame, status: 'running', updatedAt: now - 60_000 },
+        'conv-router-9': { conversationId: 'conv-router-9', workspaceRoot: wsRouter, status: 'running', updatedAt: now - 1_000 },
+      },
+    };
+    const resolvedSingleOpen = await resolveActiveWorkspaceForPanel('', {
+      allowEphemeralCandidates: true,
+      openWorkspaces: [gameUri],
+      taskProgress: tp,
+      cpWorkspaces: [],
+      ramWorkspaces: [],
+    });
+    assert.equal(path.resolve(resolvedSingleOpen), path.resolve(wsGame));
+
+    // 2. Multi-root openWorkspaces breaks tie via activeConversationId
+    const tpMulti = {
+      chats: {
+        'conv-game-1': { conversationId: 'conv-game-1', workspaceRoot: wsGame, status: 'idle', updatedAt: now - 120_000 },
+        'conv-extra-2': { conversationId: 'conv-extra-2', workspaceRoot: wsExtra, status: 'running', updatedAt: now - 5_000 },
+        'conv-router-9': { conversationId: 'conv-router-9', workspaceRoot: wsRouter, status: 'running', updatedAt: now - 1_000 },
+      },
+    };
+    const resolvedMultiByCid = await resolveActiveWorkspaceForPanel('', {
+      allowEphemeralCandidates: true,
+      openWorkspaces: [extraUri, gameUri],
+      activeConversationId: 'conv-game-1',
+      taskProgress: tpMulti,
+      cpWorkspaces: [],
+      ramWorkspaces: [],
+    });
+    assert.equal(path.resolve(resolvedMultiByCid), path.resolve(wsGame));
+
+    // 3. Empty openWorkspaces still honors activeConversationId over fresher background chat
+    const resolvedByCidOnly = await resolveActiveWorkspaceForPanel('', {
+      allowEphemeralCandidates: true,
+      openWorkspaces: [],
+      activeConversationId: 'conv-game-1',
+      taskProgress: tp,
+      cpWorkspaces: [],
+      ramWorkspaces: [],
+    });
+    assert.equal(path.resolve(resolvedByCidOnly), path.resolve(wsGame));
+
+    // 4. SidecarApp contract (handler(data) with NO req argument, matching sidecar_sdk/index.mjs)
+    // Put non-ephemeral folder names outside os.tmpdir() filter? No, use direct non-amr path via symlink?
+    // Even simpler: test via query params on /api/state when activeConversationId & openWorkspaces are passed without req.
+    resetTaskProgress();
+    initTaskProgressFromPrompt({
+      conversationId: 'conv-game-live',
+      workspaceRoot: wsGame,
+      userPrompt: 'Update game UI',
+      grade: 'M',
+    });
+    initTaskProgressFromPrompt({
+      conversationId: 'conv-router-live',
+      workspaceRoot: wsRouter,
+      userPrompt: 'Background router task',
+      grade: 'M',
+    });
+
+    class DataOnlySidecarApp {
+      constructor() {
+        this._pages = new Map();
+        this._apis = new Map();
+        this._server = null;
+      }
+      page(p, h) { this._pages.set(p, h); }
+      api(p, h, m = 'POST') {
+        if (!this._apis.has(p)) this._apis.set(p, new Map());
+        this._apis.get(p).set(m.toUpperCase(), h);
+      }
+      run() {
+        const srv = http.createServer((req, res) => {
+          const u = new URL(req.url || '/', 'http://127.0.0.1');
+          const handler = this._apis.get(u.pathname)?.get(req.method);
+          if (!handler) { res.writeHead(404); res.end(); return; }
+          const data = {};
+          for (const [k, v] of u.searchParams.entries()) data[k] = v;
+          Promise.resolve(handler(data)) // intentionally omit req like real sidecar_sdk!
+            .then((out) => {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify(out));
+            })
+            .catch((err) => {
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: err?.message }));
+            });
+        });
+        this._server = srv;
+        return new Promise((r) => srv.listen(0, '127.0.0.1', () => r(srv)));
+      }
+      get port() { return this._server?.address()?.port || 0; }
+      close() {
+        if (!this._server) return Promise.resolve();
+        const s = this._server;
+        this._server = null;
+        return new Promise((r) => s.close(() => r()));
+      }
+    }
+
+    // Create two non-ephemeral workspace paths? Wait: os.tmpdir() is ephemeral, so verify query param parsing on /api/state
+    // with a real non-ephemeral project (ROOT_DIR and ROOT_DIR/sidecars/panel/ui-src) vs data.openWorkspaces!
+    const app = await startSidecarPanel({ SidecarAppClass: DataOnlySidecarApp });
+    try {
+      const origin = `http://127.0.0.1:${app.port}`;
+      const targetSubProj = path.join(ROOT_DIR, 'skills', 'ui-ux-design-system');
+      const targetUri = pathToFileURL(targetSubProj).href;
+      // Note: ROOT_DIR is active in taskProgress or fallback; passing openWorkspaces=targetUri in query string without headers/req
+      // must resolve activeWorkspace to targetSubProj when targetSubProj has a valid dir and isn't ephemeral.
+      const res = await fetch(`${origin}/api/state?adaptive=1&openWorkspaces=${encodeURIComponent(targetUri)}`);
+      const json = await res.json();
+      assert.equal(path.resolve(json.activeWorkspace), path.resolve(targetSubProj));
+      assert.equal(path.resolve(json.autoWorkspace), path.resolve(targetSubProj));
+    } finally {
+      await app.close();
+    }
+  } finally {
+    if (prevCacheDir === undefined) delete process.env.TUNNEL_CACHE_DIR;
+    else process.env.TUNNEL_CACHE_DIR = prevCacheDir;
+    if (prevIsolate === undefined) delete process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+    else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIsolate;
+    try { fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 }); } catch {}
+  }
+});
+
+test('9. Read-only /graph/* IPC routes and makeActive:false never hijack active default workspace', async () => {
+  const { pathToFileURL } = await import('node:url');
+  const { RamMemoryEngine } = await import('../core/ram-memory-engine.mjs');
+  const {
+    dispatchIpcRoute,
+    extractClientRootFromInitialize,
+    registerDaemonWorkspace,
+    resetStdioClientWorkspaceForTest,
+    resolveDefaultWorkspace,
+  } = await import('../core/ram-memory-mcp.mjs');
+  const wsOne = path.join(ROOT_DIR, 'skills');
+  const wsTwo = path.join(ROOT_DIR, 'scripts');
+  const ipcEngine = new RamMemoryEngine({ budgetMb: 64 });
+  try {
+    extractClientRootFromInitialize({ rootUri: pathToFileURL(wsOne).href });
+    assert.equal(path.resolve(resolveDefaultWorkspace('')), path.resolve(wsOne));
+
+    registerDaemonWorkspace(wsTwo, { makeActive: false });
+    assert.equal(path.resolve(resolveDefaultWorkspace('')), path.resolve(wsOne));
+
+    const graphRes = await dispatchIpcRoute(
+      'POST',
+      '/graph/project-map',
+      { wsPath: wsTwo, includeTests: false, includeDocs: false },
+      { engine: ipcEngine, settings: { enabled: true }, sentinel: null }
+    );
+    assert.equal(graphRes.status, 200);
+    assert.equal(graphRes.body?.ok, true);
+    assert.equal(path.resolve(resolveDefaultWorkspace('')), path.resolve(wsOne));
+
+    // Explicit active switch (default makeActive: true) must still update default workspace
+    registerDaemonWorkspace(wsTwo);
+    assert.equal(path.resolve(resolveDefaultWorkspace('')), path.resolve(wsTwo));
+  } finally {
+    try { ipcEngine.evict('all'); } catch {}
+    resetStdioClientWorkspaceForTest('');
+  }
+});
+

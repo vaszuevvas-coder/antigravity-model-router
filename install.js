@@ -19,6 +19,7 @@ import {
 import { findOllamaBinary } from './core/local-gpu-engine.mjs';
 import { buildPanelUi } from './core/panel-ui-builder.mjs';
 import { detectOsLocale, normalizeLang } from './core/i18n.mjs';
+import { atomicWriteJsonSync, sleepSync, withFileLockSync } from './core/safe-json.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,6 +39,7 @@ export const EXCLUDE = new Set([
   'node_modules',
   'scratch',
   'tests',
+  'docs',
   'dist',
   'build',
   'releases',
@@ -116,7 +118,13 @@ export function pruneRootOrphans(srcRoot, destRoot) {
   if (!fs.existsSync(destRoot)) return 0;
   const ROOT_PRESERVE = new Set(['.cache', 'router-state.json', 'mcp_config.json']);
   let removed = 0;
-  for (const entry of fs.readdirSync(destRoot, { withFileTypes: true })) {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(destRoot, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const entry of entries) {
     if (ROOT_PRESERVE.has(entry.name)) continue;
     const destEntry = path.join(destRoot, entry.name);
     const srcEntry = path.join(srcRoot, entry.name);
@@ -124,14 +132,15 @@ export function pruneRootOrphans(srcRoot, destRoot) {
     if (!shouldDelete) {
       try {
         const srcIsDir = fs.statSync(srcEntry).isDirectory();
-        if (entry.isDirectory() !== srcIsDir) shouldDelete = true;
+        const destIsDir = entry.isSymbolicLink() ? fs.statSync(destEntry).isDirectory() : entry.isDirectory();
+        if (destIsDir !== srcIsDir) shouldDelete = true;
       } catch {
         shouldDelete = true;
       }
     }
     if (shouldDelete) {
       try {
-        fs.rmSync(destEntry, { recursive: true, force: true });
+        fs.rmSync(destEntry, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
         removed++;
       } catch {}
     }
@@ -150,15 +159,31 @@ function isPreservedUserSkillDir(destDirPath, entry) {
 function pruneOrphanFiles(srcDirPath, destDirPath) {
   if (!fs.existsSync(destDirPath)) return 0;
   let removed = 0;
-  for (const entry of fs.readdirSync(destDirPath, { withFileTypes: true })) {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(destDirPath, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const entry of entries) {
     const destEntry = path.join(destDirPath, entry.name);
     const srcEntry = path.join(srcDirPath, entry.name);
+    if (NESTED_EXCLUDE.has(entry.name)) {
+      if (isPreservedUserSkillDir(destDirPath, entry)) {
+        continue;
+      }
+      try {
+        fs.rmSync(destEntry, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+        removed++;
+      } catch {}
+      continue;
+    }
     if (!fs.existsSync(srcEntry)) {
       if (isPreservedUserSkillDir(destDirPath, entry)) {
         continue;
       }
       try {
-        fs.rmSync(destEntry, { recursive: true, force: true });
+        fs.rmSync(destEntry, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
         removed++;
       } catch {}
     } else if (entry.isDirectory()) {
@@ -166,10 +191,24 @@ function pruneOrphanFiles(srcDirPath, destDirPath) {
         if (fs.statSync(srcEntry).isDirectory()) {
           removed += pruneOrphanFiles(srcEntry, destEntry);
         } else {
-          fs.rmSync(destEntry, { recursive: true, force: true });
+          fs.rmSync(destEntry, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
           removed++;
         }
       } catch {}
+    } else if (entry.isSymbolicLink()) {
+      try {
+        const destStat = fs.statSync(destEntry);
+        const srcStat = fs.statSync(srcEntry);
+        if (destStat.isDirectory() !== srcStat.isDirectory()) {
+          fs.rmSync(destEntry, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+          removed++;
+        }
+      } catch {
+        try {
+          fs.rmSync(destEntry, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+          removed++;
+        } catch {}
+      }
     }
   }
   return removed;
@@ -216,7 +255,14 @@ export function maintainCacheDir(cacheDir) {
   const digests = [];
   const validVectorStores = [];
 
-  for (const name of fs.readdirSync(cacheDir)) {
+  let cacheEntries = [];
+  try {
+    cacheEntries = fs.readdirSync(cacheDir);
+  } catch {
+    return res;
+  }
+
+  for (const name of cacheEntries) {
     const fullPath = path.join(cacheDir, name);
 
     if (/^repomap-.*\.json$/i.test(name)) {
@@ -280,9 +326,10 @@ export function maintainCacheDir(cacheDir) {
         }
       } catch {}
       if (!validI8) {
-        try { fs.unlinkSync(fullPath); } catch {}
-        try { if (fs.existsSync(binPath)) fs.unlinkSync(binPath); } catch {}
-        res.vectorsPurged++;
+        let purgedAny = false;
+        try { fs.unlinkSync(fullPath); purgedAny = true; } catch {}
+        try { if (fs.existsSync(binPath)) { fs.unlinkSync(binPath); purgedAny = true; } } catch {}
+        if (purgedAny) res.vectorsPurged++;
       } else {
         validVectorStores.push({ metaPath: fullPath, binPath, mtimeMs });
       }
@@ -310,34 +357,52 @@ export function maintainCacheDir(cacheDir) {
     }
   }
 
-  // Prune & compact high-frequency JSON caches (max 64 entries, spaces: 0)
+  // Prune & compact high-frequency JSON caches (max 64 entries, spaces: 0) under file locks
   const nowMs = Date.now();
   const compactJsonStore = (fileName, wrapKey, maxAgeMs, getTs, keepFn) => {
     const fp = path.join(cacheDir, fileName);
     if (!fs.existsSync(fp)) return;
     try {
-      const parsed = JSON.parse(fs.readFileSync(fp, 'utf8'));
-      const rawMap = wrapKey ? parsed?.[wrapKey] : parsed;
-      if (!rawMap || typeof rawMap !== 'object' || Array.isArray(rawMap)) return;
-      const pinned = [];
-      const regular = [];
-      for (const [k, v] of Object.entries(rawMap)) {
-        if (!v || typeof v !== 'object') continue;
-        if (keepFn && keepFn(k, v)) {
-          pinned.push([k, v, getTs(v) || nowMs]);
-        } else {
-          const ts = getTs(v) || 0;
-          if (ts > 0 && (maxAgeMs <= 0 || nowMs - ts <= maxAgeMs)) {
-            regular.push([k, v, ts]);
+      withFileLockSync(
+        fp,
+        () => {
+          if (!fs.existsSync(fp)) return;
+          let parsed;
+          try {
+            parsed = JSON.parse(fs.readFileSync(fp, 'utf8'));
+          } catch (parseErr) {
+            if (parseErr instanceof SyntaxError) {
+              try {
+                fs.unlinkSync(fp);
+                res.legacyRemoved++;
+              } catch {}
+            }
+            return;
           }
-        }
-      }
-      regular.sort((a, b) => b[2] - a[2]);
-      const nextMap = {};
-      for (const [k, v] of pinned) nextMap[k] = v;
-      for (const [k, v] of regular.slice(0, Math.max(0, 64 - pinned.length))) nextMap[k] = v;
-      const nextDoc = wrapKey ? { ...parsed, [wrapKey]: nextMap } : nextMap;
-      fs.writeFileSync(fp, JSON.stringify(nextDoc), 'utf8');
+          const rawMap = wrapKey ? parsed?.[wrapKey] : parsed;
+          if (!rawMap || typeof rawMap !== 'object' || Array.isArray(rawMap)) return;
+          const pinned = [];
+          const regular = [];
+          for (const [k, v] of Object.entries(rawMap)) {
+            if (!v || typeof v !== 'object') continue;
+            if (keepFn && keepFn(k, v)) {
+              pinned.push([k, v, getTs(v) || nowMs]);
+            } else {
+              const ts = getTs(v) || 0;
+              if (ts > 0 && (maxAgeMs <= 0 || nowMs - ts <= maxAgeMs)) {
+                regular.push([k, v, ts]);
+              }
+            }
+          }
+          regular.sort((a, b) => b[2] - a[2]);
+          const nextMap = {};
+          for (const [k, v] of pinned) nextMap[k] = v;
+          for (const [k, v] of regular.slice(0, Math.max(0, 64 - pinned.length))) nextMap[k] = v;
+          const nextDoc = wrapKey ? { ...parsed, [wrapKey]: nextMap } : nextMap;
+          atomicWriteJsonSync(fp, nextDoc, { spaces: 0 });
+        },
+        { createDir: false }
+      );
     } catch {}
   };
 
@@ -353,21 +418,39 @@ export function maintainCacheDir(cacheDir) {
   try {
     const compFile = path.join(cacheDir, 'compaction-state.json');
     if (fs.existsSync(compFile)) {
-      const comp = JSON.parse(fs.readFileSync(compFile, 'utf8'));
-      const epochs = comp?.epochs && typeof comp.epochs === 'object' ? comp.epochs : {};
-      const resets = comp?.resetTimestamps && typeof comp.resetTimestamps === 'object' ? comp.resetTimestamps : {};
-      const keys = Array.from(new Set([...Object.keys(epochs), ...Object.keys(resets)]));
-      keys.sort((a, b) => (Number(resets[b] || 0) || 0) - (Number(resets[a] || 0) || 0));
-      const nextEp = {};
-      const nextRs = {};
-      for (const k of keys.slice(0, 64)) {
-        if (Object.hasOwn(epochs, k)) nextEp[k] = epochs[k];
-        if (Object.hasOwn(resets, k)) nextRs[k] = resets[k];
-      }
-      fs.writeFileSync(
+      withFileLockSync(
         compFile,
-        JSON.stringify({ epochs: nextEp, resetTimestamps: nextRs, totalCompactions: Number(comp?.totalCompactions || 0) }),
-        'utf8'
+        () => {
+          if (!fs.existsSync(compFile)) return;
+          let comp;
+          try {
+            comp = JSON.parse(fs.readFileSync(compFile, 'utf8'));
+          } catch (parseErr) {
+            if (parseErr instanceof SyntaxError) {
+              try {
+                fs.unlinkSync(compFile);
+                res.legacyRemoved++;
+              } catch {}
+            }
+            return;
+          }
+          const epochs = comp?.epochs && typeof comp.epochs === 'object' ? comp.epochs : {};
+          const resets = comp?.resetTimestamps && typeof comp.resetTimestamps === 'object' ? comp.resetTimestamps : {};
+          const keys = Array.from(new Set([...Object.keys(epochs), ...Object.keys(resets)]));
+          keys.sort((a, b) => (Number(resets[b] || 0) || 0) - (Number(resets[a] || 0) || 0));
+          const nextEp = {};
+          const nextRs = {};
+          for (const k of keys.slice(0, 64)) {
+            if (Object.hasOwn(epochs, k)) nextEp[k] = epochs[k];
+            if (Object.hasOwn(resets, k)) nextRs[k] = resets[k];
+          }
+          atomicWriteJsonSync(
+            compFile,
+            { epochs: nextEp, resetTimestamps: nextRs, totalCompactions: Number(comp?.totalCompactions || 0) },
+            { spaces: 0 }
+          );
+        },
+        { createDir: false }
       );
     }
   } catch {}
@@ -463,6 +546,23 @@ function purgeDuplicateGlobalSkills(installedPluginDir) {
   return removed;
 }
 
+function normalizePathForCompare(targetPath) {
+  const resolved = path.resolve(String(targetPath || ''));
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function isSamePath(a, b) {
+  return normalizePathForCompare(a) === normalizePathForCompare(b);
+}
+
+function isSubPath(parentPath, childPath) {
+  const parent = normalizePathForCompare(parentPath);
+  const child = normalizePathForCompare(childPath);
+  if (!parent || !child || parent === child) return false;
+  const rel = path.relative(parent, child);
+  return Boolean(rel) && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
 function resolveTargetDir(customTarget) {
   if (typeof customTarget === 'string' && customTarget.trim()) {
     return path.resolve(customTarget.trim());
@@ -499,8 +599,7 @@ export function createStateBackup(destRoot, externalBackupPath = '') {
 
   let writtenInternal = '';
   try {
-    fs.mkdirSync(cacheDir, { recursive: true });
-    fs.writeFileSync(backupPath, payload, 'utf8');
+    atomicWriteJsonSync(backupPath, payload, { spaces: 2 });
     writtenInternal = backupPath;
   } catch {}
 
@@ -508,8 +607,7 @@ export function createStateBackup(destRoot, externalBackupPath = '') {
   if (typeof externalBackupPath === 'string' && externalBackupPath.trim()) {
     try {
       const extPath = path.resolve(externalBackupPath.trim());
-      fs.mkdirSync(path.dirname(extPath), { recursive: true });
-      fs.writeFileSync(extPath, payload, 'utf8');
+      atomicWriteJsonSync(extPath, payload, { spaces: 2 });
       writtenExternal = extPath;
     } catch {}
   }
@@ -567,23 +665,11 @@ function computeMergedState(srcStatePath, destStatePath, fallbackExistingState =
 }
 
 function calibrateOrMergeState(srcStatePath, destStatePath, fallbackExistingState = null) {
-  const mergedState = computeMergedState(srcStatePath, destStatePath, fallbackExistingState);
-  fs.mkdirSync(path.dirname(destStatePath), { recursive: true });
-  fs.writeFileSync(destStatePath, JSON.stringify(mergedState, null, 2) + '\n', 'utf8');
-  return mergedState;
-}
-
-function sleepMsSync(ms) {
-  const waitMs = Math.max(0, Number(ms) || 0);
-  if (!waitMs) return;
-  try {
-    if (typeof SharedArrayBuffer !== 'undefined' && typeof Atomics !== 'undefined') {
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, waitMs);
-      return;
-    }
-  } catch {}
-  const end = Date.now() + waitMs;
-  while (Date.now() < end) { /* fallback spin wait */ }
+  return withFileLockSync(destStatePath, () => {
+    const mergedState = computeMergedState(srcStatePath, destStatePath, fallbackExistingState);
+    atomicWriteJsonSync(destStatePath, JSON.stringify(mergedState, null, 2) + '\n', { spaces: 2 });
+    return mergedState;
+  });
 }
 
 const TRANSIENT_COPY_ERR_CODES = new Set(['EBUSY', 'EPERM', 'EACCES']);
@@ -599,65 +685,95 @@ function copyFileWithRetrySync(srcPath, destPath, retries = 3, delayMs = 150) {
       if (!TRANSIENT_COPY_ERR_CODES.has(err?.code) || attempt >= retries) {
         throw err;
       }
-      sleepMsSync(delayMs);
+      sleepSync(delayMs);
     }
   }
   if (lastErr) throw lastErr;
 }
 
-function copyRecursive(src, dest, destRoot = dest, options = {}, depth = 0) {
-  fs.mkdirSync(dest, { recursive: true });
-  const activeExclude = depth === 0 ? EXCLUDE : NESTED_EXCLUDE;
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-    if (activeExclude.has(entry.name)) continue;
-    const srcPath = path.join(src, entry.name);
-    const destPath = path.join(dest, entry.name);
-    if (entry.isDirectory()) {
-      copyRecursive(srcPath, destPath, destRoot, options, depth + 1);
-    } else {
-      // Сохраняем пользовательский router-state.json при обновлении, а для чистой установки калибруем лимиты под реальное железо ПК
-      if (entry.name === 'router-state.json') {
-        try {
-          calibrateOrMergeState(srcPath, destPath, options.fallbackExistingState || null);
-          continue;
-        } catch {}
-      }
-      // Прописываем точный абсолютный путь к MCP-серверу RAM и безопасный бюджет памяти при установке, сохраняя eager-настройки пользователя
-      if (entry.name === 'mcp_config.json') {
-        try {
-          const mcpCfg = JSON.parse(fs.readFileSync(srcPath, 'utf8'));
-          const existingMcp = safeParseJsonObject(destPath);
-          const installedStatePath = path.join(destRoot, 'router-state.json');
-          const existingState = safeParseJsonObject(installedStatePath) || options.fallbackExistingState || {};
-          const sysRam = detectCpuAndRam();
-          const maxRamCapMb = computeMaxRamBudgetMb(sysRam.totalRamMb);
-          const fallbackRamMb = sysRam.recommendedRamBudgetMb;
-          const budgetMb = Math.max(
-            512,
-            Math.min(maxRamCapMb, Number(existingState.ramMaxBudgetMb) || fallbackRamMb)
-          );
-          if (mcpCfg?.mcpServers?.['ram-memory']) {
-            mcpCfg.mcpServers['ram-memory'].args = [
-              `--max-old-space-size=${budgetMb}`,
-              path.join(destRoot, 'core', 'ram-memory-mcp.mjs'),
-            ];
-            const prevTools = existingMcp?.mcpServers?.['ram-memory']?.tools;
-            const nextTools = mcpCfg.mcpServers['ram-memory'].tools;
-            if (prevTools && typeof prevTools === 'object' && nextTools && typeof nextTools === 'object') {
-              for (const [toolKey, toolCfg] of Object.entries(nextTools)) {
-                if (Object.hasOwn(prevTools, toolKey) && typeof prevTools[toolKey]?.eager === 'boolean') {
-                  toolCfg.eager = prevTools[toolKey].eager;
-                }
-              }
-            }
+function mergeAndWriteMcpConfigSync(srcPath, destPath, destRoot, options = {}) {
+  const mcpCfg = JSON.parse(fs.readFileSync(srcPath, 'utf8'));
+  return withFileLockSync(destPath, () => {
+    const existingMcp = safeParseJsonObject(destPath);
+    const installedStatePath = path.join(destRoot, 'router-state.json');
+    const existingState = safeParseJsonObject(installedStatePath) || options.fallbackExistingState || {};
+    const sysRam = detectCpuAndRam();
+    const maxRamCapMb = computeMaxRamBudgetMb(sysRam.totalRamMb);
+    const fallbackRamMb = sysRam.recommendedRamBudgetMb;
+    const budgetMb = Math.max(
+      512,
+      Math.min(maxRamCapMb, Number(existingState.ramMaxBudgetMb) || fallbackRamMb)
+    );
+    if (mcpCfg?.mcpServers?.['ram-memory']) {
+      mcpCfg.mcpServers['ram-memory'].args = [
+        `--max-old-space-size=${budgetMb}`,
+        path.join(destRoot, 'core', 'ram-memory-mcp.mjs'),
+      ];
+      const prevTools = existingMcp?.mcpServers?.['ram-memory']?.tools;
+      const nextTools = mcpCfg.mcpServers['ram-memory'].tools;
+      if (prevTools && typeof prevTools === 'object' && nextTools && typeof nextTools === 'object') {
+        for (const [toolKey, toolCfg] of Object.entries(nextTools)) {
+          if (Object.hasOwn(prevTools, toolKey) && typeof prevTools[toolKey]?.eager === 'boolean') {
+            toolCfg.eager = prevTools[toolKey].eager;
           }
-          fs.writeFileSync(destPath, JSON.stringify(mcpCfg, null, 2), 'utf8');
-          continue;
-        } catch {}
+        }
       }
-      copyFileWithRetrySync(srcPath, destPath);
     }
+    atomicWriteJsonSync(destPath, JSON.stringify(mcpCfg, null, 2) + '\n', { spaces: 2 });
+  });
+}
+
+function copyRecursive(src, dest, destRoot = dest, options = {}, depth = 0, visitedRealDirs = new Set()) {
+  let realSrc = path.resolve(src);
+  try {
+    realSrc = fs.realpathSync(src);
+  } catch {}
+  if (visitedRealDirs.has(realSrc)) return;
+  visitedRealDirs.add(realSrc);
+
+  try {
+    fs.mkdirSync(dest, { recursive: true });
+    const activeExclude = depth === 0 ? EXCLUDE : NESTED_EXCLUDE;
+    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+      if (activeExclude.has(entry.name)) continue;
+      const srcPath = path.join(src, entry.name);
+      const destPath = path.join(dest, entry.name);
+      if (isSamePath(srcPath, destRoot)) continue;
+
+      let isDir = entry.isDirectory();
+      if (entry.isSymbolicLink()) {
+        try {
+          isDir = fs.statSync(srcPath).isDirectory();
+        } catch {
+          // Broken symlink: skip without aborting install
+          continue;
+        }
+      }
+
+      if (isDir) {
+        let realSub = path.resolve(srcPath);
+        try {
+          realSub = fs.realpathSync(srcPath);
+        } catch {}
+        if (visitedRealDirs.has(realSub) || isSamePath(realSub, destRoot)) continue;
+        copyRecursive(srcPath, destPath, destRoot, options, depth + 1, visitedRealDirs);
+      } else if (entry.name === 'router-state.json') {
+        // Сохраняем пользовательский router-state.json при обновлении, а для чистой установки калибруем лимиты под реальное железо ПК
+        calibrateOrMergeState(srcPath, destPath, options.fallbackExistingState || null);
+      } else if (entry.name === 'mcp_config.json') {
+        // Прописываем точный абсолютный путь к MCP-серверу RAM и безопасный бюджет памяти при установке, сохраняя eager-настройки пользователя
+        mergeAndWriteMcpConfigSync(srcPath, destPath, destRoot, options);
+      } else {
+        copyFileWithRetrySync(srcPath, destPath);
+      }
+    }
+  } finally {
+    visitedRealDirs.delete(realSrc);
   }
+}
+
+function isCliFlagToken(val) {
+  return /^-/.test(val) || /^\/(?:s|u|\?)$/i.test(val);
 }
 
 export function parseInstallCliArgs(argv = process.argv.slice(2)) {
@@ -671,6 +787,8 @@ export function parseInstallCliArgs(argv = process.argv.slice(2)) {
     silent: false,
     json: false,
     help: false,
+    unknownArgs: [],
+    errors: [],
   };
   for (let i = 0; i < safeArgv.length; i++) {
     const arg = String(safeArgv[i] || '').trim();
@@ -689,14 +807,39 @@ export function parseInstallCliArgs(argv = process.argv.slice(2)) {
       opts.silent = true;
     } else if (arg === '--json') {
       opts.json = true;
-    } else if (arg === '--lang' && i + 1 < safeArgv.length) {
-      opts.lang = String(safeArgv[++i] || '').trim();
+    } else if (arg === '--lang') {
+      const nextVal = i + 1 < safeArgv.length ? String(safeArgv[i + 1] || '').trim() : '';
+      if (!nextVal || isCliFlagToken(nextVal)) {
+        opts.errors.push(`Missing value for ${arg}`);
+      } else {
+        opts.lang = nextVal;
+        i++;
+      }
     } else if (arg.startsWith('--lang=')) {
-      opts.lang = arg.slice('--lang='.length).trim();
-    } else if (arg === '--target' && i + 1 < safeArgv.length) {
-      opts.targetDir = String(safeArgv[++i] || '').trim();
+      const val = arg.slice('--lang='.length).trim();
+      if (!val) {
+        opts.errors.push('Missing value for --lang=');
+      } else {
+        opts.lang = val;
+      }
+    } else if (arg === '--target') {
+      const nextVal = i + 1 < safeArgv.length ? String(safeArgv[i + 1] || '').trim() : '';
+      if (!nextVal || isCliFlagToken(nextVal)) {
+        opts.errors.push(`Missing value for ${arg}`);
+      } else {
+        opts.targetDir = nextVal;
+        i++;
+      }
     } else if (arg.startsWith('--target=')) {
-      opts.targetDir = arg.slice('--target='.length).trim();
+      const val = arg.slice('--target='.length).trim();
+      if (!val) {
+        opts.errors.push('Missing value for --target=');
+      } else {
+        opts.targetDir = val;
+      }
+    } else {
+      opts.unknownArgs.push(arg);
+      opts.errors.push(`Unknown argument: ${arg}`);
     }
   }
   return opts;
@@ -724,11 +867,36 @@ export function getInstallStatus({ targetDir: customTarget } = {}) {
   };
 }
 
+function isSafePluginUninstallTarget(destRoot) {
+  const fsRoot = path.parse(destRoot).root;
+  if (isSamePath(destRoot, fsRoot) || isSamePath(destRoot, os.homedir())) {
+    return false;
+  }
+  if (isSamePath(destRoot, srcDir) || isSubPath(destRoot, srcDir)) {
+    return false;
+  }
+  const manifest = safeParseJsonObject(path.join(destRoot, 'plugin.json'));
+  if (manifest?.name === PLUGIN_NAME) return true;
+  if (path.basename(destRoot).toLowerCase() === PLUGIN_NAME) {
+    const markers = [
+      'router-state.json',
+      'hooks.json',
+      'mcp_config.json',
+      path.join('core', 'hook-runner.mjs'),
+    ];
+    if (markers.some((rel) => fs.existsSync(path.join(destRoot, rel)))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function runUninstall({ targetDir: customTarget, purge = false, silent = false, lang = '' } = {}) {
   const isRu = normalizeLang(lang || detectOsLocale(), 'en') === 'ru';
   const destRoot = resolveTargetDir(customTarget);
   const externalBackup = getExternalBackupPath(destRoot);
   const log = silent ? () => {} : (...args) => console.log(...args);
+  const errLog = silent ? () => {} : (...args) => console.error(...args);
 
   if (!fs.existsSync(destRoot)) {
     if (purge && fs.existsSync(externalBackup)) {
@@ -745,6 +913,20 @@ export function runUninstall({ targetDir: customTarget, purge = false, silent = 
     };
   }
 
+  if (!isSafePluginUninstallTarget(destRoot)) {
+    const msg = isRu
+      ? `[ОШИБКА] Отказ удаления: каталог не распознан как безопасная установка ${PLUGIN_NAME}: ${destRoot}`
+      : `[ERROR] Refusing to remove directory that does not look like a ${PLUGIN_NAME} installation: ${destRoot}`;
+    errLog(msg);
+    return {
+      ok: false,
+      removed: false,
+      targetDir: destRoot,
+      backupPath: '',
+      error: msg,
+    };
+  }
+
   let backupPath = '';
   if (!purge) {
     const backupRes = createStateBackup(destRoot, externalBackup);
@@ -757,7 +939,22 @@ export function runUninstall({ targetDir: customTarget, purge = false, silent = 
     } catch {}
   }
 
-  fs.rmSync(destRoot, { recursive: true, force: true });
+  try {
+    fs.rmSync(destRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });
+  } catch (err) {
+    const msg = isRu
+      ? `[ОШИБКА] Не удалось удалить ${destRoot} (${err?.code || err?.message}). Закройте Google Antigravity и повторите.`
+      : `[ERROR] Failed to remove ${destRoot} (${err?.code || err?.message}). Close Google Antigravity and retry.`;
+    errLog(msg);
+    return {
+      ok: false,
+      removed: false,
+      targetDir: destRoot,
+      backupPath,
+      error: err?.message || String(err),
+    };
+  }
+
   log(isRu ? `[✓] Плагин ${PLUGIN_NAME} удалён из: ${destRoot}` : `[OK] Plugin ${PLUGIN_NAME} removed from: ${destRoot}`);
   if (backupPath) {
     log(isRu ? `[✓] Резервная копия настроек сохранена: ${backupPath}` : `[OK] Settings backup saved: ${backupPath}`);
@@ -774,12 +971,32 @@ export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun =
   const isRu = normalizeLang(lang || detectOsLocale(), 'en') === 'ru';
   const resolvedSrc = path.resolve(srcRoot || srcDir);
   const destRoot = resolveTargetDir(customTarget);
-  const isDefaultTarget = path.resolve(destRoot) === path.resolve(targetDir);
-  const inPlace = resolvedSrc === destRoot;
+  const isDefaultTarget = isSamePath(destRoot, targetDir);
+  const inPlace = isSamePath(resolvedSrc, destRoot);
   const log = silent ? () => {} : (...args) => console.log(...args);
+  const errLog = silent ? () => {} : (...args) => console.error(...args);
 
   const srcManifest = safeParseJsonObject(path.join(resolvedSrc, 'plugin.json'));
-  const version = srcManifest?.version ? String(srcManifest.version) : '4.0.5';
+  const version = srcManifest?.version ? String(srcManifest.version) : '4.0.6';
+
+  if (!inPlace && isSubPath(resolvedSrc, destRoot)) {
+    const msg = isRu
+      ? `[ОШИБКА] Целевая папка не может находиться внутри исходного каталога: ${destRoot}`
+      : `[ERROR] Target directory cannot be inside source directory: ${destRoot}`;
+    errLog(msg);
+    return {
+      ok: false,
+      dryRun: Boolean(dryRun),
+      targetDir: destRoot,
+      version,
+      inPlace: false,
+      orphansRemoved: 0,
+      globalDupesRemoved: 0,
+      restoredFromBackup: false,
+      error: msg,
+    };
+  }
+
   const srcStatePath = path.join(resolvedSrc, 'router-state.json');
   const destStatePath = path.join(destRoot, 'router-state.json');
   const externalBackupPath = getExternalBackupPath(destRoot);
@@ -814,16 +1031,58 @@ export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun =
     createStateBackup(destRoot);
   }
 
+  const warnings = [];
   if (inPlace) {
-    log(`[✓] Плагин уже находится в целевой директории: ${destRoot} — выполняем калибровку и обслуживание.`);
+    log(
+      isRu
+        ? `[✓] Плагин уже находится в целевой директории: ${destRoot} — выполняем калибровку и обслуживание.`
+        : `[OK] Plugin is already in target directory: ${destRoot} — running calibration and maintenance.`
+    );
     try {
       calibrateOrMergeState(destStatePath, destStatePath, fallbackBackupState);
-    } catch {}
+    } catch (err) {
+      const msg = isRu
+        ? `[ОШИБКА] Не удалось обновить настройки в ${destStatePath}: ${err?.message || err}`
+        : `[ERROR] Failed to calibrate settings at ${destStatePath}: ${err?.message || err}`;
+      errLog(msg);
+      return {
+        ok: false,
+        dryRun: false,
+        targetDir: destRoot,
+        version,
+        inPlace,
+        orphansRemoved: 0,
+        globalDupesRemoved: 0,
+        restoredFromBackup: Boolean(fallbackBackupState),
+        error: err?.message || String(err),
+      };
+    }
   } else {
     try {
       buildPanelUi({ repoRoot: resolvedSrc });
-    } catch {}
-    copyRecursive(resolvedSrc, destRoot, destRoot, { fallbackExistingState: fallbackBackupState });
+    } catch (err) {
+      warnings.push(`buildPanelUi: ${err?.message || err}`);
+    }
+    try {
+      copyRecursive(resolvedSrc, destRoot, destRoot, { fallbackExistingState: fallbackBackupState });
+    } catch (err) {
+      const msg = isRu
+        ? `[ОШИБКА] Сбой копирования файлов плагина в ${destRoot}: ${err?.message || err}`
+        : `[ERROR] Failed to copy plugin files to ${destRoot}: ${err?.message || err}`;
+      errLog(msg);
+      return {
+        ok: false,
+        dryRun: false,
+        targetDir: destRoot,
+        version,
+        inPlace,
+        orphansRemoved: 0,
+        globalDupesRemoved: 0,
+        restoredFromBackup: Boolean(fallbackBackupState),
+        warnings,
+        error: err?.message || String(err),
+      };
+    }
   }
 
   try {
@@ -834,7 +1093,9 @@ export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun =
         gpuEnabled: Boolean(finalState.gpuEnabled),
       });
     }
-  } catch {}
+  } catch (err) {
+    warnings.push(`syncMcpRamBudget: ${err?.message || err}`);
+  }
 
   let orphansRemoved = 0;
   if (!inPlace) {
@@ -869,7 +1130,7 @@ export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun =
 
   const globalDupesRemoved = isDefaultTarget ? purgeDuplicateGlobalSkills(destRoot) : 0;
 
-  // Чистка и обновление кэшей (.cache) The Tunnel v4.0.5: legacy priors/ledgers, старый f32bin-v1, нулевые repomap/digest
+  // Чистка и обновление кэшей (.cache) The Tunnel v4.0.6: legacy priors/ledgers, старый f32bin-v1, нулевые repomap/digest
   const targetCacheStats = maintainCacheDir(path.join(destRoot, '.cache'));
   const localCacheStats = inPlace || !isDefaultTarget
     ? { repomapsRemoved: 0, vectorsPurged: 0, digestsPruned: 0, legacyRemoved: 0 }
@@ -879,10 +1140,13 @@ export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun =
   const totalDigestsPruned = targetCacheStats.digestsPruned + localCacheStats.digestsPruned;
   const totalLegacyRemoved = targetCacheStats.legacyRemoved + localCacheStats.legacyRemoved;
 
+  for (const warn of warnings) {
+    log(isRu ? `[!] Предупреждение: ${warn}` : `[!] Warning: ${warn}`);
+  }
   log(
     isRu
-      ? `[✓] Обслуживание The Tunnel v4.0.5: удалено сирот=${orphansRemoved}, дублей скиллов v3.0=${globalDupesRemoved}, legacy-кэшей=${totalLegacyRemoved}, устаревших f32bin/json векторов=${totalVectorsPurged}, устаревших repomap=${totalRepomapsRemoved}, старых дайджестов=${totalDigestsPruned}`
-      : `[OK] The Tunnel v4.0.5 maintenance: orphansRemoved=${orphansRemoved}, dupSkills=${globalDupesRemoved}, legacyCaches=${totalLegacyRemoved}, staleVectors=${totalVectorsPurged}, staleRepomaps=${totalRepomapsRemoved}, prunedDigests=${totalDigestsPruned}`
+      ? `[✓] Обслуживание The Tunnel v4.0.6: удалено сирот=${orphansRemoved}, дублей скиллов v3.0=${globalDupesRemoved}, legacy-кэшей=${totalLegacyRemoved}, устаревших f32bin/json векторов=${totalVectorsPurged}, устаревших repomap=${totalRepomapsRemoved}, старых дайджестов=${totalDigestsPruned}`
+      : `[OK] The Tunnel v4.0.6 maintenance: orphansRemoved=${orphansRemoved}, dupSkills=${globalDupesRemoved}, legacyCaches=${totalLegacyRemoved}, staleVectors=${totalVectorsPurged}, staleRepomaps=${totalRepomapsRemoved}, prunedDigests=${totalDigestsPruned}`
   );
   if (fallbackBackupState) {
     log(isRu ? `[✓] Пользовательские настройки восстановлены из резервной копии: ${externalBackupPath}` : `[OK] User settings restored from backup: ${externalBackupPath}`);
@@ -901,6 +1165,7 @@ export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun =
     orphansRemoved,
     globalDupesRemoved,
     restoredFromBackup: Boolean(fallbackBackupState),
+    warnings,
   };
 }
 
@@ -929,6 +1194,11 @@ if (isMain) {
       '  node install.js --status [--target <dir>] [--lang en|ru] [--json]',
       '  node install.js --uninstall [--target <dir>] [--lang en|ru] [--purge] [--silent]',
     ].join('\n'));
+  } else if (cliOpts.errors.length > 0) {
+    for (const errMsg of cliOpts.errors) {
+      console.error(isRu ? `[ОШИБКА] ${errMsg}` : `[ERROR] ${errMsg}`);
+    }
+    process.exit(1);
   } else if (cliOpts.action === 'status') {
     const st = getInstallStatus({ targetDir: cliOpts.targetDir });
     if (cliOpts.json) {
@@ -945,8 +1215,20 @@ if (isMain) {
       console.log(`Node.js:  ${st.nodeVersion}`);
     }
   } else if (cliOpts.action === 'uninstall') {
-    runUninstall({ targetDir: cliOpts.targetDir, purge: cliOpts.purge, silent: cliOpts.silent, lang: cliOpts.lang });
+    try {
+      const res = runUninstall({ targetDir: cliOpts.targetDir, purge: cliOpts.purge, silent: cliOpts.silent, lang: cliOpts.lang });
+      if (!res?.ok) process.exitCode = 1;
+    } catch (err) {
+      console.error(isRu ? `[ОШИБКА] ${err?.message || err}` : `[ERROR] ${err?.message || err}`);
+      process.exitCode = 1;
+    }
   } else {
-    runInstall({ targetDir: cliOpts.targetDir, dryRun: cliOpts.dryRun, silent: cliOpts.silent, lang: cliOpts.lang });
+    try {
+      const res = runInstall({ targetDir: cliOpts.targetDir, dryRun: cliOpts.dryRun, silent: cliOpts.silent, lang: cliOpts.lang });
+      if (!res?.ok) process.exitCode = 1;
+    } catch (err) {
+      console.error(isRu ? `[ОШИБКА] ${err?.message || err}` : `[ERROR] ${err?.message || err}`);
+      process.exitCode = 1;
+    }
   }
 }

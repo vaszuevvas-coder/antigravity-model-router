@@ -8,7 +8,10 @@ import {
   buildSymbolCallGraph,
   detectArchitectureClusters,
   findShortestGraphPath,
+  findSurprisingConnections,
   foldCodeWithKnapsack,
+  normalizePosixRel,
+  pickBestCallTargetDef,
   queryDocRefsForFile,
   querySymbolEgoGraph,
   selectDiverseSlicesMMR,
@@ -589,4 +592,132 @@ test('8. RamMemoryEngine E2E: Blast Radius docRefs, Arch Graph in ContextPack, c
     ram.close();
     fs.rmSync(tmpWs, { recursive: true, force: true });
   }
+});
+
+test('9. Graphify v2 avoids utility-hub mega-clusters and resolves dynamic/realm call targets accurately', () => {
+  const filesMap = new Map([
+    ['core/safe-json.mjs', 'export function safeReadJsonSync(p) { return p; }\n'],
+    ['core/circuit-breaker.mjs', 'export function resetCircuitBreaker(s) { return s; }\n'],
+    ['sidecars/panel/ui-src/js/02-telemetry-cards.js', 'function resetCircuitBreaker() { return false; }\n'],
+    [
+      'sidecars/panel/lib/panel-telemetry-collectors.mjs',
+      [
+        "import { safeReadJsonSync } from '../../../core/safe-json.mjs';",
+        'export async function runReset(scope) {',
+        "  const mod = await import('../../../core/circuit-breaker.mjs');",
+        '  safeReadJsonSync(scope);',
+        '  return mod.resetCircuitBreaker(scope);',
+        '}',
+      ].join('\n'),
+    ],
+  ]);
+
+  const forwardDeps = new Map([
+    ['sidecars/panel/lib/panel-telemetry-collectors.mjs', new Set(['core/safe-json.mjs', 'core/circuit-breaker.mjs'])],
+  ]);
+  const reverseDeps = new Map([
+    ['core/safe-json.mjs', new Set(['sidecars/panel/lib/panel-telemetry-collectors.mjs'])],
+    ['core/circuit-breaker.mjs', new Set(['sidecars/panel/lib/panel-telemetry-collectors.mjs'])],
+  ]);
+
+  const domains = [
+    ['auth', ['login.mjs', 'jwt.mjs', 'session.mjs', 'guard.mjs']],
+    ['billing', ['invoice.mjs', 'tax.mjs', 'ledger.mjs', 'payout.mjs']],
+    ['telemetry', ['metrics.mjs', 'trace.mjs', 'export.mjs', 'sink.mjs']],
+  ];
+  for (const [dir, names] of domains) {
+    for (let i = 0; i < names.length; i++) {
+      const f = `${dir}/${names[i]}`;
+      const nextF = `${dir}/${names[(i + 1) % names.length]}`;
+      filesMap.set(f, `import { safeReadJsonSync } from '../core/safe-json.mjs';\nexport function run_${dir}_${i}() { return safeReadJsonSync('${f}'); }\n`);
+      forwardDeps.set(f, new Set(['core/safe-json.mjs', nextF]));
+      reverseDeps.get('core/safe-json.mjs').add(f);
+      if (!reverseDeps.has(nextF)) reverseDeps.set(nextF, new Set());
+      reverseDeps.get(nextF).add(f);
+    }
+  }
+
+  const symGraph = buildSymbolCallGraph(filesMap);
+  const runResetEdges = Array.from((symGraph.calleesOf.get('runReset') || new Map()).values());
+  const cbEdge = runResetEdges.find((e) => e.name === 'resetCircuitBreaker');
+  assert.ok(cbEdge, 'Expected resetCircuitBreaker call edge');
+  assert.equal(cbEdge.file, 'core/circuit-breaker.mjs', 'Dynamic import must resolve to core/circuit-breaker.mjs rather than ui-src');
+  assert.equal(cbEdge.confidence, 'INFERRED');
+
+  const arch = detectArchitectureClusters(filesMap, forwardDeps, reverseDeps, {
+    symbolGraph: symGraph,
+    maxClusters: 8,
+    maxGodNodes: 5,
+  });
+  assert.equal(arch.godNodes[0]?.file, 'core/safe-json.mjs');
+  assert.ok(arch.clusterCount >= 3, `Expected >=3 domain clusters, got ${arch.clusterCount}`);
+  assert.ok(arch.modularityQ > 0.2, `Expected modularityQ > 0.2, got ${arch.modularityQ}`);
+  assert.ok(arch.clusters[0].size < Math.ceil(arch.fileCount * 0.7), 'Utility hub must not swallow >=70% of files');
+});
+
+test('10. detectArchitectureClusters & findSurprisingConnections validate srcRel and warn on callerDefs count mismatch', () => {
+  const filesMap = new Map([
+    ['a/modA.mjs', 'export function dupFn() { return 1; }\n'],
+    ['b/modB.mjs', 'export function dupFn() { return 2; }\n'],
+    ['c/target.mjs', 'export function targetFn() { return 3; }\n'],
+  ]);
+  const symbolGraph = {
+    definedSymbols: new Map([
+      ['dupFn', [{ file: 'a/modA.mjs', startLine: 1 }, { file: 'b/modB.mjs', startLine: 1 }]],
+      ['targetFn', [{ file: 'c/target.mjs', startLine: 1 }]],
+    ]),
+    calleesOf: new Map([
+      ['dupFn', new Map([['e1', { name: 'targetFn', file: 'c/target.mjs', isRepoSymbol: true }]])],
+      ['ghostFn', new Map([['e2', { name: 'targetFn', file: 'c/target.mjs', isRepoSymbol: true }]])],
+      ['badPathFn', new Map([['e3', { name: 'targetFn', callerFile: '../outside.mjs', file: 'c/target.mjs', isRepoSymbol: true }]])],
+    ]),
+  };
+
+  const warnings = [];
+  const origWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(' '));
+  try {
+    const arch = detectArchitectureClusters(filesMap, null, null, { symbolGraph });
+    assert.equal(arch.ok, true);
+    assert.ok(warnings.some((w) => w.includes('dupFn') && w.includes('expected 1, got 2')));
+    assert.ok(warnings.some((w) => w.includes('ghostFn') && w.includes('expected 1, got 0')));
+
+    const beforeBridgesWarnCount = warnings.length;
+    const bridges = findSurprisingConnections(filesMap, arch, symbolGraph, null, { topN: 6 });
+    assert.ok(Array.isArray(bridges));
+    assert.ok(warnings.length > beforeBridgesWarnCount, 'findSurprisingConnections must also log callerDefs mismatch');
+  } finally {
+    console.warn = origWarn;
+  }
+});
+
+test('10. pickBestCallTargetDef guards empty/invalid pools and normalizePosixRel rejects invalid paths before split', () => {
+  assert.equal(normalizePosixRel(''), '');
+  assert.equal(normalizePosixRel('   '), '');
+  assert.equal(normalizePosixRel('.'), '');
+  assert.equal(normalizePosixRel('./'), '');
+  assert.equal(normalizePosixRel('/'), '');
+  assert.equal(normalizePosixRel('///'), '');
+  assert.equal(normalizePosixRel(null), '');
+  assert.equal(normalizePosixRel(undefined), '');
+  assert.equal(normalizePosixRel({}), '');
+  assert.equal(normalizePosixRel('././core\\\\utils//a.mjs'), 'core/utils/a.mjs');
+
+  assert.equal(pickBestCallTargetDef('core/a.mjs', [], new Set()), null);
+  assert.equal(pickBestCallTargetDef('core/a.mjs', null, new Set()), null);
+  assert.equal(pickBestCallTargetDef('core/a.mjs', [null, {}, { file: '' }, { file: '   ' }], new Set()), null);
+
+  const picked = pickBestCallTargetDef(
+    './',
+    [{ file: 'core/b.mjs', startLine: 1 }, { file: 'utils/b.mjs', startLine: 1 }],
+    new Set()
+  );
+  assert.equal(picked?.file, 'core/b.mjs');
+
+  const closest = pickBestCallTargetDef(
+    'core/sub/caller.mjs',
+    [{ file: 'other/target.mjs', startLine: 1 }, { file: 'core/sub/target.mjs', startLine: 1 }],
+    new Set()
+  );
+  assert.equal(closest?.file, 'core/sub/target.mjs');
 });

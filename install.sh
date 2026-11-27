@@ -62,11 +62,14 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 
 NODE_MAJOR=$(node -p "Number(process.versions.node.split('.')[0])" 2>/dev/null || echo 0)
+if ! [[ "$NODE_MAJOR" =~ ^[0-9]+$ ]]; then
+  NODE_MAJOR=0
+fi
 if [ "$NODE_MAJOR" -lt 22 ]; then
   if [ "$INSTALL_LANG" = "ru" ]; then
-    echo "[ОШИБКА] Требуется Node.js >= 22 (установлена v$(node -v)). Обновите Node.js LTS." >&2
+    echo "[ОШИБКА] Требуется Node.js >= 22 (установлена $(node -v 2>/dev/null || echo unknown)). Обновите Node.js LTS." >&2
   else
-    echo "[ERROR] Node.js >= 22 is required (found v$(node -v)). Please upgrade to Node.js LTS." >&2
+    echo "[ERROR] Node.js >= 22 is required (found $(node -v 2>/dev/null || echo unknown)). Please upgrade to Node.js LTS." >&2
   fi
   exit 1
 fi

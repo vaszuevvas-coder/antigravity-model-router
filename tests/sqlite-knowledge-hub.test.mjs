@@ -85,11 +85,11 @@ test('2. Victory Recipes deduplication, retrieval formatting, clearing & null fu
     });
     assert.equal(r1.ok, true);
 
-    // Duplicate record bumps hits instead of duplicating row
+    // Duplicate record bumps hits instead of duplicating row (even with differing touchedFiles sets)
     hub.recordVictoryRecipe({
       workspaceRoot: wsDir,
       errorExcerpt: 'TypeError: Cannot read properties of null in verifyJwtSession',
-      touchedFiles: ['core/auth.mjs'],
+      touchedFiles: ['core/auth.mjs', 'tests/auth.test.mjs'],
       fixSummary: 'Guard nullish token before split(".") inside verifyJwtSession',
     });
 

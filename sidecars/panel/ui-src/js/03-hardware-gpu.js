@@ -195,18 +195,11 @@
       const maxRam = ceilings ? ceilings.maxRamBudgetMb : null;
       const maxCpu = ceilings ? ceilings.maxCpuThreads : null;
       const fmtGb = function (v) { return Math.round(v / 1024) + L(' ГБ', ' GB'); };
-      const fmtLiteRam = function (v) { return 'RAM · ' + Math.round(v / 1024) + L(' ГБ', ' GB'); };
-      const fmtLiteGpu = function (v) { return 'GPU · ' + Math.round(v / 1024) + L(' ГБ', ' GB'); };
       const fmtCpu = function (v) { return v + L(' пот.', ' thr.'); };
-      const fmtLiteCpu = function (v) { return 'CPU · ' + v + L(' пот.', ' thr.'); };
 
       syncHwLimitSelect('sel-gpuVramCap', VRAM_LIMIT_PRESETS, maxVram, capMb, fmtGb, false);
-      syncHwLimitSelect('sel-liteGpuVramCap', VRAM_LIMIT_PRESETS, maxVram, capMb, fmtLiteGpu, false);
       syncHwLimitSelect('sel-ramBudgetMain', RAM_LIMIT_PRESETS, maxRam, ramBudgetMb, fmtGb, false);
-      syncHwLimitSelect('sel-ramBudgetExpert', RAM_LIMIT_PRESETS, maxRam, ramBudgetMb, fmtGb, false);
-      syncHwLimitSelect('sel-liteRamBudget', RAM_LIMIT_PRESETS, maxRam, ramBudgetMb, fmtLiteRam, false);
       syncHwLimitSelect('sel-cpuThreadsCap', CPU_THREAD_PRESETS, maxCpu, cpuMaxThreads, fmtCpu, true);
-      syncHwLimitSelect('sel-liteCpuThreadsCap', CPU_THREAD_PRESETS, maxCpu, cpuMaxThreads, fmtLiteCpu, true);
     }
 
     const CLIENT_RAM_GRACE_MS = 20000;
@@ -214,30 +207,59 @@
     let _lastActiveRamSnap = { ts: 0, data: null };
     let _clientRamInactiveMisses = 0;
 
-    function renderGpuAndRam(gpu, ramCache, s, cpu) {
-      const prevHwCtx = _lastHwRenderCtx;
-      if (!gpu && prevHwCtx && prevHwCtx.gpu) gpu = prevHwCtx.gpu;
-      if (!ramCache && prevHwCtx && prevHwCtx.ramCache) ramCache = prevHwCtx.ramCache;
-      if (!cpu && prevHwCtx && prevHwCtx.cpu) cpu = prevHwCtx.cpu;
+    function resolveEffectiveClientRamSnap(ramCache, s) {
       const ramOn = !(s && s.ramCacheEnabled === false);
       if (!ramOn) {
         _lastActiveRamSnap = { ts: 0, data: null };
         _clientRamInactiveMisses = 0;
-      } else if (ramCache && ramCache.active === true) {
+        return ramCache;
+      }
+      if (ramCache && ramCache.active === true) {
         _lastActiveRamSnap = { ts: Date.now(), data: ramCache };
         _clientRamInactiveMisses = 0;
-      } else if (
+        return ramCache;
+      }
+      if (
         _lastActiveRamSnap.data &&
         (Date.now() - _lastActiveRamSnap.ts <= CLIENT_RAM_GRACE_MS) &&
         _clientRamInactiveMisses < CLIENT_RAM_GRACE_MAX_MISSES
       ) {
         _clientRamInactiveMisses += 1;
-        ramCache = Object.assign({}, _lastActiveRamSnap.data, {
+        return Object.assign({}, _lastActiveRamSnap.data, {
           enabled: true,
           budgetMb: (ramCache && ramCache.budgetMb) || _lastActiveRamSnap.data.budgetMb,
           totalRamMb: (ramCache && ramCache.totalRamMb) || _lastActiveRamSnap.data.totalRamMb,
         });
       }
+      return ramCache;
+    }
+
+    function syncHeaderHardwareLivePills(gpu, ramCache, s, cpu) {
+      const prevHwCtx = _lastHwRenderCtx;
+      if (!gpu && prevHwCtx && prevHwCtx.gpu) gpu = prevHwCtx.gpu;
+      if (!ramCache && prevHwCtx && prevHwCtx.ramCache) ramCache = prevHwCtx.ramCache;
+      if (!cpu && prevHwCtx && prevHwCtx.cpu) cpu = prevHwCtx.cpu;
+      ramCache = resolveEffectiveClientRamSnap(ramCache, s);
+      const cfg = (gpu && gpu.config) || {};
+      const ceilings = resolveClientHardwareCeilings(gpu, ramCache, cpu);
+      const rawCapMb = Number((s && s.gpuMaxVramMb) || cfg.gpuMaxVramMb || 4096);
+      const capMb = ceilings && ceilings.maxVramMb ? Math.min(rawCapMb, ceilings.maxVramMb) : rawCapMb;
+      const capGb = Math.round(capMb / 1024);
+      const rawRamMb = Number((s && s.ramMaxBudgetMb) || (ramCache && ramCache.budgetMb) || 4096);
+      const ramBudgetMb = ceilings && ceilings.maxRamBudgetMb ? Math.min(rawRamMb, ceilings.maxRamBudgetMb) : rawRamMb;
+      const oll = (gpu && gpu.ollama) || {};
+      const hw = (gpu && gpu.hardware) || {};
+      const ollResolved = resolvePanelOllamaVram(oll, hw);
+      _gpuPullActiveUi = Boolean(gpu && gpu.pullStatus && gpu.pullStatus.active);
+      updateLiveHardwareOpticalUi(gpu, ollResolved, ramCache, s, capGb, ramBudgetMb, cpu, { headerOnly: true });
+    }
+
+    function renderGpuAndRam(gpu, ramCache, s, cpu) {
+      const prevHwCtx = _lastHwRenderCtx;
+      if (!gpu && prevHwCtx && prevHwCtx.gpu) gpu = prevHwCtx.gpu;
+      if (!ramCache && prevHwCtx && prevHwCtx.ramCache) ramCache = prevHwCtx.ramCache;
+      if (!cpu && prevHwCtx && prevHwCtx.cpu) cpu = prevHwCtx.cpu;
+      ramCache = resolveEffectiveClientRamSnap(ramCache, s);
       const cfg = (gpu && gpu.config) || {};
       const cpuCfg = (cpu && cpu.config) || {};
       const ceilings = resolveClientHardwareCeilings(gpu, ramCache, cpu);
@@ -550,7 +572,12 @@
 
     function hwB4IsCardCollapsed() {
       const card = document.getElementById('gpuRamCard');
-      return Boolean(card && card.classList.contains('is-collapsed'));
+      if (card && card.classList.contains('is-collapsed')) return true;
+      if (document.body && document.body.getAttribute('data-panel-view') === 'full') {
+        const tab = document.body.getAttribute('data-full-tab') || 'cockpit';
+        if (tab !== 'hardware') return true;
+      }
+      return false;
     }
 
     function drawHwB4Rect(ctx, x, y, w, h, r) {
@@ -726,8 +753,30 @@
       return Math.min(999, Math.round(pct)) + '%';
     }
 
-    function updateLiveHardwareOpticalUi(gpu, ollResolved, ramCache, s, capGb, ramBudgetMb, cpu) {
-      _lastHwRenderCtx = { gpu, ollResolved, ramCache, s, capGb, ramBudgetMb, cpu };
+    function scheduleHwAfterglowDecay(ramWorking, ramLive, gpuWorking, gpuInFlight, cpuWorking, cpuInFlight) {
+      if (_hwAfterglowDecayTimer) {
+        clearTimeout(_hwAfterglowDecayTimer);
+        _hwAfterglowDecayTimer = null;
+      }
+      if (
+        (ramWorking && Number(ramLive.activeOps || 0) === 0) ||
+        (gpuWorking && !gpuInFlight) ||
+        (cpuWorking && !cpuInFlight)
+      ) {
+        _hwAfterglowDecayTimer = setTimeout(function () {
+          if (_lastHwRenderCtx && document.visibilityState !== 'hidden') {
+            const c = _lastHwRenderCtx;
+            updateLiveHardwareOpticalUi(c.gpu, c.ollResolved, c.ramCache, c.s, c.capGb, c.ramBudgetMb, c.cpu, {
+              headerOnly: Boolean(c.headerOnly),
+            });
+          }
+        }, 160);
+      }
+    }
+
+    function updateLiveHardwareOpticalUi(gpu, ollResolved, ramCache, s, capGb, ramBudgetMb, cpu, opts) {
+      const headerOnly = Boolean(opts && opts.headerOnly);
+      _lastHwRenderCtx = { gpu, ollResolved, ramCache, s, capGb, ramBudgetMb, cpu, headerOnly };
       const now = Date.now();
       const ramEnabled = (s && typeof s.ramCacheEnabled === 'boolean')
         ? s.ramCacheEnabled
@@ -901,6 +950,9 @@
         }
       }
 
+      scheduleHwAfterglowDecay(ramWorking, ramLive, gpuWorking, gpuInFlight, cpuWorking, cpuInFlight);
+      if (headerOnly) return;
+
       // 2. Оптические карточки внутри gpuRamCard (Liquid Silk: гидро-мениск и световоды)
       const ramCard = document.getElementById('ramLiveUnitCard');
       const ramBadge = document.getElementById('ramUnitStateBadge');
@@ -996,13 +1048,13 @@
         const liveUtilPct = Math.max(0, Math.min(100, Math.round(Number(gpuHw.utilPct || 0))));
         const liveTempC = Math.max(0, Math.round(Number(gpuHw.tempC || 0)));
         const hwSensorsSuffix = (gpuEnabled && gpuHw.available && (liveTempC > 0 || liveUtilPct > 0))
-          ? (' · ' + liveUtilPct + '% · ' + (liveTempC > 0 ? (liveTempC + '°C') : '—'))
+          ? ((isRu() ? ' · Ядро ' : ' · Core ') + liveUtilPct + '% · ' + (liveTempC > 0 ? (liveTempC + '°C') : '—'))
           : '';
         setHwMetricSplit(gpuMetric, usedVramGb, '/ ' + capGb + L(' ГБ', ' GB'));
         if (gpuCapPct) {
           setHwTextIfChanged(gpuCapPct, !gpuEnabled
             ? L('Выкл', 'Off')
-            : (formatHwCapPctLabel(loadedVramMb, capVramMb) + hwSensorsSuffix));
+            : ('VRAM ' + formatHwCapPctLabel(loadedVramMb, capVramMb) + hwSensorsSuffix));
         }
         setHwTooltipTitle(
           gpuMetric,
@@ -1152,34 +1204,16 @@
       }
 
       ensureHwB4Loop();
-
-      if (_hwAfterglowDecayTimer) {
-        clearTimeout(_hwAfterglowDecayTimer);
-        _hwAfterglowDecayTimer = null;
-      }
-      if (
-        (ramWorking && Number(ramLive.activeOps || 0) === 0) ||
-        (gpuWorking && !gpuInFlight) ||
-        (cpuWorking && !cpuInFlight)
-      ) {
-        _hwAfterglowDecayTimer = setTimeout(function () {
-          if (_lastHwRenderCtx && document.visibilityState !== 'hidden') {
-            const c = _lastHwRenderCtx;
-            updateLiveHardwareOpticalUi(c.gpu, c.ollResolved, c.ramCache, c.s, c.capGb, c.ramBudgetMb, c.cpu);
-          }
-        }, 160);
-      }
     }
 
     function scrollToGpuRamCard() {
       const card = document.getElementById('gpuRamCard');
       if (!card) return;
-      const spoiler = card.closest('details');
-      if (spoiler && !spoiler.open) {
-        spoiler.open = true;
-      }
-      if (card.classList.contains('is-collapsed')) {
-        togglePanelCardCollapse('gpuRamCard');
+      if (document.body && document.body.getAttribute('data-panel-view') === 'full' && typeof setPanelFullTab === 'function') {
+        const curTab = document.body.getAttribute('data-full-tab') || 'cockpit';
+        if (curTab !== 'hardware') {
+          setPanelFullTab('hardware', { silent: true, skipAutoExpand: true });
+        }
       }
       flushVisibleBlockRenders();
       maybeLoadMissingSectionsForBlock('gpuRamCard');
@@ -1261,9 +1295,11 @@
         flashStatus(L('Ошибка: gpuEndpoint разрешён только для localhost/127.0.0.1!', 'Error: gpuEndpoint is only allowed for localhost/127.0.0.1!'));
         return;
       }
+      const chatInput = document.getElementById('inp-gpuChatModel');
+      const embedInput = document.getElementById('inp-gpuEmbedModel');
       const patch = {
-        gpuChatModel: String((document.getElementById('inp-gpuChatModel') || {}).value || 'gemma4:12b').trim(),
-        gpuEmbedModel: String((document.getElementById('inp-gpuEmbedModel') || {}).value || 'qwen3-embedding:0.6b').trim(),
+        gpuChatModel: String((chatInput && chatInput.value) || (currentState && currentState.gpuChatModel) || 'gemma4:12b').trim(),
+        gpuEmbedModel: String((embedInput && embedInput.value) || (currentState && currentState.gpuEmbedModel) || 'qwen3-embedding:0.6b').trim(),
         gpuKeepAlive: String((document.getElementById('inp-gpuKeepAlive') || {}).value || '15m').trim(),
         gpuEmbedKeepAlive: String((document.getElementById('inp-gpuEmbedKeepAlive') || {}).value || '90m').trim(),
         gpuContextTokens: Number((document.getElementById('inp-gpuContextTokens') || {}).value || 4096),
@@ -1424,8 +1460,33 @@
       if (menu) {
         menu.classList.remove('is-open');
         menu.setAttribute('aria-hidden', 'true');
-        menu.hidden = true;
-        menu.innerHTML = '';
+        const rect = menu.getBoundingClientRect ? menu.getBoundingClientRect() : null;
+        if (rect && rect.height > 0 && typeof menu.animate === 'function' && !(typeof uiPrefersReducedMotion === 'function' && uiPrefersReducedMotion())) {
+          const seq = (menu._lgSelSeq || 0) + 1;
+          menu._lgSelSeq = seq;
+          const placeTop = menu.getAttribute('data-placement') === 'top';
+          try {
+            const anim = menu.animate(
+              [
+                { opacity: 1, transform: 'translate3d(0,0,0) scale(1)' },
+                { opacity: 0, transform: 'translate3d(0,' + (placeTop ? 4 : -4) + 'px,0) scale(0.97)' }
+              ],
+              { duration: 130, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' }
+            );
+            anim.onfinish = function () {
+              if (menu._lgSelSeq === seq && !menu.classList.contains('is-open')) {
+                menu.hidden = true;
+                menu.innerHTML = '';
+              }
+            };
+          } catch {
+            menu.hidden = true;
+            menu.innerHTML = '';
+          }
+        } else {
+          menu.hidden = true;
+          menu.innerHTML = '';
+        }
       }
       if (typeof releaseTooltipForClosedMenu === 'function') {
         releaseTooltipForClosedMenu();
@@ -1527,17 +1588,31 @@
         menu.appendChild(emptyEl);
       }
 
+      menu._lgSelSeq = (menu._lgSelSeq || 0) + 1;
       menu.classList.remove('is-open');
       menu.hidden = false;
       menu.setAttribute('aria-hidden', 'false');
 
       const rect = trigger.getBoundingClientRect();
       const maxViewportW = Math.max(180, window.innerWidth - 16);
-      const isCompactLimitSel = selId.indexOf('VramCap') !== -1 || selId.indexOf('RamBudget') !== -1 || selId.indexOf('CpuThreads') !== -1;
-      const desiredW = Math.min(maxViewportW, Math.max(rect.width, isCompactLimitSel ? 136 : 238));
-      const left = Math.max(8, Math.min(rect.left, window.innerWidth - desiredW - 8));
-      menu.style.width = Math.round(desiredW) + 'px';
-      menu.style.left = Math.round(left) + 'px';
+      const isCompactLimitSel = /vramcap|rambudget|cputhreads/i.test(selId);
+      menu.classList.toggle('is-compact-limit', isCompactLimitSel);
+      if (menu.style && typeof menu.style.setProperty === 'function') {
+        if (isCompactLimitSel && typeof window.getComputedStyle === 'function') {
+          const trigFont = window.getComputedStyle(trigger).fontSize;
+          if (trigFont) menu.style.setProperty('--compact-sel-font', trigFont);
+        } else if (typeof menu.style.removeProperty === 'function') {
+          menu.style.removeProperty('--compact-sel-font');
+        }
+      }
+      const desiredW = isCompactLimitSel
+        ? Math.min(maxViewportW, Math.max(44, rect.width))
+        : Math.min(maxViewportW, Math.max(rect.width, 238));
+      const left = isCompactLimitSel
+        ? Math.max(4, Math.min(rect.left, window.innerWidth - desiredW - 4))
+        : Math.max(8, Math.min(rect.left, window.innerWidth - desiredW - 8));
+      menu.style.width = (isCompactLimitSel ? Number(desiredW.toFixed(2)) : Math.round(desiredW)) + 'px';
+      menu.style.left = (isCompactLimitSel ? Number(left.toFixed(2)) : Math.round(left)) + 'px';
       menu.style.maxHeight = '228px';
 
       const naturalH = Math.min(menu.scrollHeight || 160, 228);
@@ -2385,6 +2460,7 @@
       const forceNew = Boolean(opts.forceNewConversation);
       const shouldFocusNew = opts.focusNewConversation !== false;
       const customTitle = typeof opts.title === 'string' ? opts.title.trim() : '';
+      const explicitRootDir = typeof opts.rootDir === 'string' ? opts.rootDir.trim() : '';
       const directConvId = forceNew
         ? ''
         : ((window.sidecar && window.sidecar.conversationId) || _activeFallbackSidecarConvId || '');
@@ -2392,7 +2468,7 @@
       const pinnedWs = (_selectedWorkspaceMode !== '__auto__' && _selectedWorkspaceMode !== '__all__')
         ? _selectedWorkspaceMode
         : '';
-      const rootDir = pinnedWs || (detectedProjectInfo && detectedProjectInfo.workspaceRoot) || _activeWorkspaceResolved || '';
+      const rootDir = explicitRootDir || pinnedWs || (detectedProjectInfo && detectedProjectInfo.workspaceRoot) || _activeWorkspaceResolved || '';
       let lastErr = '';
 
       try {
@@ -2460,8 +2536,9 @@
       }
 
       const copied = await copyTextToClipboardSafe(promptText);
+      const errDetail = lastErr ? (' (' + lastErr.slice(0, 120) + ')') : '';
       const fallbackMsg = copied
-        ? (copiedStatus || L('Текст скопирован в буфер — вставьте в чат (Ctrl+V) ✓', 'Copied to clipboard — paste in chat (Ctrl+V) ✓'))
+        ? ((copiedStatus || L('Текст скопирован в буфер — вставьте в чат (Ctrl+V) ✓', 'Copied to clipboard — paste in chat (Ctrl+V) ✓')) + errDetail)
         : (L('Не удалось отправить в чат', 'Failed to send to chat') + (lastErr ? (': ' + lastErr) : L(' — откройте активный чат и повторите', ' — open an active chat and retry')));
       flashStatus(fallbackMsg);
       return { sent: false, copied: copied, mode: 'clipboard', conversationId: '', statusText: fallbackMsg, error: lastErr };

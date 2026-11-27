@@ -7,6 +7,7 @@
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmdirSync,
@@ -15,7 +16,86 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
+
+const activeProcessLocks = new Map();
+
+const NON_RETRYABLE_READ_CODES = new Set([
+  'ENOENT',
+  'EISDIR',
+  'ENOTDIR',
+  'EINVAL',
+  'ENAMETOOLONG',
+  'ELOOP',
+]);
+
+const TRANSIENT_FS_CODES = new Set([
+  'EBUSY',
+  'EPERM',
+  'EACCES',
+  'EMFILE',
+  'ENFILE',
+  'ENOTEMPTY',
+]);
+
+const TMP_ARTIFACT_SUFFIX_RE = /^\d+\.[a-z0-9]{4,10}\.tmp$/;
+
+function stripUtf8Bom(raw) {
+  if (typeof raw !== 'string') return '';
+  return raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw;
+}
+
+function removePathWithRetry(targetPath, { recursive = false } = {}) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      if (recursive) {
+        rmSync(targetPath, { recursive: true, force: true });
+      } else {
+        unlinkSync(targetPath);
+      }
+      return true;
+    } catch (err) {
+      if (err?.code === 'ENOENT') return true;
+      if (attempt < 3 && TRANSIENT_FS_CODES.has(err?.code)) {
+        sleepSync(5 * attempt);
+        continue;
+      }
+      return false;
+    }
+  }
+  return false;
+}
+
+function sweepOrphanArtifacts(targetPath, minAgeMs = 30000) {
+  try {
+    const dir = dirname(targetPath);
+    const base = basename(targetPath);
+    const stalePrefix = `${base}.lock.stale.`;
+    const tmpPrefix = `${base}.`;
+    const cutoff = Date.now() - Math.max(30000, Number(minAgeMs) || 30000);
+    const entries = readdirSync(dir);
+    for (const name of entries) {
+      const isStaleLock = name.startsWith(stalePrefix);
+      const isTmpFile =
+        !isStaleLock &&
+        name.startsWith(tmpPrefix) &&
+        TMP_ARTIFACT_SUFFIX_RE.test(name.slice(tmpPrefix.length));
+      if (!isStaleLock && !isTmpFile) continue;
+      const fullPath = join(dir, name);
+      try {
+        const st = statSync(fullPath);
+        if (st.mtimeMs < cutoff) {
+          removePathWithRetry(fullPath, { recursive: isStaleLock });
+        }
+      } catch {}
+    }
+  } catch {}
+}
+
+function normalizeLockKey(lockDir) {
+  const abs = resolve(String(lockDir || ''));
+  return process.platform === 'win32' ? abs.toLowerCase() : abs;
+}
 
 const SLEEP_BUF = (() => {
   try {
@@ -49,15 +129,41 @@ export function sleepSync(ms) {
  * @param {object} [options]
  * @param {number} [options.maxWaitMs=5000] Максимальное время ожидания захвата замка
  * @param {number} [options.staleLockMs=6000] Время устаревания зависшего замка
+ * @param {boolean} [options.createDir=true] Создавать ли родительский каталог, если он отсутствует
  * @returns {T}
  */
-export function withFileLockSync(targetPath, fn, { maxWaitMs = 5000, staleLockMs = 6000 } = {}) {
+export function withFileLockSync(targetPath, fn, options = {}) {
+  const opts = options && typeof options === 'object' ? options : {};
+  const maxWaitMs = Number.isFinite(Number(opts.maxWaitMs)) && Number(opts.maxWaitMs) > 0
+    ? Number(opts.maxWaitMs)
+    : 5000;
+  const staleLockMs = Number.isFinite(Number(opts.staleLockMs)) && Number(opts.staleLockMs) > 0
+    ? Number(opts.staleLockMs)
+    : 6000;
+  const createDir = opts.createDir !== false;
+
   const dir = dirname(targetPath);
-  try {
-    mkdirSync(dir, { recursive: true });
-  } catch {}
+  if (createDir) {
+    try {
+      mkdirSync(dir, { recursive: true });
+    } catch {}
+  }
 
   const lockDir = `${targetPath}.lock`;
+  const lockKey = normalizeLockKey(lockDir);
+  const prevDepth = activeProcessLocks.get(lockKey) || 0;
+  if (prevDepth > 0) {
+    // Re-entrant call in the same process: reuse active lock instead of self-deadlocking
+    activeProcessLocks.set(lockKey, prevDepth + 1);
+    try {
+      return fn();
+    } finally {
+      const rem = (activeProcessLocks.get(lockKey) || 1) - 1;
+      if (rem > 0) activeProcessLocks.set(lockKey, rem);
+      else activeProcessLocks.delete(lockKey);
+    }
+  }
+
   const ownerFile = join(lockDir, 'owner');
   const ownerToken = `${process.pid}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
   const startTime = Date.now();
@@ -71,9 +177,7 @@ export function withFileLockSync(targetPath, fn, { maxWaitMs = 5000, staleLockMs
         acquired = true;
         break;
       } catch (writeErr) {
-        try {
-          rmSync(lockDir, { recursive: true, force: true });
-        } catch {}
+        removePathWithRetry(lockDir, { recursive: true });
         throw writeErr;
       }
     } catch (err) {
@@ -102,16 +206,22 @@ export function withFileLockSync(targetPath, fn, { maxWaitMs = 5000, staleLockMs
             const stalePath = `${lockDir}.stale.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}`;
             try {
               renameSync(lockDir, stalePath);
-              rmSync(stalePath, { recursive: true, force: true });
+              removePathWithRetry(stalePath, { recursive: true });
+              sweepOrphanArtifacts(targetPath, Math.max(staleLockMs, 30000));
               continue;
             } catch {}
           }
         } catch {}
         sleepSync(3 + Math.floor(Math.random() * 6));
       } else if (err && (err.code === 'ENOENT' || err.code === 'ENOTEMPTY')) {
-        try {
-          mkdirSync(dir, { recursive: true });
-        } catch {}
+        if (err.code === 'ENOENT' && !createDir) {
+          throw err;
+        }
+        if (createDir) {
+          try {
+            mkdirSync(dir, { recursive: true });
+          } catch {}
+        }
         sleepSync(4);
       } else {
         throw err;
@@ -123,9 +233,11 @@ export function withFileLockSync(targetPath, fn, { maxWaitMs = 5000, staleLockMs
     throw new Error(`Lock acquisition timeout (${maxWaitMs}ms) for ${targetPath}`);
   }
 
+  activeProcessLocks.set(lockKey, 1);
   try {
     return fn();
   } finally {
+    activeProcessLocks.delete(lockKey);
     // Only release lockDir if this process still owns it (prevents deleting a stolen lock)
     let stillOwned = false;
     try {
@@ -134,9 +246,7 @@ export function withFileLockSync(targetPath, fn, { maxWaitMs = 5000, staleLockMs
       stillOwned = false;
     }
     if (stillOwned) {
-      try {
-        rmSync(lockDir, { recursive: true, force: true });
-      } catch {
+      if (!removePathWithRetry(lockDir, { recursive: true })) {
         try {
           unlinkSync(ownerFile);
           rmdirSync(lockDir);
@@ -159,10 +269,34 @@ function resolveDefault(factory) {
     try {
       return structuredClone(factory);
     } catch {
-      return JSON.parse(JSON.stringify(factory));
+      try {
+        return JSON.parse(JSON.stringify(factory));
+      } catch {
+        return Array.isArray(factory) ? [...factory] : { ...factory };
+      }
     }
   }
   return factory;
+}
+
+/**
+ * Safeguards callers expecting a non-null object/array default against files containing literal JSON `null`.
+ * @param {any} parsed
+ * @param {any} defaultFactory
+ * @returns {any}
+ */
+function coerceParsedWithDefault(parsed, defaultFactory) {
+  if (parsed !== null) {
+    return parsed;
+  }
+  if (defaultFactory === null || defaultFactory === undefined) {
+    return parsed;
+  }
+  const def = resolveDefault(defaultFactory);
+  if (def !== null && typeof def === 'object') {
+    return def;
+  }
+  return parsed;
 }
 
 /**
@@ -173,69 +307,111 @@ function resolveDefault(factory) {
  * @param {T | (() => T)} defaultFactory Фабрика или объект по умолчанию
  * @param {object} [options]
  * @param {boolean} [options.selfHeal=true] Перезаписать ли битый/пустой файл значением по умолчанию
+ * @param {number} [options.lockWaitMs=750] Максимальное время ожидания замка при самоисцелении
  * @returns {T}
  */
-export function safeReadJsonSync(filePath, defaultFactory, { selfHeal = true } = {}) {
+export function safeReadJsonSync(filePath, defaultFactory, options = {}) {
+  const opts = options && typeof options === 'object' ? options : {};
+  const selfHeal = opts.selfHeal !== undefined ? Boolean(opts.selfHeal) : true;
+  const lockWaitMs = Number.isFinite(Number(opts.lockWaitMs)) && Number(opts.lockWaitMs) > 0
+    ? Math.min(5000, Math.round(Number(opts.lockWaitMs)))
+    : 750;
+
+  if (typeof filePath !== 'string' || !filePath.trim() || filePath.includes('\0')) {
+    return resolveDefault(defaultFactory);
+  }
+
   if (!existsSync(filePath)) {
     return resolveDefault(defaultFactory);
   }
 
-  let content = '';
+  const maxAttempts = 5;
   let readOk = false;
   let ioError = false;
-  for (let attempt = 1; attempt <= 6; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      content = readFileSync(filePath, 'utf-8');
+      const raw = readFileSync(filePath, 'utf-8');
       readOk = true;
       ioError = false;
-      if (content && content.trim()) {
-        break;
+      const cleaned = stripUtf8Bom(raw);
+      if (cleaned.trim()) {
+        try {
+          const parsed = JSON.parse(cleaned);
+          return coerceParsedWithDefault(parsed, defaultFactory);
+        } catch {
+          // Possible torn write from a concurrent non-locked writer — retry before healing
+        }
       }
-    } catch {
-      // Transient EPERM/EBUSY during atomic rename on Windows
+    } catch (err) {
+      if (err && NON_RETRYABLE_READ_CODES.has(err.code)) {
+        return resolveDefault(defaultFactory);
+      }
+      // Transient EPERM/EBUSY/EACCES during atomic rename or AV scan on Windows
       ioError = true;
     }
-    sleepSync(4 * attempt);
-  }
-  if (!readOk && !existsSync(filePath)) {
-    return resolveDefault(defaultFactory);
-  }
-
-  // Never self-heal onto disk if read failed due to transient OS lock (EBUSY/EPERM)
-  if (ioError && (!content || !content.trim())) {
-    return resolveDefault(defaultFactory);
-  }
-
-  const verifyAndSelfHealUnderLock = () => {
-    const def = resolveDefault(defaultFactory);
-    if (!selfHeal || !readOk || ioError) return def;
-    try {
-      return withFileLockSync(filePath, () => {
-        if (existsSync(filePath)) {
-          try {
-            const latest = readFileSync(filePath, 'utf-8');
-            if (latest && latest.trim()) {
-              return JSON.parse(latest);
-            }
-          } catch {}
-        }
-        atomicWriteJsonSync(filePath, def);
-        return def;
-      });
-    } catch {
-      return def;
+    if (attempt < maxAttempts) {
+      sleepSync(4 * attempt);
     }
-  };
+  }
 
-  if (!content || !content.trim()) {
-    return verifyAndSelfHealUnderLock();
+  // Never self-heal onto disk if read failed due to transient OS lock (EBUSY/EPERM/EACCES)
+  if (!readOk || ioError || !selfHeal) {
+    return resolveDefault(defaultFactory);
+  }
+
+  // Never recreate a file that was concurrently deleted before acquiring the lock
+  if (!existsSync(filePath)) {
+    return resolveDefault(defaultFactory);
   }
 
   try {
-    return JSON.parse(content);
+    return withFileLockSync(
+      filePath,
+      () => {
+        if (!existsSync(filePath)) {
+          return resolveDefault(defaultFactory);
+        }
+
+        let latestRaw = '';
+        let latestReadOk = false;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            latestRaw = readFileSync(filePath, 'utf-8');
+            latestReadOk = true;
+            break;
+          } catch (err) {
+            if (err && NON_RETRYABLE_READ_CODES.has(err.code)) {
+              return resolveDefault(defaultFactory);
+            }
+            if (attempt < 3) {
+              sleepSync(4 * attempt);
+            }
+          }
+        }
+
+        // Never overwrite disk if re-read under lock failed with an OS I/O error
+        if (!latestReadOk) {
+          return resolveDefault(defaultFactory);
+        }
+
+        const latestCleaned = stripUtf8Bom(latestRaw);
+        if (latestCleaned.trim()) {
+          try {
+            const parsed = JSON.parse(latestCleaned);
+            return coerceParsedWithDefault(parsed, defaultFactory);
+          } catch {
+            // Confirmed corrupted JSON under lock — proceed to self-heal
+          }
+        }
+
+        const def = resolveDefault(defaultFactory);
+        atomicWriteJsonSync(filePath, def);
+        return def;
+      },
+      { maxWaitMs: lockWaitMs, createDir: false }
+    );
   } catch {
-    // Тихое самоисцеление повреждённого JSON строго под файловым замком
-    return verifyAndSelfHealUnderLock();
+    return resolveDefault(defaultFactory);
   }
 }
 
@@ -243,8 +419,11 @@ export function safeReadJsonSync(filePath, defaultFactory, { selfHeal = true } =
  * Атомарно записывает JSON в файл через временный файл и renameSync с повторами на Windows.
  * @param {string} filePath Путь к целевому файлу
  * @param {any} data Данные для сериализации
+ * @param {{ spaces?: number }} [options={}] Параметры форматирования
  */
-export function atomicWriteJsonSync(filePath, data, { spaces = 2 } = {}) {
+export function atomicWriteJsonSync(filePath, data, options = {}) {
+  const opts = options && typeof options === 'object' ? options : {};
+  const spaces = opts.spaces !== undefined ? opts.spaces : 2;
   const dir = dirname(filePath);
   try {
     mkdirSync(dir, { recursive: true });
@@ -261,28 +440,31 @@ export function atomicWriteJsonSync(filePath, data, { spaces = 2 } = {}) {
   try {
     writeFileSync(tmpPath, jsonStr, 'utf-8');
 
-    const maxAttempts = 12;
+    const maxAttempts = 16;
+    let lastRenameErr = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         renameSync(tmpPath, filePath);
         renamed = true;
         break;
-      } catch {
+      } catch (err) {
+        lastRenameErr = err;
         if (attempt < maxAttempts) {
-          sleepSync(Math.min(50, 6 * attempt));
+          sleepSync(Math.min(60, 6 * attempt));
         }
       }
     }
 
     if (!renamed) {
-      writeFileSync(filePath, jsonStr, 'utf-8');
+      throw lastRenameErr || new Error(`Atomic rename failed for ${filePath}`);
     }
   } finally {
-    try {
-      if (existsSync(tmpPath)) {
-        unlinkSync(tmpPath);
+    if (!renamed && existsSync(tmpPath)) {
+      const cleaned = removePathWithRetry(tmpPath, { recursive: false });
+      if (!cleaned) {
+        sweepOrphanArtifacts(filePath, 30000);
       }
-    } catch {}
+    }
   }
 }
 

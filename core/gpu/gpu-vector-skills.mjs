@@ -566,12 +566,33 @@ export function loadWorkspaceVectorStore(wsAbsRoot, embedModel, { cacheDir = '' 
  * @param {Map<string, object>} ramFilesMap Map<relPath, { buf, ext }>
  * @param {object} [options={}]
  */
-export async function indexWorkspaceVectors(wsAbsRoot, ramFilesMap, { maxNewFiles = 200 } = {}) {
+const inFlightWsVectorLocks = new Map();
+
+export async function indexWorkspaceVectors(wsAbsRoot, ramFilesMap, options = {}) {
   const cfg = loadGpuConfig();
   if (!cfg.gpuEnabled || !cfg.gpuSemanticSearch) {
     return { ok: false, error: 'GPU semantic search disabled' };
   }
   const absRoot = path.resolve(wsAbsRoot);
+  const lockKey = process.platform === 'win32' ? absRoot.toLowerCase() : absRoot;
+  const prev = inFlightWsVectorLocks.get(lockKey) || Promise.resolve();
+  const runPromise = prev
+    .catch(() => {})
+    .then(() => indexWorkspaceVectorsLocked(absRoot, ramFilesMap, options));
+  const tracked = runPromise.finally(() => {
+    if (inFlightWsVectorLocks.get(lockKey) === tracked) {
+      inFlightWsVectorLocks.delete(lockKey);
+    }
+  });
+  inFlightWsVectorLocks.set(lockKey, tracked);
+  return runPromise;
+}
+
+async function indexWorkspaceVectorsLocked(absRoot, ramFilesMap, { maxNewFiles = 200 } = {}) {
+  const cfg = loadGpuConfig();
+  if (!cfg.gpuEnabled || !cfg.gpuSemanticSearch) {
+    return { ok: false, error: 'GPU semantic search disabled' };
+  }
   const store = loadWorkspaceVectorStore(absRoot, cfg.gpuEmbedModel);
   const isIgnoredVecRel = (rel) => /^(?:scratch|\.cache|\.git|\.agents|backups|\.shadow)[\\/]/i.test(rel);
 
@@ -590,7 +611,9 @@ export async function indexWorkspaceVectors(wsAbsRoot, ramFilesMap, { maxNewFile
     if (CODE_DOC_SKIP_EXT.has(entry.ext)) continue;
     if (isIgnoredVecRel(rel)) continue;
     if (entry.sizeBytes > 400_000) continue; // пропускаем огромные дампы
-    const sha1 = createHash('sha1').update(entry.buf).digest('hex').slice(0, 16);
+    const buf = entry?.buf;
+    if (!buf || buf.byteLength === 0) continue;
+    const sha1 = entry.sha1 || createHash('sha1').update(buf).digest('hex').slice(0, 16);
     const existing = store.files.get(rel);
     if (!existing || existing.sha1 !== sha1) {
       pendingFiles.push({ rel, entry, sha1 });
@@ -627,21 +650,48 @@ export async function indexWorkspaceVectors(wsAbsRoot, ramFilesMap, { maxNewFile
     return { ok: false, error: ready.error };
   }
 
+  // Filter live buffers after async yields (entries may have been evicted via removeEntry/evict)
+  const livePending = [];
+  for (const pf of pendingFiles) {
+    const b = pf.entry?.buf;
+    if (b && b.byteLength > 0) {
+      livePending.push({ ...pf, text: b.toString('utf8') });
+    }
+  }
+
+  if (livePending.length === 0) {
+    if (removed > 0) {
+      let totalChunks = 0;
+      for (const v of store.files.values()) totalChunks += v.chunks.length;
+      store.totalChunks = totalChunks;
+      saveWorkspaceVectorStore(absRoot, store);
+    }
+    return {
+      ok: true,
+      model: cfg.gpuEmbedModel,
+      indexedNow: 0,
+      removed,
+      totalFiles: store.files.size,
+      totalChunks: store.totalChunks,
+      cached: true,
+    };
+  }
+
   // Нарезаем чанки (многопоточно на CPU worker_threads при пакете >= 8 файлов) и отправляем батчами по 12 штук
   const allChunkJobs = [];
   const tempFileMap = new Map();
   let chunkBatched = false;
-  if (pendingFiles.length >= 8) {
+  if (livePending.length >= 8) {
     try {
       const { loadCpuConfig, runCpuBatch } = await import('../cpu-worker-pool.mjs');
       if (loadCpuConfig().cpuMulticoreEnabled) {
-        const batchInput = pendingFiles.map((pf) => ({
+        const batchInput = livePending.map((pf) => ({
           relPath: pf.rel,
           sha1: pf.sha1,
-          text: pf.entry.buf.toString('utf8'),
+          text: pf.text,
         }));
         const chunkedRes = await runCpuBatch('chunkVectorsBatch', batchInput, { minItemsForWorkers: 8 });
-        if (Array.isArray(chunkedRes) && chunkedRes.length === pendingFiles.length) {
+        if (Array.isArray(chunkedRes) && chunkedRes.length === livePending.length) {
           for (const item of chunkedRes) {
             const chunks = item.chunks || [];
             tempFileMap.set(item.relPath, { sha1: item.sha1, expectedCount: chunks.length, chunks: [] });
@@ -655,9 +705,8 @@ export async function indexWorkspaceVectors(wsAbsRoot, ramFilesMap, { maxNewFile
     } catch {}
   }
   if (!chunkBatched) {
-    for (const pf of pendingFiles) {
-      const content = pf.entry.buf.toString('utf8');
-      const chunks = chunkFileForVectors(pf.rel, content);
+    for (const pf of livePending) {
+      const chunks = chunkFileForVectors(pf.rel, pf.text);
       tempFileMap.set(pf.rel, { sha1: pf.sha1, expectedCount: chunks.length, chunks: [] });
       for (const c of chunks) {
         allChunkJobs.push({ rel: pf.rel, chunk: c });

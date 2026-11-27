@@ -265,3 +265,71 @@ test('4. E2E Variant 1B: ask_question pause option arms modelSwitchPending in Po
     fs.rmSync(tmpWs, { recursive: true, force: true });
   }
 });
+
+test('5. PostToolUse ask_question fallback on IDE "user cancelled ask_question" emits chat fallback directive and preserves askQuestionCalled', async () => {
+  const tmpWs = fs.mkdtempSync(path.join(os.tmpdir(), 'amr-ask-cancel-'));
+  const convoId = `ask-cancel-${Date.now()}`;
+  try {
+    const state = {
+      confirmBeforeRun: true,
+      confirmThreshold: 'ALL',
+      orchestratorSmartSynergy: false,
+      ramCacheEnabled: false,
+      uiLanguage: 'ru',
+    };
+
+    await handlePreInvocation(
+      {
+        hookEventName: 'PreInvocation',
+        conversationId: convoId,
+        workspacePaths: [tmpWs],
+        lastUserInput: 'Исправь баг в server.mjs',
+        modelName: 'Gemini 4 Hydrogen (Medium)',
+      },
+      state
+    );
+
+    const postRes = await handlePostToolUse(
+      {
+        conversationId: convoId,
+        workspacePaths: [tmpWs],
+        toolCall: { name: 'ask_question', args: { questions: [{ question: 'План?', options: ['1', '2', '3'] }] } },
+        error: 'user cancelled ask_question',
+      },
+      state
+    );
+    assert.match(String(postRes?.systemMessage || ''), /ask_question Fallback/);
+    assert.match(String(postRes?.systemMessage || ''), /НЕ пиши «Запуск правок отменён»/);
+
+    const t2 = await handlePreInvocation(
+      {
+        hookEventName: 'PreInvocation',
+        conversationId: convoId,
+        workspacePaths: [tmpWs],
+        lastUserInput: '1',
+        modelName: 'Gemini 4 Hydrogen (Medium)',
+      },
+      state
+    );
+    const t2Text = (t2?.injectSteps || []).map((s) => s?.ephemeralMessage || s?.systemMessage?.systemMessage || '').join('\n');
+    assert.doesNotMatch(t2Text, /Two-Phase Plan Gate/);
+
+    const targetFile = path.join(tmpWs, 'app.mjs');
+    fs.writeFileSync(targetFile, 'export const a = 1;\n', 'utf8');
+    const allowEdit = await handlePreToolUse(
+      {
+        conversationId: convoId,
+        workspacePaths: [tmpWs],
+        toolCall: {
+          name: 'edit_file',
+          args: { Path: targetFile, Target: 'a = 1', Replacement: 'a = 2' },
+        },
+      },
+      state
+    );
+    assert.equal(allowEdit.decision, 'allow');
+  } finally {
+    cleanupConvoEntry(convoId);
+    fs.rmSync(tmpWs, { recursive: true, force: true });
+  }
+});

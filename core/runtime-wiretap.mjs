@@ -14,10 +14,11 @@ import { maskTerminalOutputSmart } from './obs-masker.mjs';
 import { atomicWriteJsonSync, safeReadJsonSync, withFileLockSync } from './safe-json.mjs';
 import { checkCommandSecurity, redactSecretsInText } from './security-guard.mjs';
 import { normalizeLang, pickLang } from './i18n.mjs';
+import { resolveTunnelCacheDir } from './cache-dir.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
-const DEFAULT_CACHE_DIR = join(PLUGIN_ROOT, '.cache');
+const getDefaultCacheDir = () => resolveTunnelCacheDir(PLUGIN_ROOT);
 const BLOCKED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const MAX_FAULTS_PER_WS = 25;
 
@@ -42,7 +43,7 @@ function normWsKey(wsPath = '') {
 }
 
 function resolveWiretapFile(cacheDir = '') {
-  const baseCache = asStr(cacheDir, 1024).trim() ? resolve(asStr(cacheDir, 1024).trim()) : DEFAULT_CACHE_DIR;
+  const baseCache = asStr(cacheDir, 1024).trim() ? resolve(asStr(cacheDir, 1024).trim()) : getDefaultCacheDir();
   if (!existsSync(baseCache)) mkdirSync(baseCache, { recursive: true });
   return {
     cacheDir: baseCache,
@@ -255,7 +256,7 @@ export function getLatestWiretapFaults(workspaceRoot = '', opts = {}) {
   if (typeof workspaceRoot === 'string' && workspaceRoot.trim() && !wsKey) {
     return { ok: true, faults: [] };
   }
-  const baseCache = asStr(safeOpts.cacheDir, 1024).trim() ? resolve(asStr(safeOpts.cacheDir, 1024).trim()) : DEFAULT_CACHE_DIR;
+  const baseCache = asStr(safeOpts.cacheDir, 1024).trim() ? resolve(asStr(safeOpts.cacheDir, 1024).trim()) : getDefaultCacheDir();
   const file = join(baseCache, 'runtime-wiretap.json');
   if (!existsSync(file)) return { ok: true, faults: [] };
   const limit = Number.isFinite(Number(safeOpts.limit)) ? Math.max(1, Math.min(25, Math.round(Number(safeOpts.limit)))) : 10;
@@ -420,7 +421,7 @@ export function runAutomatedGitBisect(opts = {}) {
     return { ok: false, error: isEn ? `Failed to resolve Git revisions: ${err?.message || err}` : `Не удалось разрешить ревизии Git: ${err?.message || err}` };
   }
 
-  const baseCache = asStr(safeOpts.cacheDir, 1024).trim() ? resolve(asStr(safeOpts.cacheDir, 1024).trim()) : DEFAULT_CACHE_DIR;
+  const baseCache = asStr(safeOpts.cacheDir, 1024).trim() ? resolve(asStr(safeOpts.cacheDir, 1024).trim()) : getDefaultCacheDir();
   if (!existsSync(baseCache)) mkdirSync(baseCache, { recursive: true });
   const wtDir = join(baseCache, `bisect-wt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
 

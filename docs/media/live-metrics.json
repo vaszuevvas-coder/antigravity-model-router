@@ -1,0 +1,78 @@
+{
+  "generatedAt": "2026-11-27T06:56:03.272Z",
+  "telemetry": {
+    "version": "4.0.6",
+    "counts": {
+      "topCore": 59,
+      "totalCore": 71,
+      "testSuites": 56,
+      "builtInSkills": 15,
+      "guardrails": 59
+    },
+    "ramEngine": {
+      "cachedFiles": 239,
+      "warmMs": 953,
+      "searchMs": 42.35,
+      "searchHits": 5,
+      "sliceMs": 0.86,
+      "sliceLines": 80
+    },
+    "triageExamples": {
+      "S": {
+        "grade": "S",
+        "label": "Hydrogen · Medium"
+      },
+      "L": {
+        "grade": "L",
+        "label": "Orchestrator (Neon · High)"
+      },
+      "XL": {
+        "grade": "L",
+        "label": "Orchestrator (Neon · XHigh)"
+      }
+    }
+  },
+  "projectGraph": {
+    "folderNodes": 14,
+    "folderEdges": 25,
+    "stats": "186 nodes · 419 edges",
+    "fileNodes": 186,
+    "fileEdges": 419,
+    "hubId": "core/ram-memory-engine.mjs",
+    "hubX": 0,
+    "hubY": 23,
+    "baseCamX": 0,
+    "baseCamY": -81.55547409579668,
+    "baseCamScale": 0.25749344520188777,
+    "cyclesCount": 0
+  },
+  "clips": {
+    "cockpitFrameCount": 111,
+    "mapFrameCount": 177,
+    "cockpitMilestones": {
+      "composerEndFrame": 33,
+      "behaviorStartFrame": 34,
+      "hardwareStartFrame": 55,
+      "guardStartFrame": 76
+    },
+    "mapMilestones": {
+      "blastStartFrame": 56,
+      "hotspotsStartFrame": 94,
+      "symbolsStartFrame": 138
+    }
+  },
+  "assets": [
+    "cockpit-showcase.png",
+    "panel-cockpit.png",
+    "panel-behavior.png",
+    "panel-hardware.png",
+    "panel-guard.png",
+    "project-map-folders.png",
+    "project-map-arch.png",
+    "project-map-blast.png",
+    "project-map-hotspots.png",
+    "project-map-symbols.png",
+    "demo-project-map.gif",
+    "demo-cockpit.gif"
+  ]
+}
