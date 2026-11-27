@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="google" content="notranslate" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='2' width='28' height='28' rx='6' fill='%230a0b0d' stroke='%232a2d35' stroke-width='2'/%3E%3Cpath d='M6 16h6M20 16h6M12 16l4-5 4 5-4 5z' fill='none' stroke='%23f04848' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='2' width='28' height='28' rx='5' fill='%230e1014' stroke='%232a2d35' stroke-width='1.8'/%3E%3Cpath d='M5.5 16h5M21.5 16h5' stroke='%239ca3af' stroke-width='1.8' stroke-linecap='round'/%3E%3Cpath d='M16 9l6.5 7-6.5 7-6.5-7z' fill='%23181215' stroke='%23f04848' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M16 12.8l2.8 3.2-2.8 3.2-2.8-3.2z' fill='%23f04848'/%3E%3Ccircle cx='16' cy='16' r='1.1' fill='%23f3f4f6'/%3E%3C/svg%3E" />
   <title>The Tunnel v4.0.5</title>
   <script src="/preload.js"></script>
   <style>
@@ -36374,8 +36374,12 @@
       const targetFile = node.isFolder
         ? (node.topHubFile || (node.fileIds && node.fileIds[0]) || node.id)
         : (node.isSymbol ? (node.file || node.id) : node.id);
-      const topIncoming = incoming.slice(0, 5).map(function (e) { return e.id; }).filter(Boolean);
-      const topOutgoing = outgoing.slice(0, 5).map(function (e) { return e.id; }).filter(Boolean);
+      const topIncoming = incoming.slice(0, 6).map(function (e) { return e.id; }).filter(Boolean);
+      const topOutgoing = outgoing.slice(0, 6).map(function (e) { return e.id; }).filter(Boolean);
+      const rawFolderFiles = node.isFolder && Array.isArray(node.fileIds)
+        ? node.fileIds.filter(Boolean)
+        : [];
+      const folderFiles = rawFolderFiles.slice(0, 8);
       return {
         nodeId: node.id,
         targetFile: targetFile,
@@ -36388,6 +36392,8 @@
         outCount: Math.max(outgoing.length, Number(node.outDeg || 0)),
         topIncoming: topIncoming,
         topOutgoing: topOutgoing,
+        folderFiles: folderFiles,
+        folderFilesTotal: rawFolderFiles.length,
         isGod: Boolean(node.isGod || (node.godCount || 0) > 0),
         isFragile: Boolean(node.isFragile || (node.fragileCount || 0) > 0),
         reliabilityPct: Number(node.reliabilityPercent !== undefined ? node.reliabilityPercent : 100),
@@ -36428,6 +36434,70 @@
         'Проанализируй ' + subject + ' и предложи ключевые улучшения.',
         'Analyze ' + subject + ' and suggest key improvements.'
       );
+    }
+
+    function pgFormatRelationNodeLabel(rawId) {
+      const raw = String(rawId || '').trim();
+      if (!raw) return '';
+      const symMatch = /^sym:([^#]+)#([^:]+)(?::(\d+))?$/.exec(raw);
+      if (symMatch) {
+        return symMatch[2] + ' (' + symMatch[1] + (symMatch[3] ? (':' + symMatch[3]) : '') + ')';
+      }
+      if (raw.indexOf('folder:') === 0) {
+        const folderName = raw.slice(7).replace(/\\/g, '/').replace(/\/+$/, '');
+        return folderName ? (folderName + '/') : raw;
+      }
+      return raw.replace(/\\/g, '/');
+    }
+
+    function pgBuildNodeRelationsContextBlock(ctx) {
+      if (!ctx) return '';
+      const lines = [];
+      const formatList = function (items, totalCount) {
+        const labels = [];
+        const seen = new Set();
+        for (let i = 0; i < items.length; i++) {
+          const lbl = pgFormatRelationNodeLabel(items[i]);
+          if (lbl && !seen.has(lbl)) {
+            seen.add(lbl);
+            labels.push(lbl);
+          }
+        }
+        if (labels.length === 0) return '';
+        const extra = Math.max(0, Number(totalCount || 0) - labels.length);
+        return labels.join(', ') + (extra > 0 ? L(' (и ещё +' + extra + ')', ' (+' + extra + ' more)') : '');
+      };
+
+      if (ctx.isFolder && Array.isArray(ctx.folderFiles) && ctx.folderFiles.length > 0) {
+        const folderList = formatList(ctx.folderFiles, ctx.folderFilesTotal || ctx.folderFiles.length);
+        if (folderList) {
+          lines.push(L('Файлы в папке (' + (ctx.folderFilesTotal || ctx.folderFiles.length) + '): ', 'Files in folder (' + (ctx.folderFilesTotal || ctx.folderFiles.length) + '): ') + folderList);
+        }
+      }
+      if (Array.isArray(ctx.topIncoming) && ctx.topIncoming.length > 0) {
+        const incList = formatList(ctx.topIncoming, ctx.inCount);
+        if (incList) {
+          lines.push(L('Зависимые модули / Blast Radius (↙ ' + ctx.inCount + '): ', 'Dependent modules / Blast Radius (↙ ' + ctx.inCount + '): ') + incList);
+        }
+      }
+      if (Array.isArray(ctx.topOutgoing) && ctx.topOutgoing.length > 0) {
+        const outList = formatList(ctx.topOutgoing, ctx.outCount);
+        if (outList) {
+          lines.push(L('Импорты / зависимости (↗ ' + ctx.outCount + '): ', 'Imports / dependencies (↗ ' + ctx.outCount + '): ') + outList);
+        }
+      }
+
+      const meta = [];
+      if (ctx.isGod) meta.push('God-module');
+      if (ctx.isFragile) meta.push(L('Хрупкий (' + ctx.reliabilityPct + '%)', 'Fragile (' + ctx.reliabilityPct + '%)'));
+      if (ctx.clusterLabel) meta.push(L('кластер: ', 'cluster: ') + ctx.clusterLabel);
+      if (meta.length > 0) {
+        lines.push(L('Риски / метаданные: ', 'Risks / metadata: ') + meta.join(' · '));
+      }
+
+      if (lines.length === 0) return '';
+      const header = L('[Контекст связей с карты проекта]', '[Project Map Relations Context]');
+      return header + '\n- ' + lines.join('\n- ');
     }
 
     function pgFormatNodeRef(rawId) {
@@ -37083,8 +37153,10 @@
         return;
       }
       const prompt = pgBuildAiPresetPrompt(preset, ctx);
+      const relationsBlock = pgBuildNodeRelationsContextBlock(ctx);
+      const promptWithContext = relationsBlock ? (prompt + '\n\n' + relationsBlock) : prompt;
       const token = ctx.targetFile ? ('@file:' + ctx.targetFile) : '';
-      const fullPrompt = token ? (token + '\n' + prompt) : prompt;
+      const fullPrompt = token ? (token + '\n' + promptWithContext) : promptWithContext;
       const wsRoot = (typeof pgGetEffectiveWorkspaceRoot === 'function' ? pgGetEffectiveWorkspaceRoot() : '') ||
         pgState.autoWorkspace ||
         (typeof _activeWorkspaceResolved === 'string' ? _activeWorkspaceResolved : '') ||
@@ -37109,7 +37181,7 @@
 
       pgDispatchToComposer({
         tokens: token ? [token] : [],
-        prompt: prompt,
+        prompt: promptWithContext,
       });
     }
 
@@ -37192,9 +37264,16 @@
       const token = '@file:' + ctx.targetFile;
       const inpEl = document.getElementById('pgAiQuestionInput');
       const draftQ = String(explicitPrompt || (inpEl && inpEl.value) || pgState.aiLastPrompt || '').trim();
+      const relationsBlock = pgBuildNodeRelationsContextBlock(ctx);
+      const hasRelationsAlready =
+        draftQ.indexOf('[Контекст связей с карты проекта]') !== -1 ||
+        draftQ.indexOf('[Project Map Relations Context]') !== -1;
+      const promptWithContext = (relationsBlock && !hasRelationsAlready)
+        ? (draftQ ? (draftQ + '\n\n' + relationsBlock) : relationsBlock)
+        : draftQ;
       pgDispatchToComposer({
         tokens: [token],
-        prompt: draftQ,
+        prompt: promptWithContext,
         inlineOkLabel: L('Вопрос и @file добавлены в Композер ✓', 'Question & @file sent to Composer ✓'),
         standaloneOkLabel: L('Вопрос отправлен в Умный Композер панели ✓ (и скопирован)', 'Question sent to panel Smart Composer ✓ (copied)'),
         standaloneFallbackLabel: L('Скопировано для вставки в чат: ', 'Copied for chat: ') + token,

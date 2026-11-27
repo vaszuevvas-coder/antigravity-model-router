@@ -3088,8 +3088,13 @@ test('18. Project Map right-click contextmenu opens custom node menu instead of 
     assert.equal(out.selectedOnRmb, 'core/a.mjs', 'RMB on node must select that node');
     assert.ok(out.menuHtml.includes('data-arg="focus"'), 'Context menu must include Focus action');
     assert.ok(out.menuHtml.includes('data-arg="symbols"'), 'Context menu must include Symbols action for file');
+    assert.ok(out.menuHtml.includes('data-ctx-submenu="llm"'), 'Context menu must include Ask local LLM flyout submenu');
+    assert.ok(out.menuHtml.includes('data-ctx-submenu="chat"'), 'Context menu must include Ask in new chat flyout submenu');
     assert.ok(out.menuHtml.includes('data-arg="ai:explain"'), 'Context menu must include AI Explain preset');
     assert.ok(out.menuHtml.includes('data-arg="ai:risks"'), 'Context menu must include AI Blast Radius preset');
+    assert.ok(out.menuHtml.includes('data-arg="chat:explain"'), 'Context menu must include Chat Explain preset');
+    assert.ok(out.menuHtml.includes('data-arg="chat:risks"'), 'Context menu must include Chat Blast Radius preset');
+    assert.ok(out.menuHtml.includes('data-arg="ai:composer"'), 'Context menu must include Composer preset in Chat submenu');
     assert.equal(out.closedAfterAction, true, 'Running a context menu action must close the menu');
     assert.equal(out.inCartAfterAction, true, 'Cart action must add node to contextCart');
     assert.equal(out.closedAfterEsc, true, 'Escape must close #pgNodeContextMenu');
@@ -4703,7 +4708,7 @@ test('30. Fragile file "Карта" deep-link: open-window focus param, path san
   try {
     const openWindowHandler = panelApp._routes.get('/api/project-graph/open-window')?.get('POST');
     assert.equal(typeof openWindowHandler, 'function', '/api/project-graph/open-window POST route must exist');
-    const mockReq = { headers: { host: '127.0.0.1:41234', origin: 'http://127.0.0.1:41234', 'x-sidecar-token': 'tok123' } };
+    const mockReq = { headers: { host: '127.0.0.1:41234', origin: 'http://127.0.0.1:41234', 'x-router-panel': 'antigravity-v38', 'x-sidecar-token': 'tok123' } };
 
     // 1. /api/project-graph/open-window forwards sanitized focus param
     const okJson = await openWindowHandler({ rootDir: tmpWs, focus: '.\\core\\auto-verifier.mjs', dryRun: true }, mockReq);
@@ -4957,13 +4962,898 @@ test('30. Fragile file "Карта" deep-link: open-window focus param, path san
   assert.equal(focusCheck.camX, focusCheck.nodeX, `Camera X must center on focused fragile file (emptySub=${focusCheck.emptySub})`);
   assert.equal(focusCheck.camY, focusCheck.nodeY, 'Camera Y must center on focused fragile file');
 
-  // 4. openFragileInGraph in non-standalone panel forwards focus to /api/project-graph/open-window
+  // 4. openFragileInGraph in non-standalone panel opens inline extension map (no external browser),
+  //    while explicit externalWindow:true still forwards focus to /api/project-graph/open-window
   windowObj.location.search = '?token=tok123';
   await vm.runInContext(`openFragileInGraph('core/auto-verifier.mjs')`, ctx);
   await new Promise((r) => setImmediate(r));
-  assert.equal(openWindowPayloads.length, 1, 'openFragileInGraph must invoke /api/project-graph/open-window');
+  assert.equal(openWindowPayloads.length, 0, 'openFragileInGraph must open inside extension without spawning external browser');
+  assert.equal(vm.runInContext('pgState.focusFile', ctx), 'core/auto-verifier.mjs');
+  await vm.runInContext(`openProjectGraphModal({ focusFile: 'core/auto-verifier.mjs', externalWindow: true })`, ctx);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(openWindowPayloads.length, 1, 'Explicit externalWindow:true must still invoke /api/project-graph/open-window');
   assert.equal(openWindowPayloads[0].focus, 'core/auto-verifier.mjs');
 });
+
+test('30. Project Map "Open question in Smart Composer" works in standalone (server handoff + #pgStatusToast) and inline modal (auto-expand card)', async () => {
+  const vm = await import('node:vm');
+  const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+  for (const marker of [
+    'id="pgStatusToast"',
+    'function pgDispatchToComposer(',
+    'function applyExternalComposerHandoff(',
+    'function insertIntoLocalSmartComposer(',
+    '/api/composer/handoff',
+  ]) {
+    assert.ok(html.includes(marker), `Expected marker ${marker} in compiled ui.html`);
+  }
+
+  // 1) Server endpoint test: POST /api/composer/handoff -> exposed in GET /api/telemetry
+  const tmpDir = makeTmpDir('amr-pg-handoff-');
+  const prevState = process.env.TUNNEL_TEST_STATE_PATH;
+  const prevIsolate = process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+  process.env.TUNNEL_TEST_STATE_PATH = path.join(tmpDir, 'router-state.json');
+  process.env.TUNNEL_TEST_ISOLATE_INSTALLED = '1';
+  fs.writeFileSync(process.env.TUNNEL_TEST_STATE_PATH, JSON.stringify({ onboardingCompleted: true, uiLanguage: 'ru' }, null, 2));
+  class MiniSidecarApp {
+    constructor() { this._routes = new Map(); }
+    page() {}
+    api(p, handler, method = 'POST') {
+      if (!this._routes.has(p)) this._routes.set(p, new Map());
+      this._routes.get(p).set(method.toUpperCase(), handler);
+    }
+    run() { return http.createServer(); }
+  }
+  try {
+    const app = await startSidecarPanel({ SidecarAppClass: MiniSidecarApp });
+    const handoffHandler = app._routes.get('/api/composer/handoff')?.get('POST');
+    const telemetryHandler = app._routes.get('/api/telemetry')?.get('GET');
+    assert.equal(typeof handoffHandler, 'function', 'POST /api/composer/handoff must be registered');
+    assert.equal(typeof telemetryHandler, 'function', 'GET /api/telemetry must be registered');
+
+    const postReq = { method: 'POST', headers: { host: '127.0.0.1:4555', origin: 'http://127.0.0.1:4555', 'x-router-panel': 'antigravity-v38' } };
+    const postRes = await handoffHandler({
+      tokens: ['@file:core/tool-pruner.mjs'],
+      prompt: 'Проанализируй core/tool-pruner.mjs',
+      text: '@file:core/tool-pruner.mjs Проанализируй core/tool-pruner.mjs',
+    }, postReq);
+    assert.equal(postRes.ok, true);
+    assert.ok(postRes.seq >= 1);
+
+    const telRes = await telemetryHandler({ rootDir: tmpDir }, { method: 'GET', headers: { host: '127.0.0.1:4555' } });
+    assert.ok(telRes.composerHandoff, '/api/telemetry must expose active composerHandoff');
+    assert.equal(telRes.composerHandoff.seq, postRes.seq);
+    assert.deepEqual(telRes.composerHandoff.tokens, ['@file:core/tool-pruner.mjs']);
+  } finally {
+    if (prevState === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
+    else process.env.TUNNEL_TEST_STATE_PATH = prevState;
+    if (prevIsolate === undefined) delete process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+    else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIsolate;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+
+  // 2) UI VM test: standalone click -> POST /api/composer/handoff + #pgStatusToast visible; main panel consumes handoff & expands collapsed card
+  const mainScriptMatch = html.match(/<script>\s*([\s\S]*?)\s*<\/script>\s*<\/body>/i);
+  assert.ok(mainScriptMatch);
+
+  const elements = new Map();
+  const makeClassList = () => {
+    const set = new Set();
+    return {
+      add: (c) => set.add(c),
+      remove: (c) => set.delete(c),
+      toggle: (c, force) => (force === true ? (set.add(c), true) : force === false ? (set.delete(c), false) : (set.has(c) ? (set.delete(c), false) : (set.add(c), true))),
+      contains: (c) => set.has(c),
+    };
+  };
+  const makeEl = (id = '') => ({
+    id,
+    value: '',
+    textContent: '',
+    innerHTML: '',
+    hidden: false,
+    children: [],
+    style: {},
+    classList: makeClassList(),
+    focused: false,
+    scrolled: false,
+    focus() { this.focused = true; },
+    scrollIntoView() { this.scrolled = true; },
+    setAttribute() {},
+    getAttribute() { return null; },
+    addEventListener() {},
+    removeEventListener() {},
+    appendChild() {},
+    insertBefore() {},
+    remove() {},
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    closest: () => null,
+  });
+  const getEl = (id) => {
+    if (!elements.has(id)) elements.set(id, makeEl(id));
+    return elements.get(id);
+  };
+  getEl('pgStatusToast').hidden = true;
+  const smartCard = getEl('smartComposerCard');
+  smartCard.classList.add('is-collapsed');
+
+  const handoffPosts = [];
+  const copiedTexts = [];
+  const fetchMock = async (url, opts = {}) => {
+    const u = String(url);
+    if (u.startsWith('/api/composer/handoff')) {
+      const body = JSON.parse(opts.body || '{}');
+      handoffPosts.push(body);
+      return { ok: true, status: 200, json: async () => ({ ok: true, seq: handoffPosts.length }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+
+  const doc = {
+    body: { classList: makeClassList(), getAttribute: () => 'full', setAttribute() {} },
+    documentElement: { style: { setProperty() {} } },
+    visibilityState: 'visible',
+    getElementById: (id) => getEl(id),
+    createElement: (tag) => makeEl(tag),
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  doc.body.classList.add('pg-standalone');
+
+  const windowObj = {
+    innerWidth: 1280,
+    innerHeight: 800,
+    location: { search: '?view=graph&token=tok1' },
+    fetch: fetchMock,
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    navigator: { clipboard: { writeText: async (t) => { copiedTexts.push(t); } } },
+    addEventListener() {},
+    removeEventListener() {},
+    requestAnimationFrame: () => 0,
+    cancelAnimationFrame() {},
+    matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+  };
+
+  const ctx = vm.createContext({
+    window: windowObj,
+    document: doc,
+    localStorage: windowObj.localStorage,
+    navigator: windowObj.navigator,
+    location: windowObj.location,
+    CSS: { escape: (s) => String(s) },
+    URL,
+    URLSearchParams,
+    AbortController,
+    performance,
+    Event: class { constructor(type) { this.type = type; } },
+    CustomEvent: class { constructor(type, opts = {}) { this.type = type; this.detail = opts.detail; } },
+    requestAnimationFrame: () => 0,
+    cancelAnimationFrame() {},
+    setTimeout: () => 0,
+    clearTimeout() {},
+    setInterval: () => 0,
+    clearInterval() {},
+    fetch: fetchMock,
+    console,
+    Promise, Set, Map, WeakMap, Array, Object, String, Number, Boolean, Math, Date, JSON, RegExp, Error,
+    encodeURIComponent, decodeURIComponent,
+  });
+
+  vm.runInContext(mainScriptMatch[1], ctx, { filename: 'sidecars/panel/ui.html' });
+
+  // Standalone: trigger context menu 'ai:composer'
+  await vm.runInContext(`(async () => {
+    const node = { id: 'core/tool-pruner.mjs', label: 'tool-pruner.mjs', isFolder: false, isSymbol: false };
+    pgState.nodeById.set(node.id, node);
+    pgState.selectedNodeId = node.id;
+    pgState.ctxMenuNodeId = node.id;
+    pgRunNodeContextAction('ai:composer');
+  })()`, ctx);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(handoffPosts.length, 1, 'Standalone ai:composer must POST to /api/composer/handoff');
+  assert.deepEqual(handoffPosts[0].tokens, ['@file:core/tool-pruner.mjs']);
+  assert.ok(handoffPosts[0].prompt.includes('core/tool-pruner.mjs'));
+  assert.equal(copiedTexts.length, 1, 'Standalone ai:composer must also copy fallback text to clipboard');
+  assert.equal(getEl('pgStatusToast').hidden, false, 'Standalone ai:composer must show visible #pgStatusToast');
+  assert.ok(getEl('pgStatusToast').textContent.length > 0);
+
+  // Main panel: switch out of standalone and consume handoff -> expands card & populates #smartComposerInput
+  windowObj.location.search = '?token=tok1';
+  doc.body.classList.remove('pg-standalone');
+  const consumed1 = vm.runInContext(`applyExternalComposerHandoff({ seq: 1, tokens: ['@file:core/tool-pruner.mjs'], prompt: 'Проанализируй core/tool-pruner.mjs' })`, ctx);
+  const consumedDup = vm.runInContext(`applyExternalComposerHandoff({ seq: 1, tokens: ['@file:core/tool-pruner.mjs'], prompt: 'Проанализируй core/tool-pruner.mjs' })`, ctx);
+  assert.equal(consumed1, true, 'Main panel must consume new composerHandoff');
+  assert.equal(consumedDup, false, 'Main panel must ignore already-consumed seq');
+  assert.equal(smartCard.classList.contains('is-collapsed'), false, 'Collapsed Smart Composer card must auto-expand');
+  assert.ok(getEl('smartComposerInput').value.includes('@file:core/tool-pruner.mjs'));
+  assert.ok(getEl('smartComposerInput').value.includes('Проанализируй core/tool-pruner.mjs'));
+  assert.equal(getEl('smartComposerInput').focused, true);
+});
+
+test('31. Project Map RMB Ask AI flyout submenus: edge flip-left & chat:* dispatches new temporary chat', async () => {
+  const vm = await import('node:vm');
+  buildPanelUi({ repoRoot: ROOT_DIR });
+  const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+  for (const marker of [
+    'data-ctx-submenu="',
+    "renderSubmenu('llm'",
+    "renderSubmenu('chat'",
+    'pg-ctx-flip-left',
+    'async function pgAskInNewProjectChat(',
+  ]) {
+    assert.ok(html.includes(marker), `Expected marker ${marker} in compiled ui.html`);
+  }
+
+  const mainScriptMatch = html.match(/<script>\s*([\s\S]*?)\s*<\/script>\s*<\/body>/i);
+  assert.ok(mainScriptMatch, 'Main script block must exist in ui.html');
+
+  const chatPosts = [];
+  const fetchMock = async (url, opts = {}) => {
+    const u = String(url || '');
+    if (u.includes('/api/chat-send')) {
+      const body = opts.body ? JSON.parse(opts.body) : {};
+      chatPosts.push(body);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, mode: 'new_conversation', conversationId: 'temp-chat-42' }),
+      };
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+
+  const makeClassList = () => {
+    const set = new Set();
+    return {
+      add: (...cs) => cs.forEach((c) => set.add(c)),
+      remove: (...cs) => cs.forEach((c) => set.delete(c)),
+      toggle: (c, force) => {
+        if (force === true) { set.add(c); return true; }
+        if (force === false) { set.delete(c); return false; }
+        if (set.has(c)) { set.delete(c); return false; }
+        set.add(c);
+        return true;
+      },
+      contains: (c) => set.has(c),
+    };
+  };
+
+  const attachBus = (obj) => {
+    const map = new Map();
+    obj.addEventListener = (type, fn) => {
+      if (!map.has(type)) map.set(type, new Set());
+      map.get(type).add(fn);
+    };
+    obj.removeEventListener = (type, fn) => {
+      if (map.has(type)) map.get(type).delete(fn);
+    };
+    obj.dispatchEvent = (ev) => {
+      const listeners = map.get(ev.type);
+      if (!listeners) return;
+      for (const fn of Array.from(listeners)) fn(ev);
+    };
+    return obj;
+  };
+
+  const els = new Map();
+  const getEl = (id) => {
+    if (!els.has(id)) {
+      const attrs = new Map();
+      const el = attachBus({
+        id,
+        tagName: id === 'projectGraphCanvas' ? 'CANVAS' : 'DIV',
+        hidden: id === 'pgNodeContextMenu' || id === 'pgAskAiMenu',
+        classList: makeClassList(),
+        style: { display: '', left: '', top: '', setProperty() {}, removeProperty() {} },
+        dataset: {},
+        value: '',
+        textContent: '',
+        innerHTML: '',
+        clientWidth: 1000,
+        clientHeight: 700,
+        offsetWidth: 256,
+        offsetHeight: 340,
+        setAttribute: (k, v) => attrs.set(String(k), String(v)),
+        getAttribute: (k) => (attrs.has(String(k)) ? attrs.get(String(k)) : null),
+        removeAttribute: (k) => attrs.delete(String(k)),
+        getBoundingClientRect: () => ({ left: 0, top: 0, width: 1000, height: 700 }),
+        getContext: () => ({
+          save() {}, restore() {}, clearRect() {}, fillRect() {}, strokeRect() {}, beginPath() {}, closePath() {},
+          arc() {}, rect() {}, clip() {}, fill() {}, stroke() {}, moveTo() {}, lineTo() {}, quadraticCurveTo() {},
+          bezierCurveTo() {}, roundRect() {}, drawImage() {}, setLineDash() {}, setTransform() {}, scale() {},
+          translate() {}, fillText() {}, strokeText() {}, measureText: () => ({ width: 20 }),
+          createLinearGradient: () => ({ addColorStop() {} }),
+          createRadialGradient: () => ({ addColorStop() {} }),
+        }),
+        focus() {},
+        closest: (sel) => (sel === '#' + id ? el : null),
+        querySelectorAll: () => [],
+        querySelector: () => null,
+      });
+      els.set(id, el);
+    }
+    return els.get(id);
+  };
+
+  for (const id of [
+    'projectGraphModal', 'pgCanvasStage', 'projectGraphCanvas', 'pgNodeContextMenu',
+    'pgAskAiMenu', 'pgActionAskAiBtn', 'pgAiChatBox', 'pgStatusToast',
+  ]) {
+    getEl(id);
+  }
+
+  const doc = attachBus({
+    body: getEl('body'),
+    documentElement: getEl('html'),
+    activeElement: null,
+    getElementById: (id) => (els.has(id) ? els.get(id) : getEl(id)),
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: (tag) => getEl('tmp_' + tag),
+  });
+
+  const activeTimers = new Set();
+  const safeSetTimeout = (fn, ms) => {
+    const id = setTimeout(() => { activeTimers.delete(id); fn(); }, Math.min(Number(ms) || 0, 50));
+    if (id && typeof id.unref === 'function') id.unref();
+    activeTimers.add(id);
+    return id;
+  };
+  const safeClearTimeout = (id) => { activeTimers.delete(id); clearTimeout(id); };
+
+  const win = attachBus({
+    location: { search: '?token=tok1', href: 'http://127.0.0.1:4242/?token=tok1' },
+    innerWidth: 1200,
+    innerHeight: 800,
+    devicePixelRatio: 1,
+    document: doc,
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    navigator: { clipboard: { writeText: async () => {} } },
+    sidecar: {
+      conversationId: 'existing-active-chat',
+      agent: {
+        getWorkspaceUris: async () => ['file:///D:/MyOpenProject'],
+        sendMessage: async () => {},
+        startConversation: async () => ({ conversationId: 'temp-chat-42' }),
+      },
+    },
+    setTimeout: safeSetTimeout,
+    clearTimeout: safeClearTimeout,
+    requestAnimationFrame: () => 0,
+    cancelAnimationFrame: () => {},
+    fetch: fetchMock,
+    URLSearchParams,
+    matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+  });
+
+  const ctx = vm.createContext({
+    window: win,
+    document: doc,
+    localStorage: win.localStorage,
+    navigator: win.navigator,
+    location: win.location,
+    CSS: { escape: (s) => String(s) },
+    URL,
+    URLSearchParams,
+    AbortController,
+    performance,
+    Event: class { constructor(type) { this.type = type; } },
+    CustomEvent: class { constructor(type, opts = {}) { this.type = type; this.detail = opts.detail; } },
+    requestAnimationFrame: () => 0,
+    cancelAnimationFrame: () => {},
+    setTimeout: safeSetTimeout,
+    clearTimeout: safeClearTimeout,
+    setInterval: () => 0,
+    clearInterval() {},
+    fetch: fetchMock,
+    console,
+    Promise, Set, Map, WeakMap, Array, Object, String, Number, Boolean, Math, Date, JSON, RegExp, Error,
+    encodeURIComponent, decodeURIComponent,
+  });
+
+  try {
+    vm.runInContext(mainScriptMatch[1], ctx, { filename: 'sidecars/panel/ui.html' });
+
+    const out = await vm.runInContext(`(async () => {
+      const node = { id: 'core/a.mjs', label: 'a.mjs', isFolder: false, isSymbol: false, lines: 50, inDeg: 1, outDeg: 1 };
+      pgState.open = true;
+      pgState.autoWorkspace = 'D:/MyOpenProject';
+      pgState.nodes = [node];
+      pgState.nodeById = new Map([['core/a.mjs', node]]);
+      pgState.inNeighbors = new Map([['core/a.mjs', []]]);
+      pgState.outNeighbors = new Map([['core/a.mjs', []]]);
+
+      pgOpenNodeContextMenu(node, 920, 620);
+      const menu = document.getElementById('pgNodeContextMenu');
+      const flipLeft = menu.classList.contains('pg-ctx-flip-left');
+      const flipUp = menu.classList.contains('pg-ctx-flip-up');
+      const menuHtml = menu.innerHTML;
+
+      await pgRunNodeContextAction('chat:explain');
+      return { flipLeft, flipUp, menuHtml };
+    })()`, ctx);
+
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    assert.equal(out.flipLeft, true, 'Menu near right edge must activate pg-ctx-flip-left');
+    assert.equal(out.flipUp, true, 'Menu near bottom edge must activate pg-ctx-flip-up');
+    assert.ok(out.menuHtml.includes('data-ctx-submenu="llm"'));
+    assert.ok(out.menuHtml.includes('data-ctx-submenu="chat"'));
+
+    assert.equal(chatPosts.length, 1, 'chat:explain must POST once to /api/chat-send');
+    assert.equal(chatPosts[0].conversationId, '', 'Temporary project chat must NOT reuse active conversationId');
+    assert.equal(chatPosts[0].allowNewConversation, true, 'Temporary project chat must allow new conversation creation');
+    assert.equal(chatPosts[0].rootDir, 'D:/MyOpenProject', 'Temporary project chat must pass effective project rootDir');
+    assert.ok(chatPosts[0].message.includes('@file:core/a.mjs'), 'Prompt must attach @file:<targetFile>');
+    assert.ok(chatPosts[0].message.includes('core/a.mjs'), 'Prompt must reference target file');
+  } finally {
+    try {
+      vm.runInContext(`if (typeof telemetryPollTimer !== 'undefined' && telemetryPollTimer) { clearTimeout(telemetryPollTimer); telemetryPollTimer = null; }`, ctx);
+    } catch {}
+    for (const id of Array.from(activeTimers)) {
+      safeClearTimeout(id);
+    }
+  }
+});
+
+test('32. Project Map preserves Russian language via open-window ?lang=, GET /api/state?sections=core, focus sync & setUiLanguage', async () => {
+  const uiHtml = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+  const scriptMatches = [...uiHtml.matchAll(/<script>([\s\S]*?)<\/script>/gi)];
+  const mainScriptMatch = scriptMatches.find((m) => m[1].includes('pgSyncStandaloneThemeAndLang'));
+  assert.ok(mainScriptMatch, 'Compiled ui.html script containing pgSyncStandaloneThemeAndLang must exist');
+
+  // Verify server open-window embeds lang= in standalone URL
+  const tmpWs = makeTmpDir('tunnel-pg-lang-ws-');
+  const statePath = path.join(tmpWs, 'router-state.json');
+  fs.writeFileSync(statePath, JSON.stringify({ uiLanguage: 'ru', onboardingCompleted: true }, null, 2), 'utf8');
+  const prevIso = process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+  const prevStatePath = process.env.TUNNEL_TEST_STATE_PATH;
+  process.env.TUNNEL_TEST_ISOLATE_INSTALLED = '1';
+  process.env.TUNNEL_TEST_STATE_PATH = statePath;
+  try {
+    class MiniApp {
+      constructor() { this._routes = new Map(); }
+      page() {}
+      api(p, fn, m = 'GET') {
+        if (!this._routes.has(p)) this._routes.set(p, new Map());
+        this._routes.get(p).set(m.toUpperCase(), fn);
+      }
+      run() { return Promise.resolve(); }
+      close() {}
+    }
+    const app = await startSidecarPanel({ SidecarAppClass: MiniApp });
+    try {
+      const openWin = app._routes.get('/api/project-graph/open-window')?.get('POST');
+      const winRes = await openWin(
+        { rootDir: tmpWs, dryRun: true },
+        { method: 'POST', headers: { host: '127.0.0.1:41234', origin: 'http://127.0.0.1:41234', 'x-router-panel': 'antigravity-v38' } }
+      );
+      assert.equal(winRes.ok, true);
+      const u = new URL(winRes.url);
+      assert.equal(u.searchParams.get('lang'), 'ru', 'open-window URL must include lang=ru');
+    } finally {
+      app.close();
+    }
+  } finally {
+    if (prevIso === undefined) delete process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+    else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIso;
+    if (prevStatePath === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
+    else process.env.TUNNEL_TEST_STATE_PATH = prevStatePath;
+    fs.rmSync(tmpWs, { recursive: true, force: true });
+  }
+
+  // Verify standalone sync uses GET /api/state?sections=core and re-renders inspector & title in Russian
+  let serverLang = 'en';
+  const fetched = [];
+  const makeClassList = () => {
+    const set = new Set();
+    return {
+      add: (...c) => c.filter(Boolean).forEach((x) => set.add(x)),
+      remove: (...c) => c.forEach((x) => set.delete(x)),
+      toggle: (c, f) => (f === true ? (set.add(c), true) : f === false ? (set.delete(c), false) : (set.has(c) ? (set.delete(c), false) : (set.add(c), true))),
+      contains: (c) => set.has(c),
+    };
+  };
+  const els = new Map();
+  const makeEl = (id, text = '') => {
+    const attrs = new Map();
+    const el = {
+      id,
+      tagName: 'DIV',
+      nodeType: 1,
+      classList: makeClassList(),
+      style: { setProperty() {}, removeProperty() {} },
+      dataset: {},
+      textContent: text,
+      innerHTML: '',
+      childNodes: [],
+      children: [],
+      setAttribute: (k, v) => attrs.set(k, String(v)),
+      getAttribute: (k) => (attrs.has(k) ? attrs.get(k) : null),
+      removeAttribute: (k) => attrs.delete(k),
+      getBoundingClientRect: () => ({ width: 900, height: 600, left: 0, top: 0 }),
+      getContext: () => null,
+      closest: () => null,
+      querySelectorAll: () => [],
+      querySelector: () => null,
+      appendChild: (c) => c,
+      addEventListener() {},
+    };
+    els.set(id, el);
+    return el;
+  };
+  for (const id of [
+    'projectGraphModal', 'projectGraphCanvas', 'pgCanvasStage', 'pgStatsPill', 'pgProjectBadge',
+    'pgWorkspaceSelect', 'pgInspFilename', 'pgInspPath', 'pgInspBadges', 'pgInspMetrics',
+    'pgInspTabs', 'pgInspLensPanel', 'pgInspList', 'pgInspActions', 'pgContextCart', 'pgCartSummary',
+    'pgClusterPills', 'pgLegendExtra', 'pgModalTitle',
+  ]) {
+    makeEl(id);
+  }
+  const bodyEl = makeEl('body');
+  const docEl = { setAttribute: (k, v) => bodyEl.setAttribute('doc-' + k, v) };
+  const docListeners = new Map();
+  const winListeners = new Map();
+  const doc = {
+    body: bodyEl,
+    documentElement: docEl,
+    title: '',
+    visibilityState: 'visible',
+    getElementById: (id) => els.get(id) || null,
+    querySelectorAll: () => [],
+    querySelector: () => null,
+    createElement: (tag) => makeEl('dyn-' + tag + '-' + els.size),
+    addEventListener: (ev, fn) => {
+      if (!docListeners.has(ev)) docListeners.set(ev, []);
+      docListeners.get(ev).push(fn);
+    },
+  };
+  const ctx = vm.createContext({
+    window: {
+      location: { search: '?view=graph&lang=ru&rootDir=C%3A%2Frepo', pathname: '/', hash: '' },
+      history: { replaceState() {} },
+      addEventListener: (ev, fn) => {
+        if (!winListeners.has(ev)) winListeners.set(ev, []);
+        winListeners.get(ev).push(fn);
+      },
+      removeEventListener() {},
+      matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+      requestAnimationFrame: () => 0,
+      cancelAnimationFrame() {},
+      fetch: async (url, opts) => {
+        const u = String(url || '');
+        fetched.push({ url: u, method: (opts && opts.method) || 'GET' });
+        if (u.startsWith('/api/state')) {
+          return { ok: true, status: 200, json: async () => ({ ok: true, state: { uiLanguage: serverLang, panelUiScale: 'auto' } }) };
+        }
+        return { ok: true, status: 200, json: async () => ({ ok: true, clusters: [], nodes: [], edges: [] }) };
+      },
+    },
+    document: doc,
+    location: { search: '?view=graph&lang=ru&rootDir=C%3A%2Frepo' },
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    navigator: { clipboard: { writeText: async () => {} } },
+    CSS: { escape: (s) => String(s) },
+    URL, URLSearchParams, AbortController, performance,
+    ResizeObserver: class { observe() {} disconnect() {} },
+    IntersectionObserver: class { observe() {} disconnect() {} },
+    Event: class { constructor(t) { this.type = t; } },
+    CustomEvent: class { constructor(t, o) { this.type = t; this.detail = o?.detail; } },
+    requestAnimationFrame: () => 0,
+    cancelAnimationFrame() {},
+    setTimeout: () => 0,
+    clearTimeout() {},
+    setInterval: () => 0,
+    clearInterval() {},
+    console, Promise, Set, Map, WeakMap, Array, Object, String, Number, Boolean, Math, Date, JSON, RegExp, Error,
+    encodeURIComponent, decodeURIComponent,
+  });
+  ctx.window.document = doc;
+  ctx.fetch = ctx.window.fetch;
+  vm.runInContext(mainScriptMatch[1], ctx, { filename: 'sidecars/panel/ui.html' });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+
+  assert.ok(fetched.some((f) => f.url.startsWith('/api/state?sections=core') && f.method === 'GET'), 'Standalone sync must use GET /api/state?sections=core');
+  // Simulate user switching language to Russian in panel settings and focusing standalone window
+  serverLang = 'ru';
+  for (const fn of (winListeners.get('focus') || [])) fn();
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(doc.title, 'Карта проекта · The Tunnel', 'Focused standalone window must sync Russian title');
+  assert.equal(vm.runInContext('getUiLanguage()', ctx), 'ru', 'currentUiLanguage must sync to ru on focus');
+  assert.equal(els.get('pgInspFilename').textContent, 'Выберите узел на карте', 'Inspector must re-render in Russian after focus sync');
+});
+
+test('33. Native Antigravity /graph extension views in sidecar.json, server.mjs route & pathname standalone detection', async () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'sidecar.json'), 'utf8'));
+  const views = manifest?.ui_config?.views || [];
+  assert.equal(
+    views.some((v) => v.path === '/graph'),
+    false,
+    'sidecar.json must not expose separate /graph sidebar/aux-pane entries (opened via The Tunnel button)'
+  );
+
+  const pages = new Map();
+  class MockApp {
+    page(p, fn) { pages.set(p, fn); }
+    api() {}
+    async run() { return null; }
+  }
+  await startSidecarPanel({ SidecarAppClass: MockApp });
+  assert.equal(typeof pages.get('/graph'), 'function', 'server.mjs must register /graph page route');
+  const graphResp = pages.get('/graph')();
+  assert.ok(String(graphResp?.body || '').includes('projectGraphModal'), '/graph must serve compiled panel ui.html');
+  assert.equal(typeof pages.get('/graph-icon.svg'), 'function', 'server.mjs must register /graph-icon.svg route');
+  const iconResp = pages.get('/graph-icon.svg')();
+  assert.ok(String(iconResp?.contentType || '').includes('image/svg+xml'), '/graph-icon.svg must serve image/svg+xml');
+  assert.ok(String(iconResp?.body || '').includes('#f04848'), '/graph-icon.svg must contain crimson button graph icon');
+
+  buildPanelUi({ repoRoot: ROOT_DIR });
+  const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+  assert.ok(html.includes("if (pathname === '/graph') return true;"), 'Compiled ui.html must detect /graph pathname as standalone graph view');
+  assert.ok(html.includes('opts && opts.externalWindow === true'), 'openProjectGraphModal must open inside extension by default without spawning external browser');
+  assert.ok(html.includes("fav.href = '/graph-icon.svg';"), 'Standalone /graph view must set /graph-icon.svg favicon');
+  assert.ok(html.includes("const errDetail = lastErr ? (' (' + lastErr.slice(0, 120) + ')') : '';"), 'Clipboard fallback toast must include diagnostic lastErr detail');
+});
+
+test('34. Inline .pg-overlay fills viewport with 12px inset without 1040x680 size caps', () => {
+  buildPanelUi({ repoRoot: ROOT_DIR });
+  const css = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui-src', 'styles.css'), 'utf8');
+  const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+  const overlayMatch = css.match(/\.pg-overlay\s*\{[\s\S]*?\}/);
+  assert.ok(overlayMatch, '.pg-overlay rule must exist in styles.css');
+  const rule = overlayMatch[0];
+  assert.ok(rule.includes('width: calc(100vw - 24px);'), '.pg-overlay must set width: calc(100vw - 24px)');
+  assert.ok(rule.includes('height: calc(100dvh - 24px);'), '.pg-overlay must set height: calc(100dvh - 24px)');
+  assert.ok(rule.includes('max-width: calc(100vw - 24px);'), '.pg-overlay must set max-width: calc(100vw - 24px)');
+  assert.ok(!rule.includes('1040px') && !rule.includes('680px'), '.pg-overlay must not cap size to 1040x680');
+  assert.ok(html.includes('width: calc(100vw - 24px);') && !html.includes('min(1040px, calc(100vw - 24px))'), 'Compiled ui.html must reflect full-viewport .pg-overlay');
+});
+
+test('35. Project Map chat & composer handoff attaches connected modules, folder files and risk flags', async () => {
+  buildPanelUi({ repoRoot: ROOT_DIR });
+  const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+  assert.ok(html.includes('function pgBuildNodeRelationsContextBlock('), 'Compiled ui.html must include pgBuildNodeRelationsContextBlock');
+
+  const mainScriptMatch = html.match(/<script>\s*([\s\S]*?)\s*<\/script>\s*<\/body>/i);
+  assert.ok(mainScriptMatch, 'Main script block must exist in ui.html');
+
+  const chatPosts = [];
+  const composerCalls = [];
+  const fetchMock = async (url, opts = {}) => {
+    const u = String(url || '');
+    if (u.includes('/api/chat-send')) {
+      chatPosts.push(opts.body ? JSON.parse(opts.body) : {});
+      return { ok: true, status: 200, json: async () => ({ ok: true, mode: 'new_conversation', conversationId: 'chat-rel-1' }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+
+  const makeClassList = () => {
+    const set = new Set();
+    return {
+      add: (...cs) => cs.forEach((c) => set.add(c)),
+      remove: (...cs) => cs.forEach((c) => set.delete(c)),
+      toggle: (c, force) => {
+        if (force === true) { set.add(c); return true; }
+        if (force === false) { set.delete(c); return false; }
+        if (set.has(c)) { set.delete(c); return false; }
+        set.add(c);
+        return true;
+      },
+      contains: (c) => set.has(c),
+    };
+  };
+  const attachBus = (obj) => {
+    obj.addEventListener = () => {};
+    obj.removeEventListener = () => {};
+    obj.dispatchEvent = () => {};
+    return obj;
+  };
+  const els = new Map();
+  const getEl = (id) => {
+    if (!els.has(id)) {
+      const attrs = new Map();
+      const el = attachBus({
+        id,
+        tagName: 'DIV',
+        hidden: false,
+        classList: makeClassList(),
+        style: { display: '', setProperty() {}, removeProperty() {} },
+        dataset: {},
+        value: '',
+        textContent: '',
+        innerHTML: '',
+        setAttribute: (k, v) => attrs.set(String(k), String(v)),
+        getAttribute: (k) => (attrs.has(String(k)) ? attrs.get(String(k)) : null),
+        removeAttribute: (k) => attrs.delete(String(k)),
+        focus() {},
+        closest: () => null,
+        querySelectorAll: () => [],
+        querySelector: () => null,
+      });
+      els.set(id, el);
+    }
+    return els.get(id);
+  };
+  const doc = attachBus({
+    body: getEl('body'),
+    documentElement: getEl('html'),
+    activeElement: null,
+    getElementById: (id) => getEl(id),
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: (tag) => getEl('tmp_' + tag),
+  });
+  const activeTimers = new Set();
+  const safeSetTimeout = (fn, ms) => {
+    const id = setTimeout(() => { activeTimers.delete(id); fn(); }, Math.min(Number(ms) || 0, 50));
+    if (id && typeof id.unref === 'function') id.unref();
+    activeTimers.add(id);
+    return id;
+  };
+  const safeClearTimeout = (id) => { activeTimers.delete(id); clearTimeout(id); };
+  const win = attachBus({
+    location: { search: '?token=tok1&lang=ru', href: 'http://127.0.0.1:4242/?token=tok1&lang=ru' },
+    innerWidth: 1200,
+    innerHeight: 800,
+    devicePixelRatio: 1,
+    document: doc,
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    navigator: { clipboard: { writeText: async () => {} } },
+    sidecar: {
+      conversationId: 'active-chat-1',
+      agent: {
+        getWorkspaceUris: async () => ['file:///D:/MyOpenProject'],
+        sendMessage: async () => {},
+        startConversation: async () => ({ conversationId: 'chat-rel-1' }),
+      },
+    },
+    setTimeout: safeSetTimeout,
+    clearTimeout: safeClearTimeout,
+    requestAnimationFrame: () => 0,
+    cancelAnimationFrame: () => {},
+    fetch: fetchMock,
+    URLSearchParams,
+    matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+  });
+
+  const ctx = vm.createContext({
+    window: win,
+    document: doc,
+    localStorage: win.localStorage,
+    navigator: win.navigator,
+    location: win.location,
+    CSS: { escape: (s) => String(s) },
+    URL,
+    URLSearchParams,
+    AbortController,
+    performance,
+    Event: class { constructor(type) { this.type = type; } },
+    CustomEvent: class { constructor(type, opts = {}) { this.type = type; this.detail = opts.detail; } },
+    requestAnimationFrame: () => 0,
+    cancelAnimationFrame: () => {},
+    setTimeout: safeSetTimeout,
+    clearTimeout: safeClearTimeout,
+    setInterval: () => 0,
+    clearInterval() {},
+    fetch: fetchMock,
+    console,
+    Promise, Set, Map, WeakMap, Array, Object, String, Number, Boolean, Math, Date, JSON, RegExp, Error,
+    encodeURIComponent, decodeURIComponent,
+    __composerCalls: composerCalls,
+  });
+
+  try {
+    vm.runInContext(mainScriptMatch[1], ctx, { filename: 'sidecars/panel/ui.html' });
+    const res = await vm.runInContext(`(async () => {
+      const fileNode = {
+        id: 'core/ram-memory-engine.mjs',
+        label: 'ram-memory-engine.mjs',
+        isFolder: false,
+        isSymbol: false,
+        lines: 1200,
+        inDeg: 8,
+        outDeg: 2,
+        isGod: true,
+        isFragile: true,
+        reliabilityPercent: 78,
+        clusterLabel: 'core',
+      };
+      const folderNode = {
+        id: 'folder:core/gpu',
+        label: 'core/gpu',
+        isFolder: true,
+        isSymbol: false,
+        topHubFile: 'core/gpu/gpu-vram-runtime.mjs',
+        fileIds: ['core/gpu/gpu-vram-runtime.mjs', 'core/gpu/gpu-embedder.mjs', 'core/gpu/gpu-distiller.mjs'],
+        inDeg: 2,
+        outDeg: 1,
+      };
+      const isolatedNode = { id: 'docs/notes.md', label: 'notes.md', isFolder: false, isSymbol: false, inDeg: 0, outDeg: 0 };
+
+      pgState.open = true;
+      pgState.autoWorkspace = 'D:/MyOpenProject';
+      pgState.nodes = [fileNode, folderNode, isolatedNode];
+      pgState.nodeById = new Map([
+        [fileNode.id, fileNode],
+        [folderNode.id, folderNode],
+        [isolatedNode.id, isolatedNode],
+      ]);
+      pgState.inNeighbors = new Map([
+        [fileNode.id, [
+          { id: 'core/ram-memory-mcp.mjs' },
+          { id: 'core/hook-runner.mjs' },
+          { id: 'sidecars/panel/server.mjs' },
+          { id: 'core/a.mjs' },
+          { id: 'core/b.mjs' },
+          { id: 'core/c.mjs' },
+          { id: 'core/d.mjs' },
+          { id: 'core/e.mjs' },
+        ]],
+        [folderNode.id, [{ id: 'folder:core' }, { id: 'sidecars/panel/server.mjs' }]],
+        [isolatedNode.id, []],
+      ]);
+      pgState.outNeighbors = new Map([
+        [fileNode.id, [{ id: 'core/repo-mapper.mjs' }, { id: 'core/security-guard.mjs' }]],
+        [folderNode.id, [{ id: 'core/i18n.mjs' }]],
+        [isolatedNode.id, []],
+      ]);
+
+      await pgAskInNewProjectChat('risks', fileNode);
+      await pgAskInNewProjectChat('explain', folderNode);
+
+      const origDispatch = pgDispatchToComposer;
+      pgDispatchToComposer = function (opts) { __composerCalls.push(opts); };
+      pgState.selectedNodeId = fileNode.id;
+      pgSendAiToComposer('Проверь контракты');
+      const firstComposerPrompt = __composerCalls[0] && __composerCalls[0].prompt ? __composerCalls[0].prompt : '';
+      pgSendAiToComposer(firstComposerPrompt);
+      pgDispatchToComposer = origDispatch;
+
+      const isolatedBlock = pgBuildNodeRelationsContextBlock(pgBuildNodeAiContext(isolatedNode));
+      return { isolatedBlock };
+    })()`, ctx);
+
+    assert.equal(chatPosts.length, 2, 'Expected 2 chat-send calls (file + folder)');
+    const fileMsg = chatPosts[0].message;
+    assert.ok(fileMsg.includes('@file:core/ram-memory-engine.mjs'), 'File chat prompt must include @file token');
+    assert.ok(fileMsg.includes('core/ram-memory-mcp.mjs'), 'File chat prompt must list incoming dependent modules');
+    assert.ok(fileMsg.includes('core/repo-mapper.mjs'), 'File chat prompt must list outgoing imports');
+    assert.ok(fileMsg.includes('+2'), 'File chat prompt must report remaining dependent count beyond cap');
+    assert.ok(fileMsg.includes('God-module') && fileMsg.includes('78%'), 'File chat prompt must include risk flags');
+
+    const folderMsg = chatPosts[1].message;
+    assert.ok(folderMsg.includes('@file:core/gpu/gpu-vram-runtime.mjs'), 'Folder chat prompt must attach hub @file token');
+    assert.ok(folderMsg.includes('core/gpu/gpu-embedder.mjs'), 'Folder chat prompt must list folder member files');
+    assert.ok(folderMsg.includes('core/'), 'Folder chat prompt must format folder: neighbor cleanly');
+    assert.ok(folderMsg.includes('core/i18n.mjs'), 'Folder chat prompt must list outgoing folder imports');
+
+    assert.equal(composerCalls.length, 2, 'Expected 2 composer dispatches');
+    assert.deepEqual(Array.from(composerCalls[0].tokens), ['@file:core/ram-memory-engine.mjs']);
+    assert.ok(composerCalls[0].prompt.includes('Проверь контракты'));
+    assert.ok(composerCalls[0].prompt.includes('core/ram-memory-mcp.mjs'));
+    assert.equal(composerCalls[1].prompt, composerCalls[0].prompt, 'Composer handoff must not duplicate relations block');
+
+    assert.equal(res.isolatedBlock, '', 'Isolated node with no relations or risks must produce empty context block');
+  } finally {
+    try {
+      vm.runInContext(`if (typeof telemetryPollTimer !== 'undefined' && telemetryPollTimer) { clearTimeout(telemetryPollTimer); telemetryPollTimer = null; }`, ctx);
+    } catch {}
+    for (const id of Array.from(activeTimers)) {
+      safeClearTimeout(id);
+    }
+  }
+});
+
+
 
 
 
