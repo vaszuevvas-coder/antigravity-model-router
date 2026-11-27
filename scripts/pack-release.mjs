@@ -151,6 +151,7 @@ export function createSanitizedDefaultState(rawState = {}) {
     ...base,
     panelTheme: 'glass_teal',
     panelViewMode: 'full',
+    panelFullTab: 'cockpit',
     uiLanguage: 'en',
     panelUiScale: 'auto',
     hardwareProfiled: false,
@@ -174,33 +175,29 @@ export function createSanitizedDefaultState(rawState = {}) {
     federatedWorkspaces: [],
     floatingHudEnabled: false,
     skillModes: {},
-    panelCollapsedCards: {
-      swarmTelemetryCard: true,
-      gpuRamCard: true,
-      sentinelSectionCard: true,
-    },
+    panelCollapsedCards: {},
     panelOpenSpoilers: {},
     panelBlockOrder: [
-      'smartProjectBanner',
       'agLiveProgressWrap',
       'smartComposerCard',
-      'liteQuickCard',
-      'skillsSectionCard',
+      'fullGuardRailWrap',
+      'unifiedPresetBar',
       'agentModeCard',
       'skillProfilesFieldset',
+      'swarmBehaviorCard',
       'swarmTelemetryCard',
       'gpuRamCard',
+      'expertRamGpuFieldset',
       'sentinelSectionCard',
-      'snapshotsBayesianSpoiler',
-      'expertDetailsBox',
       'checkpointsCard',
       'intelligenceBayesianCard',
       'expertCircuitBox',
-      'expertPitfallsBox',
+      'memoryContextCard',
       'expertKnowledgeBox',
+      'expertPitfallsBox',
+      'skillsSectionCard',
       'expertGuardrailsCard',
       'expertProfileCard',
-      'expertRamGpuFieldset',
     ],
     updatedAt: new Date().toISOString(),
   };
@@ -354,73 +351,75 @@ function renderIconDib(size) {
     const u = sx / scale;
     const v = sy / scale;
 
-    // Скруглённый квадрат (14..114, r=22) в стиле assets/logo.svg
-    const rx = Math.max(Math.abs(u - 64) - 28, 0);
-    const ry = Math.max(Math.abs(v - 64) - 28, 0);
-    const sdfBox = Math.hypot(rx, ry) - 22;
+    // Hardware rounded square (10..118, r=20) matching Crimson Rail assets/logo.svg
+    const rx = Math.max(Math.abs(u - 64) - 34, 0);
+    const ry = Math.max(Math.abs(v - 64) - 34, 0);
+    const sdfBox = Math.hypot(rx, ry) - 20;
     if (sdfBox > 1.2) return [0, 0, 0, 0];
 
-    const tGrad = Math.max(0, Math.min(1, ((u - 14) + (v - 14)) / 200));
-    let r = 40 + (30 - 40) * tGrad;
-    let g = 42 + (31 - 42) * tGrad;
-    let b = 54 + (41 - 54) * tGrad;
+    const tGrad = Math.max(0, Math.min(1, ((u - 10) + (v - 10)) / 216));
+    let r = 20 + (9 - 20) * tGrad;
+    let g = 22 + (10 - 22) * tGrad;
+    let b = 27 + (12 - 27) * tGrad;
     const boxAlpha = Math.max(0, Math.min(1, 0.8 - sdfBox / 1.5)) * 255;
 
-    // Фиолетовая обводка
+    // Structural border (#2a2d35)
     if (sdfBox > -3.4 && sdfBox < 0.8) {
       const borderA = Math.max(0, Math.min(1, 1 - Math.abs(sdfBox + 1.3) / 2.2));
-      r = r * (1 - borderA) + 189 * borderA;
-      g = g * (1 - borderA) + 147 * borderA;
-      b = b * (1 - borderA) + 249 * borderA;
+      r = r * (1 - borderA) + 42 * borderA;
+      g = g * (1 - borderA) + 45 * borderA;
+      b = b * (1 - borderA) + 53 * borderA;
     }
 
-    // Линии маршрутизации к Pro (верх) и Flash (низ)
-    const dTop = Math.min(
-      distToSegment(u, v, 42, 60, 64, 52),
-      distToSegment(u, v, 64, 52, 88, 42)
+    // Steel horizontal rails (#9ca3af)
+    const dRail = Math.min(
+      distToSegment(u, v, 22, 64, 43, 64),
+      distToSegment(u, v, 85, 64, 106, 64)
     );
-    if (dTop < 3.6) {
-      const la = Math.max(0, Math.min(1, (3.6 - dTop) / 1.6));
-      r = r * (1 - la) + 199 * la;
-      g = g * (1 - la) + 135 * la;
-      b = b * (1 - la) + 225 * la;
+    if (dRail < 3.4) {
+      const la = Math.max(0, Math.min(1, (3.4 - dRail) / 1.4));
+      r = r * (1 - la) + 156 * la;
+      g = g * (1 - la) + 163 * la;
+      b = b * (1 - la) + 175 * la;
     }
-    const dBot = Math.min(
-      distToSegment(u, v, 42, 68, 64, 76),
-      distToSegment(u, v, 64, 76, 88, 86)
+
+    // Outer Crimson Diamond fill (#181215) and stroke (#f04848)
+    const du = Math.abs(u - 64);
+    const dv = Math.abs(v - 64);
+    if (du / 26 + dv / 28 <= 1) {
+      r = 24;
+      g = 18;
+      b = 21;
+    }
+    const dDiamondEdge = Math.min(
+      distToSegment(u, v, 64, 36, 90, 64),
+      distToSegment(u, v, 90, 64, 64, 92),
+      distToSegment(u, v, 64, 92, 38, 64),
+      distToSegment(u, v, 38, 64, 64, 36)
     );
-    if (dBot < 3.6) {
-      const la = Math.max(0, Math.min(1, (3.6 - dBot) / 1.6));
-      r = r * (1 - la) + 109 * la;
-      g = g * (1 - la) + 242 * la;
-      b = b * (1 - la) + 190 * la;
+    if (dDiamondEdge < 4.0) {
+      const da = Math.max(0, Math.min(1, (4.0 - dDiamondEdge) / 1.6));
+      r = r * (1 - da) + 240 * da;
+      g = g * (1 - da) + 72 * da;
+      b = b * (1 - da) + 72 * da;
     }
 
-    // Левый белый узел диспетчера
-    const dHub = Math.hypot(u - 38, v - 64);
-    if (dHub < 12) {
-      const ca = Math.max(0, Math.min(1, (12 - dHub) / 1.8));
-      r = r * (1 - ca) + 248 * ca;
-      g = g * (1 - ca) + 248 * ca;
-      b = b * (1 - ca) + 242 * ca;
+    // Inner solid crimson diamond (#f04848)
+    const innerNorm = du / 11 + dv / 13;
+    if (innerNorm < 1.08) {
+      const ia = Math.max(0, Math.min(1, (1.08 - innerNorm) / 0.14));
+      r = r * (1 - ia) + 240 * ia;
+      g = g * (1 - ia) + 72 * ia;
+      b = b * (1 - ia) + 72 * ia;
     }
 
-    // Верхний правый узел (Pro / Carbon)
-    const dPro = Math.hypot(u - 90, v - 42);
-    if (dPro < 14) {
-      const ca = Math.max(0, Math.min(1, (14 - dPro) / 1.8));
-      r = r * (1 - ca) + 226 * ca;
-      g = g * (1 - ca) + 133 * ca;
-      b = b * (1 - ca) + 220 * ca;
-    }
-
-    // Нижний правый узел (Flash / Hydrogen)
-    const dFlash = Math.hypot(u - 90, v - 86);
-    if (dFlash < 14) {
-      const ca = Math.max(0, Math.min(1, (14 - dFlash) / 1.8));
-      r = r * (1 - ca) + 108 * ca;
-      g = g * (1 - ca) + 241 * ca;
-      b = b * (1 - ca) + 188 * ca;
+    // Center white spark (#f3f4f6)
+    const dDot = Math.hypot(u - 64, v - 64);
+    if (dDot < 4.3) {
+      const ca = Math.max(0, Math.min(1, (4.3 - dDot) / 1.5));
+      r = r * (1 - ca) + 243 * ca;
+      g = g * (1 - ca) + 244 * ca;
+      b = b * (1 - ca) + 246 * ca;
     }
 
     return [r, g, b, boxAlpha];
