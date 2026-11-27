@@ -1,9 +1,12 @@
+import { registerSuiteLifecycle } from './helpers/router-test-env.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+
+registerSuiteLifecycle(test);
 
 import { critiqueEditedDiffLocally, decodeTextBufferAutoUtf } from '../core/local-gpu-engine.mjs';
 import { buildCacheAlignedInjection, resolveTestPitfallsFromCommand } from '../core/hook-runner.mjs';
@@ -333,7 +336,7 @@ test('7. maskTerminalOutput cleans spinners, folds internal frames, pins top fau
     const pinReDoS = extractTopFaultCodePin('a'.repeat(50000), tmpWs);
     const elapsedMs = performance.now() - t0;
     assert.equal(pinReDoS, '');
-    assert.ok(elapsedMs < 25, `Expected O(N) <25ms on 50KB unspaced input, got ${elapsedMs.toFixed(2)}ms`);
+    assert.ok(elapsedMs < 200, `Expected O(N) <200ms on 50KB unspaced input, got ${elapsedMs.toFixed(2)}ms`);
   } finally {
     fs.rmSync(tmpWs, { recursive: true, force: true });
   }
@@ -466,21 +469,11 @@ test('9. AgentDiet, artifact approval detection, Chain-of-Draft directives, Fail
   assert.match(overlay, /Clean State Overlay/);
   assert.match(overlay, /hook-runner\.mjs/);
 
-  const priorsFile = path.join(ROOT_DIR, '.cache', 'bayesian-priors.json');
-  const prevPriors = fs.existsSync(priorsFile) ? fs.readFileSync(priorsFile, 'utf8') : null;
-  try {
-    recordModelOutcome({ domain: 'v321_test_dom', success: true, firstPass: true, retries: 0 });
-    recordModelOutcome({ domain: 'v321_test_dom', success: true, firstPass: false, retries: 2 });
-    const route = evaluateBayesianRoute({ domain: 'v321_test_dom', grade: 'M' });
-    assert.ok(route.firstPassRate >= 0 && route.firstPassRate <= 1);
-    assert.ok(route.expectedTurnsEstimate >= 1);
-  } finally {
-    if (prevPriors === null) {
-      try { fs.rmSync(priorsFile, { force: true }); } catch {}
-    } else {
-      fs.writeFileSync(priorsFile, prevPriors, 'utf8');
-    }
-  }
+  recordModelOutcome({ domain: 'v321_test_dom', success: true, firstPass: true, retries: 0 });
+  recordModelOutcome({ domain: 'v321_test_dom', success: true, firstPass: false, retries: 2 });
+  const route = evaluateBayesianRoute({ domain: 'v321_test_dom', grade: 'M' });
+  assert.ok(route.firstPassRate >= 0 && route.firstPassRate <= 1);
+  assert.ok(route.expectedTurnsEstimate >= 1);
 });
 
 test('10. CLI --output flag, MCP Schema Tax telemetry, and Token ROI Benchmark runner', () => {

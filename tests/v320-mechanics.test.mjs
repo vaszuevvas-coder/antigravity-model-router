@@ -1,3 +1,4 @@
+import { ROOT_DIR, registerSuiteLifecycle } from './helpers/router-test-env.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -19,9 +20,7 @@ import { scanAddedIdentifiersForRefBugs, critiqueEditedDiffLocally } from '../co
 import { collectTelemetry } from '../sidecars/panel/server.mjs';
 import { verifySemanticContracts } from '../core/repo-mapper.mjs';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const ROOT_DIR = path.resolve(__dirname, '..');
+registerSuiteLifecycle(test);
 
 function makeTempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -148,7 +147,7 @@ test('Module 2 (Serena-Lite AST Ops): ram_slice callGraph + applySymbolReplaceme
       filePath: 'mathCore.mjs',
       symbol: 'computeOrderTotal',
       callGraph: true,
-    });
+    }, { engine: ram });
     assert.equal(mcpCg.isError, false);
     assert.match(mcpCg.text, /RAM Symbol Slice/);
 
@@ -388,14 +387,12 @@ test('Module 7 (4-Pillar Token & Cache Meter): server telemetry savingsBreakdown
 });
 
 test('CPU Telemetry Fixes: server reads cpuSavedTokensEstimate, obs-masker tags json vs drain, RamMemoryEngine records knapsack/mmr', async () => {
-  const telemetryFile = path.join(ROOT_DIR, '.cache', 'cpu-telemetry.json');
-  const prevRaw = fs.existsSync(telemetryFile) ? fs.readFileSync(telemetryFile, 'utf8') : null;
   const tmpBrain = makeTempDir('amr-v320-cputel-');
   const tmpWs = makeTempDir('amr-v320-cpuws-');
+  let engine = null;
 
   try {
     const { readCpuTelemetry, recordCpuCompressionSaving } = await import('../core/cpu-worker-pool.mjs');
-    fs.mkdirSync(path.dirname(telemetryFile), { recursive: true });
     recordCpuCompressionSaving({ kind: 'json', savedChars: 1900, latencyMs: 1.0 });
     const telAfterJson = readCpuTelemetry();
     assert.ok(telAfterJson.cpuSavedTokensEstimate >= 500, 'Expected cpuSavedTokensEstimate >= 500');
@@ -425,7 +422,7 @@ test('CPU Telemetry Fixes: server reads cpuSavedTokensEstimate, obs-masker tags 
       `export function helper_${i}(val) {\n  const x = val + ${i};\n  return x * 2;\n}`
     ).join('\n\n');
     fs.writeFileSync(path.join(tmpWs, 'sample.mjs'), bigCode, 'utf8');
-    const engine = new RamMemoryEngine({ budgetMb: 128 });
+    engine = new RamMemoryEngine({ budgetMb: 128 });
     const beforeKnapsack = readCpuTelemetry().knapsackFoldedSlices || 0;
     const skel = engine.skeletonize(tmpWs, 'sample.mjs', { query: 'helper_10', maxChars: 600 });
     assert.equal(skel.ok, true);
@@ -433,12 +430,8 @@ test('CPU Telemetry Fixes: server reads cpuSavedTokensEstimate, obs-masker tags 
     const afterKnapsack = readCpuTelemetry().knapsackFoldedSlices || 0;
     assert.equal(afterKnapsack, beforeKnapsack + 1);
   } finally {
+    try { engine?.close?.(); } catch {}
     fs.rmSync(tmpBrain, { recursive: true, force: true });
     fs.rmSync(tmpWs, { recursive: true, force: true });
-    if (prevRaw !== null) {
-      fs.writeFileSync(telemetryFile, prevRaw, 'utf8');
-    } else if (fs.existsSync(telemetryFile)) {
-      fs.rmSync(telemetryFile, { force: true });
-    }
   }
 });

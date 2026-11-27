@@ -1,3 +1,4 @@
+import './helpers/router-test-env.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -918,48 +919,62 @@ const SNAPSHOT_PATHS = [
   path.join(REPO_ROOT, '.cache', 'task-progress.json'),
 ];
 
-let globalSnapshots = null;
 let liveStateHashBefore = null;
+let liveMcpHashBefore = null;
+let repoStateHashBefore = null;
+let repoMcpHashBefore = null;
 let liveGpuChatModelBefore = undefined;
+let e2ePluginDir = '';
+let prevCacheBefore = undefined;
+let prevStateBefore = undefined;
+let prevIsolateBefore = undefined;
 let tempDirs = [];
-let cpBakBefore = new Set();
 
 test.before(() => {
   liveStateHashBefore = sha256FileIfExists(LIVE_INSTALLED_STATE);
+  liveMcpHashBefore = sha256FileIfExists(LIVE_INSTALLED_MCP);
+  repoStateHashBefore = sha256FileIfExists(path.join(REPO_ROOT, 'router-state.json'));
+  repoMcpHashBefore = sha256FileIfExists(path.join(REPO_ROOT, 'mcp_config.json'));
   if (fs.existsSync(LIVE_INSTALLED_STATE)) {
     try {
       liveGpuChatModelBefore = JSON.parse(fs.readFileSync(LIVE_INSTALLED_STATE, 'utf8')).gpuChatModel;
     } catch {}
   }
-  globalSnapshots = makeFileSnapshots(SNAPSHOT_PATHS);
+  prevCacheBefore = process.env.TUNNEL_CACHE_DIR;
+  prevStateBefore = process.env.TUNNEL_TEST_STATE_PATH;
+  prevIsolateBefore = process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+
   const e2eStateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'amr-e2e-state-'));
   const e2eStatePath = path.join(e2eStateDir, 'router-state.json');
+  const e2eCacheDir = path.join(e2eStateDir, '.cache');
+  e2ePluginDir = path.join(e2eStateDir, 'plugin');
+  fs.mkdirSync(e2eCacheDir, { recursive: true });
+  fs.mkdirSync(e2ePluginDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(e2ePluginDir, 'plugin.json'),
+    JSON.stringify({ name: 'antigravity-model-router', version: PKG_VERSION }, null, 2),
+    'utf8'
+  );
   const repoStatePath = path.join(REPO_ROOT, 'router-state.json');
   if (fs.existsSync(repoStatePath)) {
     fs.copyFileSync(repoStatePath, e2eStatePath);
   }
+  process.env.TUNNEL_TEST_ISOLATE_INSTALLED = '1';
   process.env.TUNNEL_TEST_STATE_PATH = e2eStatePath;
+  process.env.TUNNEL_CACHE_DIR = e2eCacheDir;
   tempDirs.push(e2eStateDir);
-  const cpDir = path.join(REPO_ROOT, '.cache', 'shadow-checkpoints');
-  if (fs.existsSync(cpDir)) {
-    cpBakBefore = new Set(fs.readdirSync(cpDir));
-  }
 });
 
 test.after(() => {
-  delete process.env.TUNNEL_TEST_STATE_PATH;
+  if (prevStateBefore === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
+  else process.env.TUNNEL_TEST_STATE_PATH = prevStateBefore;
+  if (prevCacheBefore === undefined) delete process.env.TUNNEL_CACHE_DIR;
+  else process.env.TUNNEL_CACHE_DIR = prevCacheBefore;
+  if (prevIsolateBefore === undefined) delete process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+  else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIsolateBefore;
+  try { knowledgeHub.close(); } catch {}
   try { shutdownCpuPool(); } catch {}
   try { destroyOllamaKeepAliveAgents(); } catch {}
-  // Clean up any shadow-checkpoint .bak files created during test
-  const cpDir = path.join(REPO_ROOT, '.cache', 'shadow-checkpoints');
-  if (fs.existsSync(cpDir)) {
-    for (const f of fs.readdirSync(cpDir)) {
-      if (!cpBakBefore.has(f) && f !== 'index.json') {
-        try { fs.unlinkSync(path.join(cpDir, f)); } catch {}
-      }
-    }
-  }
-  restoreFileSnapshots(globalSnapshots);
   for (const d of tempDirs) {
     try { fs.rmSync(d, { recursive: true, force: true }); } catch {}
   }
@@ -967,6 +982,10 @@ test.after(() => {
     const liveAfter = JSON.parse(fs.readFileSync(LIVE_INSTALLED_STATE, 'utf8'));
     assert.equal(liveAfter.gpuChatModel, liveGpuChatModelBefore, 'Tests must NOT overwrite user live installed gpuChatModel');
   }
+  assert.equal(sha256FileIfExists(LIVE_INSTALLED_STATE), liveStateHashBefore, 'Tests must NOT mutate live installed router-state.json');
+  assert.equal(sha256FileIfExists(LIVE_INSTALLED_MCP), liveMcpHashBefore, 'Tests must NOT mutate live installed mcp_config.json');
+  assert.equal(sha256FileIfExists(path.join(REPO_ROOT, 'router-state.json')), repoStateHashBefore, 'Tests must NOT mutate REPO router-state.json');
+  assert.equal(sha256FileIfExists(path.join(REPO_ROOT, 'mcp_config.json')), repoMcpHashBefore, 'Tests must NOT mutate REPO mcp_config.json');
 });
 
 function makeTempGitRepo(prefix) {
@@ -991,7 +1010,7 @@ test('1. Full Panel E2E: UI DOM click-through for themes, wizard, workspace, com
   const peerRel = path.relative(tmpRepo, peerRepo);
 
   const TestSidecarApp = createTestSidecarAppClass();
-  const app = await startSidecarPanel({ SidecarAppClass: TestSidecarApp });
+  const app = await startSidecarPanel({ SidecarAppClass: TestSidecarApp, pluginRoot: e2ePluginDir });
   assert.ok(app && app.port > 0);
   const originUrl = `http://127.0.0.1:${app.port}`;
 
@@ -1522,7 +1541,7 @@ test('1. Full Panel E2E: UI DOM click-through for themes, wizard, workspace, com
       15,
       () => `pill="${dom.doc.getElementById('statusPill')?.textContent}" list="${dom.doc.getElementById('shadowWorktreeList')?.innerHTML}" disabled=${dom.doc.querySelector('[data-action="worktreeAction"][data-mode="create"]')?.disabled}`
     );
-    const wtList = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, '.cache', 'shadow-worktrees.json'), 'utf8'));
+    const wtList = JSON.parse(fs.readFileSync(path.join(process.env.TUNNEL_CACHE_DIR || path.join(REPO_ROOT, '.cache'), 'shadow-worktrees.json'), 'utf8'));
     const wtEntry = (wtList?.entries || []).find((e) => e.workspaceRoot && e.workspaceRoot.toLowerCase() === tmpRepo.toLowerCase());
     if (wtEntry?.worktreePath) {
       fs.writeFileSync(path.join(wtEntry.worktreePath, 'app.mjs'), `${origContent}// promoted from wt\n`, 'utf8');
@@ -1625,7 +1644,7 @@ test('1. Full Panel E2E: UI DOM click-through for themes, wizard, workspace, com
 test('2. All 56 Boolean Toggles: UI checkbox sync, server persistence & real downstream module effects', async () => {
   const tmpRepo = makeTempGitRepo('amr-e2e-toggles-');
   const TestSidecarApp = createTestSidecarAppClass();
-  const app = await startSidecarPanel({ SidecarAppClass: TestSidecarApp });
+  const app = await startSidecarPanel({ SidecarAppClass: TestSidecarApp, pluginRoot: e2ePluginDir });
   const originUrl = `http://127.0.0.1:${app.port}`;
   const html = fs.readFileSync(UI_HTML_PATH, 'utf8');
   const dom = createPanelDomHarness(html, originUrl, 'e2e-token-2', { workspaceUris: [tmpRepo] });
@@ -1689,6 +1708,8 @@ test('2. All 56 Boolean Toggles: UI checkbox sync, server persistence & real dow
     assert.match(dom.doc.getElementById('shadowWorktreeList').textContent, /отключена|disabled/i);
 
     // B) sqliteKnowledgeEnabled = false -> disables UI federation input & knowledge snapshot
+    dom.doc.getElementById('fullTabBtn-memory')?.click();
+    await dom.waitIdle();
     const chkSql = dom.doc.getElementById('chk-sqliteKnowledgeEnabled');
     chkSql.checked = false;
     chkSql.dispatchEvent({ type: 'change', bubbles: true });
@@ -1839,7 +1860,7 @@ test('3. Multi-Chat Stats Aggregation: collectTelemetry sums multiple chat trans
 test('4. Audit v3.32.1 regression: updateState merges panelCollapsedCards patches and rolls back to pre-optimistic snapshot on HTTP 500', async () => {
   const tmpRepo = makeTempGitRepo('amr-e2e-rollback-');
   const TestSidecarApp = createTestSidecarAppClass();
-  const app = await startSidecarPanel({ SidecarAppClass: TestSidecarApp });
+  const app = await startSidecarPanel({ SidecarAppClass: TestSidecarApp, pluginRoot: e2ePluginDir });
   assert.ok(app && app.port > 0);
   const originUrl = `http://127.0.0.1:${app.port}`;
   const htmlRes = await globalThis.fetch(`${originUrl}/`);
@@ -1919,7 +1940,7 @@ test('4. Audit v3.32.1 regression: updateState merges panelCollapsedCards patche
 test('5. Panel Full-only lock: no Lite/Full switcher, adaptive Full telemetry & Crimson Rail active button contrast', async () => {
   const tmpRepo = makeTempGitRepo('amr-e2e-full-lock-');
   const TestSidecarApp = createTestSidecarAppClass();
-  const app = await startSidecarPanel({ SidecarAppClass: TestSidecarApp });
+  const app = await startSidecarPanel({ SidecarAppClass: TestSidecarApp, pluginRoot: e2ePluginDir });
   assert.ok(app && app.port > 0);
   const originUrl = `http://127.0.0.1:${app.port}`;
 
@@ -1991,7 +2012,7 @@ test('5. Panel Full-only lock: no Lite/Full switcher, adaptive Full telemetry & 
 test('6. Wave 1 UX: card header drag vs click collapse, Setup Doctor rescan & auto-collapse, adaptive UI scale 1080p/2K/4K', async () => {
   const tmpRepo = makeTempGitRepo('amr-e2e-wave1-');
   const TestSidecarApp = createTestSidecarAppClass();
-  const app = await startSidecarPanel({ SidecarAppClass: TestSidecarApp });
+  const app = await startSidecarPanel({ SidecarAppClass: TestSidecarApp, pluginRoot: e2ePluginDir });
   assert.ok(app && app.port > 0);
   const originUrl = `http://127.0.0.1:${app.port}`;
 
@@ -2184,7 +2205,7 @@ test('7. Wave 2 UX: banner workspace switcher, unscoped "Без проекта" 
 
   // 3. Panel DOM: workspace switcher in #smartProjectBanner, unscoped chats visible when pinned, waiting_user jump
   const TestSidecarApp = createTestSidecarAppClass();
-  const app = await startSidecarPanel({ SidecarAppClass: TestSidecarApp });
+  const app = await startSidecarPanel({ SidecarAppClass: TestSidecarApp, pluginRoot: e2ePluginDir });
   assert.ok(app && app.port > 0);
   const originUrl = `http://127.0.0.1:${app.port}`;
   const htmlRes = await globalThis.fetch(`${originUrl}/`);
@@ -3422,10 +3443,10 @@ test('12. Phase 2 Variant C: Left mini-rail, embedded Sticky Progress, native Un
   }
 });
 
-test('10. Header RAM/GPU/CPU live pills update across all Full tabs even when gpuRamCard is hidden or collapsed', async () => {
+test('10b. Header RAM/GPU/CPU live pills update across all Full tabs even when gpuRamCard is hidden or collapsed', async () => {
   const tmpRepo = makeTempGitRepo('amr-e2e-hw-header-pills-');
   const TestSidecarApp = createTestSidecarAppClass();
-  const app = await startSidecarPanel({ SidecarAppClass: TestSidecarApp });
+  const app = await startSidecarPanel({ SidecarAppClass: TestSidecarApp, pluginRoot: e2ePluginDir });
   assert.ok(app && app.port > 0);
   let dom = null;
   try {

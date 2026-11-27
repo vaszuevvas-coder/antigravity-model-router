@@ -215,35 +215,38 @@ test('Wave 2: Graphify v2 EXTRACTED/INFERRED/AMBIGUOUS confidence, topologyHash,
     assert.equal(h1, h2);
 
     const ram = new RamMemoryEngine({ budgetMb: 128 });
-    const report = ram.queryKnowledgeGraph(tmpWs, { mode: 'report' });
-    assert.equal(report.ok, true);
-    assert.match(report.topologyHash, /^v1:[0-9a-f]{24}$/);
+    try {
+      const report = ram.queryKnowledgeGraph(tmpWs, { mode: 'report' });
+      assert.equal(report.ok, true);
+      assert.match(report.topologyHash, /^v1:[0-9a-f]{24}$/);
 
-    const symGraph = buildSymbolCallGraph(ram.ensureWarm(tmpWs).files);
-    const checkoutEdges = symGraph.calleesOf.get('runCheckout');
-    assert.ok(checkoutEdges);
-    const edgeList = Array.from(checkoutEdges.values());
-    const jwtEdge = edgeList.find((e) => e.name === 'verifyJwtToken');
-    const ambigEdge = edgeList.find((e) => e.name === 'sharedValidate');
-    assert.equal(jwtEdge?.confidence, 'EXTRACTED');
-    assert.equal(ambigEdge?.confidence, 'AMBIGUOUS');
+      const symGraph = buildSymbolCallGraph(ram.ensureWarm(tmpWs).files);
+      const checkoutEdges = symGraph.calleesOf.get('runCheckout');
+      assert.ok(checkoutEdges);
+      const edgeList = Array.from(checkoutEdges.values());
+      const jwtEdge = edgeList.find((e) => e.name === 'verifyJwtToken');
+      const ambigEdge = edgeList.find((e) => e.name === 'sharedValidate');
+      assert.equal(jwtEdge?.confidence, 'EXTRACTED');
+      assert.equal(ambigEdge?.confidence, 'AMBIGUOUS');
 
-    const arch = detectArchitectureClusters(ram.ensureWarm(tmpWs).files, ram.ensureWarm(tmpWs).forwardDeps, ram.ensureWarm(tmpWs).reverseDeps, {
-      symbolGraph: symGraph,
-    });
-    const bridges = findSurprisingConnections(ram.ensureWarm(tmpWs).files, arch, symGraph, ram.ensureWarm(tmpWs).forwardDeps);
-    assert.ok(bridges.length >= 1);
-    const qs = suggestArchitectureQuestions(arch, bridges);
-    assert.ok(Array.isArray(qs));
+      const arch = detectArchitectureClusters(ram.ensureWarm(tmpWs).files, ram.ensureWarm(tmpWs).forwardDeps, ram.ensureWarm(tmpWs).reverseDeps, {
+        symbolGraph: symGraph,
+      });
+      const bridges = findSurprisingConnections(ram.ensureWarm(tmpWs).files, arch, symGraph, ram.ensureWarm(tmpWs).forwardDeps);
+      assert.ok(bridges.length >= 1);
+      const qs = suggestArchitectureQuestions(arch, bridges);
+      assert.ok(Array.isArray(qs));
 
-    const affected = queryAffectedBlastGraph(ram.ensureWarm(tmpWs).files, 'auth/token.mjs', {
-      symbolGraph: symGraph,
-      maxDepth: 4,
-    });
-    assert.equal(affected.ok, true);
-    assert.ok(affected.affected.some((h) => h.file === 'billing/checkout.mjs'));
-    assert.ok(affected.affected.some((h) => h.file === 'billing/index.mjs' && h.viaRelation === 're_exports'));
-    ram.shutdownAll?.();
+      const affected = queryAffectedBlastGraph(ram.ensureWarm(tmpWs).files, 'auth/token.mjs', {
+        symbolGraph: symGraph,
+        maxDepth: 4,
+      });
+      assert.equal(affected.ok, true);
+      assert.ok(affected.affected.some((h) => h.file === 'billing/checkout.mjs'));
+      assert.ok(affected.affected.some((h) => h.file === 'billing/index.mjs' && h.viaRelation === 're_exports'));
+    } finally {
+      try { ram.close(); } catch {}
+    }
   } finally {
     fs.rmSync(tmpWs, { recursive: true, force: true });
   }

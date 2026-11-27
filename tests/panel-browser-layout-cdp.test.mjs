@@ -413,16 +413,19 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
   let cdp = null;
 
   const prevIsolate = process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+  const prevStatePath = process.env.TUNNEL_TEST_STATE_PATH;
+  const prevCacheDir = process.env.TUNNEL_CACHE_DIR;
   try {
     const isolatedStatePath = path.join(tmpUserDataDir, 'router-state.json');
     if (stateSnapshotBuf !== null) {
       fs.writeFileSync(isolatedStatePath, stateSnapshotBuf);
     }
+    fs.writeFileSync(path.join(tmpUserDataDir, 'plugin.json'), JSON.stringify({ name: 'antigravity-model-router', version: '4.0.9' }), 'utf8');
     process.env.TUNNEL_TEST_STATE_PATH = isolatedStatePath;
     process.env.TUNNEL_CACHE_DIR = path.join(tmpUserDataDir, 'cache');
     process.env.TUNNEL_TEST_ISOLATE_INSTALLED = '1';
     const TestSidecarApp = createTestSidecarAppClass();
-    app = await startSidecarPanel({ port: 0, SidecarAppClass: TestSidecarApp });
+    app = await startSidecarPanel({ port: 0, SidecarAppClass: TestSidecarApp, pluginRoot: tmpUserDataDir });
     assert.ok(app && app.port > 0, 'Sidecar panel server must bind an ephemeral port');
     const originUrl = `http://127.0.0.1:${app.port}`;
 
@@ -1239,8 +1242,10 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
       assert.ok(btn.w >= minW, `Rail button ${btn.id} crushed at 380px: width=${btn.w} < ${minW}`);
     }
   } finally {
-    delete process.env.TUNNEL_TEST_STATE_PATH;
-    delete process.env.TUNNEL_CACHE_DIR;
+    if (prevStatePath === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
+    else process.env.TUNNEL_TEST_STATE_PATH = prevStatePath;
+    if (prevCacheDir === undefined) delete process.env.TUNNEL_CACHE_DIR;
+    else process.env.TUNNEL_CACHE_DIR = prevCacheDir;
     if (prevIsolate === undefined) delete process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
     else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIsolate;
     if (cdp) cdp.close();
@@ -1251,12 +1256,6 @@ test('Real Headless Chromium/Edge CDP: narrow 320x700 panel layout, scroll, coll
       } catch {
         try { app.server?.close?.(); } catch {}
       }
-    }
-
-    if (stateSnapshotBuf === null) {
-      if (fs.existsSync(STATE_PATH)) fs.unlinkSync(STATE_PATH);
-    } else if (!fs.existsSync(STATE_PATH) || !fs.readFileSync(STATE_PATH).equals(stateSnapshotBuf)) {
-      fs.writeFileSync(STATE_PATH, stateSnapshotBuf);
     }
 
     try {

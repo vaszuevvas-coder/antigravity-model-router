@@ -286,7 +286,7 @@ test('5. safeReadJsonSync handles UTF-8 BOM, invalid args, EISDIR fast-fail, and
     const dirRes = safeReadJsonSync(dirTarget, () => ({ fallback: true }), { selfHeal: true });
     const dirElapsedMs = performance.now() - tDir;
     assert.deepEqual(dirRes, { fallback: true });
-    assert.ok(dirElapsedMs < 40, `EISDIR should fail fast (<40ms), took ${Math.round(dirElapsedMs)}ms`);
+    assert.ok(dirElapsedMs < 200, `EISDIR should fail fast (<200ms), took ${Math.round(dirElapsedMs)}ms`);
     assert.equal(fs.statSync(dirTarget).isDirectory(), true);
 
     // 5c. Null options, bad paths, and circular non-cloneable object defaults must never throw

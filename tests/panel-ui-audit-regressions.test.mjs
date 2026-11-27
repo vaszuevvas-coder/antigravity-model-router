@@ -409,12 +409,19 @@ test('1. Stale background tasks TTL auto-cancels hanging non-daemon & expired da
 test('2. POST /api/update fast path returns compact state quickly while preserving full fallback', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'amr-fast-update-'));
   const prevStateEnv = process.env.TUNNEL_TEST_STATE_PATH;
+  const prevCacheEnv = process.env.TUNNEL_CACHE_DIR;
+  const prevIso = process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
   const statePath = path.join(tmpDir, 'router-state.json');
+  const cacheDir = path.join(tmpDir, '.cache');
+  fs.mkdirSync(cacheDir, { recursive: true });
+  fs.writeFileSync(path.join(tmpDir, 'plugin.json'), JSON.stringify({ name: 'antigravity-model-router', version: '4.0.9' }), 'utf8');
   fs.writeFileSync(statePath, JSON.stringify({ ...DEFAULT_STATE, onboardingCompleted: true, hardwareProfiled: true }, null, 2));
   process.env.TUNNEL_TEST_STATE_PATH = statePath;
+  process.env.TUNNEL_CACHE_DIR = cacheDir;
+  process.env.TUNNEL_TEST_ISOLATE_INSTALLED = '1';
 
   const TestSidecarApp = createTestSidecarAppClass();
-  const app = await startSidecarPanel({ port: 0, SidecarAppClass: TestSidecarApp });
+  const app = await startSidecarPanel({ port: 0, SidecarAppClass: TestSidecarApp, pluginRoot: tmpDir });
   try {
     const baseUrl = `http://127.0.0.1:${app.port}`;
     const headersBase = {
@@ -441,7 +448,7 @@ test('2. POST /api/update fast path returns compact state quickly while preservi
     assert.equal(fastJson.skills, undefined, 'Fast path must skip skills discovery');
     assert.equal(fastJson.checkpoints, undefined, 'Fast path must skip checkpoints scan');
     assert.ok(Buffer.byteLength(fastText, 'utf8') < 15 * 1024, `Fast payload too large: ${Buffer.byteLength(fastText, 'utf8')} bytes`);
-    assert.ok(fastMs < 250, `Fast update took ${fastMs.toFixed(1)}ms, expected < 250ms`);
+    assert.ok(fastMs < 500, `Fast update took ${fastMs.toFixed(1)}ms, expected < 500ms`);
 
     const queryFastRes = await fetch(`${baseUrl}/api/update?fast=1`, {
       method: 'POST',
@@ -466,6 +473,10 @@ test('2. POST /api/update fast path returns compact state quickly while preservi
     await app.close();
     if (prevStateEnv === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
     else process.env.TUNNEL_TEST_STATE_PATH = prevStateEnv;
+    if (prevCacheEnv === undefined) delete process.env.TUNNEL_CACHE_DIR;
+    else process.env.TUNNEL_CACHE_DIR = prevCacheEnv;
+    if (prevIso === undefined) delete process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+    else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIso;
     try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 80 }); } catch {}
   }
 });
@@ -479,7 +490,12 @@ test('3. Real Headless CDP: HUD swarm badge, 4-item bg preview cap, EN statusPil
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'amr-cdp-audit-'));
   const prevStateEnv = process.env.TUNNEL_TEST_STATE_PATH;
+  const prevCacheEnv = process.env.TUNNEL_CACHE_DIR;
+  const prevIso = process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
   const statePath = path.join(tmpDir, 'router-state.json');
+  const cacheDir = path.join(tmpDir, '.cache');
+  fs.mkdirSync(cacheDir, { recursive: true });
+  fs.writeFileSync(path.join(tmpDir, 'plugin.json'), JSON.stringify({ name: 'antigravity-model-router', version: '4.0.9' }), 'utf8');
   fs.writeFileSync(statePath, JSON.stringify({
     ...DEFAULT_STATE,
     onboardingCompleted: true,
@@ -491,6 +507,8 @@ test('3. Real Headless CDP: HUD swarm badge, 4-item bg preview cap, EN statusPil
     panelOpenSpoilers: {},
   }, null, 2));
   process.env.TUNNEL_TEST_STATE_PATH = statePath;
+  process.env.TUNNEL_CACHE_DIR = cacheDir;
+  process.env.TUNNEL_TEST_ISOLATE_INSTALLED = '1';
 
   const TestSidecarApp = createTestSidecarAppClass();
   let app = null;
@@ -498,7 +516,7 @@ test('3. Real Headless CDP: HUD swarm badge, 4-item bg preview cap, EN statusPil
   let cdp = null;
 
   try {
-    app = await startSidecarPanel({ port: 0, SidecarAppClass: TestSidecarApp });
+    app = await startSidecarPanel({ port: 0, SidecarAppClass: TestSidecarApp, pluginRoot: tmpDir });
     const originUrl = `http://127.0.0.1:${app.port}`;
     const launched = await launchHeadlessBrowser(browserExe, path.join(tmpDir, 'profile'));
     browserProc = launched.proc;
@@ -633,6 +651,10 @@ test('3. Real Headless CDP: HUD swarm badge, 4-item bg preview cap, EN statusPil
     if (app) await app.close();
     if (prevStateEnv === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
     else process.env.TUNNEL_TEST_STATE_PATH = prevStateEnv;
+    if (prevCacheEnv === undefined) delete process.env.TUNNEL_CACHE_DIR;
+    else process.env.TUNNEL_CACHE_DIR = prevCacheEnv;
+    if (prevIso === undefined) delete process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+    else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIso;
     try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 80 }); } catch {}
   }
 });

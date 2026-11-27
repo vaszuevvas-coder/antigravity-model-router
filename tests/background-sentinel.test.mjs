@@ -1,3 +1,4 @@
+import { ROOT_DIR, makeTempDir, registerSuiteLifecycle } from './helpers/router-test-env.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -5,7 +6,8 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+registerSuiteLifecycle(test);
 
 import { estimateTaskGradeAndThinkingBudget, detectPromptIntentSignals } from '../core/tool-pruner.mjs';
 import { handlePreInvocation, handlePreToolUse } from '../core/hook-runner.mjs';
@@ -24,12 +26,7 @@ import {
 } from '../core/background-sentinel.mjs';
 import { RamMemoryEngine } from '../core/ram-memory-engine.mjs';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT_DIR = path.join(__dirname, '..');
-
-function makeTempDir(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-}
+const AGENT_SHIELD_MARKER = true;
 
 test('1. Two-Phase ask_question Gate: prevAskQuestionCalled false vs true vs undefined + E2E PreInvocation', async () => {
   // 1a) Legacy undefined prevAskQuestionCalled preserves immediate Plan Approved Follow-Up (backward compatibility)
@@ -399,28 +396,6 @@ test('1b. Short Russian approvals ("Да", "Да!", "Исправляем") + Pr
     else process.env.TUNNEL_CACHE_DIR = prevCacheDir;
     fs.rmSync(isoCacheDir, { recursive: true, force: true, maxRetries: 6, retryDelay: 50 });
     fs.rmSync(tmpWs, { recursive: true, force: true, maxRetries: 6, retryDelay: 50 });
-    try {
-      if (fs.existsSync(turnCachePath)) {
-        const cur = JSON.parse(fs.readFileSync(turnCachePath, 'utf8'));
-        if (cur?.turns && typeof cur.turns === 'object') {
-          for (const k of Object.keys(cur.turns)) {
-            if (k.includes(baseId)) delete cur.turns[k];
-          }
-          fs.writeFileSync(turnCachePath, JSON.stringify(cur, null, 2), 'utf8');
-        }
-      }
-    } catch {}
-    try {
-      if (fs.existsSync(swarmRolesPath)) {
-        const curRoles = JSON.parse(fs.readFileSync(swarmRolesPath, 'utf8'));
-        if (curRoles?.roles && typeof curRoles.roles === 'object') {
-          for (const k of Object.keys(curRoles.roles)) {
-            if (k.includes(baseId)) delete curRoles.roles[k];
-          }
-          fs.writeFileSync(swarmRolesPath, JSON.stringify(curRoles, null, 2), 'utf8');
-        }
-      }
-    } catch {}
   }
 });
 
@@ -555,35 +530,41 @@ test('3. Engine A: Shadow Guard broken arity & syntax detection + zero-token cle
     fs.writeFileSync(path.join(tmpWs, 'broken.json'), '{ "unclosed": true ', 'utf8');
 
     const ramEng = new RamMemoryEngine({ budgetMb: 32 });
-    await ramEng.warmWorkspaceAsync(tmpWs, { startWatcher: false });
+    let ramEngClean = null;
+    try {
+      await ramEng.warmWorkspaceAsync(tmpWs, { startWatcher: false });
 
-    const guardSentinel = new BackgroundSentinel({ cacheDir: tmpCache });
-    const badRes = await guardSentinel.runShadowGuardPass(tmpWs, ramEng);
+      const guardSentinel = new BackgroundSentinel({ cacheDir: tmpCache });
+      const badRes = await guardSentinel.runShadowGuardPass(tmpWs, ramEng);
 
-    assert.equal(badRes.status, 'error');
-    assert.ok(badRes.errorCount >= 2);
-    assert.ok(badRes.issues.some((i) => i.type === 'arity_mismatch' && i.symbol === 'computeTotal'));
-    assert.ok(badRes.issues.some((i) => i.type === 'syntax_error' && i.file === 'broken.json'));
+      assert.equal(badRes.status, 'error');
+      assert.ok(badRes.errorCount >= 2);
+      assert.ok(badRes.issues.some((i) => i.type === 'arity_mismatch' && i.symbol === 'computeTotal'));
+      assert.ok(badRes.issues.some((i) => i.type === 'syntax_error' && i.file === 'broken.json'));
 
-    const promptAlert = guardSentinel.formatSentinelAlertForPrompt(tmpWs);
-    assert.match(promptAlert, /^🛡️ \[Shadow Guard\]/);
-    assert.ok(promptAlert.split('\n').length <= 3, 'Alert must be <= 3 lines');
+      const promptAlert = guardSentinel.formatSentinelAlertForPrompt(tmpWs);
+      assert.match(promptAlert, /^🛡️ \[Shadow Guard\]/);
+      assert.ok(promptAlert.split('\n').length <= 3, 'Alert must be <= 3 lines');
 
-    // Fix both issues -> Shadow Guard becomes clean and formatSentinelAlertForPrompt returns '' (zero tokens!)
-    fs.writeFileSync(
-      consumerFile,
-      'import { computeTotal } from "./provider.mjs";\nexport const res = computeTotal(100, 0.2);\n',
-      'utf8'
-    );
-    fs.writeFileSync(path.join(tmpWs, 'broken.json'), '{ "unclosed": false }\n', 'utf8');
-    const ramEngClean = new RamMemoryEngine({ budgetMb: 32 });
-    await ramEngClean.warmWorkspaceAsync(tmpWs, { startWatcher: false });
+      // Fix both issues -> Shadow Guard becomes clean and formatSentinelAlertForPrompt returns '' (zero tokens!)
+      fs.writeFileSync(
+        consumerFile,
+        'import { computeTotal } from "./provider.mjs";\nexport const res = computeTotal(100, 0.2);\n',
+        'utf8'
+      );
+      fs.writeFileSync(path.join(tmpWs, 'broken.json'), '{ "unclosed": false }\n', 'utf8');
+      ramEngClean = new RamMemoryEngine({ budgetMb: 32 });
+      await ramEngClean.warmWorkspaceAsync(tmpWs, { startWatcher: false });
 
-    const cleanSentinel = new BackgroundSentinel({ cacheDir: tmpCache });
-    const cleanRes = await cleanSentinel.runShadowGuardPass(tmpWs, ramEngClean);
-    assert.equal(cleanRes.status, 'clean');
-    assert.equal(cleanRes.errorCount, 0);
-    assert.equal(cleanSentinel.formatSentinelAlertForPrompt(tmpWs), '');
+      const cleanSentinel = new BackgroundSentinel({ cacheDir: tmpCache });
+      const cleanRes = await cleanSentinel.runShadowGuardPass(tmpWs, ramEngClean);
+      assert.equal(cleanRes.status, 'clean');
+      assert.equal(cleanRes.errorCount, 0);
+      assert.equal(cleanSentinel.formatSentinelAlertForPrompt(tmpWs), '');
+    } finally {
+      try { ramEngClean?.close?.(); } catch {}
+      try { ramEng.close(); } catch {}
+    }
   } finally {
     try { fs.rmSync(tmpWs, { recursive: true, force: true, maxRetries: 10, retryDelay: 60 }); } catch {}
     try { fs.rmSync(tmpCache, { recursive: true, force: true, maxRetries: 10, retryDelay: 60 }); } catch {}
@@ -761,68 +742,72 @@ test('5. Engine C & D: Symbol Cards SHA-256 persistence + bilingual search + Spe
     );
 
     const ramEng = new RamMemoryEngine({ budgetMb: 32 });
-    await ramEng.warmWorkspaceAsync(tmpWs, { startWatcher: false });
+    try {
+      await ramEng.warmWorkspaceAsync(tmpWs, { startWatcher: false });
 
-    let cardGpuCalls = 0;
-    const mockCardHttp = async (_m, _u, body) => {
-      cardGpuCalls += 1;
-      const content = body?.messages?.[1]?.content || '';
-      if (content.includes('sessionVault.mjs')) {
+      let cardGpuCalls = 0;
+      const mockCardHttp = async (_m, _u, body) => {
+        cardGpuCalls += 1;
+        const content = body?.messages?.[1]?.content || '';
+        if (content.includes('sessionVault.mjs')) {
+          return {
+            ok: true,
+            data: {
+              message: {
+                content: JSON.stringify({
+                  purposeRu: 'Ротация токенов авторизации и защита сессий пользователя.',
+                  purposeEn: 'Rotates authentication session tokens and guards user sessions.',
+                  keyContracts: 'rotateAuthSessionToken(userId)',
+                }),
+              },
+            },
+          };
+        }
         return {
           ok: true,
           data: {
             message: {
               content: JSON.stringify({
-                purposeRu: 'Ротация токенов авторизации и защита сессий пользователя.',
-                purposeEn: 'Rotates authentication session tokens and guards user sessions.',
-                keyContracts: 'rotateAuthSessionToken(userId)',
+                purposeRu: 'Расчёт НДС и итоговой суммы счёта.',
+                purposeEn: 'Calculates VAT tax for billing invoices.',
+                keyContracts: 'calculateInvoiceVat(amount)',
               }),
             },
           },
         };
-      }
-      return {
-        ok: true,
-        data: {
-          message: {
-            content: JSON.stringify({
-              purposeRu: 'Расчёт НДС и итоговой суммы счёта.',
-              purposeEn: 'Calculates VAT tax for billing invoices.',
-              keyContracts: 'calculateInvoiceVat(amount)',
-            }),
-          },
-        },
       };
-    };
 
-    const s = new BackgroundSentinel({ cacheDir: tmpCache });
-    const pass1 = await s.runIdleSymbolCardsPass(tmpWs, ramEng, { maxFiles: 5, httpJsonFn: mockCardHttp });
-    assert.equal(pass1.ok, true);
-    assert.equal(pass1.indexedNow, 2);
-    assert.equal(cardGpuCalls, 2);
+      const s = new BackgroundSentinel({ cacheDir: tmpCache });
+      const pass1 = await s.runIdleSymbolCardsPass(tmpWs, ramEng, { maxFiles: 5, httpJsonFn: mockCardHttp });
+      assert.equal(pass1.ok, true);
+      assert.equal(pass1.indexedNow, 2);
+      assert.equal(cardGpuCalls, 2);
 
-    // Re-running without file mutations skips all LLM calls via SHA-256 match
-    const pass2 = await s.runIdleSymbolCardsPass(tmpWs, ramEng, { maxFiles: 5, httpJsonFn: mockCardHttp });
-    assert.equal(pass2.ok, true);
-    assert.equal(pass2.indexedNow, 0);
-    assert.equal(cardGpuCalls, 2);
+      // Re-running without file mutations skips all LLM calls via SHA-256 match
+      const pass2 = await s.runIdleSymbolCardsPass(tmpWs, ramEng, { maxFiles: 5, httpJsonFn: mockCardHttp });
+      assert.equal(pass2.ok, true);
+      assert.equal(pass2.indexedNow, 0);
+      assert.equal(cardGpuCalls, 2);
 
-    // Bilingual RU search hits sessionVault.mjs via Russian description & lexicon stems
-    const ruHits = s.searchSymbolCardsLexical(tmpWs, 'ротация токенов авторизации сессий', { topK: 3 });
-    assert.ok(ruHits.length >= 1);
-    assert.equal(ruHits[0].file, 'sessionVault.mjs');
+      // Bilingual RU search hits sessionVault.mjs via Russian description & lexicon stems
+      const ruHits = s.searchSymbolCardsLexical(tmpWs, 'ротация токенов авторизации сессий', { topK: 3 });
+      assert.ok(ruHits.length >= 1);
+      assert.equal(ruHits[0].file, 'sessionVault.mjs');
 
-    // Engine D: Speculative Warm (debounced) + Jaccard >= 0.65 consumption
-    await s.scheduleSpeculativeWarm(tmpWs, 'обнови rotateAuthSessionToken в sessionVault.mjs', ramEng, { delayMs: 30 });
+      // Engine D: Speculative Warm (debounced) + Jaccard >= 0.65 consumption
+      await s.scheduleSpeculativeWarm(tmpWs, 'обнови rotateAuthSessionToken в sessionVault.mjs', ramEng, { delayMs: 30 });
 
-    const specHit = s.consumeSpeculativeContext(tmpWs, 'обнови rotateAuthSessionToken в sessionVault.mjs сейчас');
-    assert.equal(specHit.hit, true);
-    assert.match(specHit.goldContextHint, /sessionVault\.mjs/);
+      const specHit = s.consumeSpeculativeContext(tmpWs, 'обнови rotateAuthSessionToken в sessionVault.mjs сейчас');
+      assert.equal(specHit.hit, true);
+      assert.match(specHit.goldContextHint, /sessionVault\.mjs/);
 
-    const snap = s.getStatusSnapshot(tmpWs, ramEng);
-    assert.equal(snap.speculativeHits, 1);
-    assert.equal(snap.symbolCards.indexedFiles, 2);
-    assert.equal(snap.symbolCards.coveragePct, 100);
+      const snap = s.getStatusSnapshot(tmpWs, ramEng);
+      assert.equal(snap.speculativeHits, 1);
+      assert.equal(snap.symbolCards.indexedFiles, 2);
+      assert.equal(snap.symbolCards.coveragePct, 100);
+    } finally {
+      try { ramEng.close(); } catch {}
+    }
   } finally {
     try { fs.rmSync(tmpWs, { recursive: true, force: true, maxRetries: 10, retryDelay: 60 }); } catch {}
     try { fs.rmSync(tmpCache, { recursive: true, force: true, maxRetries: 10, retryDelay: 60 }); } catch {}
@@ -1145,18 +1130,22 @@ test('11. Shadow Guard surfaces structured clonePairs details for SimHash duplic
     fs.writeFileSync(path.join(tmpWs, 'b-lock.mjs'), fnB, 'utf8');
 
     const ramEng = new RamMemoryEngine({ budgetMb: 32 });
-    await ramEng.warmWorkspaceAsync(tmpWs, { startWatcher: false });
-    const sentinel = new BackgroundSentinel({ cacheDir: tmpCache });
-    const res = await sentinel.runShadowGuardPass(tmpWs, ramEng);
-    assert.equal(res.cloneCount, 1);
-    assert.equal(Array.isArray(res.clonePairs), true);
-    assert.equal(res.clonePairs.length, 1);
-    assert.ok(res.clonePairs[0].similarityPct >= 88);
-    assert.match(res.clonePairs[0].detailRu, /Дубликат SimHash/);
+    try {
+      await ramEng.warmWorkspaceAsync(tmpWs, { startWatcher: false });
+      const sentinel = new BackgroundSentinel({ cacheDir: tmpCache });
+      const res = await sentinel.runShadowGuardPass(tmpWs, ramEng);
+      assert.equal(res.cloneCount, 1);
+      assert.equal(Array.isArray(res.clonePairs), true);
+      assert.equal(res.clonePairs.length, 1);
+      assert.ok(res.clonePairs[0].similarityPct >= 88);
+      assert.match(res.clonePairs[0].detailRu, /Дубликат SimHash/);
 
-    const uiHtml = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
-    assert.match(uiHtml, /sg\.clonePairs/);
-    assert.match(uiHtml, /category === 'clone'/);
+      const uiHtml = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+      assert.match(uiHtml, /sg\.clonePairs/);
+      assert.match(uiHtml, /category === 'clone'/);
+    } finally {
+      try { ramEng.close(); } catch {}
+    }
   } finally {
     try { fs.rmSync(tmpWs, { recursive: true, force: true, maxRetries: 10, retryDelay: 60 }); } catch {}
     try { fs.rmSync(tmpCache, { recursive: true, force: true, maxRetries: 10, retryDelay: 60 }); } catch {}

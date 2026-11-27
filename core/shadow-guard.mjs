@@ -10,15 +10,21 @@ import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { safeReadJsonSync, atomicWriteJsonSync, withFileLockSync } from './safe-json.mjs';
+import { resolveTunnelCacheDir } from './cache-dir.mjs';
 import { recordModelOutcome } from './bayesian-router.mjs';
 import { recordPitfall } from './pitfall-ledger.mjs';
 import { invalidateReadCacheForFile } from './read-dedup.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
-const CACHE_DIR = join(PLUGIN_ROOT, '.cache');
-const CHECKPOINTS_DIR = join(CACHE_DIR, 'shadow-checkpoints');
-const INDEX_FILE = join(CHECKPOINTS_DIR, 'index.json');
+
+function getCheckpointsDir() {
+  return join(resolveTunnelCacheDir(PLUGIN_ROOT), 'shadow-checkpoints');
+}
+
+function getIndexFile() {
+  return join(getCheckpointsDir(), 'index.json');
+}
 const MAX_CHECKPOINTS_PER_WORKSPACE = 60;
 const MAX_TOTAL_CHECKPOINTS = 300;
 const MAX_BACKUP_SIZE_BYTES = 2 * 1024 * 1024; // Лимит размера для бэкапа — 2 МБ
@@ -50,8 +56,9 @@ const UMBRELLA_DIR_NAMES = new Set([
  * Проверяет наличие директории хранилища чекпоинтов и создаёт её при необходимости.
  */
 function ensureStorage() {
-  if (!existsSync(CHECKPOINTS_DIR)) {
-    mkdirSync(CHECKPOINTS_DIR, { recursive: true });
+  const checkpointsDir = getCheckpointsDir();
+  if (!existsSync(checkpointsDir)) {
+    mkdirSync(checkpointsDir, { recursive: true });
   }
 }
 
@@ -61,7 +68,7 @@ function ensureStorage() {
  */
 function loadIndex() {
   ensureStorage();
-  const raw = safeReadJsonSync(INDEX_FILE, () => []);
+  const raw = safeReadJsonSync(getIndexFile(), () => []);
   return Array.isArray(raw) ? raw : [];
 }
 
@@ -233,8 +240,10 @@ export function createShadowCheckpoint(params = {}) {
 
   let checkpoint = null;
   let evicted = [];
+  const checkpointsDir = getCheckpointsDir();
+  const indexFile = getIndexFile();
 
-  withFileLockSync(INDEX_FILE, () => {
+  withFileLockSync(indexFile, () => {
     const currentList = loadIndex();
     if (preExisted && preSizeBytes > 0) {
       // Skip duplicate .bak copy only when the same turn already snapshotted exact size+mtime
@@ -256,7 +265,7 @@ export function createShadowCheckpoint(params = {}) {
     }
 
     const id = `chk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const bakPath = join(CHECKPOINTS_DIR, `${id}.bak`);
+    const bakPath = join(checkpointsDir, `${id}.bak`);
     let backedUp = false;
 
     if (preExisted && preSizeBytes <= MAX_BACKUP_SIZE_BYTES) {
@@ -309,12 +318,12 @@ export function createShadowCheckpoint(params = {}) {
     if (kept.length > MAX_TOTAL_CHECKPOINTS) {
       evicted.push(...kept.splice(MAX_TOTAL_CHECKPOINTS));
     }
-    atomicWriteJsonSync(INDEX_FILE, kept);
+    atomicWriteJsonSync(indexFile, kept);
   }, { maxWaitMs: 12000 });
 
   for (const old of evicted) {
     if (old.backedUp ?? old.existed) {
-      const oldBak = join(CHECKPOINTS_DIR, `${old.id}.bak`);
+      const oldBak = join(checkpointsDir, `${old.id}.bak`);
       try {
         if (existsSync(oldBak)) {
           unlinkSync(oldBak);
@@ -489,7 +498,9 @@ export function rollbackCheckpoint(checkpointId = 'latest', workspaceRoot = '', 
     return { ok: false, error: isEn ? 'Invalid checkpointId' : 'Некорректный checkpointId' };
   }
   ensureStorage();
-  const lockOutcome = withFileLockSync(INDEX_FILE, () => {
+  const checkpointsDir = getCheckpointsDir();
+  const indexFile = getIndexFile();
+  const lockOutcome = withFileLockSync(indexFile, () => {
     const list = loadIndex();
     if (list.length === 0) {
       return { ok: false, error: isEn ? 'Checkpoints list is empty' : 'Список чекпоинтов пуст' };
@@ -523,7 +534,7 @@ export function rollbackCheckpoint(checkpointId = 'latest', workspaceRoot = '', 
               : `Файл ${checkpoint.fileName} превышал лимит теневой копии (>2 МБ) или был занят при создании снимка; откат отменён для защиты данных`,
           };
         }
-        const bakPath = join(CHECKPOINTS_DIR, `${checkpoint.id}.bak`);
+        const bakPath = join(checkpointsDir, `${checkpoint.id}.bak`);
         if (!existsSync(bakPath)) {
           return { ok: false, error: isEn ? `Snapshot file ${checkpoint.id}.bak is missing` : `Файл снимка ${checkpoint.id}.bak отсутствует` };
         }
@@ -540,7 +551,7 @@ export function rollbackCheckpoint(checkpointId = 'latest', workspaceRoot = '', 
       const updated = list.map((c) => (
         c.id === checkpoint.id ? { ...c, restored: true, restoredAt } : c
       ));
-      atomicWriteJsonSync(INDEX_FILE, updated);
+      atomicWriteJsonSync(indexFile, updated);
       checkpoint = { ...checkpoint, restored: true, restoredAt };
       return { ok: true, checkpoint };
     } catch (err) {
@@ -702,13 +713,14 @@ export function getTurnDiffSummary(turnId = 'latest', workspaceRoot = '', opts =
     }
   }
 
+  const checkpointsDir = getCheckpointsDir();
   const files = [];
   let totalAdded = 0;
   let totalRemoved = 0;
   for (const cp of baselineByFile.values()) {
     let beforeText = '';
     if (cp.existed) {
-      const bakPath = join(CHECKPOINTS_DIR, `${cp.id}.bak`);
+      const bakPath = join(checkpointsDir, `${cp.id}.bak`);
       if (cp.backedUp && existsSync(bakPath)) {
         try { beforeText = readFileSync(bakPath, 'utf8'); } catch {}
       }
@@ -770,7 +782,9 @@ export function rollbackTurn(turnId = 'latest', workspaceRoot = '', opts = {}) {
   }
 
   ensureStorage();
-  const lockOutcome = withFileLockSync(INDEX_FILE, () => {
+  const checkpointsDir = getCheckpointsDir();
+  const indexFile = getIndexFile();
+  const lockOutcome = withFileLockSync(indexFile, () => {
     const list = loadIndex();
     if (list.length === 0) {
       return { ok: false, error: isEn ? 'Checkpoints list is empty' : 'Список чекпоинтов пуст' };
@@ -818,7 +832,7 @@ export function rollbackTurn(turnId = 'latest', workspaceRoot = '', opts = {}) {
               : `Файл ${cp.fileName} превышал лимит теневой копии (>2 МБ); откат хода отменён`,
           };
         }
-        const bakPath = join(CHECKPOINTS_DIR, `${cp.id}.bak`);
+        const bakPath = join(checkpointsDir, `${cp.id}.bak`);
         if (!existsSync(bakPath)) {
           return { ok: false, error: isEn ? `Snapshot file ${cp.id}.bak is missing` : `Файл снимка ${cp.id}.bak отсутствует` };
         }
@@ -831,7 +845,7 @@ export function rollbackTurn(turnId = 'latest', workspaceRoot = '', opts = {}) {
     try {
       for (const cp of baselineByFile.values()) {
         if (cp.existed) {
-          const bakPath = join(CHECKPOINTS_DIR, `${cp.id}.bak`);
+          const bakPath = join(checkpointsDir, `${cp.id}.bak`);
           mkdirSync(dirname(cp.filePath), { recursive: true });
           copyFileSync(bakPath, cp.filePath);
           restoredFiles.push(cp.filePath);
@@ -848,7 +862,7 @@ export function rollbackTurn(turnId = 'latest', workspaceRoot = '', opts = {}) {
       const updated = list.map((c) => (
         targetIds.has(c.id) ? { ...c, restored: true, restoredAt } : c
       ));
-      atomicWriteJsonSync(INDEX_FILE, updated);
+      atomicWriteJsonSync(indexFile, updated);
 
       return {
         ok: true,

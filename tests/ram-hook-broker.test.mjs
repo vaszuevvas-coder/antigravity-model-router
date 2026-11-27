@@ -1,3 +1,4 @@
+import { ROOT_DIR, registerSuiteLifecycle } from './helpers/router-test-env.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -5,7 +6,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
+
+registerSuiteLifecycle(test);
 
 import { dispatchIpcRoute, handleIpcHttpRequest } from '../core/ram-memory-mcp.mjs';
 import { postCompactionArchiveBestEffort } from '../core/history-compactor.mjs';
@@ -21,9 +23,6 @@ import {
   startSidecarHostWatchdog,
 } from '../sidecars/panel/server.mjs';
 import { postRamDaemonJson } from '../sidecars/panel/lib/panel-state-skills.mjs';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT_DIR = path.resolve(__dirname, '..');
 
 function makeTempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -135,8 +134,8 @@ test('1. IPC /hook/memo-check + /hook/memo-record + retry-bypass + /hook/post-ed
     assert.equal(checkAfterEdit.body.hit, false);
     assert.equal(checkAfterEdit.body.retryBypass, false);
   } finally {
-    testEngine.evict('all');
-    server.close();
+    try { testEngine.close(); } catch {}
+    await new Promise((res) => server.close(() => res()));
     fs.rmSync(wsDir, { recursive: true, force: true });
   }
 });
@@ -308,13 +307,17 @@ test('4. Sidecar host watchdog: parses loopback LS endpoints, probes TCP, and ex
     warmupDelayMs: -1,
     onHostLost: (reason) => { parentLostReason = reason; },
   });
-  assert.equal((await parentWatchdog.checkOnce()).alive, true);
-  parentAlive = false;
-  const deadParentRes = await parentWatchdog.checkOnce();
-  assert.equal(deadParentRes.alive, false);
-  assert.equal(deadParentRes.reason, 'parent_dead');
-  assert.equal(parentLostReason, 'parent_dead');
-  assert.equal(parentWatchdog.getState().stopped, true);
+  try {
+    assert.equal((await parentWatchdog.checkOnce()).alive, true);
+    parentAlive = false;
+    const deadParentRes = await parentWatchdog.checkOnce();
+    assert.equal(deadParentRes.alive, false);
+    assert.equal(deadParentRes.reason, 'parent_dead');
+    assert.equal(parentLostReason, 'parent_dead');
+    assert.equal(parentWatchdog.getState().stopped, true);
+  } finally {
+    parentWatchdog.stop();
+  }
 
   // 4) Windows cmd.exe wrapper stays alive, but LS TCP dies -> triggers after maxConsecutiveFailures
   let lsUp = true;
@@ -330,18 +333,21 @@ test('4. Sidecar host watchdog: parses loopback LS endpoints, probes TCP, and ex
     maxConsecutiveFailures: 2,
     onHostLost: (reason) => { lsLostReason = reason; },
   });
-  assert.equal((await lsWatchdog.checkOnce()).reason, 'ls_tcp_ok');
-  assert.equal(lsWatchdog.getState().lsEverReachable, true);
-  lsUp = false;
-  const retry1 = await lsWatchdog.checkOnce();
-  assert.equal(retry1.alive, true);
-  assert.equal(retry1.reason, 'ls_probe_retry');
-  assert.equal(lsLostReason, '');
-  const retry2 = await lsWatchdog.checkOnce();
-  assert.equal(retry2.alive, false);
-  assert.equal(retry2.reason, 'ls_unreachable');
-  assert.equal(lsLostReason, 'ls_unreachable');
-  lsWatchdog.stop();
+  try {
+    assert.equal((await lsWatchdog.checkOnce()).reason, 'ls_tcp_ok');
+    assert.equal(lsWatchdog.getState().lsEverReachable, true);
+    lsUp = false;
+    const retry1 = await lsWatchdog.checkOnce();
+    assert.equal(retry1.alive, true);
+    assert.equal(retry1.reason, 'ls_probe_retry');
+    assert.equal(lsLostReason, '');
+    const retry2 = await lsWatchdog.checkOnce();
+    assert.equal(retry2.alive, false);
+    assert.equal(retry2.reason, 'ls_unreachable');
+    assert.equal(lsLostReason, 'ls_unreachable');
+  } finally {
+    lsWatchdog.stop();
+  }
 
   // 5) Never-seen-reachable LS tolerates 2 misses and triggers on 3rd
   let neverLostReason = '';
@@ -356,13 +362,16 @@ test('4. Sidecar host watchdog: parses loopback LS endpoints, probes TCP, and ex
     maxConsecutiveFailures: 2,
     onHostLost: (reason) => { neverLostReason = reason; },
   });
-  assert.equal((await neverWatchdog.checkOnce()).alive, true);
-  assert.equal((await neverWatchdog.checkOnce()).alive, true);
-  assert.equal(neverLostReason, '');
-  const fail3 = await neverWatchdog.checkOnce();
-  assert.equal(fail3.alive, false);
-  assert.equal(neverLostReason, 'ls_unreachable');
-  neverWatchdog.stop();
+  try {
+    assert.equal((await neverWatchdog.checkOnce()).alive, true);
+    assert.equal((await neverWatchdog.checkOnce()).alive, true);
+    assert.equal(neverLostReason, '');
+    const fail3 = await neverWatchdog.checkOnce();
+    assert.equal(fail3.alive, false);
+    assert.equal(neverLostReason, 'ls_unreachable');
+  } finally {
+    neverWatchdog.stop();
+  }
 });
 
 test('6. IPC /gpu/chat client disconnect abort & postRamDaemonJson signal/stopOnResponse', async () => {

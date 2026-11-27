@@ -384,7 +384,7 @@ test('24. Auto-Digest & Handoff: intra-epoch fillPercent, CHECKPOINT compaction 
   }
 });
 
-test('24. Active Projects Filter: header pills show strictly live running/waiting_user projects and purge stale entries', async () => {
+test('24b. Active Projects Filter: header pills show strictly live running/waiting_user projects and purge stale entries', async () => {
   const {
     advanceTaskProgressOnPreTool,
     getTaskProgressSnapshot,
@@ -2049,7 +2049,7 @@ test('32b. Background Task (task running) keeps progress running across Stop and
   }
 });
 
-test('32b. Hybrid background task progress parser & duration history ETA estimator', async () => {
+test('32c. Hybrid background task progress parser & duration history ETA estimator', async () => {
   const { extractBgProgressFromLogTail, inspectTranscriptTurnState } = await import('../core/progress/progress-parsers.mjs');
   const {
     normalizeBgCommandSignature,
@@ -2219,7 +2219,7 @@ test('32b. Hybrid background task progress parser & duration history ETA estimat
   }
 });
 
-test('55. Native Swarm Worker Lifecycle: board brief @name detection, swarm_wait completion, kill & object matchedFiles', async () => {
+test('55a. Native Swarm Worker Lifecycle: board brief @name detection, swarm_wait completion, kill & object matchedFiles', async () => {
   const { inspectSubagentTranscriptMeta } = await import('../core/model-profile.mjs');
   const {
     advanceTaskProgressOnPreTool,

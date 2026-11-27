@@ -1,3 +1,4 @@
+import { registerSuiteLifecycle } from './helpers/router-test-env.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -6,6 +7,8 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+
+registerSuiteLifecycle(test);
 
 import {
   DEFAULT_STATE,

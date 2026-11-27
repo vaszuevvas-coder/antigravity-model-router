@@ -1345,7 +1345,7 @@ test('discoverSkills filters disabled/unregistered plugins, translates migrate-a
   }
 });
 
-test('55. Dynamic Hardware Ceilings: VRAM/RAM/CPU auto-capping on backend, sanitizeStatePatch & UI controls', async () => {
+test('55c. Dynamic Hardware Ceilings: VRAM/RAM/CPU auto-capping on backend, sanitizeStatePatch & UI controls', async () => {
   const {
     computeHardwareCeilings,
     computeMaxRamBudgetMb,

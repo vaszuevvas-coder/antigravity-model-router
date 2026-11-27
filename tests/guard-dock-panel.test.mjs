@@ -142,6 +142,7 @@ test('1. Guard Dock API (/api/guard-pulse, /api/guard-audit, /api/instincts/evol
 
   const TestApp = createTestSidecarAppClass();
   let app = null;
+  const promotedTargets = [];
   try {
     app = await startSidecarPanel({ SidecarAppClass: TestApp, disableWatchdog: true });
     const baseUrl = `http://127.0.0.1:${app.port}`;
@@ -173,19 +174,21 @@ test('1. Guard Dock API (/api/guard-pulse, /api/guard-audit, /api/instincts/evol
 
     // 1d. POST /api/instincts/evolve-all promotes ready instincts and clears readyCount
     const evolveRes = await reqJson(baseUrl, '/api/instincts/evolve-all', 'POST', { rootDir: wsDir });
+    for (const p of evolveRes.data.promoted || []) {
+      const targetFile = p?.result?.skillPath || p?.skillPath;
+      if (targetFile) promotedTargets.push(targetFile);
+    }
     assert.equal(evolveRes.status, 200);
     assert.equal(evolveRes.data.ok, true);
     assert.ok(evolveRes.data.promotedCount >= 1, 'Expected at least 1 promoted instinct');
     assert.equal(evolveRes.data.guardPulse.instincts.readyCount, 0, 'Ready instincts count should drop to 0 after evolve-all');
-
-    // Cleanup promoted skill created during test
-    for (const p of evolveRes.data.promoted || []) {
-      const targetFile = p?.result?.skillPath || p?.skillPath;
+  } finally {
+    for (const targetFile of promotedTargets) {
       if (targetFile && fs.existsSync(targetFile)) {
         try { fs.rmSync(path.dirname(targetFile), { recursive: true, force: true }); } catch {}
       }
     }
-  } finally {
+    try { knowledgeHub.close(); } catch {}
     if (app) await app.close();
     if (prevStateEnv === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
     else process.env.TUNNEL_TEST_STATE_PATH = prevStateEnv;
@@ -432,6 +435,7 @@ test('5. /api/telemetry detects Health-Doctor issues even when sec.hw=false & in
     assert.equal(fixRes.status, 200);
     assert.equal(fixRes.data.ok, true);
   } finally {
+    try { knowledgeHub.close(); } catch {}
     if (app) await app.close();
     if (prevStateEnv === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
     else process.env.TUNNEL_TEST_STATE_PATH = prevStateEnv;

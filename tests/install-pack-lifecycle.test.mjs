@@ -34,14 +34,13 @@ function snapshotFile(filePath) {
   };
 }
 
-function restoreFile(snap) {
+function assertFileUnchanged(snap) {
   if (!snap) return;
   if (snap.existed) {
-    if (fs.existsSync(snap.filePath) && fs.readFileSync(snap.filePath).equals(snap.raw)) return;
-    fs.mkdirSync(path.dirname(snap.filePath), { recursive: true });
-    fs.writeFileSync(snap.filePath, snap.raw);
-  } else if (fs.existsSync(snap.filePath)) {
-    fs.unlinkSync(snap.filePath);
+    assert.equal(fs.existsSync(snap.filePath), true, `Expected ${snap.filePath} to remain on disk`);
+    assert.equal(fs.readFileSync(snap.filePath).equals(snap.raw), true, `Tests must not mutate ${snap.filePath}`);
+  } else {
+    assert.equal(fs.existsSync(snap.filePath), false, `Tests must not create ${snap.filePath}`);
   }
 }
 
@@ -229,7 +228,7 @@ test('install.js clean install, status/CLI, dryRun, drift check, state upgrade, 
     assert.equal(fs.existsSync(tmpTarget), false);
     assert.equal(getInstallStatus({ targetDir: tmpTarget }).installed, false);
   } finally {
-    restoreFile(routerStateSnap);
+    assertFileUnchanged(routerStateSnap);
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });
@@ -263,7 +262,7 @@ test('maintainCacheDir migrates legacy priors/ledgers and purges 0-byte and lega
     assert.ok(stats.digestsPruned >= 1);
     assert.ok(stats.vectorsPurged >= 1);
   } finally {
-    restoreFile(routerStateSnap);
+    assertFileUnchanged(routerStateSnap);
     fs.rmSync(tmpCache, { recursive: true, force: true });
   }
 });
@@ -340,7 +339,7 @@ test('buildReleasePackages({ zipOnly: true }) emits verified ZIP, SHA256SUMS.txt
     assert.equal(packagedState.gpuEnabled, false);
     assert.equal(packagedState.gpuModelsDir, '');
   } finally {
-    restoreFile(routerStateSnap);
+    assertFileUnchanged(routerStateSnap);
     fs.rmSync(tmpOut, { recursive: true, force: true });
   }
 });

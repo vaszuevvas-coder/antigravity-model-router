@@ -1,3 +1,4 @@
+import { registerSuiteLifecycle } from './helpers/router-test-env.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -6,6 +7,8 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+registerSuiteLifecycle(test);
 
 import {
   initAcceptanceGatesMarkdown,

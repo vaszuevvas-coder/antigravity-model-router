@@ -1,9 +1,11 @@
+import { ROOT_DIR, SUITE_CACHE_DIR, registerSuiteLifecycle } from './helpers/router-test-env.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+registerSuiteLifecycle(test);
 
 import {
   detectPromptIntentSignals,
@@ -16,9 +18,7 @@ import {
   handlePostToolUse,
 } from '../core/hook-runner.mjs';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT_DIR = path.resolve(__dirname, '..');
-const TURN_CACHE_FILE = path.join(ROOT_DIR, '.cache', 'pre-invocation-turn.json');
+const TURN_CACHE_FILE = path.join(SUITE_CACHE_DIR, 'pre-invocation-turn.json');
 
 function cleanupConvoEntry(convoId) {
   try {

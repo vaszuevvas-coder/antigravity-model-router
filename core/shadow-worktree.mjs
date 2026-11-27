@@ -9,6 +9,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, rmSync, statSync, unlinkSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveTunnelCacheDir } from './cache-dir.mjs';
 import { maskTerminalOutput } from './obs-masker.mjs';
 import { atomicWriteJsonSync, safeReadJsonSync, withFileLockSync } from './safe-json.mjs';
 import { checkCommandSecurity } from './security-guard.mjs';
@@ -16,7 +17,6 @@ import { createShadowCheckpoint, rollbackTurn } from './shadow-guard.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..');
-const DEFAULT_CACHE_DIR = join(PLUGIN_ROOT, '.cache');
 const BLOCKED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const MAX_WORKTREES = 12;
 
@@ -41,7 +41,9 @@ function normWsKey(wsPath = '') {
 }
 
 function resolvePaths(cacheDir = '') {
-  const baseCache = asStr(cacheDir).trim() ? resolve(asStr(cacheDir).trim()) : DEFAULT_CACHE_DIR;
+  const baseCache = asStr(cacheDir).trim()
+    ? resolve(asStr(cacheDir).trim())
+    : resolveTunnelCacheDir(PLUGIN_ROOT);
   return {
     cacheDir: baseCache,
     worktreesDir: join(baseCache, 'worktrees'),

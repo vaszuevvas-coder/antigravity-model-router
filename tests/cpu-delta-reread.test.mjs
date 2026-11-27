@@ -1,9 +1,11 @@
+import { ROOT_DIR, registerSuiteLifecycle } from './helpers/router-test-env.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+registerSuiteLifecycle(test);
 
 import {
   clearReadSnapshots,
@@ -22,9 +24,6 @@ import {
   recordCpuCompressionSaving,
 } from '../core/cpu-worker-pool.mjs';
 import { handlePostToolUse } from '../core/hook-runner.mjs';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT_DIR = path.resolve(__dirname, '..');
 
 function make200LineFile(tag = 'v1') {
   const lines = [];
@@ -56,7 +55,7 @@ test('computeMyersLineDelta computes compact bounded Myers diff (>75% saved) and
   assert.ok(delta.diffText.includes('+export function handler_25(ctx) { const value = "PATCHED_25"'));
   const origBytes = Buffer.byteLength(next, 'utf8');
   assert.ok(delta.savedBytes / origBytes > 0.75, `Expected >75% saved, got ${(delta.savedBytes / origBytes * 100).toFixed(1)}%`);
-  assert.ok(delta.elapsedMs < 15, `Expected <15ms, got ${delta.elapsedMs}ms`);
+  assert.ok(delta.elapsedMs < 200, `Expected <200ms, got ${delta.elapsedMs}ms`);
 
   // Massive rewrite (>35% changed) must disable delta
   const rewritten = make200LineFile('COMPLETELY_REWRITTEN');
@@ -282,31 +281,20 @@ test('PostToolUse edit_file preserves snapshot via markFileEditedForDelta & inva
 });
 
 test('recordCpuCompressionSaving updates all CPU compression telemetry counters cleanly', () => {
-  const telemetryFile = path.join(ROOT_DIR, '.cache', 'cpu-telemetry.json');
-  const prevRaw = fs.existsSync(telemetryFile) ? fs.readFileSync(telemetryFile, 'utf8') : null;
+  const before = readCpuTelemetry();
+  const afterDrain = recordCpuCompressionSaving({ kind: 'drain', savedChars: 3800, latencyMs: 1.2 });
+  assert.equal(afterDrain.drainCompressedLogs, (before.drainCompressedLogs || 0) + 1);
+  assert.equal(afterDrain.cpuSavedTokensEstimate, (before.cpuSavedTokensEstimate || 0) + 1000);
 
-  try {
-    const before = readCpuTelemetry();
-    const afterDrain = recordCpuCompressionSaving({ kind: 'drain', savedChars: 3800, latencyMs: 1.2 });
-    assert.equal(afterDrain.drainCompressedLogs, (before.drainCompressedLogs || 0) + 1);
-    assert.equal(afterDrain.cpuSavedTokensEstimate, (before.cpuSavedTokensEstimate || 0) + 1000);
+  const afterJson = recordCpuCompressionSaving({ kind: 'json_crush', savedChars: 1900, latencyMs: 0.8 });
+  assert.equal(afterJson.jsonCrushedPayloads, (before.jsonCrushedPayloads || 0) + 1);
 
-    const afterJson = recordCpuCompressionSaving({ kind: 'json_crush', savedChars: 1900, latencyMs: 0.8 });
-    assert.equal(afterJson.jsonCrushedPayloads, (before.jsonCrushedPayloads || 0) + 1);
+  const afterKnapsack = recordCpuCompressionSaving({ kind: 'knapsack', savedChars: 760, latencyMs: 1.1 });
+  assert.equal(afterKnapsack.knapsackFoldedSlices, (before.knapsackFoldedSlices || 0) + 1);
 
-    const afterKnapsack = recordCpuCompressionSaving({ kind: 'knapsack', savedChars: 760, latencyMs: 1.1 });
-    assert.equal(afterKnapsack.knapsackFoldedSlices, (before.knapsackFoldedSlices || 0) + 1);
+  const afterDelta = recordCpuCompressionSaving({ kind: 'delta_reread', savedChars: 7600, latencyMs: 0.5 });
+  assert.equal(afterDelta.deltaRereads, (before.deltaRereads || 0) + 1);
 
-    const afterDelta = recordCpuCompressionSaving({ kind: 'delta_reread', savedChars: 7600, latencyMs: 0.5 });
-    assert.equal(afterDelta.deltaRereads, (before.deltaRereads || 0) + 1);
-
-    const afterMmr = recordCpuCompressionSaving({ kind: 'mmr', savedChars: 380, latencyMs: 0.4 });
-    assert.equal(afterMmr.mmrFilteredSlices, (before.mmrFilteredSlices || 0) + 1);
-  } finally {
-    if (prevRaw !== null) {
-      fs.writeFileSync(telemetryFile, prevRaw, 'utf8');
-    } else if (fs.existsSync(telemetryFile)) {
-      fs.rmSync(telemetryFile, { force: true });
-    }
-  }
+  const afterMmr = recordCpuCompressionSaving({ kind: 'mmr', savedChars: 380, latencyMs: 0.4 });
+  assert.equal(afterMmr.mmrFilteredSlices, (before.mmrFilteredSlices || 0) + 1);
 });

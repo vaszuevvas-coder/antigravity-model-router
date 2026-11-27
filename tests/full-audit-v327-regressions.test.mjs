@@ -1,10 +1,12 @@
+import { ROOT_DIR, SUITE_CACHE_DIR, registerSuiteLifecycle } from './helpers/router-test-env.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+registerSuiteLifecycle(test);
 
 import { normalizeModelProfile, resolveEffectivePreTaskGatePolicy } from '../core/model-profile.mjs';
 import { handlePreInvocation, handlePreToolUse } from '../core/hook-runner.mjs';
@@ -25,9 +27,7 @@ import { RamMemoryEngine } from '../core/ram-memory-engine.mjs';
 import { collectAndDetectStack } from '../skills/deep-stress-auditor/scripts/lib/stack-detector.mjs';
 import { runStressAudit } from '../skills/deep-stress-auditor/scripts/run-stress-audit.mjs';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT_DIR = path.resolve(__dirname, '..');
-const TURN_CACHE_FILE = path.join(ROOT_DIR, '.cache', 'turn-context.json');
+const TURN_CACHE_FILE = path.join(SUITE_CACHE_DIR, 'turn-context.json');
 const SWARM_ROLES_FILE = path.join(ROOT_DIR, '.cache', 'swarm-roles.json');
 
 function cleanupConvoCache(prefix) {

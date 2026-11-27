@@ -1,3 +1,4 @@
+import { registerSuiteLifecycle } from './helpers/router-test-env.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -6,6 +7,8 @@ import path from 'node:path';
 import http from 'node:http';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+
+registerSuiteLifecycle(test);
 
 import { buildPanelUi } from '../core/panel-ui-builder.mjs';
 import { buildFileSymbolGraphPayload, buildProjectGraphPayload, parseGitChurnOutput } from '../core/project-graph-builder.mjs';
@@ -623,7 +626,7 @@ test('4. Project Graph Phase 1 API & IPC: Tarjan SCC cycles, orphans, testFilesB
     assert.equal(ipcPathRes.status, 200);
     assert.equal(ipcPathRes.body?.found, true);
   } finally {
-    try { ipcEngine.evict('all'); } catch {}
+    try { ipcEngine.close(); } catch {}
     try { knowledgeHub.close(); } catch {}
     if (prevIsolate === undefined) delete process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
     else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIsolate;
@@ -983,7 +986,7 @@ test('6. Phase 2 Backend API & IPC: symbols graph, git-churn parser & fallback, 
     assert.equal(semRes.ok, true);
     assert.ok(semRes.scoresByFile['core/math.mjs'] > 0 || semRes.scoresByFile['core/pipeline.mjs'] > 0);
   } finally {
-    try { ipcEngine.evict('all'); } catch {}
+    try { ipcEngine.close(); } catch {}
     try { knowledgeHub.close(); } catch {}
     if (prevIsolate === undefined) delete process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
     else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIsolate;
@@ -3113,7 +3116,7 @@ test('18. Project Map right-click contextmenu opens custom node menu instead of 
 
 test('19. Project Map AI thinking bubble, Stop button & /api/local-chat/abort on Stop and Modal Close', async () => {
   const vm = await import('node:vm');
-  buildPanelUi({ repoRoot: ROOT_DIR });
+  buildPanelUi({ repoRoot: ROOT_DIR, checkOnly: true });
   const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
   for (const marker of [
     'function pgAbortActiveAiRequest(',
@@ -3435,7 +3438,7 @@ test('19. Project Map AI thinking bubble, Stop button & /api/local-chat/abort on
 
 test('20. Combo AI visualization: structured card without raw sym:, Markdown GPU reply, map spotlight & callout', async () => {
   const vm = await import('node:vm');
-  buildPanelUi({ repoRoot: ROOT_DIR });
+  buildPanelUi({ repoRoot: ROOT_DIR, checkOnly: true });
   const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
   for (const marker of [
     'id="pgAiMapCallout"',
@@ -4061,7 +4064,7 @@ test('21. Far node drag invalidates quadtree spatialTree for hover, select, and 
   }
 });
 
-test('20. Project Map combo layers (swimlanes + frames + clickable headers) and synchronized UI scale', async () => {
+test('20b. Project Map combo layers (swimlanes + frames + clickable headers) and synchronized UI scale', async () => {
   const vm = await import('node:vm');
   const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
   for (const marker of [
@@ -4706,33 +4709,34 @@ test('30. Fragile file "Карта" deep-link: open-window focus param, path san
 
   const panelApp = await startSidecarPanel({ SidecarAppClass: MiniSidecarApp });
   try {
-    const openWindowHandler = panelApp._routes.get('/api/project-graph/open-window')?.get('POST');
-    assert.equal(typeof openWindowHandler, 'function', '/api/project-graph/open-window POST route must exist');
-    const mockReq = { headers: { host: '127.0.0.1:41234', origin: 'http://127.0.0.1:41234', 'x-router-panel': 'antigravity-v38', 'x-sidecar-token': 'tok123' } };
+    try {
+      const openWindowHandler = panelApp._routes.get('/api/project-graph/open-window')?.get('POST');
+      assert.equal(typeof openWindowHandler, 'function', '/api/project-graph/open-window POST route must exist');
+      const mockReq = { headers: { host: '127.0.0.1:41234', origin: 'http://127.0.0.1:41234', 'x-router-panel': 'antigravity-v38', 'x-sidecar-token': 'tok123' } };
 
-    // 1. /api/project-graph/open-window forwards sanitized focus param
-    const okJson = await openWindowHandler({ rootDir: tmpWs, focus: '.\\core\\auto-verifier.mjs', dryRun: true }, mockReq);
-    assert.equal(okJson.ok, true);
-    const okUrl = new URL(okJson.url);
-    assert.equal(okUrl.searchParams.get('view'), 'graph');
-    assert.equal(okUrl.searchParams.get('focus'), 'core/auto-verifier.mjs');
+      // 1. /api/project-graph/open-window forwards sanitized focus param
+      const okJson = await openWindowHandler({ rootDir: tmpWs, focus: '.\\core\\auto-verifier.mjs', dryRun: true }, mockReq);
+      assert.equal(okJson.ok, true);
+      const okUrl = new URL(okJson.url);
+      assert.equal(okUrl.searchParams.get('view'), 'graph');
+      assert.equal(okUrl.searchParams.get('focus'), 'core/auto-verifier.mjs');
 
-    // 2. /api/project-graph/open-window strips path traversal & schemes
-    const badJson = await openWindowHandler({ rootDir: tmpWs, focus: '../secrets.env', dryRun: true }, mockReq);
-    assert.equal(badJson.ok, true);
-    assert.equal(new URL(badJson.url).searchParams.get('focus'), null, 'Path traversal focus must be stripped');
+      // 2. /api/project-graph/open-window strips path traversal & schemes
+      const badJson = await openWindowHandler({ rootDir: tmpWs, focus: '../secrets.env', dryRun: true }, mockReq);
+      assert.equal(badJson.ok, true);
+      assert.equal(new URL(badJson.url).searchParams.get('focus'), null, 'Path traversal focus must be stripped');
 
-    const schemeJson = await openWindowHandler({ rootDir: tmpWs, focus: 'javascript:alert(1)', dryRun: true }, mockReq);
-    assert.equal(schemeJson.ok, true);
-    assert.equal(new URL(schemeJson.url).searchParams.get('focus'), null, 'Scheme focus must be stripped');
-  } finally {
-    if (prevIsolate === undefined) delete process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
-    else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIsolate;
-    if (prevStatePath === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
-    else process.env.TUNNEL_TEST_STATE_PATH = prevStatePath;
-    if (prevCacheDir === undefined) delete process.env.TUNNEL_CACHE_DIR;
-    else process.env.TUNNEL_CACHE_DIR = prevCacheDir;
-  }
+      const schemeJson = await openWindowHandler({ rootDir: tmpWs, focus: 'javascript:alert(1)', dryRun: true }, mockReq);
+      assert.equal(schemeJson.ok, true);
+      assert.equal(new URL(schemeJson.url).searchParams.get('focus'), null, 'Scheme focus must be stripped');
+    } finally {
+      if (prevIsolate === undefined) delete process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+      else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIsolate;
+      if (prevStatePath === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
+      else process.env.TUNNEL_TEST_STATE_PATH = prevStatePath;
+      if (prevCacheDir === undefined) delete process.env.TUNNEL_CACHE_DIR;
+      else process.env.TUNNEL_CACHE_DIR = prevCacheDir;
+    }
 
   // 3. Standalone boot with ?view=graph&focus=tests/router-core.test.mjs auto-enables tests, focuses & selects the file
   const uiHtml = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
@@ -4973,9 +4977,14 @@ test('30. Fragile file "Карта" deep-link: open-window focus param, path san
   await new Promise((r) => setImmediate(r));
   assert.equal(openWindowPayloads.length, 1, 'Explicit externalWindow:true must still invoke /api/project-graph/open-window');
   assert.equal(openWindowPayloads[0].focus, 'core/auto-verifier.mjs');
+  } finally {
+    try { panelApp?.close?.(); } catch {}
+    fs.rmSync(tmpWs, { recursive: true, force: true });
+    fs.rmSync(tmpPanelDir, { recursive: true, force: true });
+  }
 });
 
-test('30. Project Map "Open question in Smart Composer" works in standalone (server handoff + #pgStatusToast) and inline modal (auto-expand card)', async () => {
+test('30b. Project Map "Open question in Smart Composer" works in standalone (server handoff + #pgStatusToast) and inline modal (auto-expand card)', async () => {
   const vm = await import('node:vm');
   const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
   for (const marker of [
@@ -4992,8 +5001,12 @@ test('30. Project Map "Open question in Smart Composer" works in standalone (ser
   const tmpDir = makeTmpDir('amr-pg-handoff-');
   const prevState = process.env.TUNNEL_TEST_STATE_PATH;
   const prevIsolate = process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+  const prevCache = process.env.TUNNEL_CACHE_DIR;
+  const cacheDir = path.join(tmpDir, '.cache');
+  fs.mkdirSync(cacheDir, { recursive: true });
   process.env.TUNNEL_TEST_STATE_PATH = path.join(tmpDir, 'router-state.json');
   process.env.TUNNEL_TEST_ISOLATE_INSTALLED = '1';
+  process.env.TUNNEL_CACHE_DIR = cacheDir;
   fs.writeFileSync(process.env.TUNNEL_TEST_STATE_PATH, JSON.stringify({ onboardingCompleted: true, uiLanguage: 'ru' }, null, 2));
   class MiniSidecarApp {
     constructor() { this._routes = new Map(); }
@@ -5004,8 +5017,9 @@ test('30. Project Map "Open question in Smart Composer" works in standalone (ser
     }
     run() { return http.createServer(); }
   }
+  let app = null;
   try {
-    const app = await startSidecarPanel({ SidecarAppClass: MiniSidecarApp });
+    app = await startSidecarPanel({ SidecarAppClass: MiniSidecarApp });
     const handoffHandler = app._routes.get('/api/composer/handoff')?.get('POST');
     const telemetryHandler = app._routes.get('/api/telemetry')?.get('GET');
     assert.equal(typeof handoffHandler, 'function', 'POST /api/composer/handoff must be registered');
@@ -5025,11 +5039,15 @@ test('30. Project Map "Open question in Smart Composer" works in standalone (ser
     assert.equal(telRes.composerHandoff.seq, postRes.seq);
     assert.deepEqual(telRes.composerHandoff.tokens, ['@file:core/tool-pruner.mjs']);
   } finally {
+    try { await app?.close?.(); } catch {}
+    try { knowledgeHub.close(); } catch {}
     if (prevState === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
     else process.env.TUNNEL_TEST_STATE_PATH = prevState;
     if (prevIsolate === undefined) delete process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
     else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIsolate;
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    if (prevCache === undefined) delete process.env.TUNNEL_CACHE_DIR;
+    else process.env.TUNNEL_CACHE_DIR = prevCache;
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
 
   // 2) UI VM test: standalone click -> POST /api/composer/handoff + #pgStatusToast visible; main panel consumes handoff & expands collapsed card
@@ -5177,7 +5195,7 @@ test('30. Project Map "Open question in Smart Composer" works in standalone (ser
 
 test('31. Project Map RMB Ask AI flyout submenus: edge flip-left & chat:* dispatches new temporary chat', async () => {
   const vm = await import('node:vm');
-  buildPanelUi({ repoRoot: ROOT_DIR });
+  buildPanelUi({ repoRoot: ROOT_DIR, checkOnly: true });
   const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
   for (const marker of [
     'data-ctx-submenu="',
@@ -5411,11 +5429,15 @@ test('32. Project Map preserves Russian language via open-window ?lang=, GET /ap
   // Verify server open-window embeds lang= in standalone URL
   const tmpWs = makeTmpDir('tunnel-pg-lang-ws-');
   const statePath = path.join(tmpWs, 'router-state.json');
+  const cacheDir = path.join(tmpWs, '.cache');
+  fs.mkdirSync(cacheDir, { recursive: true });
   fs.writeFileSync(statePath, JSON.stringify({ uiLanguage: 'ru', onboardingCompleted: true }, null, 2), 'utf8');
   const prevIso = process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
   const prevStatePath = process.env.TUNNEL_TEST_STATE_PATH;
+  const prevCache = process.env.TUNNEL_CACHE_DIR;
   process.env.TUNNEL_TEST_ISOLATE_INSTALLED = '1';
   process.env.TUNNEL_TEST_STATE_PATH = statePath;
+  process.env.TUNNEL_CACHE_DIR = cacheDir;
   try {
     class MiniApp {
       constructor() { this._routes = new Map(); }
@@ -5445,6 +5467,8 @@ test('32. Project Map preserves Russian language via open-window ?lang=, GET /ap
     else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIso;
     if (prevStatePath === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
     else process.env.TUNNEL_TEST_STATE_PATH = prevStatePath;
+    if (prevCache === undefined) delete process.env.TUNNEL_CACHE_DIR;
+    else process.env.TUNNEL_CACHE_DIR = prevCache;
     fs.rmSync(tmpWs, { recursive: true, force: true });
   }
 
@@ -5580,22 +5604,44 @@ test('33. Native Antigravity /graph extension views in sidecar.json, server.mjs 
     'sidecar.json must not expose separate /graph sidebar/aux-pane entries (opened via The Tunnel button)'
   );
 
+  const tmpDir = makeTmpDir('tunnel-pg-routes-');
+  const prevIso = process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+  const prevStatePath = process.env.TUNNEL_TEST_STATE_PATH;
+  const prevCache = process.env.TUNNEL_CACHE_DIR;
+  const cacheDir = path.join(tmpDir, '.cache');
+  fs.mkdirSync(cacheDir, { recursive: true });
+  fs.writeFileSync(path.join(tmpDir, 'plugin.json'), JSON.stringify({ name: 'antigravity-model-router', version: '4.0.9' }), 'utf8');
+  fs.writeFileSync(path.join(tmpDir, 'router-state.json'), JSON.stringify({ onboardingCompleted: true, hardwareProfiled: true }), 'utf8');
+  process.env.TUNNEL_TEST_ISOLATE_INSTALLED = '1';
+  process.env.TUNNEL_TEST_STATE_PATH = path.join(tmpDir, 'router-state.json');
+  process.env.TUNNEL_CACHE_DIR = cacheDir;
+
   const pages = new Map();
   class MockApp {
     page(p, fn) { pages.set(p, fn); }
     api() {}
     async run() { return null; }
   }
-  await startSidecarPanel({ SidecarAppClass: MockApp });
-  assert.equal(typeof pages.get('/graph'), 'function', 'server.mjs must register /graph page route');
-  const graphResp = pages.get('/graph')();
-  assert.ok(String(graphResp?.body || '').includes('projectGraphModal'), '/graph must serve compiled panel ui.html');
-  assert.equal(typeof pages.get('/graph-icon.svg'), 'function', 'server.mjs must register /graph-icon.svg route');
-  const iconResp = pages.get('/graph-icon.svg')();
-  assert.ok(String(iconResp?.contentType || '').includes('image/svg+xml'), '/graph-icon.svg must serve image/svg+xml');
-  assert.ok(String(iconResp?.body || '').includes('#f04848'), '/graph-icon.svg must contain crimson button graph icon');
+  try {
+    await startSidecarPanel({ SidecarAppClass: MockApp, pluginRoot: tmpDir });
+    assert.equal(typeof pages.get('/graph'), 'function', 'server.mjs must register /graph page route');
+    const graphResp = pages.get('/graph')();
+    assert.ok(String(graphResp?.body || '').includes('projectGraphModal'), '/graph must serve compiled panel ui.html');
+    assert.equal(typeof pages.get('/graph-icon.svg'), 'function', 'server.mjs must register /graph-icon.svg route');
+    const iconResp = pages.get('/graph-icon.svg')();
+    assert.ok(String(iconResp?.contentType || '').includes('image/svg+xml'), '/graph-icon.svg must serve image/svg+xml');
+    assert.ok(String(iconResp?.body || '').includes('#f04848'), '/graph-icon.svg must contain crimson button graph icon');
+  } finally {
+    if (prevIso === undefined) delete process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+    else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIso;
+    if (prevStatePath === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
+    else process.env.TUNNEL_TEST_STATE_PATH = prevStatePath;
+    if (prevCache === undefined) delete process.env.TUNNEL_CACHE_DIR;
+    else process.env.TUNNEL_CACHE_DIR = prevCache;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 
-  buildPanelUi({ repoRoot: ROOT_DIR });
+  buildPanelUi({ repoRoot: ROOT_DIR, checkOnly: true });
   const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
   assert.ok(html.includes("if (pathname === '/graph') return true;"), 'Compiled ui.html must detect /graph pathname as standalone graph view');
   assert.ok(html.includes('opts && opts.externalWindow === true'), 'openProjectGraphModal must open inside extension by default without spawning external browser');
@@ -5604,7 +5650,7 @@ test('33. Native Antigravity /graph extension views in sidecar.json, server.mjs 
 });
 
 test('34. Inline .pg-overlay fills viewport with 12px inset without 1040x680 size caps', () => {
-  buildPanelUi({ repoRoot: ROOT_DIR });
+  buildPanelUi({ repoRoot: ROOT_DIR, checkOnly: true });
   const css = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui-src', 'styles.css'), 'utf8');
   const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
   const overlayMatch = css.match(/\.pg-overlay\s*\{[\s\S]*?\}/);
@@ -5618,7 +5664,7 @@ test('34. Inline .pg-overlay fills viewport with 12px inset without 1040x680 siz
 });
 
 test('35. Project Map chat & composer handoff attaches connected modules, folder files and risk flags', async () => {
-  buildPanelUi({ repoRoot: ROOT_DIR });
+  buildPanelUi({ repoRoot: ROOT_DIR, checkOnly: true });
   const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
   assert.ok(html.includes('function pgBuildNodeRelationsContextBlock('), 'Compiled ui.html must include pgBuildNodeRelationsContextBlock');
 
@@ -5857,7 +5903,7 @@ test('35. Project Map chat & composer handoff attaches connected modules, folder
 
 test('36. Project Map AI presets (risks/bugs/tests) enforce structured read-only prompts, 2nd-hop, tests, cycles & EN hub label', async () => {
   const vm = await import('node:vm');
-  buildPanelUi({ repoRoot: ROOT_DIR });
+  buildPanelUi({ repoRoot: ROOT_DIR, checkOnly: true });
   const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
   assert.ok(html.includes('function pgGetAiPresetLabel('), 'Compiled ui.html must include pgGetAiPresetLabel');
 

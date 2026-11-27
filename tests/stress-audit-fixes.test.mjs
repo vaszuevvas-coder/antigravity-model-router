@@ -1,10 +1,13 @@
+import { ROOT_DIR, makeTempDir, registerSuiteLifecycle } from './helpers/router-test-env.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
+
+registerSuiteLifecycle(test);
 
 import { RamMemoryEngine } from '../core/ram-memory-engine.mjs';
 import { SqliteKnowledgeHub } from '../core/sqlite-knowledge-hub.mjs';
@@ -18,12 +21,6 @@ import {
   resolveDefaultWorkspace,
 } from '../core/ram-memory-mcp.mjs';
 import { runStressAudit } from '../skills/deep-stress-auditor/scripts/run-stress-audit.mjs';
-
-const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-
-function makeTempDir(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-}
 
 test('1. Fix #3: RAM Engine & RepoMapper resolve TS NodeNext (.js/.mjs -> .ts/.d.ts), Vite ?query, and Python relative imports', () => {
   const tmpWs = makeTempDir('amr-fix-imports-');

@@ -240,11 +240,18 @@ test('3. Sidecar /api/state (roiTimeline), /api/health-doctor, /api/health-docto
 
   const tmpDir = makeTmpDir('amr-srv-s2-');
   const prevState = process.env.TUNNEL_TEST_STATE_PATH;
+  const prevCache = process.env.TUNNEL_CACHE_DIR;
+  const prevIso = process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
   const statePath = path.join(tmpDir, 'router-state.json');
+  const cacheDir = path.join(tmpDir, '.cache');
+  fs.mkdirSync(cacheDir, { recursive: true });
+  fs.writeFileSync(path.join(tmpDir, 'plugin.json'), JSON.stringify({ name: 'antigravity-model-router', version: '4.0.9' }), 'utf8');
   fs.writeFileSync(statePath, JSON.stringify({ ...DEFAULT_STATE, onboardingCompleted: true }, null, 2));
   process.env.TUNNEL_TEST_STATE_PATH = statePath;
+  process.env.TUNNEL_CACHE_DIR = cacheDir;
+  process.env.TUNNEL_TEST_ISOLATE_INSTALLED = '1';
 
-  const app = await startSidecarPanel({ port: 0, SidecarAppClass: createTestSidecarAppClass() });
+  const app = await startSidecarPanel({ port: 0, SidecarAppClass: createTestSidecarAppClass(), pluginRoot: tmpDir });
   try {
     const baseUrl = `http://127.0.0.1:${app.port}`;
     const headers = { 'Content-Type': 'application/json', 'X-Router-Panel': 'antigravity-v38' };
@@ -280,6 +287,10 @@ test('3. Sidecar /api/state (roiTimeline), /api/health-doctor, /api/health-docto
     await app.close();
     if (prevState === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
     else process.env.TUNNEL_TEST_STATE_PATH = prevState;
+    if (prevCache === undefined) delete process.env.TUNNEL_CACHE_DIR;
+    else process.env.TUNNEL_CACHE_DIR = prevCache;
+    if (prevIso === undefined) delete process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+    else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIso;
     try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 4, retryDelay: 60 }); } catch {}
   }
 });

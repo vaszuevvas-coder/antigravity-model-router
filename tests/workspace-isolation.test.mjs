@@ -1,9 +1,11 @@
+import { ROOT_DIR, SUITE_CACHE_DIR, makeTempDir, registerSuiteLifecycle } from './helpers/router-test-env.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+registerSuiteLifecycle(test);
 
 import {
   createShadowCheckpoint,
@@ -31,32 +33,6 @@ import {
   getTaskProgressSnapshot,
 } from '../core/task-progress.mjs';
 import { atomicWriteJsonSync, safeReadJsonSync, updateJsonAtomicSync, withFileLockSync } from '../core/safe-json.mjs';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT_DIR = path.resolve(__dirname, '..');
-
-function makeTempDir(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-}
-
-function backupFileState(filePath) {
-  return {
-    filePath,
-    existed: fs.existsSync(filePath),
-    raw: fs.existsSync(filePath) ? fs.readFileSync(filePath) : null,
-  };
-}
-
-function restoreFileState(snap) {
-  try {
-    if (snap.existed) {
-      fs.mkdirSync(path.dirname(snap.filePath), { recursive: true });
-      fs.writeFileSync(snap.filePath, snap.raw);
-    } else if (fs.existsSync(snap.filePath)) {
-      fs.unlinkSync(snap.filePath);
-    }
-  } catch {}
-}
 
 test('1. resolveEffectiveProjectRoot isolates external & nested projects from umbrella folders while keeping monorepos and temp dirs intact', () => {
   const tmpRoot = makeTempDir('amr-iso-root-');
@@ -99,9 +75,7 @@ test('1. resolveEffectiveProjectRoot isolates external & nested projects from um
 });
 
 test('2. Shadow Guard isolates per-workspace retention quota (60/ws), turn grouping in __all__, and scoped rollback', () => {
-  const cpDir = path.join(ROOT_DIR, '.cache', 'shadow-checkpoints');
-  const pitfallSnap = backupFileState(path.join(ROOT_DIR, '.cache', 'pitfalls-ledger.json'));
-  const priorsSnap = backupFileState(path.join(ROOT_DIR, '.cache', 'domain-priors.json'));
+  const cpDir = path.join(SUITE_CACHE_DIR, 'shadow-checkpoints');
   const createdIds = [];
 
   const tmpRoot = makeTempDir('amr-iso-cp-');
@@ -182,15 +156,11 @@ test('2. Shadow Guard isolates per-workspace retention quota (60/ws), turn group
         }, { maxWaitMs: 12000 });
       }
     } catch {}
-    restoreFileState(pitfallSnap);
-    restoreFileState(priorsSnap);
     try { fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 }); } catch {}
   }
 });
 
 test('3. Bayesian fragility & Circuit Breaker isolate per workspace and reset cleanly', () => {
-  const priorsSnap = backupFileState(path.join(ROOT_DIR, '.cache', 'domain-priors.json'));
-  const cbSnap = backupFileState(path.join(ROOT_DIR, '.cache', 'circuit-breaker.json'));
   const tmpRoot = makeTempDir('amr-iso-bc-');
   const wsA = path.join(tmpRoot, 'ws-a');
   const wsB = path.join(tmpRoot, 'ws-b');
@@ -235,8 +205,6 @@ test('3. Bayesian fragility & Circuit Breaker isolate per workspace and reset cl
     assert.equal(getCircuitState({ workspaceRoot: wsA }).status, 'CLOSED');
     assert.equal(getCircuitState({ workspaceRoot: wsA, conversationId: 'conv-a-1' }).status, 'CLOSED');
   } finally {
-    restoreFileState(priorsSnap);
-    restoreFileState(cbSnap);
     try { fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 }); } catch {}
   }
 });
@@ -566,21 +534,26 @@ test('8. Auto-workspace prioritizes active IDE openWorkspaces & conversationId o
   const tmpRoot = makeTempDir('amr-ws-priority-');
   const prevCacheDir = process.env.TUNNEL_CACHE_DIR;
   const prevIsolate = process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
+  const prevStatePath = process.env.TUNNEL_TEST_STATE_PATH;
   const tmpCache = path.join(tmpRoot, 'cache');
   const wsGame = path.join(tmpRoot, 'BitFergo-game');
   const wsRouter = path.join(tmpRoot, 'antigravity-model-router');
   const wsExtra = path.join(tmpRoot, 'extra-lib');
+  const isolatedStatePath = path.join(tmpRoot, 'router-state.json');
 
   fs.mkdirSync(tmpCache, { recursive: true });
   fs.mkdirSync(wsGame, { recursive: true });
   fs.mkdirSync(wsRouter, { recursive: true });
   fs.mkdirSync(wsExtra, { recursive: true });
+  fs.writeFileSync(path.join(tmpRoot, 'plugin.json'), '{"name":"antigravity-model-router","version":"4.0.9"}\n', 'utf8');
+  fs.writeFileSync(isolatedStatePath, JSON.stringify({ onboardingCompleted: true, hardwareProfiled: true, ramMaxBudgetMb: 4096 }, null, 2), 'utf8');
   fs.writeFileSync(path.join(wsGame, 'package.json'), '{"name":"bitfergo-game"}\n', 'utf8');
   fs.writeFileSync(path.join(wsRouter, 'plugin.json'), '{"name":"antigravity-model-router"}\n', 'utf8');
   fs.writeFileSync(path.join(wsExtra, 'package.json'), '{"name":"extra-lib"}\n', 'utf8');
 
   process.env.TUNNEL_CACHE_DIR = tmpCache;
   process.env.TUNNEL_TEST_ISOLATE_INSTALLED = '1';
+  process.env.TUNNEL_TEST_STATE_PATH = isolatedStatePath;
 
   const now = Date.now();
   const gameUri = pathToFileURL(wsGame).href;
@@ -691,7 +664,7 @@ test('8. Auto-workspace prioritizes active IDE openWorkspaces & conversationId o
 
     // Create two non-ephemeral workspace paths? Wait: os.tmpdir() is ephemeral, so verify query param parsing on /api/state
     // with a real non-ephemeral project (ROOT_DIR and ROOT_DIR/sidecars/panel/ui-src) vs data.openWorkspaces!
-    const app = await startSidecarPanel({ SidecarAppClass: DataOnlySidecarApp });
+    const app = await startSidecarPanel({ SidecarAppClass: DataOnlySidecarApp, pluginRoot: tmpRoot });
     try {
       const origin = `http://127.0.0.1:${app.port}`;
       const targetSubProj = path.join(ROOT_DIR, 'skills', 'ui-ux-design-system');
@@ -710,6 +683,8 @@ test('8. Auto-workspace prioritizes active IDE openWorkspaces & conversationId o
     else process.env.TUNNEL_CACHE_DIR = prevCacheDir;
     if (prevIsolate === undefined) delete process.env.TUNNEL_TEST_ISOLATE_INSTALLED;
     else process.env.TUNNEL_TEST_ISOLATE_INSTALLED = prevIsolate;
+    if (prevStatePath === undefined) delete process.env.TUNNEL_TEST_STATE_PATH;
+    else process.env.TUNNEL_TEST_STATE_PATH = prevStatePath;
     try { fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 }); } catch {}
   }
 });
@@ -748,7 +723,7 @@ test('9. Read-only /graph/* IPC routes and makeActive:false never hijack active 
     registerDaemonWorkspace(wsTwo);
     assert.equal(path.resolve(resolveDefaultWorkspace('')), path.resolve(wsTwo));
   } finally {
-    try { ipcEngine.evict('all'); } catch {}
+    try { ipcEngine.close(); } catch {}
     resetStdioClientWorkspaceForTest('');
   }
 });

@@ -1252,7 +1252,7 @@ test('50. Wave 3 GPU & Ollama: HF mirror preference, persistent pull errors, cus
     const pack = ram.buildGroundedChatPack(wsDir, 'Объясни работу модуля и риски', { focusFile: 'src/auth.mjs' });
     assert.ok(pack.sources.some((s) => s.file === 'src/auth.mjs'), 'focusFile must be included in grounded RAG sources');
     assert.ok(pack.formatted.includes('src/auth.mjs'), 'focusFile code slice must be embedded in RAG context');
-    ram.evict('all');
+    ram.close();
   } finally {
     fs.rmSync(customRoot, { recursive: true, force: true });
   }

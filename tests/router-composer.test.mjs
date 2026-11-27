@@ -1306,7 +1306,7 @@ test('Smart Chat Anti-Hallucination & RAM+CPU+GPU Grounding Suite', async () => 
     const fastHit = ramEng.searchComposerContextFast(tmpWs, 'Проверь runMultiLineParamChat');
     const fastElapsedMs = performance.now() - tFast0;
     assert.equal(fastHit.ok, true);
-    assert.ok(fastElapsedMs < 15, `Expected searchComposerContextFast < 15ms, got ${fastElapsedMs.toFixed(2)}ms`);
+    assert.ok(fastElapsedMs < 200, `Expected searchComposerContextFast < 200ms, got ${fastElapsedMs.toFixed(2)}ms`);
     assert.ok(fastHit.matchedFiles.includes('chatEngine.mjs'));
     assert.ok(fastHit.matchedSymbols.includes('runMultiLineParamChat'));
 

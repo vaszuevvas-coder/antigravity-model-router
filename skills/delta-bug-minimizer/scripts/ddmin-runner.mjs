@@ -321,12 +321,10 @@ async function runCli() {
   const timeoutMs = Number.isFinite(rawTimeout) && rawTimeout > 0 ? Math.floor(rawTimeout) : 15000;
 
   if (inputFile && cmdTemplate) {
-    const isJson = args.includes('--json');
-    const outFile = getEqOrVal('--output');
-    const emitOutput = (obj) => {
-      if (outFile) writeFileSync(outFile, JSON.stringify(obj, null, 2) + '\n', 'utf8');
-      console.log(isJson ? JSON.stringify(obj, null, 2) : `ddmin: ${obj.originalSize ?? 0} -> ${obj.minimizedSize ?? 0} (${obj.iterations ?? 0} iters)`);
-    };
+    if (!/\{file\}/i.test(cmdTemplate)) {
+      emitOutput({ ok: false, error: 'Command template (--cmd) must contain {FILE} placeholder' });
+      process.exit(1);
+    }
 
     if (!existsSync(inputFile)) {
       emitOutput({ ok: false, error: `File not found: ${inputFile}` });

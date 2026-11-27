@@ -926,8 +926,6 @@ function collectTelemetryUncached(configuredThreshold = 120000, options = {}) {
           ? panelRuntime.modelProfileSync.peekActiveModelFromTranscript(item.path, activeCid || '')
           : null;
         if (activeProfile && activeProfile.tier !== 'unknown') {
-          stats.activeModel = activeProfile.displayRu || '';
-          stats.activeModelShort = activeProfile.shortRu || activeProfile.shortEn || '';
           stats.isOrchestrator = Boolean(activeProfile.isOrchestrator);
           stats.isHydrogen = Boolean(activeProfile.isHydrogen);
           stats.isNeon = Boolean(activeProfile.isNeon);

@@ -7,12 +7,15 @@
  * AST Knapsack, Bipartite PPR, Arity Guard, 64-bit SimHash clones, Bitap healer, Myers zlib delta).
  */
 
+import { registerSuiteLifecycle } from './helpers/router-test-env.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+
+registerSuiteLifecycle(test);
 
 import {
   CsrInvertedIndex,

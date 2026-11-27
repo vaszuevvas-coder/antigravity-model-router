@@ -651,7 +651,7 @@ test('13. v3.8 Deep Audit Regressions: Sidecar HTTP Guard, POSIX/ADS Security, S
     try { popCascadeAlert(convCascadeB); } catch {}
     if (createdShadowIds.length > 0) {
       try {
-        const idxPath = path.join(ROOT_DIR, '.cache', 'shadow-checkpoints', 'index.json');
+        const idxPath = path.join(SUITE_CACHE_DIR, 'shadow-checkpoints', 'index.json');
         if (fs.existsSync(idxPath)) {
           const idSet = new Set(createdShadowIds);
           const list = JSON.parse(fs.readFileSync(idxPath, 'utf8'));
@@ -659,7 +659,7 @@ test('13. v3.8 Deep Audit Regressions: Sidecar HTTP Guard, POSIX/ADS Security, S
             fs.writeFileSync(idxPath, JSON.stringify(list.filter((c) => !idSet.has(c.id)), null, 2), 'utf8');
           }
           for (const cid of createdShadowIds) {
-            const bak = path.join(ROOT_DIR, '.cache', 'shadow-checkpoints', `${cid}.bak`);
+            const bak = path.join(SUITE_CACHE_DIR, 'shadow-checkpoints', `${cid}.bak`);
             if (fs.existsSync(bak)) fs.unlinkSync(bak);
           }
         }
@@ -1529,7 +1529,7 @@ test('54. Audit Regressions: getSafeWorkerExecArgv strips V8 heap/inspect flags,
   assert.match(md, /Carbon · Средний/);
 });
 
-test('55. Gemini 4 Neon & Orchestrator (Neon) full routing, FinOps, Guard, Bayesian & Swarm suite', async () => {
+test('55b. Gemini 4 Neon & Orchestrator (Neon) full routing, FinOps, Guard, Bayesian & Swarm suite', async () => {
   const {
     normalizeModelProfile,
     getPricingPhaseStatus,

@@ -1463,11 +1463,13 @@ async function execDefaultOllamaHttpStep(
       const total = Number(msg?.total) || 0;
       const completed = Number(msg?.completed) || 0;
       let pct = null;
+      if (/^success$/i.test(statusStr)) {
+        sawSuccess = true;
+      }
       if (total > 0 && completed >= 0) {
         pct = Math.max(0, Math.min(100, Math.round((completed / total) * 100)));
-      } else if (/^success$/i.test(statusStr)) {
+      } else if (sawSuccess) {
         pct = 100;
-        sawSuccess = true;
       }
       if ((pct !== null && pct > 0) || total > 0 || /\b(?:verifying|writing manifest|success)\b/i.test(statusStr)) {
         sawDownloadProgress = true;

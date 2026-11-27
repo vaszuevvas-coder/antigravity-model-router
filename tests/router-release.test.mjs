@@ -153,8 +153,7 @@ test('15. Release Packaging & Auto-Installer Lifecycle (install, backup, uninsta
 
     // 4. Полная сборка релиза (ZIP + SHA256SUMS.txt + Setup.exe на Windows)
     const isMutationSandbox = process.env.AMR_MUTATION_SANDBOX === '1';
-    fs.mkdirSync(path.join(ROOT_DIR, '.cache'), { recursive: true });
-    const tmpDist = fs.mkdtempSync(path.join(ROOT_DIR, '.cache', 'amr-release-dist-'));
+    const tmpDist = fs.mkdtempSync(path.join(tmpRoot, 'amr-release-dist-'));
     try {
     const packRes = buildReleasePackages({ repoRoot: ROOT_DIR, outDir: tmpDist, silent: true, zipOnly: isMutationSandbox });
     assert.equal(packRes.ok, true);
