@@ -32,7 +32,7 @@ const FPS = 30;
 const TOTAL_FRAMES = Math.round(DURATION_SEC * FPS);
 const SAMPLE_RATE = 48000;
 
-export const VIDEO_SFX_CUES = [
+const VIDEO_SFX_CUES = [
   { timeSec: 0.12, kind: 'riser', gain: 0.45, label: 'grid_ignite' },
   { timeSec: 0.85, kind: 'hit', gain: 0.82, label: 'diamond_lock' },
   { timeSec: 1.75, kind: 'pop', gain: 0.55, label: 'metrics_reveal' },
@@ -104,6 +104,9 @@ async function launchCdp(browserExe, userDataDir) {
     let logs = '';
     let settled = false;
     const timer = setTimeout(() => { if (!settled) { settled = true; rejectUrl(new Error('CDP timeout')); } }, 15000);
+    proc.once('error', (err) => {
+      if (!settled) { settled = true; clearTimeout(timer); rejectUrl(err); }
+    });
     const onData = (chunk) => {
       if (settled) return;
       logs += chunk.toString('utf8');
@@ -124,6 +127,10 @@ async function launchCdp(browserExe, userDataDir) {
     } catch {}
     if (!pageWsUrl) await new Promise((r) => setTimeout(r, 80));
   }
+  if (!pageWsUrl) {
+    killBrowser(proc);
+    throw new Error('No CDP page target found');
+  }
 
   const ws = new WebSocket(pageWsUrl);
   await new Promise((res, rej) => {
@@ -135,7 +142,13 @@ async function launchCdp(browserExe, userDataDir) {
   const pending = new Map();
   const waiters = new Set();
   ws.addEventListener('message', (ev) => {
-    const msg = JSON.parse(String(ev.data));
+    let msg = null;
+    try {
+      msg = JSON.parse(String(ev.data));
+    } catch {
+      return;
+    }
+    if (!msg || typeof msg !== 'object') return;
     if (msg.id && pending.has(msg.id)) {
       const { resolve, reject, timer } = pending.get(msg.id);
       pending.delete(msg.id);
@@ -1252,12 +1265,16 @@ function startStaticDocsServer(docsDir, promoFramesDir) {
     '.gif': 'image/gif',
     '.json': 'application/json; charset=utf-8',
   };
+  const isContainedPath = (rootDir, candidate) => {
+    const rel = path.relative(rootDir, candidate);
+    return Boolean(rel && !rel.startsWith('..') && !path.isAbsolute(rel));
+  };
   const server = http.createServer((req, res) => {
     const clean = decodeURIComponent((req.url || '/').split('?')[0]);
     if (clean.startsWith('/promo-frames/') && promoFramesDir) {
       const frameRel = clean.slice('/promo-frames/'.length);
       const frameAbs = path.resolve(promoFramesDir, frameRel);
-      if (!frameAbs.startsWith(promoFramesDir) || !fs.existsSync(frameAbs) || fs.statSync(frameAbs).isDirectory()) {
+      if (!isContainedPath(promoFramesDir, frameAbs) || !fs.existsSync(frameAbs) || fs.statSync(frameAbs).isDirectory()) {
         res.writeHead(404);
         res.end('Not Found');
         return;
@@ -1268,7 +1285,7 @@ function startStaticDocsServer(docsDir, promoFramesDir) {
     }
     const rel = clean === '/' ? 'demo/index.html' : clean.replace(/^\/+/, '');
     const abs = path.resolve(docsDir, rel);
-    if (!abs.startsWith(docsDir) || !fs.existsSync(abs) || fs.statSync(abs).isDirectory()) {
+    if (!isContainedPath(docsDir, abs) || !fs.existsSync(abs) || fs.statSync(abs).isDirectory()) {
       res.writeHead(404);
       res.end('Not Found');
       return;
@@ -1429,7 +1446,15 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error('[render-promo-video] FAILED:', err);
-  process.exit(1);
-});
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  const self = path.resolve(__filename);
+  const arg = path.resolve(process.argv[1]);
+  return process.platform === 'win32' ? self.toLowerCase() === arg.toLowerCase() : self === arg;
+})();
+if (isMain) {
+  main().catch((err) => {
+    console.error('[render-promo-video] FAILED:', err);
+    process.exit(1);
+  });
+}

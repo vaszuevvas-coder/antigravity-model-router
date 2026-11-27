@@ -12,10 +12,11 @@ import {
   getInstallStatus,
   maintainCacheDir,
   parseInstallCliArgs,
+  pruneRootOrphans,
   runInstall,
   runUninstall,
 } from '../install.js';
-import { buildReleasePackages } from '../scripts/pack-release.mjs';
+import { buildReleasePackages, buildZipBuffer } from '../scripts/pack-release.mjs';
 import { buildPanelUi } from '../core/panel-ui-builder.mjs';
 import { checkInstalledPluginDrift } from '../core/hook-runner.mjs';
 
@@ -423,7 +424,20 @@ test('install.js safety guards: uninstall refuses unmarked dir, install blocks s
     const installSh = fs.readFileSync(path.join(ROOT_DIR, 'install.sh'), 'utf8');
     assert.equal(installSh.includes('v$(node -v)'), false);
     assert.match(installSh, /\[\[ "\$NODE_MAJOR" =~ \^\[0-9\]\+\$ \]\]/);
+    assert.match(installSh, /case "\$INSTALL_LANG" in/);
+
+    // 7. Batch 6 regressions: null guards in install/pack-release
+    assert.doesNotThrow(() => getInstallStatus(null));
+    assert.doesNotThrow(() => maintainCacheDir(null));
+    assert.equal(pruneRootOrphans(null, null), 0);
+    assert.equal(buildZipBuffer([null]).length, 22);
   } finally {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
+});
+
+test('Batch 6 regressions: edge-tts-v2 NaN guard & media script isMain guards', async () => {
+  const { generateSecMsGecV2 } = await import('../scripts/lib/edge-tts-v2.mjs');
+  assert.match(generateSecMsGecV2(NaN), /^[0-9A-F]{16}-[0-9A-F]{64}$/);
+  await assert.doesNotReject(import('../scripts/render-promo-video.mjs'));
 });

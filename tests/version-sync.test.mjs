@@ -185,8 +185,15 @@ test('bump-version: current repo package.json and plugin.json are in sync', () =
     cwd: ROOT_DIR,
     encoding: 'utf8',
   });
-  const parsed = JSON.parse(out);
-  assert.equal(parsed.ok, true);
-  assert.equal(parsed.inSync, true);
-  assert.equal(parsed.version, expectedVersion);
+    const parsed = JSON.parse(out);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.inSync, true);
+    assert.equal(parsed.version, expectedVersion);
+});
+
+test('parseVersionCliArgs handles null argv without throwing', async () => {
+  const { parseVersionCliArgs } = await import('../scripts/bump-version.mjs');
+  const parsedNull = parseVersionCliArgs(null);
+  assert.equal(parsedNull.help, false);
+  assert.equal(parsedNull.check, false);
 });

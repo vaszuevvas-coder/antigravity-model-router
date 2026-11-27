@@ -188,7 +188,7 @@ const COMPANION_VERSION_RULES = [
       [/(Пульт(?: управления)?(?:\s+The Tunnel(?:\s*·)?)?(?:\s+Liquid Glass)?\s+`?v)\d+\.\d+(?:\.\d+)?(`?)/g, (v) => `$1${v}$2`],
       [/(Манифест плагина The Tunnel \(v)\d+\.\d+(?:\.\d+)?(\))/, (v) => `$1${v}$2`],
       [/(Plugin manifest \(The Tunnel v)\d+\.\d+(?:\.\d+)?(\))/, (v) => `$1${v}$2`],
-      [/(alt="The Tunnel v)\d+\.\d+(?:\.\d+)?(\s+—)/, (v) => `$1${v}$2`],
+      [/(alt="The Tunnel v)\d+\.\d+(?:\.\d+)?(\s+—)/g, (v) => `$1${v}$2`],
       [/(Полная история изменений \(v1\.0\.0 — v)\d+\.\d+(?:\.\d+)?(\))/, (v) => `$1${v}$2`],
       [/(The-Tunnel-v)\d+\.\d+(?:\.\d+)?(-Setup\.exe|\.zip)/g, (v) => `$1${v}$2`],
       [/(releases\/download\/v)\d+\.\d+(?:\.\d+)?(\/)/g, (v) => `$1${v}$2`],
@@ -203,6 +203,7 @@ const COMPANION_VERSION_RULES = [
       [/(панели The Tunnel \((?:Liquid Glass\s+)?v)\d+\.\d+(?:\.\d+)?(\))/g, (v) => `$1${v}$2`],
       [/(THE TUNNEL\s+·\s+v)\d+\.\d+(?:\.\d+)?/g, (v) => `$1${v}`],
       [/(<tspan fill="(?:#38bdf8|#f04848)">v)\d+\.\d+(?:\.\d+)?(<\/tspan>)/g, (v) => `$1${v}$2`],
+      [/(aria-label="The Tunnel v)\d+\.\d+(?:\.\d+)?(")/g, (v) => `$1${v}$2`],
     ],
   },
   {
@@ -327,7 +328,7 @@ export function parseVersionCliArgs(argv = process.argv.slice(2)) {
     help: false,
   };
 
-  for (const rawArg of argv) {
+  for (const rawArg of Array.isArray(argv) ? argv : []) {
     const arg = String(rawArg || '').trim();
     if (!arg) continue;
     if (arg === '--help' || arg === '-h') {

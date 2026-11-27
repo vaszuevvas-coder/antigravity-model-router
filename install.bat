@@ -34,7 +34,7 @@ if not defined NODE_EXE (
 )
 
 echo Installing The Tunnel plugin...
-"%NODE_EXE%" "!SCRIPT_DIR!install.js" %*
+"!NODE_EXE!" "!SCRIPT_DIR!install.js" %*
 set "EXIT_CODE=!ERRORLEVEL!"
 if !EXIT_CODE! NEQ 0 (
   echo [ERR] Installation failed with exit code !EXIT_CODE!.

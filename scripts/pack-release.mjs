@@ -56,32 +56,16 @@ const SKIP_FILE_NAMES = new Set(['.DS_Store', 'Thumbs.db']);
 const UNINSTALL_BAT_CONTENT = [
   '@echo off',
   'chcp 65001 >nul',
-  'setlocal EnableExtensions EnableDelayedExpansion',
+  'setlocal EnableExtensions',
+  'set "SCRIPT_DIR=%~dp0"',
   'title Удаление The Tunnel',
-  'cd /d "%~dp0"',
+  'cd /d "%SCRIPT_DIR%"',
   '',
   'set "SILENT_MODE=0"',
-  'for %%A in (%*) do (',
-  '  if /I "%%~A"=="--silent" set "SILENT_MODE=1"',
-  '  if /I "%%~A"=="/S" set "SILENT_MODE=1"',
-  ')',
+  'call :PARSE_ARGS %*',
+  'setlocal EnableDelayedExpansion',
   '',
-  'set "NODE_EXE="',
-  'for /f "delims=" %%P in (\'where node.exe 2^>nul\') do (',
-  '  if not defined NODE_EXE if exist "%%~P" set "NODE_EXE=%%~P"',
-  ')',
-  'if not defined NODE_EXE (',
-  '  for %%D in (',
-  '    "%ProgramFiles%\\nodejs"',
-  '    "%ProgramFiles(x86)%\\nodejs"',
-  '    "%LOCALAPPDATA%\\Programs\\nodejs"',
-  '    "%NVM_SYMLINK%"',
-  '    "%VOLTA_HOME%\\bin"',
-  '    "%USERPROFILE%\\scoop\\apps\\nodejs\\current"',
-  '  ) do (',
-  '    if not defined NODE_EXE if not "%%~D"=="" if exist "%%~D\\node.exe" set "NODE_EXE=%%~D\\node.exe"',
-  '  )',
-  ')',
+  'call :FIND_NODE',
   '',
   'if not defined NODE_EXE (',
   '  echo [ОШИБКА] Node.js не найден. Запустите Setup.exe с параметром --uninstall или удалите папку плагина вручную.',
@@ -89,42 +73,52 @@ const UNINSTALL_BAT_CONTENT = [
   '  exit /b 1',
   ')',
   '',
-  '"%NODE_EXE%" "%~dp0install.js" --uninstall %*',
+  '"!NODE_EXE!" "!SCRIPT_DIR!install.js" --uninstall %*',
   'set "EXIT_CODE=!ERRORLEVEL!"',
   'if "!SILENT_MODE!"=="0" pause',
   'exit /b !EXIT_CODE!',
+  '',
+  ':PARSE_ARGS',
+  'if "%~1"=="" goto :EOF',
+  'if /I "%~1"=="--silent" set "SILENT_MODE=1"',
+  'if /I "%~1"=="/S" set "SILENT_MODE=1"',
+  'shift',
+  'goto :PARSE_ARGS',
+  '',
+  ':FIND_NODE',
+  'set "NODE_EXE="',
+  'for /f "delims=" %%P in (\'where node.exe 2^>nul\') do (',
+  '  if not defined NODE_EXE if exist "%%~P" set "NODE_EXE=%%~P"',
+  ')',
+  'if defined NODE_EXE goto :EOF',
+  'for %%D in (',
+  '  "%ProgramFiles%\\nodejs"',
+  '  "%ProgramFiles(x86)%\\nodejs"',
+  '  "%LOCALAPPDATA%\\Programs\\nodejs"',
+  '  "%NVM_SYMLINK%"',
+  '  "%VOLTA_HOME%\\bin"',
+  '  "%USERPROFILE%\\scoop\\apps\\nodejs\\current"',
+  '  "%USERPROFILE%\\scoop\\apps\\nodejs-lts\\current"',
+  ') do (',
+  '  if not defined NODE_EXE if not "%%~D"=="" if exist "%%~D\\node.exe" set "NODE_EXE=%%~D\\node.exe"',
+  ')',
+  'goto :EOF',
   '',
 ].join('\r\n');
 
 const UNINSTALL_BAT_EN_CONTENT = [
   '@echo off',
   'chcp 65001 >nul',
-  'setlocal EnableExtensions EnableDelayedExpansion',
+  'setlocal EnableExtensions',
+  'set "SCRIPT_DIR=%~dp0"',
   'title Uninstall The Tunnel',
-  'cd /d "%~dp0"',
+  'cd /d "%SCRIPT_DIR%"',
   '',
   'set "SILENT_MODE=0"',
-  'for %%A in (%*) do (',
-  '  if /I "%%~A"=="--silent" set "SILENT_MODE=1"',
-  '  if /I "%%~A"=="/S" set "SILENT_MODE=1"',
-  ')',
+  'call :PARSE_ARGS %*',
+  'setlocal EnableDelayedExpansion',
   '',
-  'set "NODE_EXE="',
-  'for /f "delims=" %%P in (\'where node.exe 2^>nul\') do (',
-  '  if not defined NODE_EXE if exist "%%~P" set "NODE_EXE=%%~P"',
-  ')',
-  'if not defined NODE_EXE (',
-  '  for %%D in (',
-  '    "%ProgramFiles%\\nodejs"',
-  '    "%ProgramFiles(x86)%\\nodejs"',
-  '    "%LOCALAPPDATA%\\Programs\\nodejs"',
-  '    "%NVM_SYMLINK%"',
-  '    "%VOLTA_HOME%\\bin"',
-  '    "%USERPROFILE%\\scoop\\apps\\nodejs\\current"',
-  '  ) do (',
-  '    if not defined NODE_EXE if not "%%~D"=="" if exist "%%~D\\node.exe" set "NODE_EXE=%%~D\\node.exe"',
-  '  )',
-  ')',
+  'call :FIND_NODE',
   '',
   'if not defined NODE_EXE (',
   '  echo [ERROR] Node.js was not found. Run Setup.exe --uninstall or delete the plugin folder manually.',
@@ -132,10 +126,36 @@ const UNINSTALL_BAT_EN_CONTENT = [
   '  exit /b 1',
   ')',
   '',
-  '"%NODE_EXE%" "%~dp0install.js" --uninstall --lang=en %*',
+  '"!NODE_EXE!" "!SCRIPT_DIR!install.js" --uninstall --lang=en %*',
   'set "EXIT_CODE=!ERRORLEVEL!"',
   'if "!SILENT_MODE!"=="0" pause',
   'exit /b !EXIT_CODE!',
+  '',
+  ':PARSE_ARGS',
+  'if "%~1"=="" goto :EOF',
+  'if /I "%~1"=="--silent" set "SILENT_MODE=1"',
+  'if /I "%~1"=="/S" set "SILENT_MODE=1"',
+  'shift',
+  'goto :PARSE_ARGS',
+  '',
+  ':FIND_NODE',
+  'set "NODE_EXE="',
+  'for /f "delims=" %%P in (\'where node.exe 2^>nul\') do (',
+  '  if not defined NODE_EXE if exist "%%~P" set "NODE_EXE=%%~P"',
+  ')',
+  'if defined NODE_EXE goto :EOF',
+  'for %%D in (',
+  '  "%ProgramFiles%\\nodejs"',
+  '  "%ProgramFiles(x86)%\\nodejs"',
+  '  "%LOCALAPPDATA%\\Programs\\nodejs"',
+  '  "%NVM_SYMLINK%"',
+  '  "%VOLTA_HOME%\\bin"',
+  '  "%USERPROFILE%\\scoop\\apps\\nodejs\\current"',
+  '  "%USERPROFILE%\\scoop\\apps\\nodejs-lts\\current"',
+  ') do (',
+  '  if not defined NODE_EXE if not "%%~D"=="" if exist "%%~D\\node.exe" set "NODE_EXE=%%~D\\node.exe"',
+  ')',
+  'goto :EOF',
   '',
 ].join('\r\n');
 
@@ -151,14 +171,21 @@ export function createSanitizedDefaultState(rawState = {}) {
   }
   return {
     ...base,
+    subscriptionTier: 'pro',
+    swarmWorkerTier: 'hydrogen_auto',
     panelTheme: 'glass_teal',
     panelViewMode: 'full',
     panelFullTab: 'cockpit',
     uiLanguage: 'en',
     panelUiScale: 'auto',
+    autoSpecMode: 'auto',
+    autoSpecOutput: 'thinking',
+    debugLogMode: 'errors',
     hardwareProfiled: false,
     onboardingCompleted: false,
     gpuEnabled: false,
+    gpuChatModel: 'gemma4:12b',
+    gpuEmbedModel: 'qwen3-embedding:0.6b',
     gpuModelsDir: '',
     gpuOllamaDir: '',
     gpuPreferHfMirror: false,
@@ -269,6 +296,7 @@ export function buildZipBuffer(entries = []) {
   let offset = 0;
 
   for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') continue;
     const cleanName = String(entry.name || '').replace(/\\/g, '/').replace(/^\/+/, '');
     if (!cleanName) continue;
     const rawData = Buffer.isBuffer(entry.data) ? entry.data : Buffer.from(entry.data || '');
@@ -931,12 +959,35 @@ namespace AntigravityModelRouterSetup
             }
         }
 
+        internal static bool IsSafeUninstallTarget(string targetDir)
+        {
+            if (string.IsNullOrEmpty(targetDir)) return false;
+            string full = Path.GetFullPath(targetDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string root = (Path.GetPathRoot(full) ?? "").TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string userProfile = (Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) ?? "").TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (string.IsNullOrEmpty(full) || string.Equals(full, root, StringComparison.OrdinalIgnoreCase) || (!string.IsNullOrEmpty(userProfile) && string.Equals(full, userProfile, StringComparison.OrdinalIgnoreCase)))
+            {
+                return false;
+            }
+            if (File.Exists(Path.Combine(full, "plugin.json"))) return true;
+            if (string.Equals(Path.GetFileName(full), PluginName, StringComparison.OrdinalIgnoreCase))
+            {
+                return File.Exists(Path.Combine(full, "router-state.json")) || File.Exists(Path.Combine(full, "hooks.json"));
+            }
+            return false;
+        }
+
         internal static int UninstallFallbackWithoutNode(string targetDir, Action<string> log)
         {
             if (!Directory.Exists(targetDir))
             {
                 if (log != null) log(T("[i] Плагин не найден в: ", "[i] Plugin was not found at: ") + targetDir);
                 return 0;
+            }
+            if (!IsSafeUninstallTarget(targetDir))
+            {
+                if (log != null) log(T("[ОШИБКА] Отказ удаления: каталог не распознан как установка плагина: ", "[ERROR] Refusing to remove unsafe uninstall target: ") + targetDir);
+                return 1;
             }
             string statePath = Path.Combine(targetDir, "router-state.json");
             if (File.Exists(statePath))
@@ -1376,7 +1427,8 @@ namespace AntigravityModelRouterSetup
  * Собирает релизные пакеты (ZIP + автономный Setup.exe на Windows + SHA256SUMS.txt).
  * @param {{ repoRoot?: string, outDir?: string, zipOnly?: boolean, silent?: boolean }} [options]
  */
-export function buildReleasePackages(options = {}) {
+export function buildReleasePackages(rawOpts = {}) {
+  const options = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   const isRuPack = normalizeLang(options.lang || detectOsLocale(), 'en') === 'ru';
   const repoRoot = path.resolve(options.repoRoot || DEFAULT_REPO_ROOT);
   const outDir = path.resolve(options.outDir || path.join(repoRoot, 'dist'));

@@ -39,7 +39,7 @@ if not defined NODE_EXE (
 )
 
 echo Запуск установщика The Tunnel...
-"%NODE_EXE%" "!SCRIPT_DIR!install.js" %*
+"!NODE_EXE!" "!SCRIPT_DIR!install.js" %*
 set "EXIT_CODE=!ERRORLEVEL!"
 if !EXIT_CODE! NEQ 0 (
   echo.

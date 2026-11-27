@@ -143,6 +143,9 @@ async function launchBrowserCdp(browserExe, userDataDir) {
     const timer = setTimeout(() => {
       if (!settled) { settled = true; rejectUrl(new Error(`CDP timeout:\n${logs}`)); }
     }, 15000);
+    proc.once('error', (err) => {
+      if (!settled) { settled = true; clearTimeout(timer); rejectUrl(err); }
+    });
     const onData = (chunk) => {
       if (settled) return;
       logs += chunk.toString('utf8');
@@ -386,7 +389,7 @@ async function main() {
         '</div>';
 
       const cleanLivePanelForShowcase = () => {
-        const convoPill = document.getElementById('convoShortId');
+        const convoPill = document.getElementById('agProgressProjectBadge') || document.getElementById('convoShortId');
         if (convoPill) convoPill.textContent = 'Все чаты · Автопилот';
         const heading = document.getElementById('agProgressHeadingText');
         if (heading) heading.textContent = 'ПРОГРЕСС ЗАДАЧ (1)';
@@ -789,7 +792,15 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error('[capture-shorts-ru-media] FAILED:', err);
-  process.exit(1);
-});
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  const self = path.resolve(__filename);
+  const arg = path.resolve(process.argv[1]);
+  return process.platform === 'win32' ? self.toLowerCase() === arg.toLowerCase() : self === arg;
+})();
+if (isMain) {
+  main().catch((err) => {
+    console.error('[capture-shorts-ru-media] FAILED:', err);
+    process.exit(1);
+  });
+}

@@ -570,17 +570,17 @@ async function runContour6LiveCdp(screenshotsDir = '') {
       if (typeof setUiLanguage === 'function') await setUiLanguage('ru');
       await new Promise((r) => setTimeout(r, 150));
 
-      document.querySelector('[data-action="setPanelViewMode"][data-arg="lite"]')?.click();
+      document.getElementById('fullTabBtn-hardware')?.click();
       await new Promise((r) => setTimeout(r, 220));
-      measure('lite_ru_380');
+      measure('hardware_ru_380');
       return { checks, enTitle, view: document.body.getAttribute('data-panel-view'), theme: document.body.getAttribute('data-panel-theme') };
     });
-    await savePng('cdp-panel-lite-ru.png');
+    await savePng('cdp-panel-hardware-ru.png');
 
-    // Restore Full view before opening Project Graph modal
+    // Restore Cockpit tab before opening Project Graph modal
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 900, height: 720, deviceScaleFactor: 1, mobile: false });
     await cdp.evaluate(async () => {
-      document.querySelector('[data-action="setPanelViewMode"][data-arg="full"]')?.click();
+      document.getElementById('fullTabBtn-cockpit')?.click();
       await new Promise((r) => setTimeout(r, 150));
     });
 
@@ -746,8 +746,8 @@ export async function runMegaDiagnostic(rawOpts = {}) {
       timeoutMs: 240000,
     });
     const combinedOut = `${c4All.stdout}\n${c4All.stderr}`;
-    const mPass = combinedOut.match(/# pass\s+(\d+)/);
-    const mFail = combinedOut.match(/# fail\s+(\d+)/);
+    const mPass = combinedOut.match(/(?:^|\n)\s*(?:#|ℹ)\s*pass\s+(\d+)/m);
+    const mFail = combinedOut.match(/(?:^|\n)\s*(?:#|ℹ)\s*fail\s+(\d+)/m);
     contours.push({
       id: 'contour_4_regression',
       name: `Full Regression Suite (${testFiles.length} suites)`,
@@ -788,11 +788,16 @@ export async function runMegaDiagnostic(rawOpts = {}) {
   };
 }
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename);
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  const self = path.resolve(__filename);
+  const arg = path.resolve(process.argv[1]);
+  return process.platform === 'win32' ? self.toLowerCase() === arg.toLowerCase() : self === arg;
+})();
 if (isMain) {
   const args = parseMegaDiagnosticArgs(process.argv.slice(2));
   const report = await runMegaDiagnostic(args);
-  let pkgVersion = '4.0.0';
+  let pkgVersion = '4.0.9';
   try {
     const pkgMeta = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
     if (pkgMeta?.version) pkgVersion = String(pkgMeta.version);

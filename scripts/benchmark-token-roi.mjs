@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * @file benchmark-token-roi.mjs
- * @description Offline Token-Economy & Cache-Hit ROI benchmark for The Tunnel v3.21.0.
+ * @description Offline Token-Economy & Cache-Hit ROI benchmark for The Tunnel v4.0.9.
  * Measures real compression savings across RTK/ObsMasker, Dot-Path Config Flattening,
  * TOON tables, POSIX path normalization, AgentDiet waste pruning, and brain/ transcripts.
  */
@@ -49,7 +49,7 @@ function estTokens(text = '') {
 function collectTranscriptMetrics(maxSessions = 12, brainDirsOverride = null) {
   const geminiRoot = join(homedir(), '.gemini');
   const brainDirs = Array.isArray(brainDirsOverride)
-    ? brainDirsOverride.filter((p) => existsSync(p))
+    ? brainDirsOverride.filter((p) => typeof p === 'string' && p && existsSync(p))
     : ['antigravity', 'antigravity-ide', 'antigravity-cli']
         .map((d) => join(geminiRoot, d, 'brain'))
         .filter((p) => existsSync(p));

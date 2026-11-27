@@ -488,7 +488,7 @@ async function main() {
         '<div style="height:4px;background:#1a1c22;border-radius:2px;margin-top:6px;overflow:hidden;"><div style="width:74%;height:100%;background:#f04848;"></div></div>' +
         '</div>';
       const cleanLivePanelForShowcase = () => {
-        const convoPill = document.getElementById('convoShortId');
+        const convoPill = document.getElementById('agProgressProjectBadge') || document.getElementById('convoShortId');
         if (convoPill) convoPill.textContent = 'All Chats · Autopilot';
         const heading = document.getElementById('agProgressHeadingText');
         if (heading) heading.textContent = 'TASK PROGRESS (1)';
@@ -1057,7 +1057,15 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error('[capture-live-media] FAILED:', err);
-  process.exit(1);
-});
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  const self = path.resolve(__filename);
+  const arg = path.resolve(process.argv[1]);
+  return process.platform === 'win32' ? self.toLowerCase() === arg.toLowerCase() : self === arg;
+})();
+if (isMain) {
+  main().catch((err) => {
+    console.error('[capture-live-media] FAILED:', err);
+    process.exit(1);
+  });
+}

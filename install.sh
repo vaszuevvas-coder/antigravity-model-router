@@ -36,11 +36,12 @@ for arg in "$@"; do
   esac
 done
 if [ -z "$INSTALL_LANG" ]; then
-  case "${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}" in
-    ru*|RU*) INSTALL_LANG="ru" ;;
-    *) INSTALL_LANG="en" ;;
-  esac
+  INSTALL_LANG="${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}"
 fi
+case "$INSTALL_LANG" in
+  ru*|RU*) INSTALL_LANG="ru" ;;
+  *) INSTALL_LANG="en" ;;
+esac
 
 if ! command -v node >/dev/null 2>&1; then
   if [ "$INSTALL_LANG" = "ru" ]; then

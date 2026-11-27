@@ -14,7 +14,7 @@
   },
   "logo": "assets/logo.svg",
   "suggestedPrompts": [
-    "Open the The Tunnel control panel",
+    "Open The Tunnel control panel",
     "Which model routing strategy is currently active?",
     "Evaluate task complexity with the 3D matrix and coordinate Hydrogen, Neon, and Carbon"
   ]

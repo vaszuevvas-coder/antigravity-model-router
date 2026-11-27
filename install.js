@@ -115,7 +115,7 @@ export function sanitizeMergedState(mergedState) {
 }
 
 export function pruneRootOrphans(srcRoot, destRoot) {
-  if (!fs.existsSync(destRoot)) return 0;
+  if (typeof srcRoot !== 'string' || !srcRoot || typeof destRoot !== 'string' || !destRoot || !fs.existsSync(destRoot)) return 0;
   const ROOT_PRESERVE = new Set(['.cache', 'router-state.json', 'mcp_config.json']);
   let removed = 0;
   let entries = [];
@@ -221,7 +221,7 @@ export function maintainCacheDir(cacheDir) {
     digestsPruned: 0,
     legacyRemoved: 0,
   };
-  if (!fs.existsSync(cacheDir)) return res;
+  if (typeof cacheDir !== 'string' || !cacheDir || !fs.existsSync(cacheDir)) return res;
 
   // Migrate legacy cache filenames cleanly into canonical v3.7 filenames before removing legacy duplicates
   for (const [legacyName, canonicalName] of [
@@ -504,6 +504,7 @@ function purgeDuplicateGlobalSkills(installedPluginDir) {
   const fallbackSlugs = [
     'ast-codemod-refactor',
     'binary-app-localizer',
+    'cli-anything-harness',
     'context-fork',
     'deep-stress-auditor',
     'delta-bug-minimizer',
@@ -845,7 +846,8 @@ export function parseInstallCliArgs(argv = process.argv.slice(2)) {
   return opts;
 }
 
-export function getInstallStatus({ targetDir: customTarget } = {}) {
+export function getInstallStatus(rawOpts = {}) {
+  const { targetDir: customTarget } = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   const destRoot = resolveTargetDir(customTarget);
   const pluginManifest = safeParseJsonObject(path.join(destRoot, 'plugin.json'));
   const installed = Boolean(fs.existsSync(destRoot) && pluginManifest);
@@ -891,7 +893,8 @@ function isSafePluginUninstallTarget(destRoot) {
   return false;
 }
 
-export function runUninstall({ targetDir: customTarget, purge = false, silent = false, lang = '' } = {}) {
+export function runUninstall(rawOpts = {}) {
+  const { targetDir: customTarget, purge = false, silent = false, lang = '' } = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   const isRu = normalizeLang(lang || detectOsLocale(), 'en') === 'ru';
   const destRoot = resolveTargetDir(customTarget);
   const externalBackup = getExternalBackupPath(destRoot);
@@ -967,7 +970,8 @@ export function runUninstall({ targetDir: customTarget, purge = false, silent = 
   };
 }
 
-export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun = false, silent = false, lang = '' } = {}) {
+export function runInstall(rawOpts = {}) {
+  const { srcRoot = srcDir, targetDir: customTarget, dryRun = false, silent = false, lang = '' } = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   const isRu = normalizeLang(lang || detectOsLocale(), 'en') === 'ru';
   const resolvedSrc = path.resolve(srcRoot || srcDir);
   const destRoot = resolveTargetDir(customTarget);
@@ -1154,7 +1158,7 @@ export function runInstall({ srcRoot = srcDir, targetDir: customTarget, dryRun =
   log(isRu ? `[✓] Плагин The Tunnel (${PLUGIN_NAME}) v${version} успешно установлен в:` : `[OK] Plugin The Tunnel (${PLUGIN_NAME}) v${version} installed to:`);
   log(`    ${destRoot}`);
   log(isRu ? `\nПерезапустите Google Antigravity или напишите агенту в чате:` : `\nRestart Google Antigravity or ask the agent in chat:`);
-  log(isRu ? `    "Открой панель управления The Tunnel"` : `    "Open the The Tunnel control panel"`);
+  log(isRu ? `    "Открой панель управления The Tunnel"` : `    "Open The Tunnel control panel"`);
 
   return {
     ok: true,

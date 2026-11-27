@@ -261,7 +261,9 @@ function cs64Digest(dataBuf, digestBuf) {
 }
 
 export function generateSecMsGecV2(unixSec = Math.floor(Date.now() / 1000)) {
-  const secBig = BigInt(Math.floor(unixSec));
+  const rawSec = Number(unixSec);
+  const safeSec = Number.isFinite(rawSec) ? Math.floor(rawSec) : Math.floor(Date.now() / 1000);
+  const secBig = BigInt(safeSec);
   let ticks = secBig + WIN_EPOCH;
   ticks -= ticks % 300n;
   ticks *= 10000000n;
@@ -290,10 +292,12 @@ async function fetchEdgeServerUnixSec() {
       headers: {
         'User-Agent': `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROMIUM_MAJOR_VERSION}.0.0.0 Safari/537.36 Edg/${CHROMIUM_MAJOR_VERSION}.0.0.0`,
       },
+      signal: AbortSignal.timeout(5000),
     }
   );
   const srvDate = res.headers.get('date');
-  return srvDate ? Math.floor(new Date(srvDate).getTime() / 1000) : Math.floor(Date.now() / 1000);
+  const parsedMs = srvDate ? new Date(srvDate).getTime() : NaN;
+  return Number.isFinite(parsedMs) ? Math.floor(parsedMs / 1000) : Math.floor(Date.now() / 1000);
 }
 
 function buildMaskedWsClientFrame(opcode, payloadBuf) {
@@ -348,14 +352,18 @@ function createWsFrameParser(onFrame) {
   };
 }
 
-export async function synthesizeEdgeNeuralSegment({
-  text,
-  outMp3Path,
-  voice = 'ru-RU-DmitryNeural',
-  rate = '+10%',
-  pitch = '+0Hz',
-  serverUnixSec = null,
-}) {
+export async function synthesizeEdgeNeuralSegment(rawOpts = {}) {
+  const {
+    text = '',
+    outMp3Path = '',
+    voice = 'ru-RU-DmitryNeural',
+    rate = '+10%',
+    pitch = '+0Hz',
+    serverUnixSec = null,
+  } = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
+  if (!String(text || '').trim() || typeof outMp3Path !== 'string' || !outMp3Path.trim()) {
+    throw new Error('synthesizeEdgeNeuralSegment requires non-empty text and outMp3Path');
+  }
   const unixSec = serverUnixSec || (await fetchEdgeServerUnixSec());
   const secMsGec = generateSecMsGecV2(unixSec);
   const connId = crypto.randomUUID().replace(/-/g, '');
@@ -503,7 +511,8 @@ export async function synthesizeEdgeNeuralSegment({
   });
 }
 
-export function probeAudioDurationSec(audioPath) {
+export function probeAudioDurationSec(audioPath = '') {
+  if (typeof audioPath !== 'string' || !audioPath.trim()) return 0;
   const out = execFileSync('ffprobe', [
     '-v', 'error',
     '-show_entries', 'format=duration',
@@ -547,7 +556,7 @@ async function synthesizeGoogleFallbackSegment({ text, outMp3Path }) {
   const bufs = [];
   for (const part of parts) {
     const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=ru&client=tw-ob&q=${encodeURIComponent(part)}`;
-    const r = await fetch(url);
+    const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
     if (!r.ok) throw new Error(`Google TTS HTTP ${r.status}`);
     bufs.push(Buffer.from(await r.arrayBuffer()));
   }
@@ -563,8 +572,9 @@ async function synthesizeGoogleFallbackSegment({ text, outMp3Path }) {
 }
 
 function synthesizeWinRtFallbackSegment({ text, outMp3Path }) {
-  const wavPath = outMp3Path.replace(/\.mp3$/i, '.wav');
-  const txtPath = outMp3Path.replace(/\.mp3$/i, '.txt');
+  const baseOut = /\.mp3$/i.test(outMp3Path) ? outMp3Path.replace(/\.mp3$/i, '') : outMp3Path;
+  const wavPath = `${baseOut}.tmp.wav`;
+  const txtPath = `${baseOut}.tmp.txt`;
   fs.writeFileSync(txtPath, text, 'utf8');
   const psScript = `
 $ErrorActionPreference = 'Stop'
@@ -603,10 +613,15 @@ $reader.ReadBytes($bytes)
  * Synthesizes an array of Russian voiceover segments with Edge Neural TTS v2 (+ fallbacks)
  * and measures exact audio durations.
  */
-export async function synthesizeRussianVoiceover(segments, outDir, options = {}) {
+export async function synthesizeRussianVoiceover(segments, outDir, rawOpts = {}) {
+  const segList = Array.isArray(segments) ? segments : [];
+  const options = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   const voice = options.voice || 'ru-RU-DmitryNeural';
   const rate = options.rate || '+12%';
   const pitch = options.pitch || '+0Hz';
+  if (typeof outDir !== 'string' || !outDir.trim()) {
+    throw new Error('synthesizeRussianVoiceover requires a valid outDir');
+  }
   fs.mkdirSync(outDir, { recursive: true });
 
   let serverUnixSec = null;
@@ -615,7 +630,8 @@ export async function synthesizeRussianVoiceover(segments, outDir, options = {})
   } catch {}
 
   const results = [];
-  for (const seg of segments) {
+  for (const seg of segList) {
+    if (!seg || typeof seg !== 'object' || !seg.id) continue;
     const mp3Path = path.join(outDir, `${seg.id}.mp3`);
     const segRate = seg.rate || rate;
     const segPitch = seg.pitch || pitch;

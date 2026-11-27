@@ -139,6 +139,9 @@ async function launchCdp(browserExe, userDataDir) {
     let logs = '';
     let settled = false;
     const timer = setTimeout(() => { if (!settled) { settled = true; rejectUrl(new Error('CDP timeout')); } }, 15000);
+    proc.once('error', (err) => {
+      if (!settled) { settled = true; clearTimeout(timer); rejectUrl(err); }
+    });
     const onData = (chunk) => {
       if (settled) return;
       logs += chunk.toString('utf8');
@@ -159,6 +162,10 @@ async function launchCdp(browserExe, userDataDir) {
     } catch {}
     if (!pageWsUrl) await new Promise((r) => setTimeout(r, 80));
   }
+  if (!pageWsUrl) {
+    killBrowser(proc);
+    throw new Error('No CDP page target found');
+  }
 
   const ws = new WebSocket(pageWsUrl);
   await new Promise((res, rej) => {
@@ -170,7 +177,13 @@ async function launchCdp(browserExe, userDataDir) {
   const pending = new Map();
   const waiters = new Set();
   ws.addEventListener('message', (ev) => {
-    const msg = JSON.parse(String(ev.data));
+    let msg = null;
+    try {
+      msg = JSON.parse(String(ev.data));
+    } catch {
+      return;
+    }
+    if (!msg || typeof msg !== 'object') return;
     if (msg.id && pending.has(msg.id)) {
       const { resolve, reject, timer } = pending.get(msg.id);
       pending.delete(msg.id);
@@ -1269,12 +1282,16 @@ function buildShortsHtml({ version, chapters, subtitles, clips, sfxCues }) {
 
 function startStaticServer(docsDir, framesRoot) {
   const mime = { '.html': 'text/html; charset=utf-8', '.png': 'image/png', '.json': 'application/json; charset=utf-8' };
+  const isContainedPath = (rootDir, candidate) => {
+    const rel = path.relative(rootDir, candidate);
+    return Boolean(rel && !rel.startsWith('..') && !path.isAbsolute(rel));
+  };
   const server = http.createServer((req, res) => {
     const clean = decodeURIComponent((req.url || '/').split('?')[0]);
     if (clean.startsWith('/shorts-ru-frames/')) {
       const rel = clean.slice('/shorts-ru-frames/'.length);
       const abs = path.resolve(framesRoot, rel);
-      if (!abs.startsWith(framesRoot) || !fs.existsSync(abs) || fs.statSync(abs).isDirectory()) {
+      if (!isContainedPath(framesRoot, abs) || !fs.existsSync(abs) || fs.statSync(abs).isDirectory()) {
         res.writeHead(404); res.end('Not found'); return;
       }
       res.writeHead(200, { 'Content-Type': 'image/png' });
@@ -1283,7 +1300,7 @@ function startStaticServer(docsDir, framesRoot) {
     }
     const rel = clean === '/' ? 'demo/shorts-ru.html' : clean.replace(/^\/+/, '');
     const abs = path.resolve(docsDir, rel);
-    if (!abs.startsWith(docsDir) || !fs.existsSync(abs) || fs.statSync(abs).isDirectory()) {
+    if (!isContainedPath(docsDir, abs) || !fs.existsSync(abs) || fs.statSync(abs).isDirectory()) {
       res.writeHead(404); res.end('Not found'); return;
     }
     res.writeHead(200, { 'Content-Type': mime[path.extname(abs).toLowerCase()] || 'application/octet-stream' });
@@ -1512,7 +1529,15 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error('[render-shorts-ru] FAILED:', err);
-  process.exit(1);
-});
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  const self = path.resolve(__filename);
+  const arg = path.resolve(process.argv[1]);
+  return process.platform === 'win32' ? self.toLowerCase() === arg.toLowerCase() : self === arg;
+})();
+if (isMain) {
+  main().catch((err) => {
+    console.error('[render-shorts-ru] FAILED:', err);
+    process.exit(1);
+  });
+}
