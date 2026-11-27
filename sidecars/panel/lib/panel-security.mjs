@@ -6,7 +6,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { timingSafeEqual } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
-import http from 'node:http';
 import net from 'node:net';
 import { resolve } from 'node:path';
 
@@ -35,6 +34,7 @@ export function isAllowedLoopbackEndpoint(rawUrl = '') {
   try {
     const u = new URL(trimmed);
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    if (u.username || u.password || u.search || u.hash) return false;
     const host = String(u.hostname || '').toLowerCase();
     return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]';
   } catch {
@@ -45,9 +45,10 @@ export function isAllowedLoopbackEndpoint(rawUrl = '') {
 export function isSafeCreatableFolderPath(rawPath = '') {
   if (typeof rawPath !== 'string') return false;
   const trimmed = rawPath.trim();
-  if (!trimmed || trimmed.length > 512) return false;
+  if (!trimmed || trimmed.length > 512 || trimmed.startsWith('-')) return false;
   if (/^(?:\\\\|\/\/)/.test(trimmed)) return false;
-  if (/[\r\n\0<>|"?*]/.test(trimmed.replace(/^[A-Za-z]:/, ''))) return false;
+  if (/^[A-Za-z]:(?![\\/])/.test(trimmed)) return false;
+  if (/[\r\n\0<>|"?*:]/.test(trimmed.replace(/^[A-Za-z]:/, ''))) return false;
   const parts = trimmed.split(/[\\/]/).filter(Boolean);
   if (parts.some((p) => p === '..' || BLOCKED_PROTO_KEYS.has(p))) return false;
   return true;
@@ -59,6 +60,8 @@ export function isValidWorkspaceDir(dir = '') {
   if (!trimmed || trimmed.length > 512 || trimmed.includes('\0') || trimmed.startsWith('-')) {
     return false;
   }
+  if (/^(?:\\\\|\/\/)/.test(trimmed)) return false;
+  if (/^[A-Za-z]:(?![\\/])/.test(trimmed)) return false;
   const parts = trimmed.split(/[\\/]/).filter(Boolean);
   if (parts.some((p) => BLOCKED_PROTO_KEYS.has(p))) return false;
   try {
@@ -272,14 +275,21 @@ export function attachSidecarSecurityMiddleware(server, options = {}) {
     }
 
     const isApiRoute = pathname.startsWith('/api/') || pathname.startsWith('/_sidecar/');
+    const isExchangeAuth = pathname === '/api/project-graph/exchange-auth';
     if (!validateRequestOrigin(req, {
       enforceGetOrigin: isApiRoute,
       expectedToken: options.expectedToken,
-      allowAuthCodeExchange: pathname === '/api/project-graph/exchange-auth',
+      allowAuthCodeExchange: isExchangeAuth,
     })) {
       res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ ok: false, error: 'Forbidden origin' }));
       return;
+    }
+    const sidecarToken = typeof options.expectedToken === 'string' && options.expectedToken.trim()
+      ? options.expectedToken.trim()
+      : String(process.env.ANTIGRAVITY_SIDECAR_UI_TOKEN || '').trim();
+    if (isExchangeAuth && req.method === 'POST' && sidecarToken && !req.headers?.['x-sidecar-token']) {
+      req.headers['x-sidecar-token'] = sidecarToken;
     }
 
     const contentLength = Number(req.headers?.['content-length']);
@@ -298,7 +308,11 @@ export function attachSidecarSecurityMiddleware(server, options = {}) {
     req.emit = function guardedEmit(event, ...args) {
       if (payloadRejected) return false;
       if (event === 'data' && args[0] !== undefined) {
-        const chunkBuf = Buffer.isBuffer(args[0]) ? args[0] : Buffer.from(String(args[0]), 'utf8');
+        const chunkBuf = Buffer.isBuffer(args[0])
+          ? args[0]
+          : ArrayBuffer.isView(args[0])
+            ? Buffer.from(args[0].buffer, args[0].byteOffset, args[0].byteLength)
+            : Buffer.from(String(args[0]), 'utf8');
         receivedBytes += chunkBuf.length;
         if (receivedBytes > maxBodyBytes) {
           payloadRejected = true;
@@ -312,7 +326,17 @@ export function attachSidecarSecurityMiddleware(server, options = {}) {
         if (bodyChunks) bodyChunks.push(chunkBuf);
       } else if (event === 'end' && bodyChunks && receivedBytes > 0) {
         try {
-          JSON.parse(Buffer.concat(bodyChunks).toString('utf8'));
+          const parsed = JSON.parse(Buffer.concat(bodyChunks).toString('utf8'));
+          if (
+            !parsed ||
+            typeof parsed !== 'object' ||
+            Array.isArray(parsed) ||
+            Object.hasOwn(parsed, '__proto__') ||
+            Object.hasOwn(parsed, 'constructor') ||
+            Object.hasOwn(parsed, 'prototype')
+          ) {
+            throw new Error('Unsafe JSON payload');
+          }
         } catch {
           payloadRejected = true;
           if (!res.headersSent) {

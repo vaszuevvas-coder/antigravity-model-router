@@ -395,7 +395,8 @@
             if (item.stepsText) metaParts.push(item.stepsText);
             metaParts.push(agFormatRecentAgo(item.finishedAt));
             const iconTxt = item.status === 'error' ? '✕' : '✓';
-            return '<div class="ag-recent-completed-row" data-recent-cid="' + escapeHtml(item.conversationId) + '">' +
+            const rowCls = item.status === 'error' ? 'ag-recent-completed-row is-error' : 'ag-recent-completed-row';
+            return '<div class="' + rowCls + '" data-action="focusWaitingProgressChat" data-cid="' + escapeHtml(item.conversationId) + '" role="button" tabindex="0">' +
               '<span class="ag-recent-completed-row-icon">' + iconTxt + '</span>' +
               '<div class="ag-recent-completed-row-body">' +
                 '<div class="ag-recent-completed-row-title" title="' + escapeHtml(titleTxt) + '">' + escapeHtml(titleTxt) + '</div>' +
@@ -1883,7 +1884,7 @@
       }
 
       if (ev.key !== 'Enter' && ev.key !== ' ') return;
-      const target = ev.target && ev.target.closest ? ev.target.closest('[data-action="toggleStepChip"]') : null;
+      const target = ev.target && ev.target.closest ? ev.target.closest('[data-action="toggleStepChip"], [data-action="focusWaitingProgressChat"][role="button"]') : null;
       if (!target) return;
       ev.preventDefault();
       dispatchPanelAction(target, ev);

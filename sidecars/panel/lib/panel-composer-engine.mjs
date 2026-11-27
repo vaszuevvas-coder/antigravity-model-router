@@ -5,24 +5,25 @@
 
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import http from 'node:http';
-import { detectTextLanguage, normalizeLang, pickLang, readActiveUiLanguage } from '../../../core/i18n.mjs';
-import net from 'node:net';
+import { detectTextLanguage, normalizeLang, pickLang } from '../../../core/i18n.mjs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { safeReadJsonSync } from '../../../core/safe-json.mjs';
 import { isCompletedSentenceDraft, sanitizeGhostContinuation } from '../../../core/local-gpu-engine.mjs';
 import { isValidWorkspaceDir } from './panel-security.mjs';
 import {
-  CASCADE_STATE_CACHE_PATH,
-  HANDOFF_MIRROR_CACHE_PATH,
-  TASK_PROGRESS_CACHE_PATH,
+  getCascadeStateCachePath,
+  getHandoffMirrorCachePath,
+  getTaskProgressCachePath,
   getAutoVerifierMod,
   getSessionHandoffMod,
+  loadState,
   normalizeWorkspaceUriKey,
   safeGetCachedRepoMap,
 } from './panel-state-skills.mjs';
 import { resolveActiveWorkspaceForPanel } from './panel-telemetry-collectors.mjs';
+
+const getActivePanelLang = () => normalizeLang(loadState()?.uiLanguage, 'en');
 
 /**
  * Быстро (без LLM, <10 мс) формирует подсказки @-чипов для Умного Композера 2.0.
@@ -351,9 +352,10 @@ export function computeFastRamAutocomplete(draft = '', context = {}) {
   }
 
   const scopedCtx = prioritizeContextForDraft(rawDraft, context);
+  const panelLang = getActivePanelLang();
   const uiLang = context?.lang
-    ? normalizeLang(context.lang, readActiveUiLanguage())
-    : detectTextLanguage(rawDraft, readActiveUiLanguage());
+    ? normalizeLang(context.lang, panelLang)
+    : detectTextLanguage(rawDraft, panelLang);
   const cleanTouched = scopedCtx.touchedFiles;
   const cleanRepoFiles = scopedCtx.repoFiles;
   const cleanSymbols = scopedCtx.symbols;
@@ -526,13 +528,16 @@ function readFastAutocompleteSyncSignature(wsRoot = '') {
   let progressMtime = 0;
   let wsHandoffMtime = 0;
   try {
-    if (existsSync(CASCADE_STATE_CACHE_PATH)) cascadeMtime = Math.round(statSync(CASCADE_STATE_CACHE_PATH).mtimeMs);
+    const cascadePath = getCascadeStateCachePath();
+    if (existsSync(cascadePath)) cascadeMtime = Math.round(statSync(cascadePath).mtimeMs);
   } catch {}
   try {
-    if (existsSync(HANDOFF_MIRROR_CACHE_PATH)) handoffMtime = Math.round(statSync(HANDOFF_MIRROR_CACHE_PATH).mtimeMs);
+    const handoffMirrorPath = getHandoffMirrorCachePath();
+    if (existsSync(handoffMirrorPath)) handoffMtime = Math.round(statSync(handoffMirrorPath).mtimeMs);
   } catch {}
   try {
-    if (existsSync(TASK_PROGRESS_CACHE_PATH)) progressMtime = Math.round(statSync(TASK_PROGRESS_CACHE_PATH).mtimeMs);
+    const progressPath = getTaskProgressCachePath();
+    if (existsSync(progressPath)) progressMtime = Math.round(statSync(progressPath).mtimeMs);
   } catch {}
   try {
     if (wsRoot) {
@@ -702,8 +707,9 @@ async function rebuildAutocompleteWorkspaceContext(wsRoot = '', stateSig = '') {
         const liveFiles = [];
         const liveGoals = [];
         try {
-          if (existsSync(TASK_PROGRESS_CACHE_PATH)) {
-            const prog = safeReadJsonSync(TASK_PROGRESS_CACHE_PATH, () => null, { selfHeal: false });
+          const progressPath = getTaskProgressCachePath();
+          if (existsSync(progressPath)) {
+            const prog = safeReadJsonSync(progressPath, () => null, { selfHeal: false });
             const normTargetWs = wsRoot ? resolve(wsRoot).replace(/\\/g, '/').toLowerCase() : '';
             const chatsObj = prog?.chats && typeof prog.chats === 'object' ? prog.chats : {};
             const matchingChats = Object.values(chatsObj)
@@ -733,7 +739,7 @@ async function rebuildAutocompleteWorkspaceContext(wsRoot = '', stateSig = '') {
           const gitDirty = await new Promise((resGit) => {
             execFile(
               'git',
-              ['status', '--porcelain', '-uno'],
+              ['-c', 'core.quotepath=false', 'status', '--porcelain', '-uno'],
               { cwd: wsRoot, timeout: 450, windowsHide: true, maxBuffer: 65536 },
               (err, stdout) => {
                 if (err || !stdout) return resGit([]);
@@ -786,7 +792,7 @@ async function rebuildAutocompleteWorkspaceContext(wsRoot = '', stateSig = '') {
       }
       if (cascadeAlert?.file && cascadeAlert?.error) {
         recentGoals.unshift(
-          readActiveUiLanguage() === 'en'
+          getActivePanelLang() === 'en'
             ? `Fix alert (${cascadeAlert.checker || 'syntax'}) in ${cascadeAlert.file}`
             : `Исправить алерт (${cascadeAlert.checker || 'syntax'}) в ${cascadeAlert.file}`
         );
@@ -842,7 +848,27 @@ export async function getAutocompleteWorkspaceContext(explicitRoot = '', { allow
     rebuildAutocompleteWorkspaceContext(wsRoot, liveSig).catch(() => {});
     return autocompleteCtxCache.value;
   }
-  return await rebuildAutocompleteWorkspaceContext(wsRoot, liveSig);
+  try {
+    return await rebuildAutocompleteWorkspaceContext(wsRoot, liveSig);
+  } catch (err) {
+    if (err?.code === 'QUEUE_TASK_TIMEOUT' || err?.timedOut) {
+      if (autocompleteCtxCache.value && autocompleteCtxCache.wsRoot === wsRoot) {
+        return autocompleteCtxCache.value;
+      }
+      return {
+        wsRoot,
+        workspaceName: wsRoot ? basename(wsRoot) : '',
+        touchedFiles: [],
+        recentGoals: [],
+        repoFiles: [],
+        symbols: [],
+        symbolsByFile: {},
+        cascadeAlert: null,
+        chips: [],
+      };
+    }
+    throw err;
+  }
 }
 
 export const SAFE_SIDE_ID_RE = /^[a-zA-Z0-9_-]{8,128}$/;
@@ -1251,7 +1277,7 @@ export class Queue {
         this._rejectEntry(
           entry,
           'QUEUE_TASK_EXPIRED',
-          pickLang(readActiveUiLanguage(), 'Задача автоматически сброшена по истечении времени ожидания в очереди', 'Queued task automatically dropped after waiting too long'),
+          pickLang(getActivePanelLang(), 'Задача автоматически сброшена по истечении времени ожидания в очереди', 'Queued task automatically dropped after waiting too long'),
           true
         );
       }
@@ -1260,7 +1286,7 @@ export class Queue {
     return expired.length;
   }
 
-  supersedePending(predicate, code = 'QUEUE_SUPERSEDED', message = pickLang(readActiveUiLanguage(), 'Задача заменена более новым запросом', 'Task superseded by a newer request')) {
+  supersedePending(predicate, code = 'QUEUE_SUPERSEDED', message = pickLang(getActivePanelLang(), 'Задача заменена более новым запросом', 'Task superseded by a newer request')) {
     if (this.size === 0 || typeof predicate !== 'function') return 0;
     const dropped = [];
     const kept = [];
@@ -1288,7 +1314,7 @@ export class Queue {
   }
 
   enqueue(taskFn, meta = {}) {
-    const lang = readActiveUiLanguage();
+    const lang = getActivePanelLang();
     if (this._disposed) {
       const err = new Error(pickLang(lang, 'Очередь остановлена', 'Queue is stopped'));
       err.code = 'QUEUE_DISPOSED';
@@ -1361,7 +1387,7 @@ export class Queue {
       const expiredErr = this._rejectEntry(
         entry,
         'QUEUE_TASK_EXPIRED',
-        pickLang(readActiveUiLanguage(), 'Задача автоматически сброшена перед выполнением (просрочена)', 'Queued task automatically dropped before execution (expired)'),
+        pickLang(getActivePanelLang(), 'Задача автоматически сброшена перед выполнением (просрочена)', 'Queued task automatically dropped before execution (expired)'),
         true
       );
       return { ok: false, id: entry.id, dropped: true, error: expiredErr };
@@ -1372,7 +1398,7 @@ export class Queue {
     const timeoutPromise = new Promise((_, rejectTimeout) => {
       timeoutTimer = setTimeout(() => {
         try { ac.abort(); } catch {}
-        const timeoutErr = new Error(pickLang(readActiveUiLanguage(), `Таймаут шага очереди (${entry.timeoutMs} мс)`, `Queue step timed out (${entry.timeoutMs} ms)`));
+        const timeoutErr = new Error(pickLang(getActivePanelLang(), `Таймаут шага очереди (${entry.timeoutMs} мс)`, `Queue step timed out (${entry.timeoutMs} ms)`));
         timeoutErr.code = 'QUEUE_TASK_TIMEOUT';
         timeoutErr.timedOut = true;
         rejectTimeout(timeoutErr);
@@ -1545,7 +1571,7 @@ export class Queue {
     };
   }
 
-  clear(code = 'QUEUE_CLEARED', message = pickLang(readActiveUiLanguage(), 'Очередь очищена', 'Queue cleared')) {
+  clear(code = 'QUEUE_CLEARED', message = pickLang(getActivePanelLang(), 'Очередь очищена', 'Queue cleared')) {
     this._clearNextTick();
     this._clearExpiryTimer();
     const pending = this._items.slice(this._head).filter(Boolean);
@@ -1560,7 +1586,7 @@ export class Queue {
 
   dispose() {
     this._disposed = true;
-    return this.clear('QUEUE_DISPOSED', pickLang(readActiveUiLanguage(), 'Очередь остановлена', 'Queue stopped'));
+    return this.clear('QUEUE_DISPOSED', pickLang(getActivePanelLang(), 'Очередь остановлена', 'Queue stopped'));
   }
 
   getStats() {
@@ -1593,7 +1619,7 @@ export async function dispatchChatMessageFromSidecar({
   env = process.env,
   lang = '',
 } = {}) {
-  const uiLang = lang ? normalizeLang(lang, readActiveUiLanguage()) : readActiveUiLanguage();
+  const uiLang = lang ? normalizeLang(lang, getActivePanelLang()) : getActivePanelLang();
   const cleanMessage = typeof message === 'string' ? message.trim() : '';
   if (!cleanMessage) {
     return { ok: false, code: 'EMPTY_MESSAGE', error: pickLang(uiLang, 'Пустой текст запроса', 'Prompt message is empty') };

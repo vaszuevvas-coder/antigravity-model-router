@@ -1009,3 +1009,28 @@ test('7. Regression: panel-telemetry-collectors hardening (error honesty, ISO da
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });
+
+test('4. Batch 5 regressions: security origin/ADS/SMB guards, exchange-auth bridge, safe Markdown $&, and GPU select save', async () => {
+  const {
+    isAllowedLoopbackEndpoint,
+    isSafeCreatableFolderPath,
+    isValidWorkspaceDir,
+  } = await import('../sidecars/panel/lib/panel-security.mjs');
+  const { normalizeWorkspaceUriKey } = await import('../sidecars/panel/lib/panel-state-skills.mjs');
+
+  assert.equal(isSafeCreatableFolderPath('http://evil.com/x'), false);
+  assert.equal(isSafeCreatableFolderPath('C:\\dir:ads'), false);
+  assert.equal(isSafeCreatableFolderPath('-flag'), false);
+  assert.equal(isValidWorkspaceDir('//192.0.2.1/share'), false);
+  assert.equal(isValidWorkspaceDir('C:relative'), false);
+  assert.equal(isAllowedLoopbackEndpoint('http://user:pass@127.0.0.1:11434'), false);
+  assert.equal(isAllowedLoopbackEndpoint('http://127.0.0.1:11434/?q=1'), false);
+  assert.equal(normalizeWorkspaceUriKey('C:\\Work\\100%61pp'), 'c:/work/100%61pp');
+
+  const composerSrc = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui-src', 'js', '06-smart-composer.js'), 'utf8');
+  assert.ok(composerSrc.includes('function () { return codeBlocks[i]; }'), 'formatSafeLocalRagMarkdown must use functional replacer');
+
+  const gpuUiSrc = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui-src', 'js', '03-hardware-gpu.js'), 'utf8');
+  assert.equal(gpuUiSrc.includes('inp-gpuChatModel'), false, 'saveExpertGpuConfig must not reference retired inp-gpuChatModel');
+  assert.ok(gpuUiSrc.includes("document.getElementById('sel-gpuChatModel')"));
+});

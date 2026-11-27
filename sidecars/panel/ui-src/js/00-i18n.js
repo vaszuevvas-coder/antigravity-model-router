@@ -713,7 +713,7 @@
       'Авто-навыки из паттернов': 'Auto-skills from patterns',
       'Рецепты побед': 'Win Recipes',
       'Кросс-репо': 'Cross-Repo',
-      'Нажмите «Обновить» для просмотра накопленных паттернов.': 'Click "Refresh" to view learned patterns.',
+      'Нажмите «Обновить» для просмотра накопленных паттернов.': 'Click "Update" to view learned patterns.',
       'Профиль хуков': 'Hook Profile',
       'Защита правок': 'Edit Safety',
       'Язык и профиль': 'Language & Profile',
@@ -1334,7 +1334,19 @@
       'Разделы базы опыта': 'Experience hub sections',
       'Успешные починки багов и прошлые эпизоды сессий': 'Successful bug fixes and past session episodes',
       'Связанные соседние репозитории для кросс-проектного поиска': 'Linked sibling repositories for cross-project search',
-      'Автоматический прогрев памяти и управление процессом Ollama': 'Automatic RAM warmup and Ollama process management'
+      'Автоматический прогрев памяти и управление процессом Ollama': 'Automatic RAM warmup and Ollama process management',
+      'Инстинкты проекта': 'Project instincts',
+      'Голосовой ввод': 'Voice input',
+      'Включить In-RAM кэш': 'Enable In-RAM cache',
+      'Включить GPU-помощник': 'Enable GPU copilot',
+      'Включить пул потоков CPU': 'Enable CPU worker pool',
+      'Порог сжатия эпохи': 'Epoch compaction threshold',
+      'Версия, обновления и история изменений': 'Version, updates and changelog',
+      'Проверить обновления расширения': 'Check extension updates',
+      'Глубина локального обхода': 'Local traversal depth',
+      'Сводка ответа ИИ на карте': 'AI response summary on map',
+      'Меню действий узла': 'Node actions menu',
+      'Инспектор выбранного файла': 'Selected file inspector'
     };
 
     function translateUiString(raw, dict) {

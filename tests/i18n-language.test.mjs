@@ -250,7 +250,7 @@ test('8. Panel UI 00-i18n engine translates all static DOM strings & attributes 
   }
 
   const missingAttrs = [];
-  const attrRe = /\b(?:title|placeholder|data-prompt|alt)="([^"]*)"/g;
+  const attrRe = /\b(?:title|placeholder|data-prompt|alt|aria-label)="([^"]*)"/g;
   let m;
   while ((m = attrRe.exec(bodyOnly)) !== null) {
     const val = decodeEntities(m[1]);

@@ -5,7 +5,7 @@
 
 import { execFile, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -295,12 +295,17 @@ export async function startSidecarPanel(options = {}) {
   let activeHttpServer = null;
   const resolveReq = (req) => req || getActiveSidecarRequest() || null;
   const hasRequestContext = (req) => Boolean(resolveReq(req));
-  const ensurePostReq = (req) => (req && typeof req === 'object' ? (req.method ? req : { ...req, method: 'POST' }) : req);
+  const ensureMethodReq = (req, expectedMethod = '') => {
+    if (!req || typeof req !== 'object') return req;
+    const method = String(expectedMethod || req.method || 'POST').toUpperCase();
+    return req.method === method ? req : { ...req, method };
+  };
   const isRouteAuthorized = (req, authOpts = {}) => {
     const activeReq = resolveReq(req);
     return activeReq
-      ? validateRequestOrigin(ensurePostReq(activeReq), {
+      ? validateRequestOrigin(ensureMethodReq(activeReq, authOpts?.method), {
           enforceGetOrigin: true,
+          expectedToken: options?.expectedToken,
           allowAuthCodeExchange: Boolean(authOpts?.allowAuthCodeExchange),
         })
       : securityMiddlewareActive;
@@ -447,7 +452,17 @@ export async function startSidecarPanel(options = {}) {
     const lang = normalizeLang(state?.uiLanguage, 'en');
     try {
       const panelPluginRoot = resolveUpdaterRoot();
-      if (state.onboardingCompleted === false && state.hardwareProfiled !== true && panelRuntime.hardwareProfilerSync?.ensureHardwareCalibratedOnce) {
+      const isDevRepoDefaultState =
+        !process.env.TUNNEL_TEST_STATE_PATH &&
+        existsSync(join(panelPluginRoot, '.git')) &&
+        resolve(resolvePanelStatePath()).toLowerCase() === resolve(STATE_PATH).toLowerCase();
+      if (
+        process.env.TUNNEL_TEST_ISOLATE_INSTALLED !== '1' &&
+        !isDevRepoDefaultState &&
+        state.onboardingCompleted === false &&
+        state.hardwareProfiled !== true &&
+        panelRuntime.hardwareProfilerSync?.ensureHardwareCalibratedOnce
+      ) {
         try {
           if (!hardwareCalibInFlight) {
             hardwareCalibInFlight = Promise.resolve(
@@ -747,8 +762,6 @@ export async function startSidecarPanel(options = {}) {
         String(activeReq?.headers?.['x-panel-fast-update'] || '') === '1';
       const canUseFastPath = Boolean(
         isFastUpdate &&
-        !rawReqRoot &&
-        !data?.workspaceScope &&
         !data?.skillModes &&
         !data?.replaceSkillModes
       );
@@ -870,7 +883,7 @@ export async function startSidecarPanel(options = {}) {
         const [gpu, sentinel, ramCache] = await Promise.all([
           hasGpuPatch ? safeGetGpuStatus({ force: true }) : Promise.resolve(undefined),
           hasSentinelPatch
-            ? resolvePanelWorkspaceFromRequest({ ...data, rootDir: '' }, req).then((ws) => fetchSentinelPanelStatus(ws, next, { force: true }))
+            ? resolvePanelWorkspaceFromRequest(data, req).then((ws) => fetchSentinelPanelStatus(ws, next, { force: true }))
             : Promise.resolve(undefined),
           hasRamOrCpuPatch ? safeGetRamCacheStatus(next) : Promise.resolve(undefined),
         ]);
@@ -928,6 +941,16 @@ export async function startSidecarPanel(options = {}) {
         quotaPacer,
         workspaceRoot: activeWs,
       });
+      const guardPulse = await safeGetGuardPulse(activeWs, next, {
+        sentinel,
+        wiretapFaults,
+        circuitBreaker,
+        pitfalls,
+        bayesian,
+        gpu,
+        ramCache,
+        shadowWorktrees,
+      });
       return {
         state: next,
         activeWorkspace: activeWs,
@@ -955,11 +978,14 @@ export async function startSidecarPanel(options = {}) {
         capEnforcement,
         cpu: safeGetCpuStatus(next, ramCache),
         sentinel,
+        guardPulse,
         hardwareProfile,
         hardwareCeilings: hardwareProfile?.hardwareCeilings || getRuntimeHardwareCeilings(),
         subscriptionCapabilities: getSubscriptionCapabilities(next?.subscriptionTier),
         floatingHud: hudPack.hud,
         taskProgress: hudPack.progress,
+        debugLogStatus: getDebugLogStatus({ pluginRoot: resolveUpdaterRoot(), state: next }),
+        pricingPhase: getPricingPhaseStatus(),
         pluginVersion: getPluginVersion(),
         uiBuildVersion: getUiBuildVersion(),
       };
@@ -1410,7 +1436,7 @@ export async function startSidecarPanel(options = {}) {
   }, 'GET');
 
   app.api('/api/guard-audit', async (data, req) => {
-    if (hasRequestContext(req) && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const curState = loadState();
     const lang = normalizeLang(curState?.uiLanguage, 'en');
     const ALLOWED_SCOPES = new Set(['all', 'bugs', 'shield', 'instincts', 'risks', 'env']);
@@ -1509,7 +1535,7 @@ export async function startSidecarPanel(options = {}) {
   }, 'GET');
 
   app.api('/api/setup-recommendations/apply', async (data, req) => {
-    if (hasRequestContext(req) && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const curState = loadState();
     const lang = normalizeLang(curState?.uiLanguage, 'en');
     try {
@@ -1532,6 +1558,9 @@ export async function startSidecarPanel(options = {}) {
       } else if (kind === 'agentignore') {
         const outPath = join(activeWs, '.agentignore');
         try {
+          if (existsSync(outPath) && lstatSync(outPath).isSymbolicLink()) {
+            throw new Error(pickLang(lang, 'Отказ перезаписи символической ссылки .agentignore', 'Refusing symlink overwrite for .agentignore'));
+          }
           writeFileSync(outPath, '.env*\nsecrets/\n*.pem\n*.key\n', {
             encoding: 'utf8',
             flag: data?.overwrite ? 'w' : 'wx',
@@ -1604,7 +1633,7 @@ export async function startSidecarPanel(options = {}) {
   }, 'GET');
 
   app.api('/api/health-doctor/fix', async (data, req) => {
-    if (hasRequestContext(req) && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const curState = loadState();
     const lang = normalizeLang(curState?.uiLanguage, 'en');
     try {
@@ -1682,7 +1711,7 @@ export async function startSidecarPanel(options = {}) {
   }, 'POST');
 
   app.api('/api/skills/search', async (data, req) => {
-    if (hasRequestContext(req) && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
@@ -1701,7 +1730,7 @@ export async function startSidecarPanel(options = {}) {
   }, 'POST');
 
   app.api('/api/skills/import', async (data, req) => {
-    if (hasRequestContext(req) && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
@@ -1746,7 +1775,7 @@ export async function startSidecarPanel(options = {}) {
   }, 'GET');
 
   app.api('/api/instincts/promote', async (data, req) => {
-    if (hasRequestContext(req) && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
@@ -1775,7 +1804,7 @@ export async function startSidecarPanel(options = {}) {
   }, 'POST');
 
   app.api('/api/instincts/evolve-all', async (data, req) => {
-    if (hasRequestContext(req) && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const curState = loadState();
     const lang = normalizeLang(curState?.uiLanguage, 'en');
     try {
@@ -1809,7 +1838,7 @@ export async function startSidecarPanel(options = {}) {
   }, 'POST');
 
   app.api('/api/instincts/delete', async (data, req) => {
-    if (hasRequestContext(req) && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
@@ -1881,7 +1910,7 @@ export async function startSidecarPanel(options = {}) {
   }, 'GET');
 
   app.api('/api/gates', async (data, req) => {
-    if (hasRequestContext(req) && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const activeWs = await resolvePanelWorkspaceFromRequest(data, req);
@@ -1906,7 +1935,7 @@ export async function startSidecarPanel(options = {}) {
   }, 'POST');
 
   app.api('/api/quota/reset-cooldowns', async (_data, req) => {
-    if (hasRequestContext(req) && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const { clearExpiredComboCooldowns } = await import('../../core/quota-pacer.mjs');
@@ -2119,7 +2148,7 @@ export async function startSidecarPanel(options = {}) {
   const unquoteGitPath = (rawPath = '') => {
     let p = String(rawPath || '').trim();
     if (p.startsWith('"') && p.endsWith('"') && p.length >= 2) {
-      p = p.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '/');
+      p = p.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
     }
     return p.replace(/\\/g, '/').replace(/^\.\//, '');
   };
@@ -2256,7 +2285,7 @@ export async function startSidecarPanel(options = {}) {
       let payload;
       let cacheTtlMs = GIT_DIFF_TTL_MS;
       try {
-        const { stdout } = await execFileAsync('git', ['status', '--porcelain=v1', '-uall'], {
+        const { stdout } = await execFileAsync('git', ['-c', 'core.quotepath=false', 'status', '--porcelain=v1', '-uall'], {
           cwd: activeWs,
           timeout: 1500,
           windowsHide: true,
@@ -2396,7 +2425,7 @@ export async function startSidecarPanel(options = {}) {
       let payload;
       let cacheTtlMs = GIT_CHURN_TTL_MS;
       try {
-        const { stdout } = await execFileAsync('git', ['log', `--since=${days} days ago`, '--name-only', '--pretty=format:'], {
+        const { stdout } = await execFileAsync('git', ['-c', 'core.quotepath=false', 'log', `--since=${days} days ago`, '--name-only', '--pretty=format:'], {
           cwd: activeWs,
           timeout: 2500,
           windowsHide: true,
@@ -2577,7 +2606,7 @@ export async function startSidecarPanel(options = {}) {
   };
 
   app.api('/api/project-graph/exchange-auth', async (data, req) => {
-    if (hasRequestContext(req) && !isRouteAuthorized(req, { allowAuthCodeExchange: true })) return { ok: false, status: 403, error: 'Forbidden origin' };
+    if (!isRouteAuthorized(req, { allowAuthCodeExchange: true })) return { ok: false, status: 403, error: 'Forbidden origin' };
     pruneGraphAuthCodes();
     const code = typeof data?.authCode === 'string' ? data.authCode.trim() : '';
     if (!code) return { ok: false, error: 'Missing authCode' };
@@ -2590,7 +2619,7 @@ export async function startSidecarPanel(options = {}) {
   }, 'POST');
 
   app.api('/api/project-graph/open-window', async (data, req) => {
-    if (hasRequestContext(req) && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const activeReq = resolveReq(req);
@@ -2718,6 +2747,7 @@ export async function startSidecarPanel(options = {}) {
   }, 'GET');
 
   let activeFolderPickerPromise = null;
+  let activeFolderPickerController = null;
 
   async function openNativeFolderPicker({
     rawPath = undefined,
@@ -2781,6 +2811,8 @@ export async function startSidecarPanel(options = {}) {
       };
 
       let picked = '';
+      const pickerController = new AbortController();
+      activeFolderPickerController = pickerController;
       if (process.platform === 'win32') {
         const psScript = [
           '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
@@ -2802,10 +2834,13 @@ export async function startSidecarPanel(options = {}) {
           const { stdout } = await execFileAsync(
             'powershell.exe',
             ['-NoProfile', '-NonInteractive', '-STA', '-Command', psScript],
-            { timeout: 120000, windowsHide: true, env: pickerEnv, maxBuffer: 1024 * 1024 }
+            { timeout: 120000, windowsHide: true, env: pickerEnv, maxBuffer: 1024 * 1024, signal: pickerController.signal }
           );
           picked = String(stdout || '').trim();
         } catch (psErr) {
+          if (psErr?.name === 'AbortError' || pickerController.signal.aborted) {
+            return { ok: true, cancelled: true, workspaceRoot: '', dir: '' };
+          }
           logServerErr('folder_picker_win32_failed', psErr);
           if (psErr?.code === 1 && !String(psErr?.stderr || '').trim()) {
             return { ok: true, cancelled: true, workspaceRoot: '', dir: '' };
@@ -2827,9 +2862,13 @@ export async function startSidecarPanel(options = {}) {
             timeout: 120000,
             env: pickerEnv,
             maxBuffer: 1024 * 1024,
+            signal: pickerController.signal,
           });
           picked = String(stdout || '').trim();
         } catch (err) {
+          if (err?.name === 'AbortError' || pickerController.signal.aborted) {
+            return { ok: true, cancelled: true, workspaceRoot: '', dir: '' };
+          }
           const msg = String(err?.stderr || err?.message || '');
           if (err?.code === 1 || /user canceled|-128/i.test(msg)) {
             return { ok: true, cancelled: true, workspaceRoot: '', dir: '' };
@@ -2844,9 +2883,13 @@ export async function startSidecarPanel(options = {}) {
             timeout: 120000,
             env: pickerEnv,
             maxBuffer: 1024 * 1024,
+            signal: pickerController.signal,
           });
           picked = String(stdout || '').trim();
         } catch (zenErr) {
+          if (zenErr?.name === 'AbortError' || pickerController.signal.aborted) {
+            return { ok: true, cancelled: true, workspaceRoot: '', dir: '' };
+          }
           if (zenErr?.code === 1) {
             return { ok: true, cancelled: true, workspaceRoot: '', dir: '' };
           }
@@ -2857,9 +2900,13 @@ export async function startSidecarPanel(options = {}) {
                 timeout: 120000,
                 env: pickerEnv,
                 maxBuffer: 1024 * 1024,
+                signal: pickerController.signal,
               });
               picked = String(stdout || '').trim();
             } catch (kdErr) {
+              if (kdErr?.name === 'AbortError' || pickerController.signal.aborted) {
+                return { ok: true, cancelled: true, workspaceRoot: '', dir: '' };
+              }
               if (kdErr?.code === 1) {
                 return { ok: true, cancelled: true, workspaceRoot: '', dir: '' };
               }
@@ -2894,6 +2941,7 @@ export async function startSidecarPanel(options = {}) {
     try {
       return await runPicker;
     } finally {
+      activeFolderPickerController = null;
       if (activeFolderPickerPromise === runPicker) {
         activeFolderPickerPromise = null;
       }
@@ -2901,7 +2949,7 @@ export async function startSidecarPanel(options = {}) {
   }
 
   app.api('/api/project-graph/pick-folder', async (data, req) => {
-    if (hasRequestContext(req) && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       return await openNativeFolderPicker({
@@ -2923,7 +2971,7 @@ export async function startSidecarPanel(options = {}) {
   }, 'POST');
 
   app.api('/api/gpu/pick-folder', async (data, req) => {
-    if (hasRequestContext(req) && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     const mode = data?.mode === 'models' ? 'models' : 'ollama';
     try {
@@ -3077,6 +3125,12 @@ export async function startSidecarPanel(options = {}) {
         const reqModelsDir = typeof data?.modelsDir === 'string' && data.modelsDir.trim()
           ? data.modelsDir.trim()
           : (reqInstallDir ? join(reqInstallDir, 'models') : String(curState.gpuModelsDir || '').trim());
+        if ((reqInstallDir && !isSafeCreatableFolderPath(reqInstallDir)) || (reqModelsDir && !isSafeCreatableFolderPath(reqModelsDir))) {
+          return {
+            ok: false,
+            error: pickLang(lang, 'Некорректный путь установки Ollama или папки моделей', 'Invalid Ollama install or models directory path'),
+          };
+        }
         const mirrorMode = data?.mirrorMode === 'huggingface'
           ? 'huggingface'
           : (curState.gpuPreferHfMirror ? 'huggingface' : 'auto');
@@ -3568,6 +3622,7 @@ export async function startSidecarPanel(options = {}) {
         err?.code === 'AUTOCOMPLETE_SUPERSEDED' ||
         err?.code === 'QUEUE_OVERFLOW' ||
         err?.code === 'QUEUE_TASK_EXPIRED' ||
+        err?.code === 'QUEUE_TASK_TIMEOUT' ||
         err?.code === 'QUEUE_DISPOSED'
       ) {
         return { ok: false, aborted: true, seq, continuation: '' };
@@ -4089,7 +4144,7 @@ export async function startSidecarPanel(options = {}) {
   }, 'GET');
 
   app.api('/api/plugin/update-apply', async (data, req) => {
-    if (hasRequestContext(req) && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const curState = loadState();
     const lang = normalizeLang(curState?.uiLanguage, 'en');
     const pluginRoot = resolveUpdaterRoot();
@@ -4141,7 +4196,7 @@ export async function startSidecarPanel(options = {}) {
   }, 'POST');
 
   app.api('/api/plugin/update-dismiss', async (_data, req) => {
-    if (hasRequestContext(req) && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const pluginRoot = resolveUpdaterRoot();
@@ -4202,7 +4257,7 @@ export async function startSidecarPanel(options = {}) {
   }, 'GET');
 
   app.api('/api/debug/mode', async (data, req) => {
-    if (hasRequestContext(req) && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const pluginRoot = resolveUpdaterRoot();
     const curState = loadState();
     const lang = normalizeLang(curState?.uiLanguage, 'en');
@@ -4235,7 +4290,7 @@ export async function startSidecarPanel(options = {}) {
   }, 'POST');
 
   app.api('/api/debug/client-log', async (data, req) => {
-    if (hasRequestContext(req) && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const state = loadState();
     const lang = normalizeLang(state?.uiLanguage, 'en');
     try {
@@ -4262,7 +4317,7 @@ export async function startSidecarPanel(options = {}) {
   }, 'POST');
 
   app.api('/api/debug/clear', async (_data, req) => {
-    if (hasRequestContext(req) && !isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
+    if (!isRouteAuthorized(req)) return { ok: false, status: 403, error: 'Forbidden origin' };
     const lang = normalizeLang(loadState()?.uiLanguage, 'en');
     try {
       const pluginRoot = resolveUpdaterRoot();
@@ -4332,6 +4387,10 @@ export async function startSidecarPanel(options = {}) {
     resourcesCleaned = true;
     try { chatMessageQueue.dispose(); } catch {}
     try { autocompleteGpuQueue.dispose(); } catch {}
+    if (activeFolderPickerController) {
+      try { activeFolderPickerController.abort('panel_closing'); } catch {}
+      activeFolderPickerController = null;
+    }
     if (activeAutocompleteAbort) {
       try { activeAutocompleteAbort.abort('panel_closing'); } catch {}
       activeAutocompleteAbort = null;
@@ -4362,7 +4421,7 @@ export async function startSidecarPanel(options = {}) {
   const server = runResult || app?.server || app?._server || null;
   if (server && typeof server === 'object') {
     activeHttpServer = server;
-    attachSidecarSecurityMiddleware(server);
+    attachSidecarSecurityMiddleware(server, { expectedToken: options?.expectedToken });
     securityMiddlewareActive = true;
     if (typeof server.once === 'function') {
       server.once('close', cleanupPanelResources);

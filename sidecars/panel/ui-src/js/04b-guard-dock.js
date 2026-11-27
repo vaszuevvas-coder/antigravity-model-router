@@ -180,20 +180,6 @@
         const sev = info.severity || 'ok';
         const tip = gdBuildTabTooltip(tab, buckets);
 
-        // Lite Variant B tile
-        const tile = document.getElementById('gdLiteTile-' + tab);
-        const tileBadge = document.getElementById('gdLiteBadge-' + tab);
-        if (tile) {
-          tile.classList.toggle('is-active', _gdActiveTab.lite === tab);
-          tile.classList.toggle('is-err', count > 0 && sev === 'err');
-          tile.classList.toggle('is-warn', count > 0 && sev === 'warn');
-          tile.classList.toggle('is-info', count > 0 && sev === 'info');
-          tile.setAttribute('aria-selected', _gdActiveTab.lite === tab ? 'true' : 'false');
-          if (typeof setTooltipTitle === 'function') setTooltipTitle(tile, tip);
-          else tile.title = tip;
-        }
-        gdApplyBadge(tileBadge, count, sev);
-
         // Full Variant C rail button
         const railBtn = document.getElementById('gdFullBtn-' + tab);
         const railBadge = document.getElementById('gdFullBadge-' + tab);
@@ -208,18 +194,10 @@
 
       syncFullGuardActivePill();
       syncGuardScanButtons();
-      renderGuardDrawer('lite', arguments[1]);
       renderGuardDrawer('full', arguments[1]);
     }
 
     function syncGuardScanButtons() {
-      const liteBtn = document.getElementById('btnLiteSentinelCheck');
-      if (liteBtn) {
-        liteBtn.disabled = _gdAuditBusy || _sentinelActionBusy;
-        liteBtn.textContent = (_gdAuditBusy || _sentinelActionBusy)
-          ? L('↻ Проверка…', '↻ Scanning…')
-          : L('↻ Проверить всё', '↻ Check all');
-      }
       const fullBtn = document.getElementById('btnFullGuardAuditAll');
       if (fullBtn) {
         fullBtn.disabled = _gdAuditBusy || _sentinelActionBusy;
@@ -252,51 +230,10 @@
 
     function closeAllGuardMenus() {
       _gdOpenMenu = null;
-      ['lite', 'full'].forEach(function (surf) {
-        const menu = document.getElementById(surf === 'lite' ? 'liteGuardMenu' : 'fullGuardMenu');
-        const btn = document.getElementById(surf === 'lite' ? 'btnLiteGuardMenu' : 'btnFullGuardMenu');
-        if (menu) {
-          menu.classList.remove('is-open');
-          if (typeof animateDisclosurePanel === 'function' && menu.style.display !== 'none') {
-            const rect = menu.getBoundingClientRect ? menu.getBoundingClientRect() : null;
-            if (rect && rect.height > 0 && typeof menu.animate === 'function' && !(typeof uiPrefersReducedMotion === 'function' && uiPrefersReducedMotion())) {
-              const seq = (menu._gdMenuSeq || 0) + 1;
-              menu._gdMenuSeq = seq;
-              try {
-                const anim = menu.animate(
-                  [{ opacity: 1, transform: 'translate3d(0,0,0) scale(1)' }, { opacity: 0, transform: 'translate3d(0,-4px,0) scale(0.96)' }],
-                  { duration: 130, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' }
-                );
-                anim.onfinish = function () {
-                  if (menu._gdMenuSeq === seq && !menu.classList.contains('is-open')) menu.style.display = 'none';
-                };
-              } catch {
-                menu.style.display = 'none';
-              }
-            } else {
-              menu.style.display = 'none';
-            }
-          } else {
-            menu.style.display = 'none';
-          }
-        }
-        if (btn) btn.setAttribute('aria-expanded', 'false');
-      });
     }
 
-    function toggleGuardMenu(surface) {
-      const surf = surface === 'full' ? 'full' : 'lite';
-      const wasOpen = _gdOpenMenu === surf;
+    function toggleGuardMenu(_surface) {
       closeAllGuardMenus();
-      if (wasOpen) return;
-      const menu = document.getElementById(surf === 'lite' ? 'liteGuardMenu' : 'fullGuardMenu');
-      const btn = document.getElementById(surf === 'lite' ? 'btnLiteGuardMenu' : 'btnFullGuardMenu');
-      if (!menu) return;
-      _gdOpenMenu = surf;
-      menu._gdMenuSeq = (menu._gdMenuSeq || 0) + 1;
-      menu.style.display = 'flex';
-      menu.classList.add('is-open');
-      if (btn) btn.setAttribute('aria-expanded', 'true');
     }
 
     function toggleGuardTab(spec) {
@@ -384,7 +321,7 @@
           extraBtn = gdMakeActionBtn(L('↓ Дозор', '↓ Sentinel'), 'jumpGuardFullSection', 'sentinelSectionCard', '', L('Перейти к полному разделу Фонового Дозора', 'Jump to full Background Sentinel section'));
           for (let i = 0; i < Math.min(4, b.sentinelList.length); i++) {
             const sf = b.sentinelList[i];
-            const tagTone = sf.category === 'bugbot' ? 'tone-err' : 'tone-warn';
+            const tagTone = (sf.category === 'bugbot' || sf.severity === 'error' || sf.severity === 'err') ? 'tone-err' : 'tone-warn';
             const lineTxt = (sf.loc ? (sf.loc + ' — ') : '') + (sf.desc || '');
             rows.push(
               '<div class="gd-item-row">' +
@@ -576,19 +513,15 @@
     }
 
     function renderGuardDrawer(surface, opts) {
-      const surf = surface === 'full' ? 'full' : 'lite';
+      const surf = 'full';
       const activeTab = _gdActiveTab[surf];
-      const drawerEl = document.getElementById(surf === 'lite' ? 'liteGuardDrawer' : 'fullGuardDrawer');
-      const headEl = document.getElementById(surf === 'lite' ? 'liteGuardDrawerHead' : 'fullGuardDrawerHead');
-      const bodyEl = document.getElementById(surf === 'lite' ? 'liteGuardDrawerBody' : 'fullGuardDrawerBody');
+      const drawerEl = document.getElementById('fullGuardDrawer');
+      const headEl = document.getElementById('fullGuardDrawerHead');
+      const bodyEl = document.getElementById('fullGuardDrawerBody');
       if (!drawerEl || !headEl || !bodyEl) return;
-
-      const liteSum = surf === 'lite' ? document.getElementById('liteSentinelSummary') : null;
-      const liteFind = surf === 'lite' ? document.getElementById('liteSentinelFindings') : null;
 
       if (!activeTab) {
         drawerEl.dataset.renderedTab = '';
-        if (liteSum) liteSum.style.display = 'none';
         if (opts && opts.immediate) {
           if (typeof cancelDisclosureAnimation === 'function') cancelDisclosureAnimation(drawerEl);
           drawerEl.style.display = 'none';

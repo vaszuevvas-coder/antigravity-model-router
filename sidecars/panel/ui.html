@@ -18,9 +18,13 @@
       --glass-pill-active: #1e2028;
       --specular-rim: none;
       --border-subtle: rgba(255, 255, 255, 0.10);
+      --border-strong: rgba(255, 255, 255, 0.16);
       --border-hairline: rgba(255, 255, 255, 0.075);
+      --glass-hover: rgba(255, 255, 255, 0.05);
       --text-main: #f3f4f6;
+      --text-primary: var(--text-main);
       --text-sub: #9ca3af;
+      --text-secondary: var(--text-sub);
       --text-muted: #646b77;
       --accent-primary: #f04848;
       --accent-cyan: #f04848;
@@ -143,6 +147,14 @@
     @keyframes agFadeIn {
       0% { opacity: 0; }
       100% { opacity: 1; }
+    }
+    @keyframes wizPopIn {
+      0% { opacity: 0; transform: translate3d(0, 6px, 0) scale(0.97); }
+      100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+    }
+    @keyframes agLivePulse {
+      0%, 100% { opacity: 0.45; transform: scale(0.9); }
+      50% { opacity: 1; transform: scale(1.15); }
     }
     @keyframes agSilkBreath {
       0%, 100% { opacity: 0.56; transform: scale(0.92); }
@@ -1067,6 +1079,12 @@
       background: var(--glass-card-active);
       border-color: var(--border-subtle);
       color: var(--text-sub);
+    }
+
+    .swarm-pill.warn {
+      color: var(--status-err);
+      background: rgba(240, 72, 72, 0.14);
+      border-color: rgba(240, 72, 72, 0.34);
     }
 
     .swarm-meta-row {
@@ -3159,6 +3177,10 @@
       font-size: 11px;
       font-weight: 700;
       flex-shrink: 0;
+    }
+
+    .ag-recent-completed-row.is-error .ag-recent-completed-row-icon {
+      color: var(--status-err);
     }
 
     .ag-recent-completed-row-body {
@@ -13291,7 +13313,7 @@
       <div class="tunnel-modal-head">
         <div class="tunnel-modal-title-group">
           <h3 class="tunnel-modal-title" id="changelogModalTitle">История изменений</h3>
-          <span class="tunnel-modal-pill" id="changelogCurrentBadge">v4.0.4</span>
+          <span class="tunnel-modal-pill" id="changelogCurrentBadge">v4.0.9</span>
         </div>
         <div class="tunnel-modal-head-actions">
           <a class="tunnel-modal-ext-link" id="changelogGithubLink" href="https://github.com/vaszuevvas-coder/antigravity-model-router/releases" target="_blank" rel="noopener noreferrer" title="Открыть страницу релизов на GitHub">GitHub ↗</a>
@@ -14074,7 +14096,7 @@
       'Авто-навыки из паттернов': 'Auto-skills from patterns',
       'Рецепты побед': 'Win Recipes',
       'Кросс-репо': 'Cross-Repo',
-      'Нажмите «Обновить» для просмотра накопленных паттернов.': 'Click "Refresh" to view learned patterns.',
+      'Нажмите «Обновить» для просмотра накопленных паттернов.': 'Click "Update" to view learned patterns.',
       'Профиль хуков': 'Hook Profile',
       'Защита правок': 'Edit Safety',
       'Язык и профиль': 'Language & Profile',
@@ -14695,7 +14717,19 @@
       'Разделы базы опыта': 'Experience hub sections',
       'Успешные починки багов и прошлые эпизоды сессий': 'Successful bug fixes and past session episodes',
       'Связанные соседние репозитории для кросс-проектного поиска': 'Linked sibling repositories for cross-project search',
-      'Автоматический прогрев памяти и управление процессом Ollama': 'Automatic RAM warmup and Ollama process management'
+      'Автоматический прогрев памяти и управление процессом Ollama': 'Automatic RAM warmup and Ollama process management',
+      'Инстинкты проекта': 'Project instincts',
+      'Голосовой ввод': 'Voice input',
+      'Включить In-RAM кэш': 'Enable In-RAM cache',
+      'Включить GPU-помощник': 'Enable GPU copilot',
+      'Включить пул потоков CPU': 'Enable CPU worker pool',
+      'Порог сжатия эпохи': 'Epoch compaction threshold',
+      'Версия, обновления и история изменений': 'Version, updates and changelog',
+      'Проверить обновления расширения': 'Check extension updates',
+      'Глубина локального обхода': 'Local traversal depth',
+      'Сводка ответа ИИ на карте': 'AI response summary on map',
+      'Меню действий узла': 'Node actions menu',
+      'Инспектор выбранного файла': 'Selected file inspector'
     };
 
     function translateUiString(raw, dict) {
@@ -15232,8 +15266,8 @@
         instinctsEl.textContent = '';
         const hintDiv = document.createElement('div');
         hintDiv.textContent = L(
-          'Нажмите «Инстинкты проекта» для просмотра накопленных паттернов.',
-          'Click "Project Instincts" to view learned workspace patterns.'
+          'Нажмите «Обновить» для просмотра накопленных паттернов.',
+          'Click "Update" to view learned patterns.'
         );
         instinctsEl.appendChild(hintDiv);
       }
@@ -16295,11 +16329,6 @@
       if (wsCapsule) {
         wsCapsule.classList.toggle('has-epoch', fill >= 70);
       }
-      const coreTabDot = document.getElementById('fullTabCoreDot');
-      if (coreTabDot) {
-        coreTabDot.style.display = fill >= 70 ? 'inline-block' : 'none';
-        coreTabDot.className = 'full-tab-alert-dot' + (fill >= 90 ? '' : ' is-warn');
-      }
     }
 
     function syncFooterPluginVersion(pluginVersion) {
@@ -16651,6 +16680,10 @@
         if (data.pitfalls !== undefined) {
           scheduleBlockRender('expertPitfallsBox', function () {
             renderPitfalls(data.pitfalls);
+          });
+        }
+        if (data.victoryRecipes !== undefined || data.federatedPeers !== undefined || data.knowledgeStats !== undefined) {
+          scheduleBlockRender('expertKnowledgeBox', function () {
             renderKnowledgeHub(data.victoryRecipes, data.federatedPeers, data.knowledgeStats);
           });
         }
@@ -16715,6 +16748,7 @@
       if (curTab === 'bugs') {
         secs.push('checkpoints');
         secs.push('bayesian');
+        secs.push('pitfalls');
       }
       if (curTab === 'memory' || curTab === 'settings') {
         secs.push('compaction');
@@ -17624,7 +17658,8 @@
       const pgModal = document.getElementById('projectGraphModal');
       const isPgVisible = Boolean(
         (document.body && document.body.classList && document.body.classList.contains('pg-standalone')) ||
-        (pgModal && pgModal.classList && pgModal.classList.contains('open'))
+        (typeof pgState !== 'undefined' && pgState && pgState.open) ||
+        (pgModal && pgModal.classList && (pgModal.classList.contains('visible') || pgModal.classList.contains('open')))
       );
       if (pgToast && isPgVisible) {
         pgToast.textContent = text;
@@ -20924,8 +20959,6 @@
       }
 
       syncExpertInput('inp-gpuEndpoint', (s && s.gpuEndpoint) || cfg.gpuEndpoint || 'http://127.0.0.1:11434');
-      syncExpertInput('inp-gpuChatModel', (s && s.gpuChatModel) || cfg.gpuChatModel || 'gemma4:12b');
-      syncExpertInput('inp-gpuEmbedModel', (s && s.gpuEmbedModel) || cfg.gpuEmbedModel || 'qwen3-embedding:0.6b');
       syncExpertInput('inp-gpuKeepAlive', (s && s.gpuKeepAlive) || cfg.gpuKeepAlive || '15m');
       syncExpertInput('inp-gpuEmbedKeepAlive', (s && s.gpuEmbedKeepAlive) || cfg.gpuEmbedKeepAlive || '90m');
       syncExpertInput('inp-gpuContextTokens', (s && s.gpuContextTokens) || cfg.gpuContextTokens || 4096);
@@ -21461,15 +21494,6 @@
         topGpuTxt.textContent = gpuPillText;
       }
 
-      const liteMasterBtn = document.getElementById('liteRamGpuMasterBtn');
-      if (liteMasterBtn) {
-        const anyHwOn = ramEnabled || gpuEnabled;
-        liteMasterBtn.classList.toggle('is-on', anyHwOn);
-        liteMasterBtn.classList.toggle('is-off', !anyHwOn);
-        liteMasterBtn.setAttribute('aria-pressed', anyHwOn ? 'true' : 'false');
-        liteMasterBtn.textContent = anyHwOn ? L('Активно', 'Active') : L('Пауза', 'Paused');
-      }
-
       const topCpuPill = document.getElementById('topCpuLivePill');
       const topCpuTxt = document.getElementById('topCpuLiveText');
       if (topCpuPill && topCpuTxt) {
@@ -21835,11 +21859,11 @@
         flashStatus(L('Ошибка: gpuEndpoint разрешён только для localhost/127.0.0.1!', 'Error: gpuEndpoint is only allowed for localhost/127.0.0.1!'));
         return;
       }
-      const chatInput = document.getElementById('inp-gpuChatModel');
-      const embedInput = document.getElementById('inp-gpuEmbedModel');
+      const chatSelect = document.getElementById('sel-gpuChatModel');
+      const embedSelect = document.getElementById('sel-gpuEmbedModel');
       const patch = {
-        gpuChatModel: String((chatInput && chatInput.value) || (currentState && currentState.gpuChatModel) || 'gemma4:12b').trim(),
-        gpuEmbedModel: String((embedInput && embedInput.value) || (currentState && currentState.gpuEmbedModel) || 'qwen3-embedding:0.6b').trim(),
+        gpuChatModel: String((chatSelect && chatSelect.value) || (currentState && currentState.gpuChatModel) || 'gemma4:12b').trim(),
+        gpuEmbedModel: String((embedSelect && embedSelect.value) || (currentState && currentState.gpuEmbedModel) || 'qwen3-embedding:0.6b').trim(),
         gpuKeepAlive: String((document.getElementById('inp-gpuKeepAlive') || {}).value || '15m').trim(),
         gpuEmbedKeepAlive: String((document.getElementById('inp-gpuEmbedKeepAlive') || {}).value || '90m').trim(),
         gpuContextTokens: Number((document.getElementById('inp-gpuContextTokens') || {}).value || 4096),
@@ -22891,9 +22915,6 @@
       if (key !== 'gpuChatModel' && key !== 'gpuEmbedModel') return;
       const clean = String(modelName || '').trim();
       if (!clean) return;
-      const expertInputId = key === 'gpuChatModel' ? 'inp-gpuChatModel' : 'inp-gpuEmbedModel';
-      const expertEl = document.getElementById(expertInputId);
-      if (expertEl) expertEl.value = clean;
       const patch = {};
       patch[key] = clean;
       const saved = await updateState(patch);
@@ -23579,9 +23600,9 @@
       const chkLsp = document.getElementById('chk-lspBridgeEnabled');
       if (chkLsp) chkLsp.checked = st.lspBridgeEnabled !== false;
       const chkSql = document.getElementById('chk-sqliteKnowledgeEnabled');
-      if (chkSql) chkSql.checked = st.sentinelEnabled !== undefined ? st.sqliteKnowledgeEnabled !== false : st.sqliteKnowledgeEnabled !== false;
+      if (chkSql) chkSql.checked = st.sqliteKnowledgeEnabled !== false;
       if (typeof applyHookProfileOverridesToUi === 'function') {
-        applyHookProfileOverridesToUi(st.hookProfile || 'standard');
+        applyHookProfileOverridesToUi(st.hookProfile || 'standard', st);
       }
       const badgeEl = document.getElementById('sentinelLiveBadge');
       if (badgeEl) {
@@ -23659,7 +23680,12 @@
           ? ('Проверь находку Фонового Дозора (' + tagLabel + ')' + (loc ? (' в ' + loc) : '') + ': ' + desc + '. Предложи или внеси точечное исправление.')
           : ('Inspect Background Sentinel finding (' + tagLabel + ')' + (loc ? (' in ' + loc) : '') + ': ' + desc + '. Suggest or apply a targeted fix.');
       }
+      const severityStr = typeof rawItem === 'object' && rawItem && rawItem.severity
+        ? String(rawItem.severity).trim().toLowerCase()
+        : (category === 'bugbot' ? 'err' : 'warn');
       return {
+        category: category,
+        severity: severityStr,
         tagLabel: tagLabel,
         tagClass: tagClass,
         loc: loc,
@@ -23717,7 +23743,8 @@
           : L('Есть предупреждения или ошибки Дозора (' + (shownErrs + shownWarns + bbCount) + '). Нажмите ↻ для деталей.', 'Sentinel warnings or errors detected (' + (shownErrs + shownWarns + bbCount) + '). Click ↻ for details.');
         normalizedFindings.push({
           category: onlyClones ? 'clone' : 'contract',
-          tagClass: onlyClones ? 'is-clone' : 'is-contract',
+          severity: shownErrs > 0 ? 'err' : 'warn',
+          tagClass: onlyClones ? 'tag-cochange' : 'tag-contract',
           tagLabel: onlyClones ? L('Клон', 'Clone') : L('Дозор', 'Sentinel'),
           loc: '',
           desc: fallbackDesc,
@@ -23756,8 +23783,7 @@
       syncSentinelCheckboxes(s);
       const parsedSen = syncSentinelNormalizedFindings(sentinelData);
       const boxEl = document.getElementById('sentinelStatusBox');
-      const liteRowEl = document.getElementById('liteSentinelRow');
-      if (!boxEl && !liteRowEl) return;
+      if (!boxEl) return;
 
       const sen = (sentinelData && typeof sentinelData === 'object') ? sentinelData : {};
       const sg = (sen.shadowGuard && typeof sen.shadowGuard === 'object') ? sen.shadowGuard : {};
@@ -23865,136 +23891,6 @@
       if (runBtn) {
         runBtn.disabled = _sentinelActionBusy;
         runBtn.textContent = _sentinelActionBusy ? L('Проверка…', 'Checking…') : L('Проверить сейчас', 'Check now');
-      }
-
-      const liteBadgeEl = document.getElementById('liteSentinelBadge');
-      if (liteBadgeEl) {
-        const curTaskLite = String(pickText(sen, 'currentTaskRu', 'currentTaskEn', '') || '').trim();
-        if (!isEnabled) {
-          liteBadgeEl.className = 'sentinel-live-badge is-off lite-sentinel-badge';
-          liteBadgeEl.textContent = L('Выключен', 'Off');
-          liteBadgeEl.title = L('Фоновый Дозор отключён в настройках', 'Background Sentinel is disabled in settings');
-        } else if (rawState === 'preempted' || rawState === 'yielded' || sen.p0Active) {
-          liteBadgeEl.className = 'sentinel-live-badge is-preempted lite-sentinel-badge';
-          liteBadgeEl.textContent = L('P0 Уступил чату', 'P0 Yielded');
-          liteBadgeEl.title = curTaskLite || L('Фоновая задача мгновенно уступила ресурсы активному запросу', 'Background task immediately yielded resources to active request');
-        } else if (rawState === 'working' || rawState === 'running' || rawState === 'scanning' || _sentinelActionBusy) {
-          liteBadgeEl.className = 'sentinel-live-badge is-working lite-sentinel-badge';
-          liteBadgeEl.textContent = L('Проверка…', 'Checking…');
-          liteBadgeEl.title = curTaskLite || L('Фоновый Дозор выполняет проверку', 'Background Sentinel is running checks');
-        } else if (shownErrs > 0) {
-          liteBadgeEl.className = 'sentinel-live-badge is-err lite-sentinel-badge';
-          liteBadgeEl.textContent = L('Ошибок: ', 'Errors: ') + (shownErrs + bbCount);
-          liteBadgeEl.title = L('Обнаружены ошибки контрактов или BugBot', 'Contract or BugBot errors detected');
-        } else if (shownWarns > 0 || bbCount > 0 || normalizedFindings.length > 0) {
-          liteBadgeEl.className = 'sentinel-live-badge is-preempted lite-sentinel-badge';
-          liteBadgeEl.textContent = L('Находок: ', 'Findings: ') + Math.max(normalizedFindings.length, shownWarns + bbCount);
-          liteBadgeEl.title = L('Есть предупреждения или находки Фонового Дозора', 'Background Sentinel warnings or findings detected');
-        } else {
-          liteBadgeEl.className = 'sentinel-live-badge is-ok lite-sentinel-badge';
-          liteBadgeEl.textContent = L('Чисто', 'Clean');
-          liteBadgeEl.title = L('Дежурит в паузах · ошибок не обнаружено', 'Standing by during pauses · no errors detected');
-        }
-      }
-
-      const liteSummaryEl = document.getElementById('liteSentinelSummary');
-      if (liteSummaryEl) {
-        if (!isEnabled) {
-          liteSummaryEl.className = 'lite-sentinel-summary';
-          liteSummaryEl.textContent = L('Дозор отключён в настройках', 'Sentinel disabled in settings');
-        } else if (!hasAnyAlert) {
-          liteSummaryEl.className = 'lite-sentinel-summary is-ok';
-          liteSummaryEl.textContent = L('Контракты: чисто · BugBot: чисто', 'Contracts: clean · BugBot: clean');
-        } else {
-          const sumParts = [];
-          if (shownErrs > 0) sumParts.push(L('Ошибок: ', 'Errors: ') + shownErrs);
-          if (shownWarns > 0) {
-            if (rawCloneCount > 0 && Number(sg.warnCount || 0) === 0 && rawCoChange.length === 0) {
-              sumParts.push(L('Дубликатов кода: ', 'Code clones: ') + shownWarns);
-            } else {
-              sumParts.push(L('Предупреждений: ', 'Warnings: ') + shownWarns);
-            }
-          }
-          if (bbCount > 0) sumParts.push('BugBot: ' + bbCount);
-          if (sumParts.length === 0) sumParts.push(L('Находок: ', 'Findings: ') + normalizedFindings.length);
-          liteSummaryEl.className = 'lite-sentinel-summary ' + (shownErrs > 0 ? 'is-err' : 'is-warn');
-          liteSummaryEl.textContent = sumParts.join(' · ');
-        }
-      }
-
-      const liteCheckBtn = document.getElementById('btnLiteSentinelCheck');
-      if (liteCheckBtn) {
-        liteCheckBtn.disabled = _sentinelActionBusy;
-      }
-
-      const liteFixBtn = document.getElementById('btnLiteSentinelFix');
-      if (liteFixBtn) {
-        const inFixCooldown = Date.now() < _sentinelFixCooldownUntil;
-        liteFixBtn.style.display = hasAnyAlert ? 'inline-flex' : 'none';
-        liteFixBtn.disabled = !hasAnyAlert || _sentinelActionBusy || inFixCooldown;
-        liteFixBtn.textContent = inFixCooldown
-          ? L('✓ В новом чате', '✓ In new chat')
-          : (normalizedFindings.length > 1
-            ? (L('Исправить (', 'Fix (') + normalizedFindings.length + ')')
-            : L('Исправить', 'Fix'));
-      }
-
-      const liteFindingsEl = document.getElementById('liteSentinelFindings');
-      if (liteFindingsEl) {
-        liteFindingsEl.textContent = '';
-        if (normalizedFindings.length === 0) {
-          liteFindingsEl.style.display = 'none';
-        } else {
-          liteFindingsEl.style.display = 'flex';
-          const previewLimit = Math.min(3, normalizedFindings.length);
-          for (let i = 0; i < previewLimit; i++) {
-            const lf = normalizedFindings[i];
-            const itemRow = document.createElement('div');
-            itemRow.className = 'lite-sentinel-finding-item';
-
-            const textWrap = document.createElement('div');
-            textWrap.className = 'lite-sentinel-finding-text';
-
-            const tagEl = document.createElement('span');
-            tagEl.className = 'sentinel-finding-tag ' + lf.tagClass;
-            tagEl.textContent = lf.tagLabel;
-            textWrap.appendChild(tagEl);
-
-            if (lf.loc) {
-              const locEl = document.createElement('span');
-              locEl.className = 'sentinel-finding-loc';
-              locEl.textContent = lf.loc;
-              locEl.title = lf.loc;
-              textWrap.appendChild(locEl);
-            }
-
-            if (lf.desc) {
-              const descEl = document.createElement('span');
-              descEl.className = 'lite-sentinel-finding-desc';
-              descEl.textContent = lf.desc;
-              descEl.title = (lf.loc ? (lf.loc + ' — ') : '') + lf.desc;
-              textWrap.appendChild(descEl);
-            }
-
-            const itemFixBtn = document.createElement('button');
-            itemFixBtn.type = 'button';
-            itemFixBtn.className = 'win-btn lite-sentinel-item-fix-btn';
-            itemFixBtn.setAttribute('data-action', 'fixSentinelFindingNow');
-            itemFixBtn.setAttribute('data-prompt', lf.prompt);
-            itemFixBtn.textContent = 'Fix';
-            itemFixBtn.title = L('Отправить эту ошибку на исправление в отдельный чат проекта', 'Send this issue to a separate project chat to fix');
-
-            itemRow.appendChild(textWrap);
-            itemRow.appendChild(itemFixBtn);
-            liteFindingsEl.appendChild(itemRow);
-          }
-          if (normalizedFindings.length > previewLimit) {
-            const moreEl = document.createElement('div');
-            moreEl.className = 'lite-sentinel-more';
-            moreEl.textContent = L('+ ещё находок: ', '+ more findings: ') + (normalizedFindings.length - previewLimit);
-            liteFindingsEl.appendChild(moreEl);
-          }
-        }
       }
 
       const listEl = document.getElementById('sentinelFindingsList');
@@ -24137,37 +24033,15 @@
       flashStatus(L('Задача из Дозора перенесена в Композер ✓', 'Sentinel task sent to Composer ✓'));
     }
 
-    function showSentinelFixNotice(noticeText) {
-      const el = document.getElementById('liteSentinelFixNotice');
-      if (!el) return;
-      el.textContent = String(noticeText || '');
-      el.style.display = noticeText ? 'flex' : 'none';
+    function showSentinelFixNotice(_noticeText) {
       if (_sentinelFixNoticeTimer) {
         clearTimeout(_sentinelFixNoticeTimer);
         _sentinelFixNoticeTimer = null;
-      }
-      if (noticeText) {
-        _sentinelFixNoticeTimer = setTimeout(function () {
-          _sentinelFixNoticeTimer = null;
-          const node = document.getElementById('liteSentinelFixNotice');
-          if (node) {
-            node.style.display = 'none';
-            node.textContent = '';
-          }
-        }, 7000);
       }
     }
 
     function armSentinelFixCooldown() {
       _sentinelFixCooldownUntil = Date.now() + 3000;
-      const liteFixBtn = document.getElementById('btnLiteSentinelFix');
-      if (liteFixBtn) {
-        liteFixBtn.disabled = true;
-        liteFixBtn.textContent = L('✓ В новом чате', '✓ In new chat');
-      }
-      document.querySelectorAll('#liteSentinelFindings .lite-sentinel-item-fix-btn').forEach(function (btn) {
-        btn.disabled = true;
-      });
       if (_sentinelFixCooldownTimer) clearTimeout(_sentinelFixCooldownTimer);
       _sentinelFixCooldownTimer = setTimeout(function () {
         _sentinelFixCooldownTimer = null;
@@ -27443,20 +27317,6 @@
         const sev = info.severity || 'ok';
         const tip = gdBuildTabTooltip(tab, buckets);
 
-        // Lite Variant B tile
-        const tile = document.getElementById('gdLiteTile-' + tab);
-        const tileBadge = document.getElementById('gdLiteBadge-' + tab);
-        if (tile) {
-          tile.classList.toggle('is-active', _gdActiveTab.lite === tab);
-          tile.classList.toggle('is-err', count > 0 && sev === 'err');
-          tile.classList.toggle('is-warn', count > 0 && sev === 'warn');
-          tile.classList.toggle('is-info', count > 0 && sev === 'info');
-          tile.setAttribute('aria-selected', _gdActiveTab.lite === tab ? 'true' : 'false');
-          if (typeof setTooltipTitle === 'function') setTooltipTitle(tile, tip);
-          else tile.title = tip;
-        }
-        gdApplyBadge(tileBadge, count, sev);
-
         // Full Variant C rail button
         const railBtn = document.getElementById('gdFullBtn-' + tab);
         const railBadge = document.getElementById('gdFullBadge-' + tab);
@@ -27471,18 +27331,10 @@
 
       syncFullGuardActivePill();
       syncGuardScanButtons();
-      renderGuardDrawer('lite', arguments[1]);
       renderGuardDrawer('full', arguments[1]);
     }
 
     function syncGuardScanButtons() {
-      const liteBtn = document.getElementById('btnLiteSentinelCheck');
-      if (liteBtn) {
-        liteBtn.disabled = _gdAuditBusy || _sentinelActionBusy;
-        liteBtn.textContent = (_gdAuditBusy || _sentinelActionBusy)
-          ? L('↻ Проверка…', '↻ Scanning…')
-          : L('↻ Проверить всё', '↻ Check all');
-      }
       const fullBtn = document.getElementById('btnFullGuardAuditAll');
       if (fullBtn) {
         fullBtn.disabled = _gdAuditBusy || _sentinelActionBusy;
@@ -27515,51 +27367,10 @@
 
     function closeAllGuardMenus() {
       _gdOpenMenu = null;
-      ['lite', 'full'].forEach(function (surf) {
-        const menu = document.getElementById(surf === 'lite' ? 'liteGuardMenu' : 'fullGuardMenu');
-        const btn = document.getElementById(surf === 'lite' ? 'btnLiteGuardMenu' : 'btnFullGuardMenu');
-        if (menu) {
-          menu.classList.remove('is-open');
-          if (typeof animateDisclosurePanel === 'function' && menu.style.display !== 'none') {
-            const rect = menu.getBoundingClientRect ? menu.getBoundingClientRect() : null;
-            if (rect && rect.height > 0 && typeof menu.animate === 'function' && !(typeof uiPrefersReducedMotion === 'function' && uiPrefersReducedMotion())) {
-              const seq = (menu._gdMenuSeq || 0) + 1;
-              menu._gdMenuSeq = seq;
-              try {
-                const anim = menu.animate(
-                  [{ opacity: 1, transform: 'translate3d(0,0,0) scale(1)' }, { opacity: 0, transform: 'translate3d(0,-4px,0) scale(0.96)' }],
-                  { duration: 130, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' }
-                );
-                anim.onfinish = function () {
-                  if (menu._gdMenuSeq === seq && !menu.classList.contains('is-open')) menu.style.display = 'none';
-                };
-              } catch {
-                menu.style.display = 'none';
-              }
-            } else {
-              menu.style.display = 'none';
-            }
-          } else {
-            menu.style.display = 'none';
-          }
-        }
-        if (btn) btn.setAttribute('aria-expanded', 'false');
-      });
     }
 
-    function toggleGuardMenu(surface) {
-      const surf = surface === 'full' ? 'full' : 'lite';
-      const wasOpen = _gdOpenMenu === surf;
+    function toggleGuardMenu(_surface) {
       closeAllGuardMenus();
-      if (wasOpen) return;
-      const menu = document.getElementById(surf === 'lite' ? 'liteGuardMenu' : 'fullGuardMenu');
-      const btn = document.getElementById(surf === 'lite' ? 'btnLiteGuardMenu' : 'btnFullGuardMenu');
-      if (!menu) return;
-      _gdOpenMenu = surf;
-      menu._gdMenuSeq = (menu._gdMenuSeq || 0) + 1;
-      menu.style.display = 'flex';
-      menu.classList.add('is-open');
-      if (btn) btn.setAttribute('aria-expanded', 'true');
     }
 
     function toggleGuardTab(spec) {
@@ -27647,7 +27458,7 @@
           extraBtn = gdMakeActionBtn(L('↓ Дозор', '↓ Sentinel'), 'jumpGuardFullSection', 'sentinelSectionCard', '', L('Перейти к полному разделу Фонового Дозора', 'Jump to full Background Sentinel section'));
           for (let i = 0; i < Math.min(4, b.sentinelList.length); i++) {
             const sf = b.sentinelList[i];
-            const tagTone = sf.category === 'bugbot' ? 'tone-err' : 'tone-warn';
+            const tagTone = (sf.category === 'bugbot' || sf.severity === 'error' || sf.severity === 'err') ? 'tone-err' : 'tone-warn';
             const lineTxt = (sf.loc ? (sf.loc + ' — ') : '') + (sf.desc || '');
             rows.push(
               '<div class="gd-item-row">' +
@@ -27839,19 +27650,15 @@
     }
 
     function renderGuardDrawer(surface, opts) {
-      const surf = surface === 'full' ? 'full' : 'lite';
+      const surf = 'full';
       const activeTab = _gdActiveTab[surf];
-      const drawerEl = document.getElementById(surf === 'lite' ? 'liteGuardDrawer' : 'fullGuardDrawer');
-      const headEl = document.getElementById(surf === 'lite' ? 'liteGuardDrawerHead' : 'fullGuardDrawerHead');
-      const bodyEl = document.getElementById(surf === 'lite' ? 'liteGuardDrawerBody' : 'fullGuardDrawerBody');
+      const drawerEl = document.getElementById('fullGuardDrawer');
+      const headEl = document.getElementById('fullGuardDrawerHead');
+      const bodyEl = document.getElementById('fullGuardDrawerBody');
       if (!drawerEl || !headEl || !bodyEl) return;
-
-      const liteSum = surf === 'lite' ? document.getElementById('liteSentinelSummary') : null;
-      const liteFind = surf === 'lite' ? document.getElementById('liteSentinelFindings') : null;
 
       if (!activeTab) {
         drawerEl.dataset.renderedTab = '';
-        if (liteSum) liteSum.style.display = 'none';
         if (opts && opts.immediate) {
           if (typeof cancelDisclosureAnimation === 'function') cancelDisclosureAnimation(drawerEl);
           drawerEl.style.display = 'none';
@@ -28545,7 +28352,8 @@
             if (item.stepsText) metaParts.push(item.stepsText);
             metaParts.push(agFormatRecentAgo(item.finishedAt));
             const iconTxt = item.status === 'error' ? '✕' : '✓';
-            return '<div class="ag-recent-completed-row" data-recent-cid="' + escapeHtml(item.conversationId) + '">' +
+            const rowCls = item.status === 'error' ? 'ag-recent-completed-row is-error' : 'ag-recent-completed-row';
+            return '<div class="' + rowCls + '" data-action="focusWaitingProgressChat" data-cid="' + escapeHtml(item.conversationId) + '" role="button" tabindex="0">' +
               '<span class="ag-recent-completed-row-icon">' + iconTxt + '</span>' +
               '<div class="ag-recent-completed-row-body">' +
                 '<div class="ag-recent-completed-row-title" title="' + escapeHtml(titleTxt) + '">' + escapeHtml(titleTxt) + '</div>' +
@@ -30033,7 +29841,7 @@
       }
 
       if (ev.key !== 'Enter' && ev.key !== ' ') return;
-      const target = ev.target && ev.target.closest ? ev.target.closest('[data-action="toggleStepChip"]') : null;
+      const target = ev.target && ev.target.closest ? ev.target.closest('[data-action="toggleStepChip"], [data-action="focusWaitingProgressChat"][role="button"]') : null;
       if (!target) return;
       ev.preventDefault();
       dispatchPanelAction(target, ev);
@@ -30503,7 +30311,7 @@
         })
         .join('\n');
       for (let i = 0; i < codeBlocks.length; i++) {
-        safe = safe.replace('\x00CB' + i + '\x00', codeBlocks[i]);
+        safe = safe.replace('\x00CB' + i + '\x00', function () { return codeBlocks[i]; });
       }
       return safe;
     }

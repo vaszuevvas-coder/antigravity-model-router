@@ -328,8 +328,8 @@
         instinctsEl.textContent = '';
         const hintDiv = document.createElement('div');
         hintDiv.textContent = L(
-          'Нажмите «Инстинкты проекта» для просмотра накопленных паттернов.',
-          'Click "Project Instincts" to view learned workspace patterns.'
+          'Нажмите «Обновить» для просмотра накопленных паттернов.',
+          'Click "Update" to view learned patterns.'
         );
         instinctsEl.appendChild(hintDiv);
       }

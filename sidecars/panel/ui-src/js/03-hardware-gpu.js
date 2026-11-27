@@ -395,8 +395,6 @@
       }
 
       syncExpertInput('inp-gpuEndpoint', (s && s.gpuEndpoint) || cfg.gpuEndpoint || 'http://127.0.0.1:11434');
-      syncExpertInput('inp-gpuChatModel', (s && s.gpuChatModel) || cfg.gpuChatModel || 'gemma4:12b');
-      syncExpertInput('inp-gpuEmbedModel', (s && s.gpuEmbedModel) || cfg.gpuEmbedModel || 'qwen3-embedding:0.6b');
       syncExpertInput('inp-gpuKeepAlive', (s && s.gpuKeepAlive) || cfg.gpuKeepAlive || '15m');
       syncExpertInput('inp-gpuEmbedKeepAlive', (s && s.gpuEmbedKeepAlive) || cfg.gpuEmbedKeepAlive || '90m');
       syncExpertInput('inp-gpuContextTokens', (s && s.gpuContextTokens) || cfg.gpuContextTokens || 4096);
@@ -932,15 +930,6 @@
         topGpuTxt.textContent = gpuPillText;
       }
 
-      const liteMasterBtn = document.getElementById('liteRamGpuMasterBtn');
-      if (liteMasterBtn) {
-        const anyHwOn = ramEnabled || gpuEnabled;
-        liteMasterBtn.classList.toggle('is-on', anyHwOn);
-        liteMasterBtn.classList.toggle('is-off', !anyHwOn);
-        liteMasterBtn.setAttribute('aria-pressed', anyHwOn ? 'true' : 'false');
-        liteMasterBtn.textContent = anyHwOn ? L('Активно', 'Active') : L('Пауза', 'Paused');
-      }
-
       const topCpuPill = document.getElementById('topCpuLivePill');
       const topCpuTxt = document.getElementById('topCpuLiveText');
       if (topCpuPill && topCpuTxt) {
@@ -1306,11 +1295,11 @@
         flashStatus(L('Ошибка: gpuEndpoint разрешён только для localhost/127.0.0.1!', 'Error: gpuEndpoint is only allowed for localhost/127.0.0.1!'));
         return;
       }
-      const chatInput = document.getElementById('inp-gpuChatModel');
-      const embedInput = document.getElementById('inp-gpuEmbedModel');
+      const chatSelect = document.getElementById('sel-gpuChatModel');
+      const embedSelect = document.getElementById('sel-gpuEmbedModel');
       const patch = {
-        gpuChatModel: String((chatInput && chatInput.value) || (currentState && currentState.gpuChatModel) || 'gemma4:12b').trim(),
-        gpuEmbedModel: String((embedInput && embedInput.value) || (currentState && currentState.gpuEmbedModel) || 'qwen3-embedding:0.6b').trim(),
+        gpuChatModel: String((chatSelect && chatSelect.value) || (currentState && currentState.gpuChatModel) || 'gemma4:12b').trim(),
+        gpuEmbedModel: String((embedSelect && embedSelect.value) || (currentState && currentState.gpuEmbedModel) || 'qwen3-embedding:0.6b').trim(),
         gpuKeepAlive: String((document.getElementById('inp-gpuKeepAlive') || {}).value || '15m').trim(),
         gpuEmbedKeepAlive: String((document.getElementById('inp-gpuEmbedKeepAlive') || {}).value || '90m').trim(),
         gpuContextTokens: Number((document.getElementById('inp-gpuContextTokens') || {}).value || 4096),
@@ -2362,9 +2351,6 @@
       if (key !== 'gpuChatModel' && key !== 'gpuEmbedModel') return;
       const clean = String(modelName || '').trim();
       if (!clean) return;
-      const expertInputId = key === 'gpuChatModel' ? 'inp-gpuChatModel' : 'inp-gpuEmbedModel';
-      const expertEl = document.getElementById(expertInputId);
-      if (expertEl) expertEl.value = clean;
       const patch = {};
       patch[key] = clean;
       const saved = await updateState(patch);

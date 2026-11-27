@@ -378,9 +378,9 @@
       const chkLsp = document.getElementById('chk-lspBridgeEnabled');
       if (chkLsp) chkLsp.checked = st.lspBridgeEnabled !== false;
       const chkSql = document.getElementById('chk-sqliteKnowledgeEnabled');
-      if (chkSql) chkSql.checked = st.sentinelEnabled !== undefined ? st.sqliteKnowledgeEnabled !== false : st.sqliteKnowledgeEnabled !== false;
+      if (chkSql) chkSql.checked = st.sqliteKnowledgeEnabled !== false;
       if (typeof applyHookProfileOverridesToUi === 'function') {
-        applyHookProfileOverridesToUi(st.hookProfile || 'standard');
+        applyHookProfileOverridesToUi(st.hookProfile || 'standard', st);
       }
       const badgeEl = document.getElementById('sentinelLiveBadge');
       if (badgeEl) {
@@ -458,7 +458,12 @@
           ? ('Проверь находку Фонового Дозора (' + tagLabel + ')' + (loc ? (' в ' + loc) : '') + ': ' + desc + '. Предложи или внеси точечное исправление.')
           : ('Inspect Background Sentinel finding (' + tagLabel + ')' + (loc ? (' in ' + loc) : '') + ': ' + desc + '. Suggest or apply a targeted fix.');
       }
+      const severityStr = typeof rawItem === 'object' && rawItem && rawItem.severity
+        ? String(rawItem.severity).trim().toLowerCase()
+        : (category === 'bugbot' ? 'err' : 'warn');
       return {
+        category: category,
+        severity: severityStr,
         tagLabel: tagLabel,
         tagClass: tagClass,
         loc: loc,
@@ -516,7 +521,8 @@
           : L('Есть предупреждения или ошибки Дозора (' + (shownErrs + shownWarns + bbCount) + '). Нажмите ↻ для деталей.', 'Sentinel warnings or errors detected (' + (shownErrs + shownWarns + bbCount) + '). Click ↻ for details.');
         normalizedFindings.push({
           category: onlyClones ? 'clone' : 'contract',
-          tagClass: onlyClones ? 'is-clone' : 'is-contract',
+          severity: shownErrs > 0 ? 'err' : 'warn',
+          tagClass: onlyClones ? 'tag-cochange' : 'tag-contract',
           tagLabel: onlyClones ? L('Клон', 'Clone') : L('Дозор', 'Sentinel'),
           loc: '',
           desc: fallbackDesc,
@@ -555,8 +561,7 @@
       syncSentinelCheckboxes(s);
       const parsedSen = syncSentinelNormalizedFindings(sentinelData);
       const boxEl = document.getElementById('sentinelStatusBox');
-      const liteRowEl = document.getElementById('liteSentinelRow');
-      if (!boxEl && !liteRowEl) return;
+      if (!boxEl) return;
 
       const sen = (sentinelData && typeof sentinelData === 'object') ? sentinelData : {};
       const sg = (sen.shadowGuard && typeof sen.shadowGuard === 'object') ? sen.shadowGuard : {};
@@ -664,136 +669,6 @@
       if (runBtn) {
         runBtn.disabled = _sentinelActionBusy;
         runBtn.textContent = _sentinelActionBusy ? L('Проверка…', 'Checking…') : L('Проверить сейчас', 'Check now');
-      }
-
-      const liteBadgeEl = document.getElementById('liteSentinelBadge');
-      if (liteBadgeEl) {
-        const curTaskLite = String(pickText(sen, 'currentTaskRu', 'currentTaskEn', '') || '').trim();
-        if (!isEnabled) {
-          liteBadgeEl.className = 'sentinel-live-badge is-off lite-sentinel-badge';
-          liteBadgeEl.textContent = L('Выключен', 'Off');
-          liteBadgeEl.title = L('Фоновый Дозор отключён в настройках', 'Background Sentinel is disabled in settings');
-        } else if (rawState === 'preempted' || rawState === 'yielded' || sen.p0Active) {
-          liteBadgeEl.className = 'sentinel-live-badge is-preempted lite-sentinel-badge';
-          liteBadgeEl.textContent = L('P0 Уступил чату', 'P0 Yielded');
-          liteBadgeEl.title = curTaskLite || L('Фоновая задача мгновенно уступила ресурсы активному запросу', 'Background task immediately yielded resources to active request');
-        } else if (rawState === 'working' || rawState === 'running' || rawState === 'scanning' || _sentinelActionBusy) {
-          liteBadgeEl.className = 'sentinel-live-badge is-working lite-sentinel-badge';
-          liteBadgeEl.textContent = L('Проверка…', 'Checking…');
-          liteBadgeEl.title = curTaskLite || L('Фоновый Дозор выполняет проверку', 'Background Sentinel is running checks');
-        } else if (shownErrs > 0) {
-          liteBadgeEl.className = 'sentinel-live-badge is-err lite-sentinel-badge';
-          liteBadgeEl.textContent = L('Ошибок: ', 'Errors: ') + (shownErrs + bbCount);
-          liteBadgeEl.title = L('Обнаружены ошибки контрактов или BugBot', 'Contract or BugBot errors detected');
-        } else if (shownWarns > 0 || bbCount > 0 || normalizedFindings.length > 0) {
-          liteBadgeEl.className = 'sentinel-live-badge is-preempted lite-sentinel-badge';
-          liteBadgeEl.textContent = L('Находок: ', 'Findings: ') + Math.max(normalizedFindings.length, shownWarns + bbCount);
-          liteBadgeEl.title = L('Есть предупреждения или находки Фонового Дозора', 'Background Sentinel warnings or findings detected');
-        } else {
-          liteBadgeEl.className = 'sentinel-live-badge is-ok lite-sentinel-badge';
-          liteBadgeEl.textContent = L('Чисто', 'Clean');
-          liteBadgeEl.title = L('Дежурит в паузах · ошибок не обнаружено', 'Standing by during pauses · no errors detected');
-        }
-      }
-
-      const liteSummaryEl = document.getElementById('liteSentinelSummary');
-      if (liteSummaryEl) {
-        if (!isEnabled) {
-          liteSummaryEl.className = 'lite-sentinel-summary';
-          liteSummaryEl.textContent = L('Дозор отключён в настройках', 'Sentinel disabled in settings');
-        } else if (!hasAnyAlert) {
-          liteSummaryEl.className = 'lite-sentinel-summary is-ok';
-          liteSummaryEl.textContent = L('Контракты: чисто · BugBot: чисто', 'Contracts: clean · BugBot: clean');
-        } else {
-          const sumParts = [];
-          if (shownErrs > 0) sumParts.push(L('Ошибок: ', 'Errors: ') + shownErrs);
-          if (shownWarns > 0) {
-            if (rawCloneCount > 0 && Number(sg.warnCount || 0) === 0 && rawCoChange.length === 0) {
-              sumParts.push(L('Дубликатов кода: ', 'Code clones: ') + shownWarns);
-            } else {
-              sumParts.push(L('Предупреждений: ', 'Warnings: ') + shownWarns);
-            }
-          }
-          if (bbCount > 0) sumParts.push('BugBot: ' + bbCount);
-          if (sumParts.length === 0) sumParts.push(L('Находок: ', 'Findings: ') + normalizedFindings.length);
-          liteSummaryEl.className = 'lite-sentinel-summary ' + (shownErrs > 0 ? 'is-err' : 'is-warn');
-          liteSummaryEl.textContent = sumParts.join(' · ');
-        }
-      }
-
-      const liteCheckBtn = document.getElementById('btnLiteSentinelCheck');
-      if (liteCheckBtn) {
-        liteCheckBtn.disabled = _sentinelActionBusy;
-      }
-
-      const liteFixBtn = document.getElementById('btnLiteSentinelFix');
-      if (liteFixBtn) {
-        const inFixCooldown = Date.now() < _sentinelFixCooldownUntil;
-        liteFixBtn.style.display = hasAnyAlert ? 'inline-flex' : 'none';
-        liteFixBtn.disabled = !hasAnyAlert || _sentinelActionBusy || inFixCooldown;
-        liteFixBtn.textContent = inFixCooldown
-          ? L('✓ В новом чате', '✓ In new chat')
-          : (normalizedFindings.length > 1
-            ? (L('Исправить (', 'Fix (') + normalizedFindings.length + ')')
-            : L('Исправить', 'Fix'));
-      }
-
-      const liteFindingsEl = document.getElementById('liteSentinelFindings');
-      if (liteFindingsEl) {
-        liteFindingsEl.textContent = '';
-        if (normalizedFindings.length === 0) {
-          liteFindingsEl.style.display = 'none';
-        } else {
-          liteFindingsEl.style.display = 'flex';
-          const previewLimit = Math.min(3, normalizedFindings.length);
-          for (let i = 0; i < previewLimit; i++) {
-            const lf = normalizedFindings[i];
-            const itemRow = document.createElement('div');
-            itemRow.className = 'lite-sentinel-finding-item';
-
-            const textWrap = document.createElement('div');
-            textWrap.className = 'lite-sentinel-finding-text';
-
-            const tagEl = document.createElement('span');
-            tagEl.className = 'sentinel-finding-tag ' + lf.tagClass;
-            tagEl.textContent = lf.tagLabel;
-            textWrap.appendChild(tagEl);
-
-            if (lf.loc) {
-              const locEl = document.createElement('span');
-              locEl.className = 'sentinel-finding-loc';
-              locEl.textContent = lf.loc;
-              locEl.title = lf.loc;
-              textWrap.appendChild(locEl);
-            }
-
-            if (lf.desc) {
-              const descEl = document.createElement('span');
-              descEl.className = 'lite-sentinel-finding-desc';
-              descEl.textContent = lf.desc;
-              descEl.title = (lf.loc ? (lf.loc + ' — ') : '') + lf.desc;
-              textWrap.appendChild(descEl);
-            }
-
-            const itemFixBtn = document.createElement('button');
-            itemFixBtn.type = 'button';
-            itemFixBtn.className = 'win-btn lite-sentinel-item-fix-btn';
-            itemFixBtn.setAttribute('data-action', 'fixSentinelFindingNow');
-            itemFixBtn.setAttribute('data-prompt', lf.prompt);
-            itemFixBtn.textContent = 'Fix';
-            itemFixBtn.title = L('Отправить эту ошибку на исправление в отдельный чат проекта', 'Send this issue to a separate project chat to fix');
-
-            itemRow.appendChild(textWrap);
-            itemRow.appendChild(itemFixBtn);
-            liteFindingsEl.appendChild(itemRow);
-          }
-          if (normalizedFindings.length > previewLimit) {
-            const moreEl = document.createElement('div');
-            moreEl.className = 'lite-sentinel-more';
-            moreEl.textContent = L('+ ещё находок: ', '+ more findings: ') + (normalizedFindings.length - previewLimit);
-            liteFindingsEl.appendChild(moreEl);
-          }
-        }
       }
 
       const listEl = document.getElementById('sentinelFindingsList');
@@ -936,37 +811,15 @@
       flashStatus(L('Задача из Дозора перенесена в Композер ✓', 'Sentinel task sent to Composer ✓'));
     }
 
-    function showSentinelFixNotice(noticeText) {
-      const el = document.getElementById('liteSentinelFixNotice');
-      if (!el) return;
-      el.textContent = String(noticeText || '');
-      el.style.display = noticeText ? 'flex' : 'none';
+    function showSentinelFixNotice(_noticeText) {
       if (_sentinelFixNoticeTimer) {
         clearTimeout(_sentinelFixNoticeTimer);
         _sentinelFixNoticeTimer = null;
-      }
-      if (noticeText) {
-        _sentinelFixNoticeTimer = setTimeout(function () {
-          _sentinelFixNoticeTimer = null;
-          const node = document.getElementById('liteSentinelFixNotice');
-          if (node) {
-            node.style.display = 'none';
-            node.textContent = '';
-          }
-        }, 7000);
       }
     }
 
     function armSentinelFixCooldown() {
       _sentinelFixCooldownUntil = Date.now() + 3000;
-      const liteFixBtn = document.getElementById('btnLiteSentinelFix');
-      if (liteFixBtn) {
-        liteFixBtn.disabled = true;
-        liteFixBtn.textContent = L('✓ В новом чате', '✓ In new chat');
-      }
-      document.querySelectorAll('#liteSentinelFindings .lite-sentinel-item-fix-btn').forEach(function (btn) {
-        btn.disabled = true;
-      });
       if (_sentinelFixCooldownTimer) clearTimeout(_sentinelFixCooldownTimer);
       _sentinelFixCooldownTimer = setTimeout(function () {
         _sentinelFixCooldownTimer = null;

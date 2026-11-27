@@ -367,7 +367,7 @@
         })
         .join('\n');
       for (let i = 0; i < codeBlocks.length; i++) {
-        safe = safe.replace('\x00CB' + i + '\x00', codeBlocks[i]);
+        safe = safe.replace('\x00CB' + i + '\x00', function () { return codeBlocks[i]; });
       }
       return safe;
     }

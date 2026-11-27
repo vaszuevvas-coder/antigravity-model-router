@@ -9,10 +9,12 @@ import { cpus, homedir, totalmem } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { getSubscriptionCapabilities, sanitizeSwarmWorkerTierForSubscription } from '../../../core/model-profile.mjs';
+import { resolveTunnelCacheDir } from '../../../core/cache-dir.mjs';
 import { safeReadJsonSync, updateJsonAtomicSync } from '../../../core/safe-json.mjs';
 import { BLOCKED_PROTO_KEYS, isAllowedLoopbackEndpoint, isPidAlive, isSafeCreatableFolderPath, isValidWorkspaceDir } from './panel-security.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const PANEL_PLUGIN_ROOT = join(__dirname, '..', '..', '..');
 
 // Путь к файлу состояния в корне плагина
 export const STATE_PATH = join(__dirname, '..', '..', '..', 'router-state.json');
@@ -177,8 +179,6 @@ export const VALID_PANEL_SECTIONS = new Set([
 
 export function resolvePanelFetchSections(queryData = {}, state = {}, options = {}) {
   const orderedBlocks = sanitizePanelBlockOrder(state?.panelBlockOrder) || [...DEFAULT_PANEL_BLOCK_ORDER];
-  const openSpoilers = sanitizeBooleanIdMap(state?.panelOpenSpoilers, PANEL_SPOILER_IDS) || {};
-  const collapsedCards = migrateLegacyPanelCollapsedCards(state) || {};
 
   const rawSections = queryData?.sections;
   const adaptive = queryData?.adaptive === '1' || queryData?.adaptive === true || queryData?.adaptive === 'true';
@@ -894,7 +894,6 @@ export const panelRuntime = {
   corePitfalls: null,
   coreBayesian: null,
   coreHandoff: null,
-  coreModelProfile: null,
   coreLocalGpu: null,
   coreLocalGpuMtimeMs: 0,
   coreHardwareProfiler: null,
@@ -916,18 +915,6 @@ try { panelRuntime.swarmControllerSync = await import('../../../core/swarm-contr
 try { panelRuntime.hardwareProfilerSync = await import('../../../core/hardware-profiler.mjs'); } catch {}
 
 const LOCAL_GPU_ENGINE_PATH = join(__dirname, '..', '..', '..', 'core', 'local-gpu-engine.mjs');
-
-async function getModelProfile() {
-  if (panelRuntime.coreModelProfile) return panelRuntime.coreModelProfile;
-  if (panelRuntime.modelProfileSync) {
-    panelRuntime.coreModelProfile = panelRuntime.modelProfileSync;
-    return panelRuntime.coreModelProfile;
-  }
-  try {
-    panelRuntime.coreModelProfile = await import('../../../core/model-profile.mjs');
-  } catch {}
-  return panelRuntime.coreModelProfile;
-}
 
 export async function getShadowGuard() {
   if (panelRuntime.coreShadow?.listCheckpoints) return panelRuntime.coreShadow;
@@ -1109,11 +1096,31 @@ export async function safeGetCachedRepoMap(rootDir, force = false) {
   };
 }
 
-export const CASCADE_STATE_CACHE_PATH = join(__dirname, '..', '..', '..', '.cache', 'cascade-state.json');
+export function getPanelCacheDir() {
+  return resolveTunnelCacheDir(PANEL_PLUGIN_ROOT);
+}
 
-export const HANDOFF_MIRROR_CACHE_PATH = join(__dirname, '..', '..', '..', '.cache', 'session-handoff.json');
+export function getCascadeStateCachePath() {
+  return join(getPanelCacheDir(), 'cascade-state.json');
+}
 
-export const TASK_PROGRESS_CACHE_PATH = join(__dirname, '..', '..', '..', '.cache', 'task-progress.json');
+export function getHandoffMirrorCachePath() {
+  return join(getPanelCacheDir(), 'session-handoff.json');
+}
+
+export function getTaskProgressCachePath() {
+  return join(getPanelCacheDir(), 'task-progress.json');
+}
+
+export function getRamDaemonCachePath() {
+  return join(getPanelCacheDir(), 'ram-daemon.json');
+}
+
+export const CASCADE_STATE_CACHE_PATH = join(PANEL_PLUGIN_ROOT, '.cache', 'cascade-state.json');
+
+export const HANDOFF_MIRROR_CACHE_PATH = join(PANEL_PLUGIN_ROOT, '.cache', 'session-handoff.json');
+
+export const TASK_PROGRESS_CACHE_PATH = join(PANEL_PLUGIN_ROOT, '.cache', 'task-progress.json');
 
 export function normalizeWorkspaceUriKey(rawUriOrPath = '') {
   if (typeof rawUriOrPath !== 'string') return '';
@@ -1123,9 +1130,7 @@ export function normalizeWorkspaceUriKey(rawUriOrPath = '') {
     if (/^file:\/\//i.test(s)) {
       const u = new URL(s);
       s = decodeURIComponent(u.pathname || '');
-      if (/^\/[a-zA-Z]:\//.test(s)) s = s.slice(1);
-    } else {
-      s = decodeURIComponent(s);
+      if (/^\/[a-zA-Z]:(?:\/|$)/.test(s)) s = s.slice(1);
     }
   } catch {}
   s = s.replace(/\\/g, '/').replace(/\/+$/, '');
@@ -1197,6 +1202,7 @@ export function loadState(options = {}) {
   merged.swarmWorkerTier = sanitizeSwarmWorkerTierForSubscription(merged.subscriptionTier, merged.swarmWorkerTier);
   const migratedCollapsed = migrateLegacyPanelCollapsedCards(src);
   merged.panelTheme = normalizePanelThemeValue(merged.panelTheme) || 'glass_teal';
+  merged.panelUiScale = normalizePanelUiScaleValue(merged.panelUiScale, 'auto') || 'auto';
   merged.panelViewMode = normalizePanelViewModeValue(merged.panelViewMode) || 'full';
   merged.panelFullTab = normalizePanelFullTabValue(merged.panelFullTab) || 'cockpit';
   const explicitLang = normalizeUiLanguageValue(src.uiLanguage);
@@ -1230,6 +1236,7 @@ export function saveState(patch, options = {}) {
         ...currentRaw,
         uiLanguage: normalizeUiLanguageValue(currentRaw.uiLanguage)
           || ((currentRaw.onboardingCompleted === true || currentRaw.hardwareProfiled === true) ? 'ru' : 'en'),
+        panelUiScale: normalizePanelUiScaleValue(currentRaw.panelUiScale, 'auto') || 'auto',
         panelViewMode: normalizePanelViewModeValue(currentRaw.panelViewMode) || 'full',
         panelFullTab: normalizePanelFullTabValue(currentRaw.panelFullTab) || 'cockpit',
         skillModes: sanitizeSkillModes(currentRaw.skillModes),
@@ -1520,9 +1527,21 @@ export async function querySingleRamDaemon(inst) {
       },
       (r) => {
         let raw = '';
+        let tooLarge = false;
         r.setEncoding('utf8');
-        r.on('data', (c) => { raw += c; });
+        r.on('data', (c) => {
+          if (tooLarge) return;
+          if (raw.length + c.length > 16 * 1024 * 1024) {
+            tooLarge = true;
+            try { r.destroy(); } catch {}
+            resolveReq(null);
+            return;
+          }
+          raw += c;
+        });
+        r.on('error', () => resolveReq(null));
         r.on('end', () => {
+          if (tooLarge) return;
           try {
             resolveReq(JSON.parse(raw));
           } catch {
@@ -1541,7 +1560,7 @@ export async function querySingleRamDaemon(inst) {
 }
 
 export function readRamDaemonCandidates() {
-  const daemonFile = join(__dirname, '..', '..', '..', '.cache', 'ram-daemon.json');
+  const daemonFile = getRamDaemonCachePath();
   if (!existsSync(daemonFile)) return [];
   const info = safeReadJsonSync(daemonFile, null, { selfHeal: true });
   if (!info || typeof info !== 'object') return [];
@@ -1615,9 +1634,21 @@ export async function postRamDaemonJson(endpoint, body = {}, timeoutMs = 60000, 
         },
         (r) => {
           let raw = '';
+          let tooLarge = false;
           r.setEncoding('utf8');
-          r.on('data', (c) => { raw += c; });
+          r.on('data', (c) => {
+            if (tooLarge) return;
+            if (raw.length + c.length > 16 * 1024 * 1024) {
+              tooLarge = true;
+              try { r.destroy(); } catch {}
+              finish(null);
+              return;
+            }
+            raw += c;
+          });
+          r.on('error', () => finish(extSignal?.aborted ? { ok: false, aborted: true, error: 'Request aborted' } : null));
           r.on('end', () => {
+            if (tooLarge) return;
             try {
               finish(JSON.parse(raw));
             } catch {

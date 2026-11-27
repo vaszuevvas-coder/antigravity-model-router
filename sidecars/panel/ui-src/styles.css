@@ -8,9 +8,13 @@
       --glass-pill-active: #1e2028;
       --specular-rim: none;
       --border-subtle: rgba(255, 255, 255, 0.10);
+      --border-strong: rgba(255, 255, 255, 0.16);
       --border-hairline: rgba(255, 255, 255, 0.075);
+      --glass-hover: rgba(255, 255, 255, 0.05);
       --text-main: #f3f4f6;
+      --text-primary: var(--text-main);
       --text-sub: #9ca3af;
+      --text-secondary: var(--text-sub);
       --text-muted: #646b77;
       --accent-primary: #f04848;
       --accent-cyan: #f04848;
@@ -133,6 +137,14 @@
     @keyframes agFadeIn {
       0% { opacity: 0; }
       100% { opacity: 1; }
+    }
+    @keyframes wizPopIn {
+      0% { opacity: 0; transform: translate3d(0, 6px, 0) scale(0.97); }
+      100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+    }
+    @keyframes agLivePulse {
+      0%, 100% { opacity: 0.45; transform: scale(0.9); }
+      50% { opacity: 1; transform: scale(1.15); }
     }
     @keyframes agSilkBreath {
       0%, 100% { opacity: 0.56; transform: scale(0.92); }
@@ -1057,6 +1069,12 @@
       background: var(--glass-card-active);
       border-color: var(--border-subtle);
       color: var(--text-sub);
+    }
+
+    .swarm-pill.warn {
+      color: var(--status-err);
+      background: rgba(240, 72, 72, 0.14);
+      border-color: rgba(240, 72, 72, 0.34);
     }
 
     .swarm-meta-row {
@@ -3149,6 +3167,10 @@
       font-size: 11px;
       font-weight: 700;
       flex-shrink: 0;
+    }
+
+    .ag-recent-completed-row.is-error .ag-recent-completed-row-icon {
+      color: var(--status-err);
     }
 
     .ag-recent-completed-row-body {

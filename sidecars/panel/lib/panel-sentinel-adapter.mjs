@@ -106,14 +106,16 @@ export async function fetchSentinelPanelStatus(wsRoot, currentState = {}, { forc
     return sentinelPanelCache.value;
   }
 
-  try {
-    const daemonRes = await postRamDaemonJson('/sentinel/status', { wsPath: wsRoot }, 400);
-    if (daemonRes && daemonRes.ok) {
-      const normalized = normalizeSentinelSnapshotPayload(daemonRes, st);
-      Object.assign(sentinelPanelCache, { ts: Date.now(), wsKey, enabled, shadowTests, value: normalized });
-      return normalized;
-    }
-  } catch {}
+  if (!(process.env.TUNNEL_TEST_ISOLATE_INSTALLED === '1' && !process.env.TUNNEL_CACHE_DIR)) {
+    try {
+      const daemonRes = await postRamDaemonJson('/sentinel/status', { wsPath: wsRoot }, 400);
+      if (daemonRes && daemonRes.ok) {
+        const normalized = normalizeSentinelSnapshotPayload(daemonRes, st);
+        Object.assign(sentinelPanelCache, { ts: Date.now(), wsKey, enabled, shadowTests, value: normalized });
+        return normalized;
+      }
+    } catch {}
+  }
 
   try {
     const sentinelMod = await getBackgroundSentinelMod();

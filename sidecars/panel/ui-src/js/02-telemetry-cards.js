@@ -804,11 +804,6 @@
       if (wsCapsule) {
         wsCapsule.classList.toggle('has-epoch', fill >= 70);
       }
-      const coreTabDot = document.getElementById('fullTabCoreDot');
-      if (coreTabDot) {
-        coreTabDot.style.display = fill >= 70 ? 'inline-block' : 'none';
-        coreTabDot.className = 'full-tab-alert-dot' + (fill >= 90 ? '' : ' is-warn');
-      }
     }
 
     function syncFooterPluginVersion(pluginVersion) {
@@ -1160,6 +1155,10 @@
         if (data.pitfalls !== undefined) {
           scheduleBlockRender('expertPitfallsBox', function () {
             renderPitfalls(data.pitfalls);
+          });
+        }
+        if (data.victoryRecipes !== undefined || data.federatedPeers !== undefined || data.knowledgeStats !== undefined) {
+          scheduleBlockRender('expertKnowledgeBox', function () {
             renderKnowledgeHub(data.victoryRecipes, data.federatedPeers, data.knowledgeStats);
           });
         }
@@ -1224,6 +1223,7 @@
       if (curTab === 'bugs') {
         secs.push('checkpoints');
         secs.push('bayesian');
+        secs.push('pitfalls');
       }
       if (curTab === 'memory' || curTab === 'settings') {
         secs.push('compaction');
@@ -2133,7 +2133,8 @@
       const pgModal = document.getElementById('projectGraphModal');
       const isPgVisible = Boolean(
         (document.body && document.body.classList && document.body.classList.contains('pg-standalone')) ||
-        (pgModal && pgModal.classList && pgModal.classList.contains('open'))
+        (typeof pgState !== 'undefined' && pgState && pgState.open) ||
+        (pgModal && pgModal.classList && (pgModal.classList.contains('visible') || pgModal.classList.contains('open')))
       );
       if (pgToast && isPgVisible) {
         pgToast.textContent = text;

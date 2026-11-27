@@ -14,8 +14,10 @@ import { getCpuStatusSnapshot, readCpuTelemetry } from '../../../core/cpu-worker
 import { isSubagentTranscriptFile } from '../../../core/model-profile.mjs';
 import { isValidWorkspaceDir } from './panel-security.mjs';
 import {
-  HANDOFF_MIRROR_CACHE_PATH,
-  TASK_PROGRESS_CACHE_PATH,
+  getHandoffMirrorCachePath,
+  getPanelCacheDir,
+  getRamDaemonCachePath,
+  getTaskProgressCachePath,
   clampSafeInt,
   getBayesianRouterMod,
   getCircuitBreakerMod,
@@ -73,7 +75,7 @@ function toValidIsoOrEmpty(val) {
 
 export async function safeGetHudAndProgressStatus(state = {}, activeWs = '') {
   try {
-    const hudRuntimePath = join(__dirname, '..', '..', '..', '.cache', 'floating-hud.json');
+    const hudRuntimePath = join(getPanelCacheDir(), 'floating-hud.json');
     const shouldCheckHud = Boolean(state?.floatingHudEnabled) || existsSync(hudRuntimePath);
     const [hudMod, progMod] = await Promise.all([
       shouldCheckHud ? getFloatingHudMod() : Promise.resolve(null),
@@ -764,7 +766,7 @@ function collectTelemetryUncached(configuredThreshold = 120000, options = {}) {
   let gpuSavedTokens = 0;
   if (!options?.skipGlobalGpuTelemetry) {
     try {
-      const gpuTelFile = join(__dirname, '..', '..', '..', '.cache', 'gpu-telemetry.json');
+      const gpuTelFile = join(getPanelCacheDir(), 'gpu-telemetry.json');
       if (existsSync(gpuTelFile)) {
         const gpuTel = safeReadJsonSync(gpuTelFile, () => null, { selfHeal: false });
         gpuSavedTokens = toFiniteNonNeg(gpuTel?.savedTokensEstimate, 0);
@@ -868,7 +870,7 @@ function collectTelemetryUncached(configuredThreshold = 120000, options = {}) {
     const convoWsMap = new Map();
     if (normTargetWs) {
       try {
-        const tpFile = join(__dirname, '..', '..', '..', '.cache', 'task-progress.json');
+        const tpFile = getTaskProgressCachePath();
         if (existsSync(tpFile)) {
           const tpData = safeReadJsonSync(tpFile, null, { selfHeal: false });
           if (tpData && tpData.chats && typeof tpData.chats === 'object') {
@@ -924,6 +926,8 @@ function collectTelemetryUncached(configuredThreshold = 120000, options = {}) {
           ? panelRuntime.modelProfileSync.peekActiveModelFromTranscript(item.path, activeCid || '')
           : null;
         if (activeProfile && activeProfile.tier !== 'unknown') {
+          stats.activeModel = activeProfile.displayRu || '';
+          stats.activeModelShort = activeProfile.shortRu || activeProfile.shortEn || '';
           stats.isOrchestrator = Boolean(activeProfile.isOrchestrator);
           stats.isHydrogen = Boolean(activeProfile.isHydrogen);
           stats.isNeon = Boolean(activeProfile.isNeon);
@@ -936,6 +940,7 @@ function collectTelemetryUncached(configuredThreshold = 120000, options = {}) {
             });
             stats.thinkingBurnStatus = burnEval?.status || 'optimal';
             stats.thinkingBurnAdvisory = burnEval?.advisoryRu || '';
+            stats.thinkingBurnAdvisoryEn = burnEval?.advisoryEn || '';
           }
         }
         stats.lastContextTokens = chatAccum.lastContextTokens || 0;
@@ -947,6 +952,7 @@ function collectTelemetryUncached(configuredThreshold = 120000, options = {}) {
           convoId: activeCid,
           transcriptPath: item.path,
           activeModel: activeProfile?.displayRu || '',
+          activeModelEn: activeProfile?.displayEn || activeProfile?.displayRu || '',
           steps: chatAccum.steps,
           inputTokens: chatAccum.inputTokens,
           outputTokens: chatAccum.outputTokens,
@@ -1060,8 +1066,11 @@ export async function resolveActiveWorkspaceForPanel(requestedRoot = '', options
         }
       } else if (typeof progMod?.getTaskProgressSnapshot === 'function') {
         taskProgress = progMod.getTaskProgressSnapshot({ workspaceRoot: '' });
-      } else if (existsSync(TASK_PROGRESS_CACHE_PATH)) {
-        taskProgress = safeReadJsonSync(TASK_PROGRESS_CACHE_PATH, null, { selfHeal: false });
+      } else {
+        const tpPath = getTaskProgressCachePath();
+        if (existsSync(tpPath)) {
+          taskProgress = safeReadJsonSync(tpPath, null, { selfHeal: false });
+        }
       }
     } catch {}
   }
@@ -1185,7 +1194,7 @@ export async function resolveActiveWorkspaceForPanel(requestedRoot = '', options
   }
 
   try {
-    const handoffFile = options?.handoffFile || HANDOFF_MIRROR_CACHE_PATH;
+    const handoffFile = options?.handoffFile || getHandoffMirrorCachePath();
     if (existsSync(handoffFile)) {
       const h = safeReadJsonSync(handoffFile, null, { selfHeal: false });
       if (h && typeof h === 'object') {
@@ -1394,7 +1403,7 @@ export async function collectKnownWorkspacesForPanel({
   }
 
   try {
-    const handoffFile = join(__dirname, '..', '..', '..', '.cache', 'session-handoff.json');
+    const handoffFile = getHandoffMirrorCachePath();
     if (existsSync(handoffFile)) {
       const h = safeReadJsonSync(handoffFile, null, { selfHeal: false });
       if (h && typeof h === 'object') {
@@ -1728,7 +1737,7 @@ export async function safeGetRamCacheStatus(state = {}) {
   const budgetMb = clampSafeInt(state?.ramMaxBudgetMb, 256, ceilings.maxRamBudgetMb, Math.min(4096, ceilings.maxRamBudgetMb));
   const totalRamMb = ceilings.totalRamMb;
   const enabled = state?.ramCacheEnabled !== false;
-  const daemonFile = join(__dirname, '..', '..', '..', '.cache', 'ram-daemon.json');
+  const daemonFile = getRamDaemonCachePath();
   if (!enabled) {
     return { enabled: false, active: false, budgetMb, totalRamMb, cacheUsedMb: 0, workspaces: [], instancesCount: 0 };
   }
@@ -2226,12 +2235,20 @@ export function collectRoiTimeline(options = {}) {
   }
 
   // High-water-mark deltas with self-healing against poisoned legacy baselines (>100k above live totals)
+  let slotSumRam = 0;
+  let slotSumCpu = 0;
+  let slotSumGpu = 0;
+  for (const sl of slotMap.values()) {
+    slotSumRam += Number(sl?.ram || 0);
+    slotSumCpu += Number(sl?.cpu || 0);
+    slotSumGpu += Number(sl?.gpu || 0);
+  }
   const rawPrevRam = toFiniteNonNeg(prevTotals.ram, 0);
   const rawPrevCpu = toFiniteNonNeg(prevTotals.cpu, 0);
   const rawPrevGpu = toFiniteNonNeg(prevTotals.gpu, 0);
-  const prevRam = rawPrevRam > curRam * 1.5 + 100_000 ? curRam : rawPrevRam;
-  const prevCpu = rawPrevCpu > curCpu * 1.5 + 100_000 ? curCpu : rawPrevCpu;
-  const prevGpu = rawPrevGpu > curGpu * 1.5 + 100_000 ? curGpu : rawPrevGpu;
+  const prevRam = rawPrevRam > Math.max(curRam, slotSumRam) * 1.5 + 100_000 ? curRam : rawPrevRam;
+  const prevCpu = rawPrevCpu > Math.max(curCpu, slotSumCpu) * 1.5 + 100_000 ? curCpu : rawPrevCpu;
+  const prevGpu = rawPrevGpu > Math.max(curGpu, slotSumGpu) * 1.5 + 100_000 ? curGpu : rawPrevGpu;
   const dRam = curRam > prevRam ? (curRam - prevRam) : 0;
   const dCpu = curCpu > prevCpu ? (curCpu - prevCpu) : 0;
   const dGpu = curGpu > prevGpu ? (curGpu - prevGpu) : 0;
@@ -2306,13 +2323,21 @@ export function collectRoiTimeline(options = {}) {
               });
             }
           }
+          let mergedSumRam = 0;
+          let mergedSumCpu = 0;
+          let mergedSumGpu = 0;
+          for (const ms of mergedMap.values()) {
+            mergedSumRam += Number(ms?.ram || 0);
+            mergedSumCpu += Number(ms?.cpu || 0);
+            mergedSumGpu += Number(ms?.gpu || 0);
+          }
           const diskTotals = diskDoc?.lastTotals && typeof diskDoc.lastTotals === 'object' ? diskDoc.lastTotals : {};
           const dPrevRam = toFiniteNonNeg(diskTotals.ram, 0);
           const dPrevCpu = toFiniteNonNeg(diskTotals.cpu, 0);
           const dPrevGpu = toFiniteNonNeg(diskTotals.gpu, 0);
-          const safeDiskRam = dPrevRam > curRam * 1.5 + 100_000 ? curRam : dPrevRam;
-          const safeDiskCpu = dPrevCpu > curCpu * 1.5 + 100_000 ? curCpu : dPrevCpu;
-          const safeDiskGpu = dPrevGpu > curGpu * 1.5 + 100_000 ? curGpu : dPrevGpu;
+          const safeDiskRam = dPrevRam > Math.max(curRam, mergedSumRam) * 1.5 + 100_000 ? curRam : dPrevRam;
+          const safeDiskCpu = dPrevCpu > Math.max(curCpu, mergedSumCpu) * 1.5 + 100_000 ? curCpu : dPrevCpu;
+          const safeDiskGpu = dPrevGpu > Math.max(curGpu, mergedSumGpu) * 1.5 + 100_000 ? curGpu : dPrevGpu;
           return {
             schemaVersion: ROI_TIMELINE_SCHEMA_VERSION,
             updatedAt: new Date(nowMs).toISOString(),
