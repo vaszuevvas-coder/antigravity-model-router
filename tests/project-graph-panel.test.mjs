@@ -6074,6 +6074,206 @@ test('36. Project Map AI presets (risks/bugs/tests) enforce structured read-only
   assert.equal(out.lastUserBubble, 'Найти баги и слабые места', 'User chat bubble must stay compact with preset title');
 });
 
+test('37. Project Map Ctrl+click multi-select chips, RMB bundle submenu & comprehensive cart audit (chat + composer)', async () => {
+  const html = fs.readFileSync(path.join(ROOT_DIR, 'sidecars', 'panel', 'ui.html'), 'utf8');
+  for (const marker of [
+    'id="pgCartChips"',
+    'id="pgCartAuditBtn"',
+    'id="pgCartAuditMenu"',
+    'function pgBuildCartAuditContext(',
+    'async function pgRunCartAudit(',
+    "renderSubmenu(\n            'cart'",
+  ]) {
+    assert.ok(html.includes(marker), `Expected marker ${marker} in compiled ui.html`);
+  }
+
+  const mainScriptMatch = html.match(/<script>\s*([\s\S]*?)\s*<\/script>\s*<\/body>/i);
+  assert.ok(mainScriptMatch, 'Main script block must exist in ui.html');
+
+  const chatPosts = [];
+  const composerCalls = [];
+  const fetchMock = async (url, opts = {}) => {
+    if (String(url).includes('/api/chat-send')) {
+      chatPosts.push(JSON.parse(opts.body || '{}'));
+      return { ok: true, json: async () => ({ ok: true, mode: 'new_conversation', conversationId: 'conv-cart-1' }) };
+    }
+    if (String(url).includes('/api/state')) {
+      return { ok: true, json: async () => ({ ok: true, state: { uiLanguage: 'ru' } }) };
+    }
+    return { ok: true, json: async () => ({ ok: true }) };
+  };
+
+  const makeClassList = () => {
+    const s = new Set();
+    return {
+      add: (...c) => c.forEach((x) => x && s.add(x)),
+      remove: (...c) => c.forEach((x) => s.delete(x)),
+      toggle: (c, force) => (force === true ? (s.add(c), true) : force === false ? (s.delete(c), false) : (s.has(c) ? (s.delete(c), false) : (s.add(c), true))),
+      contains: (c) => s.has(c),
+    };
+  };
+  const elements = new Map();
+  const makeEl = (id) => {
+    const attrs = new Map();
+    const el = {
+      id,
+      tagName: id === 'projectGraphCanvas' ? 'CANVAS' : 'DIV',
+      style: {},
+      classList: makeClassList(),
+      hidden: id === 'pgCartAuditMenu' || id === 'pgNodeContextMenu',
+      textContent: '',
+      innerHTML: '',
+      value: '',
+      clientWidth: 1000,
+      clientHeight: 700,
+      offsetWidth: 256,
+      offsetHeight: 340,
+      setAttribute: (k, v) => attrs.set(k, String(v)),
+      getAttribute: (k) => (attrs.has(k) ? attrs.get(k) : null),
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1000, height: 700 }),
+      getContext: () => null,
+      closest: () => null,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      addEventListener() {},
+      removeEventListener() {},
+      focus() {},
+    };
+    elements.set(id, el);
+    return el;
+  };
+  for (const id of [
+    'projectGraphModal', 'projectGraphCanvas', 'pgCanvasStage', 'pgNodeContextMenu',
+    'pgContextCart', 'pgCartSummary', 'pgCartChips', 'pgCartAuditBtn', 'pgCartAuditMenu',
+    'pgInspFilename', 'pgInspPath', 'pgInspBadges', 'pgInspMetrics', 'pgInspTabs',
+    'pgInspLensPanel', 'pgInspList', 'pgInspActions', 'pgActionCartToggleBtn',
+  ]) {
+    makeEl(id);
+  }
+
+  const activeTimers = new Set();
+  const safeSetTimeout = (fn, ms) => {
+    const id = setTimeout(() => { activeTimers.delete(id); fn(); }, Math.min(ms || 0, 50));
+    activeTimers.add(id);
+    return id;
+  };
+  const safeClearTimeout = (id) => { activeTimers.delete(id); clearTimeout(id); };
+
+  const doc = {
+    getElementById: (id) => elements.get(id) || null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    addEventListener() {},
+    removeEventListener() {},
+    documentElement: { setAttribute() {} },
+    body: { classList: makeClassList(), appendChild() {} },
+  };
+  const win = {
+    location: { href: 'http://127.0.0.1:41234/', search: '', pathname: '/' },
+    navigator: { clipboard: { writeText: async () => {} } },
+    fetch: fetchMock,
+    addEventListener() {},
+    removeEventListener() {},
+    devicePixelRatio: 1,
+    innerWidth: 1280,
+    innerHeight: 800,
+  };
+  const ctx = vm.createContext({
+    window: win,
+    document: doc,
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    navigator: win.navigator,
+    location: win.location,
+    CSS: { escape: (s) => String(s) },
+    URL, URLSearchParams, AbortController, performance,
+    Event: class { constructor(type) { this.type = type; } },
+    CustomEvent: class { constructor(type, opts = {}) { this.type = type; this.detail = opts.detail; } },
+    requestAnimationFrame: () => 0,
+    cancelAnimationFrame: () => {},
+    setTimeout: safeSetTimeout,
+    clearTimeout: safeClearTimeout,
+    setInterval: () => 0,
+    clearInterval() {},
+    fetch: fetchMock,
+    console,
+    Promise, Set, Map, WeakMap, Array, Object, String, Number, Boolean, Math, Date, JSON, RegExp, Error,
+    encodeURIComponent, decodeURIComponent,
+  });
+
+  try {
+    vm.runInContext(mainScriptMatch[1], ctx, { filename: 'sidecars/panel/ui.html' });
+    ctx.insertIntoLocalSmartComposer = (payload) => composerCalls.push(payload);
+
+    const out = await vm.runInContext(`(async () => {
+      currentUiLanguage = 'ru';
+      const nodeA = { id: 'core/stage-a.mjs', label: 'stage-a.mjs', isFolder: false, isSymbol: false, lines: 120, isFragile: true, reliabilityPercent: 65 };
+      const nodeB = { id: 'core/stage-b.mjs', label: 'stage-b.mjs', isFolder: false, isSymbol: false, lines: 80, isGod: true };
+      const nodeExt = { id: 'sidecars/panel/server.mjs', label: 'server.mjs', isFolder: false, isSymbol: false, lines: 400 };
+      pgState.open = true;
+      pgState.autoWorkspace = 'D:/MyStageProject';
+      pgState.nodes = [nodeA, nodeB, nodeExt];
+      pgState.nodeById = new Map([[nodeA.id, nodeA], [nodeB.id, nodeB], [nodeExt.id, nodeExt]]);
+      pgState.rawGraphData = {
+        nodes: [nodeA, nodeB, nodeExt],
+        edges: [
+          { source: 'core/stage-a.mjs', target: 'core/stage-b.mjs' },
+          { source: 'sidecars/panel/server.mjs', target: 'core/stage-a.mjs' },
+        ],
+        testFilesByTarget: {
+          'core/stage-a.mjs': ['tests/stage-a.test.mjs'],
+        },
+      };
+
+      // Simulate Ctrl+click selection of 2 stage nodes
+      pgToggleNodeInCart('core/stage-a.mjs');
+      pgToggleNodeInCart('core/stage-b.mjs');
+      const chipsHtml = document.getElementById('pgCartChips').innerHTML;
+      const cartCtx = pgBuildCartAuditContext();
+
+      // RMB context menu must expose group audit submenu when cart has >= 2 files
+      pgOpenNodeContextMenu(nodeA, 300, 240);
+      const rmbHtml = document.getElementById('pgNodeContextMenu').innerHTML;
+
+      // Run comprehensive bug audit into new chat and into Smart Composer
+      await pgRunCartAudit('chat:bugs');
+      await pgRunCartAudit('composer:risks');
+
+      // Remove one file via chip action
+      pgRemoveFromCart('core/stage-b.mjs');
+      const remainingSize = pgState.contextCart.size;
+      const remainingHasA = pgState.contextCart.has('core/stage-a.mjs');
+
+      return { chipsHtml, cartCtx, rmbHtml, remainingSize, remainingHasA };
+    })()`, ctx);
+
+    assert.ok(out.chipsHtml.includes('stage-a.mjs') && out.chipsHtml.includes('stage-b.mjs'), 'Cart chips must render both selected files');
+    assert.ok(out.chipsHtml.includes('data-action="pgRemoveFromCart"'), 'Cart chips must include remove action');
+    assert.deepEqual(Array.from(out.cartCtx.internalEdges), ['core/stage-a.mjs -> core/stage-b.mjs'], 'Must detect internal links between selected files');
+    assert.deepEqual(Array.from(out.cartCtx.externalDependents), ['sidecars/panel/server.mjs'], 'Must detect external Blast Radius dependents');
+    assert.deepEqual(Array.from(out.cartCtx.relatedTests), ['tests/stage-a.test.mjs'], 'Must collect related tests for bundle');
+    assert.ok(out.rmbHtml.includes('data-ctx-submenu="cart"') && out.rmbHtml.includes('cart-chat:bugs'), 'RMB menu must show bundle audit submenu when >=2 files in cart');
+
+    assert.equal(chatPosts.length, 1, 'chat:bugs must POST once to /api/chat-send');
+    assert.ok(chatPosts[0].message.includes('@file:core/stage-a.mjs') && chatPosts[0].message.includes('@file:core/stage-b.mjs'), 'Chat audit must attach all selected @file tokens');
+    assert.ok(chatPosts[0].message.includes('[Контекст группы с карты проекта]'), 'Chat audit must include bundle relations context');
+    assert.ok(chatPosts[0].message.includes('core/stage-a.mjs -> core/stage-b.mjs'), 'Chat audit must include internal cross-file links');
+
+    assert.equal(composerCalls.length, 1, 'composer:risks must dispatch to Smart Composer');
+    assert.deepEqual(Array.from(composerCalls[0].tokens), ['@file:core/stage-a.mjs', '@file:core/stage-b.mjs']);
+    assert.ok(composerCalls[0].prompt.includes('анализ зависимостей и рисков'), 'Composer risks audit must include risks prompt');
+
+    assert.equal(out.remainingSize, 1);
+    assert.equal(out.remainingHasA, true);
+  } finally {
+    try {
+      vm.runInContext(`if (typeof telemetryPollTimer !== 'undefined' && telemetryPollTimer) { clearTimeout(telemetryPollTimer); telemetryPollTimer = null; }`, ctx);
+    } catch {}
+    for (const id of Array.from(activeTimers)) {
+      safeClearTimeout(id);
+    }
+  }
+});
+
 
 
 

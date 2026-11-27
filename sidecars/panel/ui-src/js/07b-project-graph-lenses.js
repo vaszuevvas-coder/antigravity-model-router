@@ -712,10 +712,21 @@
         if (!fileId) return;
         if (pgState.contextCart.has(fileId)) {
           pgState.contextCart.delete(fileId);
+          flashStatus(L('Убрано из пакета (' + pgState.contextCart.size + ' ф.)', 'Removed from cart (' + pgState.contextCart.size + ' f.)'));
         } else {
           pgState.contextCart.add(fileId);
+          flashStatus(L('В пакете: ' + pgState.contextCart.size + ' ф. (Ctrl+клик — добавить ещё)', 'In cart: ' + pgState.contextCart.size + ' f. (Ctrl+click to add more)'));
         }
       }
+      pgRenderContextCart();
+      pgRenderInspector();
+      pgDrawGraph();
+    }
+
+    function pgRemoveFromCart(fileId) {
+      const clean = String(fileId || '').trim();
+      if (!clean || !pgState.contextCart || !pgState.contextCart.has(clean)) return;
+      pgState.contextCart.delete(clean);
       pgRenderContextCart();
       pgRenderInspector();
       pgDrawGraph();
@@ -755,8 +766,21 @@
       flashStatus(L('Путь добавлен в пакет (+', 'Path added to cart (+') + added + ')');
     }
 
+    function pgToggleCartAuditMenu(forceState) {
+      if (typeof pgEnsureAiListeners === 'function') pgEnsureAiListeners();
+      const menuEl = document.getElementById('pgCartAuditMenu');
+      const btnEl = document.getElementById('pgCartAuditBtn');
+      const size = pgState.contextCart ? pgState.contextCart.size : 0;
+      const nextOpen = typeof forceState === 'boolean' ? forceState : !pgState.cartAuditMenuOpen;
+      if (nextOpen && size === 0) return;
+      pgState.cartAuditMenuOpen = nextOpen;
+      if (menuEl) menuEl.hidden = !nextOpen;
+      if (btnEl) btnEl.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+    }
+
     function pgClearContextCart() {
       pgState.contextCart.clear();
+      pgToggleCartAuditMenu(false);
       pgRenderContextCart();
       pgRenderInspector();
       pgDrawGraph();
@@ -795,19 +819,40 @@
     function pgRenderContextCart() {
       const box = document.getElementById('pgContextCart');
       const sumEl = document.getElementById('pgCartSummary');
+      const chipsEl = document.getElementById('pgCartChips');
       if (!box) return;
       const size = pgState.contextCart ? pgState.contextCart.size : 0;
       if (size === 0) {
+        pgToggleCartAuditMenu(false);
         box.style.display = 'none';
+        if (chipsEl) chipsEl.innerHTML = '';
         return;
       }
       box.style.display = 'flex';
       let totalTok = 0;
+      const items = [];
       pgState.contextCart.forEach(function (fid) {
         totalTok += pgGetNodeEstTokens(fid);
+        items.push(fid);
       });
       if (sumEl) {
         sumEl.textContent = L('Пакет: ', 'Cart: ') + size + L(' ф. · ', ' f. · ') + pgFormatTokenEstimate(totalTok) + L(' ток.', ' tok.');
+      }
+      if (chipsEl) {
+        const maxShown = 12;
+        const shown = items.slice(0, maxShown);
+        let html = shown.map(function (fid) {
+          const slashIdx = fid.lastIndexOf('/');
+          const base = slashIdx >= 0 ? fid.slice(slashIdx + 1) : fid;
+          return '<span class="pg-cart-chip" title="' + escapeHtml(fid) + '">' +
+            '<button type="button" class="pg-cart-chip-name" data-action="pgSelectNodeById" data-arg="' + escapeHtml(fid) + '">' + escapeHtml(base) + '</button>' +
+            '<button type="button" class="pg-cart-chip-rm" data-action="pgRemoveFromCart" data-arg="' + escapeHtml(fid) + '" aria-label="' + escapeHtml(L('Убрать ' + base, 'Remove ' + base)) + '">×</button>' +
+          '</span>';
+        }).join('');
+        if (items.length > maxShown) {
+          html += '<span class="pg-cart-chip-more">+' + (items.length - maxShown) + '</span>';
+        }
+        chipsEl.innerHTML = html;
       }
     }
 

@@ -573,14 +573,21 @@
           const isCycle = Boolean(scene.hasCycleLens && scene.activeCycleNodes && scene.activeCycleNodes.has(n.id));
           const isPath = Boolean(scene.hasPathLens && pgState.pathNodeSet && pgState.pathNodeSet.has(n.id));
           const isSel = n.id === pgState.selectedNodeId || n.id === pgState.hoveredNodeId;
+          const isCart = Boolean(
+            pgState.contextCart && (
+              pgState.contextCart.has(n.id) ||
+              (n.isSymbol && n.file && pgState.contextCart.has(n.file)) ||
+              (n.isFolder && Array.isArray(n.fileIds) && n.fileIds.some(function (fid) { return pgState.contextCart.has(fid); }))
+            )
+          );
           const matches = pgNodeMatchesFilters(n);
 
           let alpha = 1;
           if (scene.hasBlastWave && waveHop === undefined) alpha *= 0.16;
           else if (scene.hasCycleLens && scene.activeCycleNodes && scene.activeCycleNodes.size > 0 && !isCycle) alpha *= 0.18;
-          else if (scene.hasHotspotsLens && hs <= 0 && !isSel) alpha *= 0.24;
+          else if (scene.hasHotspotsLens && hs <= 0 && !isSel && !isCart) alpha *= 0.24;
           else if (scene.hasPathLens && pgState.pathNodeSet && pgState.pathNodeSet.size > 0 && !isPath) alpha *= 0.16;
-          else if (activeId && scene.activeNeighbors && !scene.activeNeighbors.has(n.id)) alpha *= 0.22;
+          else if (activeId && scene.activeNeighbors && !scene.activeNeighbors.has(n.id) && !isCart) alpha *= 0.22;
           if (scene.hasQueryOrCluster && !matches) alpha *= 0.18;
 
           const fillColStr = (hs >= 0.45 && typeof pgGetHotspotColor === 'function')
@@ -589,7 +596,8 @@
           const fillRgba = pgParseColorRgba01(fillColStr, alpha);
 
           let ringColorStr = '';
-          if (isSel) ringColorStr = '#ffffff';
+          if (isCart) ringColorStr = '#30d158';
+          else if (isSel) ringColorStr = '#ffffff';
           else if (waveHop !== undefined && typeof pgGetHopColor === 'function') ringColorStr = pgGetHopColor(waveHop);
           else if (isCycle) ringColorStr = '#f04848';
           else if (ss > 0.12) ringColorStr = '#10b981';

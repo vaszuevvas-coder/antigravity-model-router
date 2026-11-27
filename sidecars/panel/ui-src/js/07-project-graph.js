@@ -2186,6 +2186,7 @@
         const isCartNode = Boolean(
           pgState.contextCart && (
             pgState.contextCart.has(n.id) ||
+            (n.isSymbol && n.file && pgState.contextCart.has(n.file)) ||
             (n.isFolder && Array.isArray(n.fileIds) && n.fileIds.some(function (fid) { return pgState.contextCart.has(fid); }))
           )
         );
@@ -2231,7 +2232,7 @@
           if (!isPathNode) alpha *= 0.15;
         } else if (hasAiSpotlight) {
           if (!aiRank && !isSelected && !isHovered) alpha *= 0.24;
-        } else if (activeId && !isNeighbor) {
+        } else if (activeId && !isNeighbor && !isCartNode) {
           alpha *= 0.22;
         }
         if (hasQueryOrCluster && !matchesFilter) alpha *= 0.18;
@@ -4742,6 +4743,11 @@
             }
           }
         }
+        if (pgState.cartAuditMenuOpen) {
+          if (!target || !target.closest || (!target.closest('#pgCartAuditMenu') && !target.closest('#pgCartAuditBtn'))) {
+            if (typeof pgToggleCartAuditMenu === 'function') pgToggleCartAuditMenu(false);
+          }
+        }
         if (!pgState.aiMenuOpen) return;
         if (target && target.closest && (target.closest('#pgAskAiMenu') || target.closest('#pgActionAskAiBtn'))) {
           return;
@@ -4754,6 +4760,13 @@
           if (typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
           if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
           pgCloseNodeContextMenu();
+          return;
+        }
+        if (ev.key === 'Escape' && pgState.cartAuditMenuOpen) {
+          if (typeof ev.preventDefault === 'function') ev.preventDefault();
+          if (typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
+          if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
+          if (typeof pgToggleCartAuditMenu === 'function') pgToggleCartAuditMenu(false);
           return;
         }
         if (ev.key === 'Escape' && pgState.aiMenuOpen) {
@@ -4868,13 +4881,30 @@
         '</div>';
       };
 
+      const cartCount = pgState.contextCart ? pgState.contextCart.size : 0;
+      const cartSubmenuHtml = cartCount >= 2
+        ? renderSubmenu(
+            'cart',
+            L('Аудит пакета (' + cartCount + ' ф.)', 'Audit bundle (' + cartCount + ' f.)'),
+            L('Группа', 'Group'),
+            [
+              { arg: 'cart-chat:bugs', label: L('Найти баги и проблемы (новый чат)', 'Find bugs & issues (new chat)') },
+              { arg: 'cart-chat:risks', label: L('Связи и риски группы (новый чат)', 'Group links & risks (new chat)') },
+              { arg: 'cart-chat:explain', label: L('Объяснить связку модулей (новый чат)', 'Explain module interplay (new chat)') },
+              { arg: 'cart-chat:tests', label: L('План тестов для группы (новый чат)', 'Test plan for bundle (new chat)') },
+              { arg: 'cart-composer:bugs', label: L('Аудит багов в Умный Композер…', 'Bug audit in Smart Composer…') },
+            ]
+          )
+        : '';
+
       menuEl.innerHTML =
         '<div class="pg-ctx-header" title="' + escapeHtml(node.id) + '">' + icon + escapeHtml(title) + '</div>' +
         nodeItems.map(renderBtn).join('') +
         '<div class="pg-ctx-sep" role="separator"></div>' +
         '<div class="pg-ctx-section-lbl">' + escapeHtml(L('Спросить ИИ', 'Ask AI')) + '</div>' +
         renderSubmenu('llm', L('Спросить LLM', 'Ask local LLM'), L('Лок. ИИ', 'Local AI'), llmItems) +
-        renderSubmenu('chat', L('Спросить в чате', 'Ask in new chat'), L('Новый чат', 'New chat'), chatItems);
+        renderSubmenu('chat', L('Спросить в чате', 'Ask in new chat'), L('Новый чат', 'New chat'), chatItems) +
+        cartSubmenuHtml;
 
       menuEl.hidden = false;
       pgState.ctxMenuOpen = true;
@@ -4931,6 +4961,14 @@
       }
       if (key === 'copy') {
         void pgCopySelectedPath();
+        return;
+      }
+      if (key.indexOf('cart-chat:') === 0) {
+        void pgRunCartAudit('chat:' + key.slice(10));
+        return;
+      }
+      if (key.indexOf('cart-composer:') === 0) {
+        void pgRunCartAudit('composer:' + key.slice(14));
         return;
       }
       if (key.indexOf('chat:') === 0) {
@@ -5879,6 +5917,248 @@
 
       pgDispatchToComposer({
         tokens: token ? [token] : [],
+        prompt: promptWithContext,
+      });
+    }
+
+    function pgBuildCartAuditContext(rawFileIds) {
+      const files = [];
+      const seen = new Set();
+      const srcList = Array.isArray(rawFileIds) ? rawFileIds : Array.from(pgState.contextCart || []);
+      for (let i = 0; i < srcList.length; i++) {
+        const f = String(srcList[i] || '').trim().replace(/\\/g, '/');
+        if (f && !seen.has(f)) {
+          seen.add(f);
+          files.push(f);
+        }
+      }
+      if (files.length === 0) return null;
+
+      const rawNodeMap = new Map();
+      const rawNodes = Array.isArray(pgState.rawGraphData && pgState.rawGraphData.nodes)
+        ? pgState.rawGraphData.nodes
+        : [];
+      for (let i = 0; i < rawNodes.length; i++) {
+        if (rawNodes[i] && rawNodes[i].id) rawNodeMap.set(rawNodes[i].id, rawNodes[i]);
+      }
+
+      const internalEdges = [];
+      const internalEdgeSet = new Set();
+      const extIncoming = [];
+      const extIncomingSet = new Set();
+      const extOutgoing = [];
+      const extOutgoingSet = new Set();
+      const rawEdges = Array.isArray(pgState.rawGraphData && pgState.rawGraphData.edges)
+        ? pgState.rawGraphData.edges
+        : (Array.isArray(pgState.edges) ? pgState.edges : []);
+      for (let i = 0; i < rawEdges.length; i++) {
+        const e = rawEdges[i];
+        const s = typeof e.source === 'object' ? e.source.id : e.source;
+        const t = typeof e.target === 'object' ? e.target.id : e.target;
+        if (!s || !t || s === t) continue;
+        const sIn = seen.has(s);
+        const tIn = seen.has(t);
+        if (sIn && tIn) {
+          const pair = s + ' -> ' + t;
+          if (!internalEdgeSet.has(pair)) {
+            internalEdgeSet.add(pair);
+            internalEdges.push(pair);
+          }
+        } else if (tIn && !sIn) {
+          if (!extIncomingSet.has(s)) {
+            extIncomingSet.add(s);
+            extIncoming.push(s);
+          }
+        } else if (sIn && !tIn) {
+          if (!extOutgoingSet.has(t)) {
+            extOutgoingSet.add(t);
+            extOutgoing.push(t);
+          }
+        }
+      }
+
+      const testMap = (pgState.rawGraphData && typeof pgState.rawGraphData.testFilesByTarget === 'object' && pgState.rawGraphData.testFilesByTarget) || null;
+      const relatedTests = [];
+      const testSeen = new Set();
+      const godFiles = [];
+      const fragileFiles = [];
+      const cycleFiles = [];
+      for (let i = 0; i < files.length; i++) {
+        const fid = files[i];
+        const meta = (pgState.nodeById && pgState.nodeById.get(fid)) || rawNodeMap.get(fid) || null;
+        if (meta) {
+          if (meta.isGod) godFiles.push(fid);
+          if (meta.isFragile) {
+            const relPct = Number(meta.reliabilityPercent !== undefined ? meta.reliabilityPercent : 100);
+            fragileFiles.push(fid + ' (' + relPct + '%)');
+          }
+          if (meta.inCycle || (pgState.cycleNodeSet && pgState.cycleNodeSet.has(fid))) {
+            cycleFiles.push(fid);
+          }
+        }
+        if (testMap && Array.isArray(testMap[fid])) {
+          for (let j = 0; j < testMap[fid].length; j++) {
+            const tf = testMap[fid][j];
+            if (tf && !testSeen.has(tf)) {
+              testSeen.add(tf);
+              relatedTests.push(tf);
+            }
+          }
+        }
+      }
+
+      return {
+        files: files,
+        internalEdges: internalEdges,
+        externalDependents: extIncoming,
+        externalImports: extOutgoing,
+        relatedTests: relatedTests,
+        godFiles: godFiles,
+        fragileFiles: fragileFiles,
+        cycleFiles: cycleFiles,
+      };
+    }
+
+    function pgBuildCartRelationsContextBlock(cartCtx) {
+      if (!cartCtx || !Array.isArray(cartCtx.files) || cartCtx.files.length === 0) return '';
+      const lines = [];
+      lines.push(
+        L('Выбранные модули (' + cartCtx.files.length + '): ', 'Selected modules (' + cartCtx.files.length + '): ') +
+        cartCtx.files.join(', ')
+      );
+      if (cartCtx.internalEdges.length > 0) {
+        const shown = cartCtx.internalEdges.slice(0, 12);
+        const extra = cartCtx.internalEdges.length - shown.length;
+        lines.push(
+          L('Внутренние связи между выбранными (' + cartCtx.internalEdges.length + '): ', 'Internal links between selected (' + cartCtx.internalEdges.length + '): ') +
+          shown.join('; ') +
+          (extra > 0 ? L(' (и ещё +' + extra + ')', ' (+' + extra + ' more)') : '')
+        );
+      }
+      if (cartCtx.externalDependents.length > 0) {
+        const shown = cartCtx.externalDependents.slice(0, 8);
+        const extra = cartCtx.externalDependents.length - shown.length;
+        lines.push(
+          L('Внешние зависимые / Blast Radius (↙ ' + cartCtx.externalDependents.length + '): ', 'External dependents / Blast Radius (↙ ' + cartCtx.externalDependents.length + '): ') +
+          shown.join(', ') +
+          (extra > 0 ? L(' (и ещё +' + extra + ')', ' (+' + extra + ' more)') : '')
+        );
+      }
+      if (cartCtx.relatedTests.length > 0) {
+        const shown = cartCtx.relatedTests.slice(0, 8);
+        const extra = cartCtx.relatedTests.length - shown.length;
+        lines.push(
+          L('Связанные тесты (' + cartCtx.relatedTests.length + '): ', 'Related tests (' + cartCtx.relatedTests.length + '): ') +
+          shown.join(', ') +
+          (extra > 0 ? L(' (и ещё +' + extra + ')', ' (+' + extra + ' more)') : '')
+        );
+      }
+      const risks = [];
+      if (cartCtx.godFiles.length > 0) risks.push('God-module: ' + cartCtx.godFiles.slice(0, 4).join(', '));
+      if (cartCtx.fragileFiles.length > 0) risks.push(L('Хрупкие: ', 'Fragile: ') + cartCtx.fragileFiles.slice(0, 4).join(', '));
+      if (cartCtx.cycleFiles.length > 0) risks.push(L('Циклы: ', 'Cycles: ') + cartCtx.cycleFiles.slice(0, 4).join(', '));
+      if (risks.length > 0) {
+        lines.push(L('Флаги риска: ', 'Risk flags: ') + risks.join(' · '));
+      }
+      const header = L('[Контекст группы с карты проекта]', '[Project Map Bundle Context]');
+      return header + '\n- ' + lines.join('\n- ');
+    }
+
+    function pgBuildCartAuditPrompt(preset, cartCtx) {
+      const count = cartCtx ? cartCtx.files.length : 0;
+      if (preset === 'risks') {
+        return L(
+          'Проведи комплексный анализ зависимостей и рисков для выбранной группы из ' + count + ' модулей.\n' +
+          'Разбери: 1) контракты и точки хрупкости на стыках между этими файлами; 2) внешний Blast Radius и что может сломаться у зависимых модулей; 3) циклы, сильную связанность и безопасный порядок рефакторинга.',
+          'Run a comprehensive dependency and risk audit across this selected bundle of ' + count + ' modules.\n' +
+          'Cover: 1) cross-module contracts and fragile boundaries; 2) external Blast Radius and downstream breakage risks; 3) cycles, tight coupling, and safe refactoring order.'
+        );
+      }
+      if (preset === 'explain') {
+        return L(
+          'Объясни, как выбранная группа из ' + count + ' модулей работает вместе как единый этап/подсистема.\n' +
+          'Разбери поток данных, распределение ответственности, точки входа/выхода и ключевые инварианты без пересказа кода построчно.',
+          'Explain how this selected bundle of ' + count + ' modules works together as a stage/subsystem.\n' +
+          'Cover data flow, responsibility split, entry/exit points, and key invariants without line-by-line narration.'
+        );
+      }
+      if (preset === 'tests') {
+        return L(
+          'Составь комплексный план тестирования для связки из ' + count + ' выбранных модулей (интеграционные стыки, граничные случаи и регрессии).\n' +
+          'Формат: компактный список — приоритет, сценарий (Given/When/Then), целевой тест-файл и точная команда запуска.',
+          'Create a comprehensive test plan for this bundle of ' + count + ' selected modules (integration boundaries, edge cases, regressions).\n' +
+          'Output format: compact list — priority, scenario (Given/When/Then), target test file, and exact run command.'
+        );
+      }
+      return L(
+        'Проведи комплексный аудит выбранной группы из ' + count + ' модулей на реальные баги, гонки, утечки, рассинхрон контрактов между ними и слабые места обработки ошибок.\n' +
+        'Игнорируй косметику. Для каждой проблемы укажи: файл:строка, суть бага/конфликта между модулями, сценарий воспроизведения, критичность (P0/P1/P2) и минимальный фикс.',
+        'Run a comprehensive bug audit across this selected bundle of ' + count + ' modules: real bugs, race conditions, leaks, cross-module contract mismatches, and weak error handling.\n' +
+        'Ignore cosmetics. For each issue provide: file:line, bug/cross-module conflict details, repro scenario, severity (P0/P1/P2), and minimal fix.'
+      );
+    }
+
+    async function pgRunCartAudit(rawArg) {
+      if (typeof pgToggleCartAuditMenu === 'function') pgToggleCartAuditMenu(false);
+      const spec = String(rawArg || 'chat:bugs').trim();
+      const parts = spec.split(':');
+      const mode = (parts.length > 1 && (parts[0] === 'chat' || parts[0] === 'composer')) ? parts[0] : 'chat';
+      const preset = (parts.length > 1 ? parts[1] : parts[0]) || 'bugs';
+
+      const cartCtx = pgBuildCartAuditContext();
+      if (!cartCtx || cartCtx.files.length === 0) {
+        flashStatus(L('Сначала выделите точки через Ctrl+клик', 'Select nodes with Ctrl+click first'));
+        return;
+      }
+
+      const tokens = cartCtx.files.map(function (f) { return '@file:' + f; });
+      const prompt = pgBuildCartAuditPrompt(preset, cartCtx);
+      const relationsBlock = pgBuildCartRelationsContextBlock(cartCtx);
+      const promptWithContext = relationsBlock ? (prompt + '\n\n' + relationsBlock) : prompt;
+
+      if (mode === 'composer') {
+        pgDispatchToComposer({
+          tokens: tokens,
+          prompt: promptWithContext,
+          inlineOkLabel: L('Аудит пакета (' + cartCtx.files.length + ' ф.) добавлен в Композер ✓', 'Bundle audit (' + cartCtx.files.length + ' f.) sent to Composer ✓'),
+          standaloneOkLabel: L('Аудит пакета (' + cartCtx.files.length + ' ф.) отправлен в Умный Композер ✓', 'Bundle audit (' + cartCtx.files.length + ' f.) sent to panel Smart Composer ✓'),
+          standaloneFallbackLabel: L('Скопирован аудит пакета: ', 'Copied bundle audit: ') + cartCtx.files.length + ' @file',
+        });
+        return;
+      }
+
+      const fullPrompt = tokens.join('\n') + '\n\n' + promptWithContext;
+      const wsRoot = (typeof pgGetEffectiveWorkspaceRoot === 'function' ? pgGetEffectiveWorkspaceRoot() : '') ||
+        pgState.autoWorkspace ||
+        (typeof _activeWorkspaceResolved === 'string' ? _activeWorkspaceResolved : '') ||
+        '';
+      const presetTitleMap = {
+        bugs: L('Аудит багов', 'Bug audit'),
+        risks: L('Риски и связи', 'Risks & links'),
+        explain: L('Разбор связки', 'Bundle walkthrough'),
+        tests: L('План тестов', 'Test plan'),
+      };
+      const chatTitle = L('Карта (' + cartCtx.files.length + ' ф.): ', 'Map (' + cartCtx.files.length + ' f.): ') +
+        (presetTitleMap[preset] || L('Аудит', 'Audit'));
+
+      if (typeof dispatchPromptToChatDetailed === 'function') {
+        await dispatchPromptToChatDetailed(
+          fullPrompt,
+          L('✓ Комплексный аудит (' + cartCtx.files.length + ' ф.) отправлен в чат', '✓ Bundle audit (' + cartCtx.files.length + ' f.) sent to chat'),
+          L('Чат недоступен — аудит пакета скопирован в буфер (Ctrl+V)', 'Chat unavailable — bundle audit copied to clipboard (Ctrl+V)'),
+          L('✓ Создан новый чат для комплексного аудита (' + cartCtx.files.length + ' ф.)', '✓ Created new chat for bundle audit (' + cartCtx.files.length + ' f.)'),
+          {
+            forceNewConversation: true,
+            focusNewConversation: true,
+            title: chatTitle,
+            rootDir: wsRoot,
+          }
+        );
+        return;
+      }
+
+      pgDispatchToComposer({
+        tokens: tokens,
         prompt: promptWithContext,
       });
     }

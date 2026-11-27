@@ -1336,6 +1336,9 @@
         case 'pgSwapPathEndpoints': pgSwapPathEndpoints(); break;
         case 'pgClearPath': pgClearPath(); break;
         case 'pgToggleNodeInCart': pgToggleNodeInCart(arg); break;
+        case 'pgRemoveFromCart': pgRemoveFromCart(arg); break;
+        case 'pgToggleCartAuditMenu': pgToggleCartAuditMenu(); break;
+        case 'pgRunCartAudit': void pgRunCartAudit(arg); break;
         case 'pgAddBlastWaveToCart': pgAddBlastWaveToCart(); break;
         case 'pgAddPathToCart': pgAddPathToCart(); break;
         case 'pgClearContextCart': pgClearContextCart(); break;
